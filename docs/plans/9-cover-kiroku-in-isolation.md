@@ -1,0 +1,479 @@
+---
+id: 9
+slug: cover-kiroku-in-isolation
+title: "Cover kiroku in isolation"
+kind: exec-plan
+created_at: 2026-09-20T17:15:35Z
+intention: "intention_01m2zvy0gje40tdsdragvzr3tq"
+master_plan: "docs/masterplans/1-build-an-extensive-verification-suite-for-the-keiro-runtime.md"
+provenance:
+  created_by:
+    model: "claude-fable-5-1"
+    harness: "claude-code"
+    at: 2026-09-20T17:15:35Z
+---
+
+# Cover kiroku in isolation
+
+This ExecPlan is a living document. The sections Progress, Surprises & Discoveries,
+Decision Log, and Outcomes & Retrospective must be kept up to date as work proceeds.
+If durable project context changes, update or create ADRs in docs/adr/ in the same change.
+
+
+## Purpose / Big Picture
+
+kiroku is the PostgreSQL event store that every other part of the keiro runtime writes to and reads from. If kiroku loses an acknowledged event, delivers events out of order, lets two writers both win the same stream version, or quietly stalls a subscriber, every layer above it is wrong in ways that are very hard to attribute. Today kiroku's own test suite runs inside one operating-system process against a PostgreSQL that has `fsync` switched off, and "crash" there means a thrown Haskell exception. Nothing exercises kiroku across processes, under real `SIGKILL`, across a PostgreSQL restart, for hours, or with its observability hooks switched on and off.
+
+After this plan a maintainer can run `kenshou list --layer kiroku` and see roughly fifty scenarios, each named `kiroku/<component>/<kind>/<name>`, and can run any of them with `kenshou run`. Correctness scenarios state kiroku's guarantees exactly as implemented (including the surprising ones: `ExactVersion 0` never creates a stream, and `WrongExpectedVersion` always reports version 0). Concurrency scenarios kill real processes with `SIGKILL` (the operating-system signal that ends a process at once, with no chance to clean up) and terminate real PostgreSQL backends (a backend is the server process PostgreSQL forks for each client connection), and then prove, from durable ledgers, that no event was lost, that order held, that subscription checkpoints never moved backwards, and that duplicates stayed inside the window the design allows. Five known kiroku defects are encoded as scenarios that fail today, are reported as known defects without blocking a run, and will flip to passing when kiroku fixes them. Benchmarks lifted from the old `kiroku-bench` project (with its broken conflict mode fixed by design) measure append, read and subscription performance against a durable PostgreSQL with the pool, batch, writer and payload variants as knobs. Soak scenarios run for hours and are judged by a leak verdict. Two telemetry scenarios measure what kiroku's event handler, its metrics server and its OpenTelemetry bridge cost. A short guide, `docs/layers/kiroku.md`, lists every scenario, its knobs and what it proves.
+
+To see it working after the first milestone, run `cabal run -v0 kenshou -- run kiroku/append/correctness/expected-version-matrix --out runs/` from the repository root and observe exit code 0 and a run directory whose `run-result.json` has `"outcome": "passed"` and whose `verdicts/` directory holds one JSON verdict per invariant.
+
+
+## Progress
+
+Milestone 1 — kiroku correctness scenarios.
+
+- [ ] Confirm the hard dependencies are delivered and the cohort resolves kiroku-store 0.8.0.1 (commands in Concrete Steps, step 1).
+- [ ] Create `kenshou-kiroku/kenshou-kiroku.cabal` with the library and the `kenshou-kiroku-test` suite; `cabal build kenshou-kiroku` succeeds.
+- [ ] Implement `Kenshou.Suite.Kiroku.Knobs`, `.Fixture.Store`, `.Fixture.Telemetry`, `.Fixture.Workload`, `.Fixture.Facts`, `.Fixture.Oracle`, with unit tests.
+- [ ] Export `bundle :: LayerBundle` from `Kenshou.Suite.Kiroku` and register it in `kenshou-cli` (the three-line edit); `kenshou list --layer kiroku` prints scenarios.
+- [ ] Append, read, lifecycle and transaction correctness scenarios (seven scenarios).
+- [ ] Subscription, consumer-group, dead-letter and notifier correctness scenarios (eight scenarios).
+- [ ] Retention, metrics and otel correctness scenarios (three scenarios).
+- [ ] All Milestone 1 scenarios pass with `pg.version=17` and `pg.version=18`; first draft of `docs/layers/kiroku.md`.
+
+Milestone 2 — kiroku concurrency, crash and known-defect scenarios.
+
+- [ ] Worker roles `kiroku.appender`, `kiroku.subscriber`, `kiroku.tx-appender` and `kiroku.reader` registered in the bundle and driven through the correctness toolkit's process control.
+- [ ] Pure stream model `Kenshou.Suite.Kiroku.Fixture.Model` with unit tests; `kiroku/append/concurrency/model-based-occ`.
+- [ ] Append concurrency scenarios: `expected-version-race`, `idempotent-duplicates`, `all-order-under-contention`, `sigkill-mid-append`.
+- [ ] Subscription and consumer-group crash scenarios: `sigkill-redelivery-window`, `multi-process-members`, `duplicate-member-claim`.
+- [ ] Fault scenarios: `listen-kill-and-notify-loss`, `postgres-restart`, `network-partition`, `all-lock-hold`.
+- [ ] Known-defect scenarios (five) carrying `KnownDefect` references; confirm each is reported as a known defect and does not change the exit code of a plan run.
+- [ ] Create or update the ADRs named in Context and Orientation; validate the ADR bundle.
+
+Milestone 3 — kiroku benchmarks lifted from kiroku-bench.
+
+- [ ] `Kenshou.Suite.Kiroku.Bench.Append` (`append-only`, `hot-stream`, `expected-version-conflict`) with pool, batch, writer and payload variants declared.
+- [ ] `Kenshou.Suite.Kiroku.Bench.Ladder` (`layer-ladder`) with its harness-owned schema `kenshou_kiroku`.
+- [ ] `Kenshou.Suite.Kiroku.Bench.Read` (`read-targets`) with prepopulation.
+- [ ] `Kenshou.Suite.Kiroku.Bench.Subscription` (`append-to-handler-latency`, `catch-up`, `fan-out`) with cross-process wall-clock latency.
+- [ ] `Kenshou.Suite.Kiroku.Bench.Transaction` (`lock-hold-contention`).
+- [ ] Methodology section written into every benchmark summary; methodology rules recorded in `docs/layers/kiroku.md`.
+- [ ] One paired comparison of two pool sizes through `kenshou compare` recorded in this plan's Outcomes.
+
+Milestone 4 — kiroku soak and telemetry arms.
+
+- [ ] Soak scenarios `append-and-subscribe`, `dead-letter-growth`, `lease-churn`, each registered at full duration (tier `soak`) and reduced duration (tier `extended`).
+- [ ] Leak verdicts and relation-growth checks wired for every soak; a reduced soak passes locally.
+- [ ] Telemetry benchmarks `kiroku/otel/benchmark/event-handler-arms` and `kiroku/metrics/benchmark/server-arms`; one `kenshou overhead` report produced.
+- [ ] `kiroku/otel/concurrency/slow-event-handler-stalls-delivery`.
+- [ ] Final `docs/layers/kiroku.md`; ADR distillation pass; Outcomes & Retrospective written.
+
+
+## Surprises & Discoveries
+
+(None yet.)
+
+
+## Decision Log
+
+- Decision: Oracles state kiroku's behaviour exactly as the 0.8.0.1 source implements it, and every invariant is labelled `contract` (promised by kiroku's documentation) or `implementation` (true today, not promised). Gaplessness of the global position is `implementation`; strict increase and total order are `contract`.
+  Rationale: kiroku's `GlobalPosition` documentation promises only "strictly increasing per successful append, and totally ordered — nothing more", and hard deletes legitimately create gaps. A suite that blocked releases on gaplessness would block on something kiroku never promised. The MasterPlan names this plan as the first exerciser of the contract/implementation split.
+  Date: 2026-09-20
+
+- Decision: The duplicate budget after a subscriber crash is per delivery path, not a single `batchSize`. It is `batchSize` for catch-up and for the database-driven live loops (category subscriptions and every consumer-group member), and `max(batchSize, 1000)` for a live, non-group `$all` subscription.
+  Rationale: Verified in `kiroku-store/src/Kiroku/Store/Subscription/Worker.hs` and `EventPublisher.hs`: the live non-group `$all` path delivers the shared publisher's batches, which hold up to `publisherBatchSize = 1000` events, and `processEvents` saves the checkpoint only at the batch tail. The research report and this plan's brief said "≤ `batchSize`"; that is wrong for this one path.
+  Date: 2026-09-20
+
+- Decision: The benchmark conflict mode creates its stream up front with `NoStream` and re-reads the live version with `getStream` after every `WrongExpectedVersion`; a run with zero successful appends is `errored`, never a result.
+  Rationale: The old kiroku-bench mode started every writer at `ExactVersion 0` on a missing stream (which never creates it) and trusted the error's third field (always 0), so it produced zero appends for its whole life. The fix is structural plus a non-vacuity gate.
+  Date: 2026-09-20
+
+- Decision: Known defects are encoded with the oracle stating the desired behaviour, never the current behaviour, and carry a `KnownDefect` reference to the upstream plan or improvement request.
+  Rationale: The scenario then flips from "known defect" to "passed" when kiroku fixes the defect, with no edit here. A probabilistic defect (the IR-7 deadlock) that does not reproduce is reported as "not reproduced", never as fixed.
+  Date: 2026-09-20
+
+- Decision: NOTIFY loss is injected by disabling kiroku's two notify triggers on `kiroku.streams` for a window, not through a wake-up seam.
+  Rationale: kiroku has no wake seam (the correctness toolkit's wake-up injector targets keiro's `neverWake`), and the network proxy cannot isolate the listener connection because it shares the connection string with the pool. `ALTER TABLE … DISABLE TRIGGER` is deterministic; its brief table lock is outside the measured window.
+  Date: 2026-09-20
+
+- Decision: Correctness scenarios supply deterministic, UUIDv7-shaped caller event identifiers; benchmarks default to store-generated identifiers.
+  Rationale: Deterministic identifiers make every append idempotent across a crash and give the ledger an exact key. Random-looking identifiers would scatter inserts across the `events_pkey` index and bias throughput, so benchmarks keep kiroku's default time-ordered identifiers unless the `kiroku.append.event-ids` knob says otherwise.
+  Date: 2026-09-20
+
+- Decision: Each soak is registered twice from one builder: `<name>` (tier `soak`, placement `cell`) and `<name>-reduced` (tier `extended`, placement `either`).
+  Rationale: Integration Point 3 gives a scenario exactly one tier, while every soak must run both locally at a reduced duration and on a cell at full duration.
+  Date: 2026-09-20
+
+- Decision: A harness event tap is installed on kiroku's single `eventHandler` slot only by scenarios whose oracle needs lifecycle evidence; benchmarks and soaks never install it.
+  Rationale: Integration Point 4 requires that measurement never flows through the feature being toggled. For benchmarks the arm `telemetry.tracing=off, telemetry.metrics=off` must mean `eventHandler = Nothing`, which is kiroku's allocation-free fast path.
+  Date: 2026-09-20
+
+- Decision: Out of scope for this plan: `linkToStream`, the causation and correlation queries, the `kiroku-cli` operator tool, the shibuya adapter (covered by `docs/plans/10-cover-shibuya-core-and-its-pgmq-and-kiroku-adapters.md`), the unique-violation misclassification of kiroku plan 86 (it needs a corrupted index to trigger) and the missing handler-stalled signal of kiroku plan 84 (an observability gap, not a behaviour to assert).
+  Rationale: None is on the path keiro uses, or none can be triggered without corrupting the database.
+  Date: 2026-09-20
+
+
+## Outcomes & Retrospective
+
+(To be filled during and after implementation.)
+
+
+## Context and Orientation
+
+This repository, `keiro-runtime-kenshou`, is a verification suite for the keiro runtime, a cohort of Haskell libraries. This plan covers one of them, kiroku, in isolation: nothing here imports shibuya, keiro, pgmq-hs or Kafka code, so a failure here is a kiroku failure. The plan creates one cabal package, `kenshou-kiroku`, with the namespace `Kenshou.Suite.Kiroku.*`, and touches exactly three lines outside it (the registration described below) plus the guide `docs/layers/kiroku.md`.
+
+### What kiroku is
+
+kiroku (`mori://shinzui/kiroku`, on disk at `/Users/shinzui/Keikaku/bokuno/kiroku-project/kiroku`, head `758b81a`) is an event store: a database of immutable facts ("events") grouped into named sequences ("streams"). The cohort pins the Hackage releases kiroku-store 0.8.0.1, kiroku-store-migrations 0.4.0.0 (0.5.0.0 has byte-identical SQL and differs only in its pg-migrate bound), kiroku-metrics 0.1.0.8 and kiroku-otel 0.2.0.8 (verified against Hackage on 2026-09-20). Read `cohort/released.project` for the pins actually in force. Everything used below is re-exported from the umbrella module `Kiroku.Store` unless a module is named.
+
+A store handle is opened with `withStore :: MonadUnliftIO m => ConnectionSettings -> (KirokuStore -> m a) -> m a` (`kiroku-store/src/Kiroku/Store/Connection.hs`). `defaultConnectionSettings connString` gives `poolSize = 10`, `schema = "kiroku"`, `idleInTransactionTimeout = 30` seconds, `statementTimeout = Nothing`, `observationHandler = Nothing`, `eventHandler = Nothing` and `storeSettings = defaultStoreSettings` (two optional hooks, `enrichEvent :: Maybe (EventData -> IO EventData)` on the append path and `decodeHook :: Maybe (RecordedEvent -> IO RecordedEvent)` on the read and subscription paths). `withStore` runs no DDL; the schema must already be migrated. It acquires a `hasql-pool` connection pool, then starts a Notifier, which is one dedicated connection outside the pool that runs `LISTEN kiroku.events` and tags itself `application_name = 'kiroku-listener'`, and one EventPublisher thread. Pool connections carry no `application_name` of their own, so this plan's fixture appends one to the connection string; that is how fault injectors find the right backends. Store operations run in `effectful` through `runStoreIO :: KirokuStore -> Eff '[Store, Error StoreError, IOE] a -> IO (Either StoreError a)`.
+
+Appending and optimistic concurrency. `appendToStream :: StreamName -> ExpectedVersion -> [EventData] -> Eff es AppendResult` appends a batch atomically as one autocommit SQL statement. Optimistic concurrency means a writer states what it believes the stream's version is and the store rejects the write if that belief is stale, instead of taking a lock while the writer thinks. `ExpectedVersion` is `NoStream | StreamExists | ExactVersion StreamVersion | AnyVersion`. A stream's version is the count of its events; the i-th event has version i. The exact results, read from `Kiroku/Store/SQL.hs`, `Effect.hs` and `Error.hs`, are: `ExactVersion v` is an `UPDATE … WHERE stream_version = v AND deleted_at IS NULL`, so it never inserts a stream row and `ExactVersion 0` against a missing stream fails with `WrongExpectedVersion`; a rejected precondition returns zero rows and the store does not re-read, so `WrongExpectedVersion name expected (StreamVersion 0)` always carries 0 as its third field and the caller must call `getStream` to learn the live version; `NoStream` on an existing stream (including a soft-deleted one) gives `StreamAlreadyExists`; `StreamExists` or `AnyVersion` on a soft-deleted stream gives `StreamNotFound`; `[]` gives `EmptyAppendBatch` before any database work; the name `$all` gives `ReservedStreamName`; a name over `maxStreamNameBytes = 512` UTF-8 bytes gives `StreamNameTooLong`. An idempotent append is one that can be retried safely: the caller sets `EventData.eventId`, and a retry of a batch that already committed gives `DuplicateEvent (Just id)`. The interpreter retries an append exactly once when PostgreSQL aborts it with SQLSTATE `40001` (serialization failure) or `40P01` (deadlock detected); a second abort surfaces as `TransientTransactionFailure code message`, documented as retryable. `appendMultiStream` appends to several streams in one transaction, all or nothing.
+
+The global order. Every event also gets a `GlobalPosition`, its place in the store-wide sequence called `$all`. `$all` is a real row (`kiroku.streams.stream_id = 0`) whose `stream_version` is the position counter. Every append updates that row and therefore holds its row lock until commit, including the write-ahead-log flush, so appends commit in strictly increasing position order store-wide and a reader can never see position N+1 before N. The documented contract is deliberately weaker than the implementation: strictly increasing and totally ordered, nothing more; callers must not assume `position + 1` exists. Today positions are contiguous, but `hardDeleteStream` deletes a stream's `$all` rows and so legitimately leaves gaps. The cost of this design is a throughput ceiling of about batch size divided by durable commit latency, and a throughput-optimal pool of about 10 to 13 connections whatever the writer count; larger pools lose 25 to 30 percent (`docs/PERF-METHODOLOGY.md` in the kiroku repository). `runTransactionAppending :: StreamName -> ExpectedVersion -> [EventData] -> (AppendResult -> Tx.Transaction a) -> Eff es (Either StoreError a)` (`Kiroku.Store.Transaction`) runs a caller's SQL in the same transaction as the append; because the `$all` lock is held until commit, every statement in that continuation blocks every other append in the store. keiro uses this path for inline projections.
+
+Lifecycle and retention. `softDeleteStream` hides a stream from appends and stream reads but not from `$all`; `undeleteStream` reverses it; `hardDeleteStream` removes it permanently; `setStreamTruncateBefore` hides a prefix from stream reads only. A retention lease (`Kiroku.Store.HistoryRetention`, one second to one hour, expiry judged on the database clock) blocks hard deletes while active: `hardDeleteStream` fails with `HistoryRetentionActive` and direct SQL deletion raises SQLSTATE `KR001`.
+
+Subscriptions. A subscription is a named, long-lived worker that feeds events to a handler in order and remembers its progress in a durable row called a checkpoint (table `kiroku.subscriptions`, key `(subscription_name, consumer_group_member)`, published read-only as the frozen view `kiroku.subscription_checkpoints_v1`). This document always says "subscription checkpoint" for that row and "PostgreSQL checkpoint" for the database's periodic flush of dirty pages, which is unrelated and matters only as benchmark noise. `subscribe :: MonadIO m => KirokuStore -> SubscriptionConfig -> m SubscriptionHandle` and `withSubscription` start one; `subscriptionStream` and `subscriptionAckStream` (`Kiroku.Store.Subscription.Stream`) expose the same worker as a Streamly stream, the second one ack-coupled (the worker waits for the consumer's decision on each event). `defaultSubscriptionConfig name target handler` gives `batchSize = 100`, `queueCapacity = 16` (in batches), `overflowPolicy = PauseAndResume`, `consumerGroup = Nothing`, `consumerGroupGuard = False`, `missingCheckpointPolicy = FromBeginning`, `retryPolicy = RetryPolicy 5`, `eventTypeFilter = AllEventTypes`, `selector = Nothing`. The target is `AllStreams` or `Category name` (a category is the part of a stream name before the first `-`). The handler returns `Continue`, `Stop`, `Retry delay` or `DeadLetter reason`. The guarantee is at-least-once delivery (every event is delivered one or more times; duplicates are possible, loss is not) in increasing global-position order, with subscription checkpoint saves that never move backwards (`GREATEST(existing, new)` in SQL) except through the explicit `resetSubscriptionCheckpointsTx`. A worker first catches up by reading PostgreSQL from its checkpoint and then goes live. Live wake-up uses PostgreSQL `LISTEN`/`NOTIFY` (a lightweight publish/subscribe signal; triggers `stream_events_notify_insert` and `stream_events_notify_update` on `kiroku.streams` fire it), but the data is always re-read from tables, and a lost notification is repaired by safety polls of 30 seconds (`safetyPollMicros` in `EventPublisher.hs`, `categorySafetyPollMicros` in `Worker.hs`). The Notifier reconnects with backoff 1, 2, 4 … capped at 30 seconds. There are three live paths: a non-group `AllStreams` worker reads a bounded queue fed by the shared EventPublisher in batches of up to `publisherBatchSize = 1000`; a non-group `Category` worker re-queries when its category's notification counter moves; every consumer-group member re-queries when the publisher's position advances. The checkpoint is saved once per delivered batch, which is what bounds duplicates after a crash (see the Decision Log for the per-path budget). The overflow policy decides what happens when the bounded queue fills: `PauseAndResume` (lossless, the worker re-reads from its checkpoint), `DropSubscription` (the worker dies with `SubscriptionOverflowed`), `DropOldest` (lossy by design). A retried event is delivered at most `retryMaxAttempts` times in total and is then written to `kiroku.dead_letters` in the same statement that advances the checkpoint; the attempt counter lives in memory only.
+
+Consumer groups. A consumer group splits one subscription across `size` members by hashing the originating stream: `(((hashtextextended(stream_id::text, 0) % size) + size) % size) = member`, evaluated in SQL. There is no rebalancing and no lifetime ownership lock; `consumerGroupGuard` is only a startup probe using a transaction-scoped advisory lock (a PostgreSQL application-level lock identified by a number), so a deployment must itself ensure one live process per member.
+
+Observability. `ConnectionSettings.eventHandler :: Maybe (KirokuEvent -> m ())` is a single slot, called synchronously on the emitting thread, so a slow handler stalls the notifier, publisher or worker that called it. `kiroku-metrics` fills the slot with `metricsEventHandler :: KirokuMetrics -> Maybe (KirokuEvent -> IO ()) -> KirokuEvent -> IO ()` (the second argument is a passthrough used to compose handlers) and serves JSON, Prometheus text, health probes and two WebSocket paths (`/ws/metrics`, `/ws/events`) from `withMetricsServerWithStore`; `MetricsServerConfig.port` defaults to 9091 and `0` binds a free port reported in `serverPort`. Because the collector must exist before `withStore` but reads gauges from the live store, it is built with `newKirokuMetricsWith` over a `TVar (Maybe KirokuStore)` that is filled once the store opens (the pattern in kiroku's `docs/user/metrics.md`). Each `/ws/events` tail registers a `DropOldest` subscriber on the publisher. `kiroku-otel` provides `subscriptionTraceHandler :: Tracer -> IO (KirokuEvent -> IO ())` (note the `IO`: it allocates span state) and `injectTraceContext :: SpanContext -> EventData -> EventData` / `extractTraceContext :: RecordedEvent -> Maybe SpanContext`, which carry W3C trace context in event metadata and are wired through `enrichEvent`.
+
+### Known kiroku defects this plan encodes
+
+All are unfixed in 0.8.0.1. kiroku's MasterPlan 12 (`mori://shinzui/kiroku/masterplans/12-harden-the-kiroku-event-store-and-subscription-machinery-surfaced-by-the-2026-07-kiroku-review`, all children unstarted) owns four. Resizing a consumer group re-buckets streams against unrelated per-member cursors and can skip events forever (`mori://shinzui/kiroku/plans/81-make-consumer-group-topology-durable-and-resize-without-gaps`). A database-driven live subscription that loses its connection reconnects from the cursor it had when it went live rather than from its real progress, so it redelivers everything since then; and `batchSize < 1` is accepted (`mori://shinzui/kiroku/plans/82-repair-live-reconnect-and-validate-subscription-identity-and-batch-size`). A store-wide `decodeHook` that throws makes the publisher retry the same position forever, so every `$all` subscriber looks live and makes no progress (`mori://shinzui/kiroku/plans/83-contain-persistent-publisher-decode-hook-failures`). Separately, `appendMultiStream` over `[A, B]` with `B` not yet existing locks `A`, then `$all`, then `B`, while a concurrent single-stream append to `B` locks `B` then `$all`; PostgreSQL detects the cycle and aborts one side with `40P01` (`mori://shinzui/kiroku/okf/improvement-requests/concepts/IR-7`). Plan and masterplan URIs do not resolve in the current Mori registry; they are the intended canonical form.
+
+### What is lifted from kiroku-bench, and prior specifications
+
+kiroku-bench lives at `/Users/shinzui/Keikaku/bokuno/kiroku-project/kiroku-bench` (GitHub `shinzui/kiroku-bench`; it is not registered in Mori, so no `mori://` URI exists). It is pinned to kiroku-store 0.2.0.0, is closed-loop only, has no warm-up or duration handling, interpolates percentiles from sixteen Prometheus buckets, measures subscription latency with a process-local monotonic clock in event metadata (so producer and subscriber must share a process), fills payloads with a constant letter, and its `expected-version-conflict` mode produces zero appends. This plan lifts its scenario taxonomy (append-only, hot-stream, conflict, read targets, subscription latency, catch-up, fan-out at 1/4/16/64 subscribers) and its layer ladder (`app/RawPg.hs`, `app/Hasql.hs`, `app/StoreApi.hs`), and rebuilds them on the measurement and correctness toolkits. Scenario ideas were also mined from the never-executed `mori://shinzui/load-testing-infra/masterplans/5-kiroku-correctness-under-load-and-event-ordering-verification` and its plans 17, 21, 22, 23, 24 and 25 under `mori://shinzui/load-testing-infra/plans/`. Findings worth knowing from that repository: run-to-run variance of plus or minus twenty percent caused by one long PostgreSQL checkpoint per ten-minute window; throughput flat from 8 to 128 writers while p99 went from 43 to 840 ms; a pool-size cliff between 13 and 20; a co-located producer and consumer saturating a two-core driver.
+
+### What this plan expects from its hard dependencies
+
+Before starting, the following must exist; each toolkit plan was drafted in parallel with this one, so read the completed plan for exact names and signatures and adapt the calls below. The kernel (`docs/plans/2-build-the-harness-kernel-for-scenarios-dimensions-run-specs-and-results.md`) delivers `kenshou-core` with `Kenshou.Core.Scenario` (`Scenario`, `ScenarioId`, `Kind`, `Tier`, `Placement`, `KnownDefect`, `RunContext`, `ScenarioReport`), `.Knob` (`KnobSpec`), `.Dimension`, `.Bundle` (`LayerBundle` with `layer`, `scenarios`, `roles`), `.Env.Postgres` (`PostgresEnv`, migrated on request with the kiroku component `Kiroku.Store.Migrations.kirokuMigrations`), `.Role` (`WorkerRole`, `RoleContext`), and `kenshou-cli` with `Kenshou.Cli.Registry`. The measurement toolkit (`docs/plans/4-build-the-measurement-toolkit-for-load-latency-sampling-and-comparison.md`) delivers `Kenshou.Measure.*`: a latency recorder backed by an HDR histogram (a histogram with logarithmic buckets that keeps a fixed number of significant digits across many orders of magnitude, so tail percentiles are accurate), closed-loop load (N workers issue the next operation as soon as the last returns) and open-loop load (operations start on a schedule regardless of completions, with latency measured from the intended start so that coordinated omission — the under-reporting of latency when a slow response delays the next request — is corrected), samplers for the GHC runtime, the process and PostgreSQL, summaries and `kenshou compare`. The correctness toolkit (`docs/plans/5-build-the-correctness-toolkit-for-ledgers-invariants-faults-and-process-control.md`) delivers `Kenshou.Check.*`: a bounded-memory, per-process, append-only ledger of facts; invariant checkers (no-loss, duplicates only inside declared crash windows and under a declared budget, per-key order, global monotonic order, gapless positions, exactly-N effects per key, eventual quiescence, monotonic checkpoints, disjoint ownership) each writing one `kenshou.verdict/v1` with a `class` of `contract` or `implementation`; `Kenshou.Check.Process` to spawn, signal and restart worker roles; fault injectors for PostgreSQL (terminate backends by `application_name`, stop and start the postmaster, which is PostgreSQL's parent server process) and the network (an in-process TCP proxy); and hedgehog state-machine helpers. The diagnostics toolkit (`docs/plans/6-build-the-diagnostics-toolkit-for-memory-leaks-and-concurrency-stalls.md`) delivers `Kenshou.Diagnose.*`: the leak verdict (a robust slope over live bytes after major garbage collections, thread counts, file descriptors, connections and relation sizes), the stall watchdog fed by progress heartbeats, and the idle busy-spin gate over `pg_stat_statements`. The telemetry toolkit (`docs/plans/7-add-telemetry-arms-and-measure-observability-overhead.md`) delivers `Kenshou.Telemetry.withTelemetry`, giving `Maybe Tracer`, `Maybe Meter`, an in-memory exporter handle and `registerEndpoint`, plus `Kenshou.Telemetry.Compose` and `kenshou overhead`.
+
+### Integration-point contracts this plan relies on
+
+A scenario identifier is `<layer>/<component>/<kind>/<name>`; here the layer is `kiroku`, the component is one of `append`, `read`, `subscription`, `consumer-group`, `dead-letter`, `lifecycle`, `transaction`, `notifier`, `retention`, `metrics`, `otel`, and the kind is `correctness`, `concurrency`, `soak` or `benchmark`. Tiers are `smoke` (under one minute), `standard` (under ten), `extended` (under an hour) and `soak` (hours); placement is `local`, `cell` (a leased, controlled set of Google Cloud machines) or `either`. The dimensions are `telemetry.tracing` (`off`, `noop`, `sdk-inmemory`, `sdk-otlp`), `telemetry.metrics` (`off`, `collect`, `serve`, `serve-scraped`), `pg.durability` (`fsync-off`, `durable`) and `pg.version` (`17`, `18`; kiroku supports both). A known-defect reference turns an expected failure into a reported, non-blocking outcome. Outcomes are `passed`, `failed`, `errored`, `inconclusive`, `infrastructure-failure`. A run directory holds `run-spec.json`, `run-result.json`, `manifest.json`, `samples/`, `series/`, `verdicts/`, `diagnosis/` and `logs/`. Workers run as child processes of the same binary through `kenshou worker`. The layer package exports exactly one `bundle :: LayerBundle`, and registration is one import and one list element in `kenshou-cli/src/Kenshou/Cli/Registry.hs` plus one `build-depends` entry in `kenshou-cli/kenshou-cli.cabal`. Layer packages never import one another.
+
+### Architecture decisions
+
+There is no local ADR corpus to consult beyond what `docs/plans/1-bootstrap-the-kenshou-repository-and-pin-the-runtime-cohort.md` creates (`docs/adr/`, a profile-governed OKF bundle; OKF is a directory of Markdown files with YAML frontmatter validated by the `okf` tool against a profile, a Dhall description of the allowed record shapes). Scan its filenames before starting. The relevant cross-repository decisions are these. `mori://shinzui/kiroku/okf/adrs/concepts/ADR-2` makes consumer groups static hash partitions with per-member checkpoints and no rebalancing, which is the coverage-and-disjointness invariant. `mori://shinzui/kiroku/okf/adrs/concepts/ADR-4` makes checkpoint initialisation explicit (three policies, an existing row always wins) and saves monotonic, with rewind only through an explicit transactional reset. `mori://shinzui/kiroku/okf/adrs/concepts/ADR-5` treats structural checks and controlled A/B workloads as authoritative performance evidence and history as telemetry, which is why benchmarks here are compared in pairs. `mori://shinzui/kiroku/okf/adrs/concepts/ADR-7` defines retention leases on the database clock and the coordinator-before-stream lock order. `mori://shinzui/kiroku/okf/adrs/concepts/ADR-1` removes the stream name from `RecordedEvent`, which is why delivered facts carry `originalStreamId`. `mori://shinzui/kiroku/okf/adrs/concepts/ADR-3` fixes the `kiroku` schema and the `kiroku.events` channel. kiroku's ADR-8 (construction-time validation, accepted but unimplemented) and ADR-9 (frozen HTTP and WebSocket wire shapes) exist on disk as `docs/adr/0008-…` and `docs/adr/0009-…` in `mori://shinzui/kiroku` but are not yet in the Mori registry; their intended handles are `mori://shinzui/kiroku/okf/adrs/concepts/ADR-8` and `…/ADR-9`.
+
+This plan should produce or amend three ADRs. First, the contract/implementation labelling ADR is owned by the correctness toolkit plan; amend it with the kiroku evidence (gapless positions are `implementation`, and the per-path duplicate budget), or create it if it does not exist yet. Second, create "Known defects are scenarios whose oracle states the desired behaviour and which carry an upstream reference". Third, create "kiroku benchmark methodology: durable PostgreSQL only, best pool against best pool, results authoritative only on a cell, macOS `fsync` caveat". Allocate handles with `okf id next docs/adr --profile docs/adr/profile.dhall ADR` and validate with `okf validate docs/adr --strict --profile docs/adr/profile.dhall --profile-enforce --log-enforce`.
+
+
+## Plan of Work
+
+### Shared design
+
+Every scenario is a `Scenario` value built in its module and collected in `Kenshou.Suite.Kiroku.bundle`. Every scenario obtains its database from the kernel's `PostgresEnv` with the kiroku migration component requested, opens the store under test through one fixture, and honours both telemetry dimensions through that fixture, which is how this layer satisfies the telemetry requirement everywhere rather than in a few special scenarios.
+
+```haskell
+module Kenshou.Suite.Kiroku.Fixture.Store where
+
+data StoreOptions = StoreOptions
+  { poolSize :: Int                        -- knob kiroku.pool-size
+  , statementTimeout :: Maybe Int          -- knob kiroku.statement-timeout-seconds (0 = Nothing)
+  , idleInTransactionTimeout :: Int        -- knob kiroku.idle-in-transaction-timeout-seconds
+  , applicationName :: Text                -- "kenshou-kiroku-<role>-<run8>", appended to the connection string
+  , keepalives :: Bool                     -- knob kiroku.conn.keepalives
+  , decodeHook :: Maybe (RecordedEvent -> IO RecordedEvent)
+  , eventTap :: Maybe (KirokuEvent -> IO ())   -- harness evidence tap; Nothing in benchmarks and soaks
+  }
+
+data StoreUnderTest = StoreUnderTest
+  { store :: KirokuStore
+  , metrics :: Maybe KirokuMetrics
+  , metricsPort :: Maybe Int               -- Just when telemetry.metrics is serve or serve-scraped
+  }
+
+storeOptionsFromKnobs :: RunContext -> Text -> StoreOptions
+withKirokuStore :: RunContext -> TelemetryHandles -> StoreOptions -> (StoreUnderTest -> IO a) -> IO a
+```
+
+`withKirokuStore` maps the dimensions onto kiroku's single handler slot in `Kenshou.Suite.Kiroku.Fixture.Telemetry`. With both telemetry dimensions `off` and no tap, `eventHandler` and `observationHandler` stay `Nothing`. With `telemetry.metrics` not `off` it builds the collector with `newKirokuMetricsWith` over a `TVar (Maybe KirokuStore)` and installs `metricsEventHandler` and `metricsObservationHandler`; with `serve` or `serve-scraped` it also runs `withMetricsServerWithStore defaultConfig{port = 0}` and announces `http://127.0.0.1:<serverPort>/metrics/prometheus` and `/metrics` through the telemetry toolkit's `registerEndpoint`, which scrapes them when the arm is `serve-scraped`. With `telemetry.tracing` not `off` it obtains a handler from `subscriptionTraceHandler tracer` and, when the knob `kiroku.trace.enrich-event` is true (its default), sets `enrichEvent` to inject the current span context with `injectTraceContext`. When both are on, the handlers are composed as `metricsEventHandler km (Just traceHandler)`, collector first because its update is non-blocking STM. The tap, when present, is the innermost passthrough.
+
+```haskell
+module Kenshou.Suite.Kiroku.Fixture.Telemetry where
+
+data HandlerArm = HandlerNone | HandlerMetrics | HandlerTrace | HandlerMetricsAndTrace
+handlerArm :: TracingArm -> MetricsArm -> HandlerArm
+composeEventHandler :: Maybe KirokuMetrics -> Maybe Tracer -> Maybe (KirokuEvent -> IO ()) -> IO (Maybe (KirokuEvent -> IO ()))
+```
+
+Knobs are declared once in `Kenshou.Suite.Kiroku.Knobs` and named after the configuration fields they set. Store knobs, accepted by every scenario: `kiroku.pool-size` (int, default 10, allowed 1 to 64, sets `poolSize`); `kiroku.statement-timeout-seconds` (int, default 0 meaning `Nothing`, allowed 0 to 600); `kiroku.idle-in-transaction-timeout-seconds` (int, default 30, allowed 1 to 3600); `kiroku.conn.keepalives` (bool, default false; true appends `keepalives_idle=5 keepalives_interval=2 keepalives_count=3 tcp_user_timeout=10000` to the connection string). Append knobs: `kiroku.append.writers` (int, default 8, allowed 1 to 256), `kiroku.append.processes` (int, default 1, allowed 1 to 8), `kiroku.append.batch-size` (int, default 1, allowed 1 to 1000, declared variants 1, 10, 100), `kiroku.append.payload-bytes` (int, default 256, allowed 16 to 1048576, declared variants 64, 256, 4096, 65536), `kiroku.append.streams` (int, scenario-specific default), `kiroku.append.event-ids` (`store`, `caller-v7`, `caller-random`). Subscription knobs: `kiroku.subscription.target` (`all` or `category`, default `all`), `kiroku.subscription.api` (`native`, `stream`, `ack-stream`, default `native`), `kiroku.subscription.batch-size` (int, default 100, allowed 1 to 10000, sets `batchSize`), `kiroku.subscription.queue-capacity` (int, default 16, allowed 1 to 1024), `kiroku.subscription.overflow-policy` (`pause-and-resume`, `drop-subscription`, `drop-oldest`), `kiroku.subscription.missing-checkpoint-policy` (`from-beginning`, `from-current-head`, `fail-if-missing`), `kiroku.subscription.retry-max-attempts` (int, default 5, allowed 1 to 10), `kiroku.subscription.buffer-size` (int, default 256, the bridge queue of the two stream APIs), `kiroku.subscription.subscribers` (int, default 1), `kiroku.subscription.handler-latency-ms` (int, default 0). Group knobs: `kiroku.consumer-group.size` (int, default 4, allowed 1 to 64) and `kiroku.consumer-group.guard` (bool, default false). Phase durations (warm-up, steady, drain) are declared per scenario and overridden in the run specification as the kernel plan specifies.
+
+The workload generator is deterministic in the run seed. Stream names are `k<run8>c<category>-<n>` so the category is `k<run8>c<category>`; payloads are seeded pseudo-random JSON of the requested size (not a constant fill, which compresses unrealistically); caller identifiers are UUIDv7-shaped with a logical-counter prefix so that a restarted appender regenerates the same identifiers.
+
+```haskell
+module Kenshou.Suite.Kiroku.Fixture.Workload where
+
+streamNameFor :: RunTag -> Int -> Int -> StreamName
+eventIdFor    :: Seed -> Int -> Int64 -> EventId        -- stream index, ordinal
+payloadOf     :: Seed -> Int -> Int64 -> Int -> Value   -- … size in bytes
+mkEvents      :: Seed -> IdPolicy -> Int -> Int64 -> Int -> Int -> [EventData]
+```
+
+Facts are what processes write to the correctness toolkit's ledger. An appender writes one `Produced` fact per acknowledged append, after `appendToStream` returns and before starting the next; a subscriber's handler writes one `Delivered` fact and flushes it before returning `Continue`, so a fact on disk means the handler really ran; the driver samples `kiroku.subscription_checkpoints_v1` every 200 ms into `CheckpointSample` facts.
+
+```haskell
+module Kenshou.Suite.Kiroku.Fixture.Facts where
+
+data Produced = Produced { stream :: Text, lastVersion :: Int64, lastPosition :: Int64, eventIds :: [UUID], ackWallNanos :: Int64 }
+data Delivered = Delivered { subscription :: Text, member :: Int32, position :: Int64, eventId :: UUID
+                           , originStreamId :: Int64, originVersion :: Int64, attempt :: Int, incarnation :: Int, recvWallNanos :: Int64 }
+data CheckpointSample = CheckpointSample { subscription :: Text, member :: Int32, position :: Int64, sampledWallNanos :: Int64 }
+```
+
+Oracles read durable truth from kiroku's own tables over a separate connection tagged `application_name = kenshou-oracle`, always schema-qualified, paging by cursor so memory stays bounded.
+
+```haskell
+module Kenshou.Suite.Kiroku.Fixture.Oracle where
+
+foldAllLog      :: Pool -> (AllRow -> IO ()) -> IO ()      -- kiroku.stream_events WHERE stream_id = 0 ORDER BY stream_version
+gapReport       :: Pool -> IO GapReport                    -- min, max, count, list of missing ranges
+threeCounts     :: Pool -> IO (Int64, Int64, Int64)        -- count(events), count($all rows), $all stream_version
+streamAudit     :: Pool -> IO [StreamAnomaly]              -- per stream: versions are exactly 1..stream_version
+checkpoints     :: Pool -> IO [(Text, Int32, Int64)]       -- kiroku.subscription_checkpoints_v1
+deadLetters     :: Pool -> Text -> IO [DeadLetterRow]      -- kiroku.dead_letters
+partitionSlots  :: Pool -> Int32 -> IO (Map Int64 Int32)   -- slot(stream_id) for a group size, computed by PostgreSQL
+deadlockCount   :: Pool -> IO Int64                        -- pg_stat_database.deadlocks for the current database
+```
+
+Dimension support is uniform: correctness scenarios support both `pg.durability` values (default `fsync-off`); every concurrency, soak and benchmark scenario supports only `durable`; every scenario supports both `pg.version` values and all telemetry values except where stated. Unless a scenario says otherwise its placement is `either`.
+
+### Milestone 1 — kiroku correctness scenarios
+
+Scope: the package, the fixtures above, the bundle registration, and eighteen single-process scenarios that pin down kiroku's documented behaviour with no faults. At the end `kenshou list --layer kiroku` lists them and each passes on PostgreSQL 17 and 18. Run them with `cabal run -v0 kenshou -- run <id> --out runs/` and expect exit code 0. Files: `kenshou-kiroku/kenshou-kiroku.cabal`, `kenshou-kiroku/src/Kenshou/Suite/Kiroku.hs`, `…/Kiroku/Knobs.hs`, `…/Kiroku/Fixture/{Store,Telemetry,Workload,Facts,Oracle}.hs`, `…/Kiroku/Correctness/{Append,Read,Lifecycle,Transaction,Subscription,ConsumerGroup,DeadLetter,Notifier,Retention,Metrics,Otel}.hs`, `kenshou-kiroku/test/Main.hs` with specs under `kenshou-kiroku/test/Test/Kenshou/Suite/Kiroku/`, and `docs/layers/kiroku.md`.
+
+- `kiroku/append/correctness/expected-version-matrix` (tier `smoke`). Purpose: the exact result of every `ExpectedVersion` against a missing, a live and a soft-deleted stream. Procedure: for each cell, append one event and compare the `Either StoreError AppendResult` with the table in Context and Orientation, then check with `getStream` that a rejected append changed nothing. Oracle (`contract`): every cell matches; in particular `ExactVersion 0` on a missing stream is `WrongExpectedVersion _ (ExactVersion 0) (StreamVersion 0)` and the stream still does not exist, and the third field is 0 even when the live version is 7; `[]`, `$all` and a 513-byte name are rejected with the named errors while a 512-byte name succeeds; the `$all` row's version is unchanged after every rejection.
+- `kiroku/append/correctness/idempotent-event-ids` (`smoke`). Procedure: append a batch with caller identifiers, then re-append it to the same stream, to another stream, and inside a larger batch. Oracle (`contract`): each retry is `DuplicateEvent (Just id)` naming a colliding identifier, no event of a rejected batch exists (`eventExistsInStream`), and stream versions are unchanged; (`implementation`) the `$all` version is unchanged, that is, a rolled-back append consumes no position.
+- `kiroku/append/correctness/all-order-and-gaps` (`standard`; knobs `workload.events` default 5000, `kiroku.append.streams` default 50). Procedure: a seeded sequential mix of `appendToStream` and `appendMultiStream` with batch sizes 1 to 20; page `$all` forward and backward; then hard-delete five streams and repeat the reads. Oracle (`contract`): positions returned to the writer are strictly increasing; a full forward read yields every event exactly once in strictly increasing position order and equals the reversed backward read; per-stream versions are exactly 1 to N; `AppendResult` carries the last event's version and position. Oracle (`implementation`): before the deletes `gapReport` finds no gap and `threeCounts` agree; after the deletes the contract checks still pass, the gap checker reports exactly the deleted streams' positions (this also proves the gap checker is not vacuous), and `visibleGlobalHeadPosition` is at most `subscriptionCheckpointInventory`'s `storePosition`.
+- `kiroku/append/correctness/multi-stream-atomicity` (`smoke`). Oracle (`contract`): one failing precondition among three operations commits nothing on any stream and the error names the failing stream; results mirror input order; `[]` returns `[]`; an operation on `$all` rejects the whole call; an empty per-stream list is `EmptyAppendBatch`.
+- `kiroku/read/correctness/cursor-semantics` (`standard`; knob `kiroku.read.page-size`, default 256, variants 1, 7, 256, 1000). Procedure: prepopulate 10,000 events over 16 streams in 8 categories and page each of `readStreamForward`, `readStreamBackward`, `readStreamForwardStream`, `readAllForward`, `readAllBackward` and `readCategory`. Oracle (`contract`): forward cursors are exclusive, a backward start of 0 means "from the latest", every page sequence yields each event exactly once in order, `readCategory` returns exactly the events whose stream name has that prefix before the first `-`, and `lookupStreamNames` resolves every `originalStreamId`.
+- `kiroku/lifecycle/correctness/delete-and-truncate` (`smoke`). Oracle (`contract`): a soft-deleted stream rejects appends per the matrix yet its events remain in `$all` and `readCategory`; `undeleteStream` restores full history; `hardDeleteStream` removes the stream and its events and emits `KirokuEventHardDeleteIssued` (tap installed); `setStreamTruncateBefore v` hides versions below `v` from stream reads only, is idempotent, and `clearStreamTruncateBefore` reverses it; every lifecycle call on `$all` is `ReservedStreamName`; a live `$all` subscription running throughout stays in order and does not stop.
+- `kiroku/transaction/correctness/append-with-continuation` (`smoke`). Procedure: `runTransactionAppending` with a continuation that inserts into the harness table `kenshou_kiroku.tx_probe`. Oracle (`contract`): the event and the probe row commit together; a continuation that calls `Tx.condemn` leaves neither; a precondition conflict returns `Left` and the continuation never runs; `runTransactionAppending` does not apply `enrichEvent` while `runTransactionAppendingResource` does.
+- `kiroku/subscription/correctness/catchup-live-handoff` (`standard`; knobs target, api, `kiroku.subscription.batch-size`, `handoff.rounds` default 20, `workload.prepopulate` default 5000). Procedure: prepopulate, start a steady appender at 200 events per second, start the subscription, wait for `Live` through `subscriptionStates`, cancel, restart under the same name, and repeat. Oracle (`contract`): no loss against `foldAllLog` filtered to the target; positions non-decreasing within each incarnation; checkpoint samples monotonic. Oracle (`implementation`): zero duplicates inside one incarnation (the stale-queue filter), and at most one batch of duplicates per graceful cancel.
+- `kiroku/subscription/correctness/checkpoint-policies` (`smoke`). Oracle (`contract`): on an absent key `FromBeginning` delivers from the first event, `FromCurrentHead` delivers only later appends, `FailIfMissing` makes `wait` return `Left SubscriptionCheckpointMissing` with zero handler calls; an existing row wins over any policy; `initializeSubscriptionCheckpoint` reports `ExistingCheckpoint` or `InitializedCheckpoint` accordingly; `resetSubscriptionCheckpointsTx` to an earlier position causes redelivery from there and reports names with no rows.
+- `kiroku/subscription/correctness/overflow-policies` (`standard`; knobs overflow policy, `kiroku.subscription.queue-capacity` default 1, `kiroku.subscription.handler-latency-ms` default 20). Procedure: go live, then append 3,000 events in bursts of single-event appends so the publisher emits many small batches; the drain deadline is `events × handler latency × 2` (the old bench's fixed 30-second wait was a harness defect). Oracle: under `PauseAndResume`, no loss, in order, monotonic checkpoint, the worker never exits and at least one `Paused` and `Resumed` pair is tapped (`contract`); under `DropSubscription`, `wait` returns `Left SubscriptionOverflowed`, the delivered prefix is in order, and a restart under the same name completes with no loss (`contract`); under `DropOldest`, the worker stays alive, order holds, loss is permitted and its count is reported as a measurement.
+- `kiroku/subscription/correctness/filters-advance-checkpoint` (`smoke`). Oracle (`contract`): with `OnlyEventTypes` and a `selector`, only matching events reach the handler, and after a run of 2,000 non-matching events the checkpoint equals the last position.
+- `kiroku/subscription/correctness/category-idle-no-spin` (`standard`, steady phase 90 s). Purpose: regression guard for the fixed busy-spin that once cost a downstream service six cores. Procedure: one `Category` subscriber on a category that receives nothing while other categories receive 500 events per second. Oracle (`implementation`): through the diagnostics toolkit's idle-spin gate, the subscriber's category-read statement is called at most `steady seconds / 30 + 2` times; the fetch rate of an idle consumer-group member is recorded as a measurement only, because that path re-queries on every global advance by design.
+- `kiroku/consumer-group/correctness/partition-coverage` (`standard`; knobs `kiroku.consumer-group.size` with variants 1, 2, 3, 4, 8, target; 500 streams, 10,000 events). Oracle (`contract`): the union of members' delivered sets equals the target's events; the sets are pairwise disjoint; every delivered event's stream maps to the delivering member under `partitionSlots`; per-stream order holds within each member; checkpoint rows exist per `(name, member)`; `size = 0`, `member = size` and `member = -1` throw `InvalidConsumerGroup` synchronously from `subscribe`.
+- `kiroku/dead-letter/correctness/retry-and-dead-letter` (`smoke`; knob `kiroku.subscription.retry-max-attempts`). Procedure: the handler returns `Retry (RetryDelay 0.01)` for a seeded one percent of events and `DeadLetter (DeadLetterPoison "x")` for another one percent. Oracle (`contract`): a retried event is delivered exactly `retryMaxAttempts` times and then appears once in `kiroku.dead_letters` with `attempt_count = retryMaxAttempts` and reason kind `max_attempts_exceeded`; an explicitly dead-lettered event appears once with `attempt_count = 1` and kind `poison`; every other event is delivered; the checkpoint ends at the head; with `retryMaxAttempts = 1` the first `Retry` dead-letters immediately.
+- `kiroku/notifier/correctness/wake-latency` (`smoke`). Procedure: 200 appends 100 ms apart to a live subscriber for each of the three live paths. Oracle (`implementation`): the largest append-to-handler delay is under 5 s, which can only hold if `NOTIFY` rather than the 30-second safety poll is driving wake-ups.
+- `kiroku/retention/correctness/leases-block-hard-delete` (`smoke`; knob `kiroku.retention.lease-seconds`, default 5, allowed 1 to 3600). Oracle (`contract`): with an active lease `hardDeleteStream` is `HistoryRetentionActive` with `activeLeaseCount = 1` and deletes nothing, and a direct `DELETE` with the hard-delete setting on raises SQLSTATE `KR001`; renewal by another owner is `HistoryRetentionRenewalOwnerMismatch`; after release, or after passive expiry on the database clock, the hard delete succeeds; `mkHistoryRetentionLeaseDuration` rejects 0 s and anything over one hour. Under `pg.version=17` this also exercises the `kiroku.uuidv7()` fallback for lease identifiers.
+- `kiroku/metrics/correctness/endpoints-truthful` (`smoke`; supports `telemetry.metrics` of `serve` and `serve-scraped` only). Procedure: a known workload of N appends, one subscriber and one dead letter. Oracle (`contract`, the wire shapes are frozen by kiroku's ADR-9): `GET /metrics` reports `store.global_position = N`; `/metrics/prometheus` reports `kiroku_events_appended_total N` and `kiroku_subscription_lag` that is never below the true lag and is 0 at quiescence; `/health/live` is 200; `/health/ready` turns 503 when the subscriber is held more than `readinessMaxLag` behind (set to 10 here); an unknown subscription is 404; a `/ws/events` tail started with `from_position` delivers every event once and in order across its replay-to-live boundary.
+- `kiroku/otel/correctness/spans-and-trace-context` (`smoke`; supports `telemetry.tracing=sdk-inmemory` only). Oracle (`contract`): one `kiroku.subscription.catchup` span per start, one `kiroku.subscription.deliver` span per delivered batch carrying `kiroku.batch.rows`, a `kiroku.subscription.retrying` span ending with error status when the event is dead-lettered; an event appended inside a span yields the same trace identifier from `extractTraceContext` on delivery (the telemetry toolkit's continuity helper); with the metrics arm also on, both handlers observe every event.
+
+The unit suite `kenshou-kiroku-test` (hspec with hspec-hedgehog) covers the harness code: workload determinism (same seed, same names, identifiers and payload bytes), knob-to-configuration mapping, fact JSON round trips, the oracle SQL against a small migrated database, and bundle well-formedness (identifiers unique, all start with `kiroku/`, components from the allowed set, every benchmark supports only `durable`, every `KnownDefect` is a `mori://` URI).
+
+### Milestone 2 — kiroku concurrency, crash and known-defect scenarios
+
+Scope: worker roles, the pure model, and seventeen scenarios that use real processes, `SIGKILL`, backend termination, a PostgreSQL restart and the network proxy. At the end, the twelve guarantee scenarios pass and the five known-defect scenarios are reported as known defects. All run under `pg.durability=durable`, tier `standard` unless stated. Files: `kenshou-kiroku/src/Kenshou/Suite/Kiroku/Roles.hs`, `…/Fixture/Model.hs`, `…/Concurrency/{Append,Subscription,ConsumerGroup,Notifier,Transaction,Postgres,KnownDefects}.hs`.
+
+Roles are entry points run by `kenshou worker`. Each receives a JSON specification from the driver over the control channel, opens its own store through `withKirokuStore`, writes facts to its own ledger file, and reports progress heartbeats for the stall watchdog.
+
+```haskell
+module Kenshou.Suite.Kiroku.Roles where
+
+roles :: [WorkerRole]   -- "kiroku.appender", "kiroku.subscriber", "kiroku.tx-appender", "kiroku.reader"
+
+data AppenderSpec = AppenderSpec
+  { streams :: StreamPlan, mode :: AppendMode, batchSize :: Int, payloadBytes :: Int
+  , writers :: Int, idPolicy :: IdPolicy, pacing :: Pacing, stopAfter :: StopRule }
+data AppendMode = AnyVersionOwnStream | OccHotStreams | SameBatchRace | MultiStreamFresh | SingleToFresh
+
+data SubscriberSpec = SubscriberSpec
+  { name :: Text, target :: TargetSpec, api :: SubscriptionApi, batchSize :: Int32, queueCapacity :: Natural
+  , overflow :: OverflowChoice, group :: Maybe (Int32, Int32), guard :: Bool, missing :: MissingChoice
+  , retryMax :: Int, behaviour :: HandlerBehaviour, incarnation :: Int }
+data HandlerBehaviour = HandlerBehaviour { latencyMicros :: Int, poisonEvery :: Maybe Int, throwAtPosition :: Maybe Int64 }
+```
+
+The model used by the model-based scenario is pure and mirrors `emptyResultConflict` in kiroku's `Error.hs` exactly.
+
+```haskell
+module Kenshou.Suite.Kiroku.Fixture.Model where
+
+data ModelStream = ModelStream { version :: Int64, deleted :: Bool, eventIds :: Seq UUID }
+newtype Model = Model (Map Text ModelStream)
+data Cmd = CmdAppend Text ExpectedVersion [UUID] | CmdGetStream Text | CmdSoftDelete Text | CmdUndelete Text | CmdReadForward Text Int64 Int32
+data Outcome = Appended Int64 | Rejected StoreErrorTag | StreamIs (Maybe (Int64, Bool)) | Events [UUID] | Done Bool
+stepModel :: Model -> Cmd -> (Model, Outcome)
+```
+
+- `kiroku/append/concurrency/expected-version-race` (knobs `kiroku.append.writers` default 8, `kiroku.append.processes` default 2, `kiroku.append.streams` default 4, steady 60 s). Procedure: every writer creates with `NoStream` (losers see `StreamAlreadyExists`), then loops `ExactVersion v`, re-reading with `getStream` after `WrongExpectedVersion`. Oracle (`contract`): for every stream `streamAudit` finds versions exactly 1 to N; each version has exactly one `Produced` fact; the number of successful events equals the final version; the only errors seen are `WrongExpectedVersion` (always with third field 0), `StreamAlreadyExists`, `TransientTransactionFailure` and `PoolAcquisitionTimeout`; at least one success and one conflict occurred, else the run is `errored`.
+- `kiroku/append/concurrency/model-based-occ` (knobs `model.cases` default 200, `model.branches` default 3). Procedure: the correctness toolkit's parallel state-machine test generates a sequential prefix and parallel branches of `Cmd` over six stream names, runs them against one store from separate threads, and checks that some interleaving of `stepModel` explains every observed `Outcome`. Oracle (`contract`): every case is linearizable, meaning the concurrent results are explainable by some one-at-a-time order of the same commands that respects their real-time order; a failure writes the seed and shrunk commands into the verdict so that `kenshou run --seed` reproduces it.
+- `kiroku/append/concurrency/idempotent-duplicates` (knobs `kiroku.append.processes` default 4, `workload.batches` default 500). Procedure: all processes submit the same batch with the same caller identifiers behind a barrier, first with `AnyVersion`, then with `ExactVersion`. Oracle (`contract`): exactly one process wins each batch; losers see `DuplicateEvent (Just id)` (or, under `ExactVersion`, `WrongExpectedVersion`, which kiroku documents as ambiguous); each identifier exists exactly once; the final version is batches times batch size.
+- `kiroku/append/concurrency/all-order-under-contention` (knobs writers default 32, processes default 2, batch size mixed 1 to 20, steady 120 s). Procedure: writers append to their own streams while a `kiroku.reader` process tails `$all` with `readAllForward` from its last position and a `$all` subscriber runs. Oracle (`contract`): each writer's acknowledged positions strictly increase; the tailing reader's observed sequence equals the final full read exactly, that is, no event ever became visible at a position below one the reader had already passed (the out-of-order-visibility hazard that sequence-based stores suffer); the subscriber sees the same sequence. Oracle (`implementation`): no gaps and the three counts agree.
+- `kiroku/append/concurrency/sigkill-mid-append` (knob `crash.kills` default 10). Procedure: `SIGKILL` appender processes at seeded instants and restart them; they regenerate the same identifiers. Oracle (`contract`): every `Produced` fact's events exist (durability of acknowledged appends); every batch is wholly present or wholly absent; a re-submitted batch ends up present exactly once.
+- `kiroku/subscription/concurrency/sigkill-redelivery-window` (knobs target, api, `kiroku.subscription.batch-size`, `crash.kills` default 10, `crash.mode` of `sigkill`, `sigterm`, `handler-exception`, `cancel`, default `sigkill`). Procedure: a continuous appender, a subscriber process killed at seeded instants and restarted under the same name with the next incarnation number; kill instants are recorded as crash windows. Oracle (`contract`): no loss; positions non-decreasing within an incarnation; checkpoint samples monotonic; every duplicate falls inside a crash window. Oracle (`implementation`): duplicates per crash are at most the per-path budget from the Decision Log.
+- `kiroku/consumer-group/concurrency/multi-process-members` (knob size default 4, `crash.kills` default 8). One process per member; random members are killed and restarted. Oracle (`contract`): coverage, disjointness and slot agreement as in Milestone 1, per-member monotonic checkpoints; (`implementation`) at most `batchSize` duplicates per crash per member.
+- `kiroku/consumer-group/concurrency/duplicate-member-claim` (knob `kiroku.consumer-group.guard`, default false). Procedure: two processes both run member 0 of a size-2 group, the second started two seconds after the first. Oracle (`contract`): no loss and a monotonic checkpoint even though two writers race on the row. The ownership overlap is recorded as a measurement and is expected to be total with the guard off and also with it on, because the guard is a startup probe holding a transaction-scoped lock for microseconds; this documents a limitation rather than a defect.
+- `kiroku/notifier/concurrency/listen-kill-and-notify-loss` (steady 180 s). Procedure: phase A terminates every backend with `application_name = 'kiroku-listener'` every 20 s under steady appends; phase B disables the two notify triggers for 70 s and re-enables them. Oracle (`contract`): no loss and order on all three live paths; every event appended during phase B is delivered within 30 s plus 5 s of slack (the safety poll); `KirokuEventNotifierReconnecting` and `…Reconnected` are tapped in phase A. Measurement: delay after reconnect returns under one second.
+- `kiroku/subscription/concurrency/postgres-restart` (placement `local` until the correctness toolkit exposes restart on a cell). Procedure: under steady load, a fast postmaster restart and then an immediate-mode crash; appenders retry with the same identifiers. Oracle (`contract`): no acknowledged event is lost, no loss and order on delivery, monotonic checkpoints, duplicates within one batch per restart per subscriber, first delivery within 90 s of the postmaster accepting connections. Measurement: which `StoreError` constructors appeared (`ConnectionLost` against the catch-all `ConnectionError`), which keiro's transient classification depends on.
+- `kiroku/subscription/concurrency/network-partition` (knob `kiroku.conn.keepalives`). Procedure: all store connections go through the proxy, which resets every connection (failover style), then blackholes for 20 s, then adds 50 ms of latency. Oracle (`contract`): the same delivery invariants; with keepalives on, recovery within 60 s. With keepalives off, the time to recover is only measured, because libpq has no client-side timeout by default and a hang there is a finding, not a harness failure; the stall watchdog's evidence is attached.
+- `kiroku/transaction/concurrency/all-lock-hold` (knob `kiroku.tx.continuation-sleep-ms` default 200). Procedure: a `kiroku.tx-appender` holds the `$all` lock by calling `pg_sleep` in its continuation while plain appenders run; then it is killed mid-continuation. Oracle (`implementation`): no plain append that starts after a hold began is acknowledged before that hold ends; (`contract`) order stays strict, and after the kill neither the event nor the probe row exists and appends resume within 10 s. The stall watchdog, run with a threshold below the hold, must classify the episode as `lock-wait` with the tx-appender's backend as the blocker, which demonstrates the diagnostics path on a real kiroku lock.
+
+Known-defect scenarios each carry a `KnownDefect` and an oracle stating the desired behaviour.
+
+- `kiroku/consumer-group/concurrency/resize-leaves-gaps`, reference `mori://shinzui/kiroku/plans/81-make-consumer-group-topology-durable-and-resize-without-gaps`. Procedure: 200 streams; run a size-2 group with member 0 to the head and member 1 stopped early; restart the same name as size 3. Oracle (`contract`): every event is delivered at least once across both topologies, or the mismatched restart is refused before delivery. Expected today: events of streams that moved from old member 1 to a new member with an advanced cursor are never delivered.
+- `kiroku/subscription/concurrency/reconnect-cursor-regression`, reference `mori://shinzui/kiroku/plans/82-repair-live-reconnect-and-validate-subscription-identity-and-batch-size`. Procedure: a `Category` subscription goes live and processes 5,000 live events, then the driver terminates the subscriber's pooled backends by `application_name` while appends continue. Oracle (`contract`): with no process crash, duplicates are at most one `batchSize`. Expected today: about 5,000 redeliveries, because the worker reconnects from the cursor it had on entering `Live`. No-loss and monotonic checkpoints must pass even today.
+- `kiroku/subscription/correctness/batch-size-validation`, same reference. Oracle (`contract`): `batchSize` of 0 or -1 is refused, synchronously or through `wait` within 5 s, with zero handler calls. Expected today: accepted. Reading the source predicts that 0 makes the empty fetch look caught-up so a non-group `$all` worker skips history between its checkpoint and the tail at store open, and that -1 loops on a PostgreSQL `LIMIT` error; the scenario records what actually happens.
+- `kiroku/subscription/concurrency/decode-hook-stalls-subscribers`, reference `mori://shinzui/kiroku/plans/83-contain-persistent-publisher-decode-hook-failures`. Procedure: a store whose `decodeHook` throws for one event type, two `$all` subscribers, one poison event in the middle of the workload. Oracle (`contract`): within 60 s each subscriber either progresses past the poison event or stops with a typed reason. Expected today: both report `Live` in `subscriptionStates`, neither progresses, and only `KirokuEventPublisherLoopError` is tapped; the stall watchdog's diagnosis is attached.
+- `kiroku/append/concurrency/multi-stream-fresh-deadlock`, reference `mori://shinzui/kiroku/okf/improvement-requests/concepts/IR-7` (knobs `deadlock.rounds` default 500, `deadlock.spinners` default 8 CPU-burning threads). Procedure: per round, one process runs `appendMultiStream` over `[A_r, B_r]` with `B_r` fresh while another appends to `B_r`, released by a barrier. Oracle for the defect: `deadlockCount` does not increase. Oracle that must hold today (`contract`): every deadlock is absorbed by the single retry or surfaces as `TransientTransactionFailure`, nothing is partially committed, and a retry with the same identifiers converges. Zero observed deadlocks is reported as "not reproduced".
+
+### Milestone 3 — kiroku benchmarks lifted from kiroku-bench
+
+Scope: nine benchmark scenarios on the measurement toolkit. At the end each writes `samples/`, `series/` and a summary, and two runs can be compared with `kenshou compare`. All support only `pg.durability=durable`, are tier `standard` with default phases of 30 s warm-up, 120 s steady and 15 s drain, and are placed `either`. Trials (at least three, paired and interleaved) come from the planner and the comparison engine, not from the scenario. Files: `kenshou-kiroku/src/Kenshou/Suite/Kiroku/Bench/{Append,Ladder,Read,Subscription,Transaction}.hs`.
+
+Every benchmark summary carries a `methodology` object with `authoritative` and `reasons`. A result is authoritative only when the placement is a cell, durability is `durable`, and the pool rule below was honoured. On macOS `fsync()` does not flush the drive cache unless PostgreSQL runs with `wal_sync_method = fsync_writethrough`, so the scenario reads `SHOW wal_sync_method` and adds the reason `macos-fsync-does-not-flush` otherwise; laptop numbers were once inflated fifty-fold by this. These rules, the PostgreSQL-checkpoint noise finding, and "never quote a single trial" go into `docs/layers/kiroku.md`.
+
+- `kiroku/append/benchmark/append-only`. Closed loop by default (`load.mode` of `closed` or `open`, with `load.rate` for open loop); each writer appends to its own stream with `AnyVersion`. Knobs and declared variants: `kiroku.append.writers` (default 32; 8, 32, 128), `kiroku.pool-size` (default 10; 4, 6, 8, 10, 13, 16, 20, 32), `kiroku.append.batch-size` (1, 10, 100), `kiroku.append.payload-bytes` (64, 256, 4096, 65536). Measures events and appends per second, latency percentiles p50, p90, p99, p99.9 and max for operation `append`, errors by `StoreError` constructor, and the PostgreSQL samplers (PostgreSQL checkpoints inside the window, WAL bytes, lock waits). The layer guide records the expectation to check on a cell: the throughput optimum lies between pool 8 and 13 and pool 32 is at least twenty percent slower.
+- `kiroku/append/benchmark/hot-stream`. As above with every writer on one stream; the expectation from earlier cloud runs is that it is indistinguishable from `append-only`, because `$all` already serializes everything.
+- `kiroku/append/benchmark/expected-version-conflict`. The fixed conflict mode of the Decision Log. Operations `append-ok`, `append-conflict` and `reread` are recorded separately; measures goodput, conflict ratio and retry tail latency against writers. Zero successes, or a final stream version different from successes times batch size, makes the run `errored`.
+- `kiroku/append/benchmark/layer-ladder` (knob `kiroku.ladder.rung`: `raw-insert`, `sql-function`, `append-cte`, `store-api`, default `store-api`). `raw-insert` is one `INSERT` into `kenshou_kiroku.bench_raw_events (id bigserial, data bytea, created_at timestamptz)` through `hasql-pool`; `sql-function` calls the PL/pgSQL function `kenshou_kiroku.bench_hasql_append(bytea)`; `append-cte` runs kiroku's own statement `Kiroku.Store.SQL.appendAnyVersion` with `Kiroku.Store.Effect.buildAppendParams` and `Kiroku.Store.Transaction.prepareEventsIO` directly on the store's pool, bypassing the effect interpreter; `store-api` is `runStoreIO store (appendToStream …)`. The harness schema is created idempotently by the scenario. Pool rule: the two lock-free rungs default to a pool of writers plus 4, the two rungs bound by the `$all` lock default to 10, and the summary records the pool used, because comparing at one shared pool mis-tunes one side (kiroku's own experiment reported 2.18 times at a shared pool against about 1.6 times best against best).
+- `kiroku/read/benchmark/read-targets`. Knobs `kiroku.read.prepopulate` (default 100000), `kiroku.read.target` (`single`, `all`, `category`), `kiroku.read.api` (`paged`, `streamly`), `kiroku.read.direction` (`forward`, `backward`), `kiroku.read.page-size` (default 256), `kiroku.read.category-cardinality` (default 8), `kiroku.read.stream-count` (default 16), `kiroku.read.readers` (default 8). Prepopulation happens before warm-up and is reused when the database already holds the requested count.
+- `kiroku/subscription/benchmark/append-to-handler-latency`. Producer and subscribers are separate processes; latency is the subscriber's wall-clock handler entry minus the appender's wall-clock acknowledgement, joined offline by event identifier, with the clock-skew bound from the environment fingerprint recorded (zero on one host). Knobs writers (default 8), target, api, `load.rate` (default 500). Reference from earlier cloud runs: p50 about 8 ms and p99 about 37 ms.
+- `kiroku/subscription/benchmark/catch-up`. Prepopulate (`workload.prepopulate` default 100000), then time a cold subscription until `CaughtUp`; knobs `kiroku.subscription.batch-size` (100, 500, 1000), target, group size. Reference: about 28,800 events per second.
+- `kiroku/subscription/benchmark/fan-out`. Knobs `kiroku.subscription.subscribers` (1, 4, 16, 64; default 4), `kiroku.subscription.processes` (default 1; all subscribers of one process share one publisher, which is what fan-out means), target. The delivery verdict must pass for the numbers to count. Reference p99: 40, 46, 142 and 416 ms.
+- `kiroku/transaction/benchmark/lock-hold-contention`. A fraction `kiroku.tx.fraction` (default 0.2) of appends go through `runTransactionAppending` with `kiroku.tx.continuation-statements` (0, 1, 5, 20; default 1) probe inserts. Measures store-wide throughput and the p99 of the plain appenders as the continuation grows, which is the cost model for keiro's inline projections.
+
+### Milestone 4 — kiroku soak and telemetry arms
+
+Scope: three soaks (six registered scenarios), two telemetry benchmarks and one telemetry stall scenario. At the end a reduced soak passes locally with a `stable` leak verdict, and `kenshou overhead` produces a report for kiroku's handler arms. Files: `kenshou-kiroku/src/Kenshou/Suite/Kiroku/Soak/{AppendSubscribe,DeadLetter,Retention}.hs`, `…/Bench/Telemetry.hs`, `…/Concurrency/Telemetry.hs`.
+
+Soaks share the knobs `soak.duration-minutes` (default 240 full, 30 reduced), `load.rate` (default 200 events per second, open loop), `soak.kill-interval-minutes` (default 10, 0 disables) and `soak.verify-interval-minutes` (default 30: the bounded ledger is verified incrementally so a failure is found early). Every process is sampled by the measurement toolkit and judged by the diagnostics toolkit's leak verdict on live bytes after major collections, Haskell threads, file descriptors, and PostgreSQL connections by `application_name` (expected: pool size plus one listener per store). A soak passes when every contract verdict passes and every leak verdict is `stable`; `insufficient-data` makes it `inconclusive`.
+
+- `kiroku/subscription/soak/append-and-subscribe` and `-reduced`. 1,000 streams in 8 categories; two `$all` subscribers, two category subscribers, a size-3 consumer group and one `ack-stream` subscriber, spread over three processes; one subscriber process is killed per interval. Oracles: the Milestone 2 delivery invariants over the whole run. Growth checks: `kiroku.events` and `kiroku.stream_events` grow linearly in appended events (bytes per event recorded), `kiroku.subscriptions` keeps a constant row count, and on `kiroku.streams` the share of HOT updates (heap-only tuple updates, PostgreSQL's cheap in-page update that writes no index entries, read from `pg_stat_user_tables.n_tup_hot_upd / n_tup_upd`) is at least 0.9 (`implementation`; the table's fillfactor of 50, which leaves half of each page free, exists so the constantly updated `$all` row stays HOT). Drift: the p99 append latency of the last tenth of the run is at most twice that of the first tenth after warm-up, else `inconclusive`.
+- `kiroku/dead-letter/soak/dead-letter-growth` and `-reduced`. One percent of events are retried to exhaustion. Oracles: `kiroku.dead_letters` holds exactly one row per poison event per subscription despite kills (the four-column unique key), its growth is linear, and total deliveries of a poison event may exceed `retryMaxAttempts` only across a kill (the attempt counter is in memory).
+- `kiroku/retention/soak/lease-churn` and `-reduced`. Leases are acquired, renewed, released and left to expire while other workers hard-delete streams and prune. Oracle (`contract`): no successful hard delete falls inside any lease's active interval on the database clock; `kiroku.history_retention_leases` stays bounded after pruning; the stall watchdog finds no deadlock between the retention coordinator lock and appends.
+- `kiroku/otel/benchmark/event-handler-arms`. The `append-only` workload plus four subscribers. The arms are dimension values: both `off` is `eventHandler = Nothing`; `telemetry.metrics=collect` is `metricsEventHandler`; `telemetry.tracing` of `noop`, `sdk-inmemory` or `sdk-otlp` is `subscriptionTraceHandler` plus trace-context injection (knob `kiroku.trace.enrich-event`); both on is the composed handler. Run it through `kenshou overhead` to get paired deltas in throughput, p50, p99, allocation rate and garbage-collection time.
+- `kiroku/metrics/benchmark/server-arms`. Same workload; arms `collect`, `serve`, `serve-scraped` at the telemetry toolkit's 15 s and 1 s scrape intervals; knob `kiroku.metrics.websocket-tails` (0, 1, 8; default 0) opens `/ws/events` tails, each of which adds a `DropOldest` subscriber to the publisher.
+- `kiroku/otel/concurrency/slow-event-handler-stalls-delivery` (`standard`; knob `kiroku.handler.delay-ms` default 50). A deliberately slow passthrough handler. Oracle (`contract`, documented behaviour): delivery throughput falls to about batches per second equal to one over the delay, no event is lost, and the stall clears when the delay is removed. The "does tracing leak" question is answered by running `kiroku/subscription/soak/append-and-subscribe-reduced` with `--dim telemetry.tracing=sdk-otlp`, which the layer guide documents.
+
+
+## Concrete Steps
+
+All commands run from the repository root, `/Users/shinzui/Keikaku/bokuno/keiro-runtime-kenshou`, inside the development shell (`nix develop`). Flag spellings for `kenshou list` and `kenshou run` are owned by the kernel plan; check `cabal run -v0 kenshou -- --help` and adjust.
+
+Step 1, check the starting state before writing code.
+
+```bash
+ls -d kenshou-core kenshou-measure kenshou-check kenshou-diagnose kenshou-telemetry kenshou-cli
+cabal build all
+cabal run -v0 kenshou -- list --layer selftest
+cabal run -v0 kenshou -- cohort show --json | jq '.components[] | select(.name | startswith("kiroku"))'
+```
+
+The expected transcript is illustrative; adjust the `jq` path to the actual shape of the cohort identity document.
+
+```text
+selftest/kernel/correctness/always-pass        smoke     either
+selftest/check/concurrency/kill-and-restart-worker  standard  either
+…
+{ "name": "kiroku-store", "version": "0.8.0.1", "uri": "mori://shinzui/kiroku" }
+```
+
+If a toolkit package is missing, stop: this plan cannot proceed past the fixtures without it. Record the resolved kiroku versions in Surprises & Discoveries if they differ from 0.8.0.1, 0.4.0.0, 0.1.0.8 and 0.2.0.8, and re-verify the behaviours in Context and Orientation against that source (`mori registry show shinzui/kiroku --full` gives the path).
+
+Step 2, create the package and register the bundle, then list.
+
+```bash
+cabal build kenshou-kiroku
+cabal test kenshou-kiroku-test
+cabal run -v0 kenshou -- list --layer kiroku
+```
+
+```text
+kiroku/append/correctness/expected-version-matrix   smoke     either
+kiroku/append/correctness/idempotent-event-ids      smoke     either
+…
+```
+
+The registration is one import and one list element in `kenshou-cli/src/Kenshou/Cli/Registry.hs` of the following shape (the list's actual name is whatever the kernel plan defined), plus `kenshou-kiroku` in the `build-depends` of `kenshou-cli/kenshou-cli.cabal`.
+
+```diff
++import Kenshou.Suite.Kiroku qualified as Kiroku
+ bundles =
+   [ Selftest.bundle
++  , Kiroku.bundle
+   ]
+```
+
+Step 3, run a correctness scenario on both PostgreSQL versions.
+
+```bash
+cabal run -v0 kenshou -- run kiroku/append/correctness/expected-version-matrix --out runs/ ; echo "exit=$?"
+cabal run -v0 kenshou -- run kiroku/append/correctness/all-order-and-gaps --dim pg.version=17 --out runs/ ; echo "exit=$?"
+```
+
+```text
+run 0199…  kiroku/append/correctness/expected-version-matrix  passed  (4.1 s)
+exit=0
+```
+
+Step 4, run a crash scenario and a known-defect scenario (Milestone 2).
+
+```bash
+cabal run -v0 kenshou -- run kiroku/subscription/concurrency/sigkill-redelivery-window --dim pg.durability=durable --set crash.kills=5 --out runs/
+cabal run -v0 kenshou -- run kiroku/subscription/concurrency/reconnect-cursor-regression --dim pg.durability=durable --out runs/ ; echo "exit=$?"
+jq '.outcome, .knownDefect' runs/*/run-result.json | tail -2
+```
+
+The second run is expected to report a failed oracle as a known defect; the exact exit code and field names for that case are defined by the kernel plan, so record what you observe here.
+
+Step 5, run a benchmark pair and compare (Milestone 3), then a reduced soak and an overhead report (Milestone 4).
+
+```bash
+cabal run -v0 kenshou -- run kiroku/append/benchmark/append-only --dim pg.durability=durable --set kiroku.pool-size=10 --out runs/a
+cabal run -v0 kenshou -- run kiroku/append/benchmark/append-only --dim pg.durability=durable --set kiroku.pool-size=32 --out runs/b
+cabal run -v0 kenshou -- compare runs/a/* runs/b/*
+cabal run -v0 kenshou -- run kiroku/subscription/soak/append-and-subscribe-reduced --dim pg.durability=durable --out runs/
+cabal run -v0 kenshou -- diagnose leak runs/<run-id>
+cabal run -v0 kenshou -- overhead kiroku/otel/benchmark/event-handler-arms --arms tracing=off,noop,sdk-inmemory --arms metrics=off,collect
+```
+
+Step 6, format, validate and commit after each milestone. Run `nix fmt` (fourmolu and cabal-gild through treefmt; use the `just` recipe instead if the bootstrap plan provides one), `cabal test kenshou-kiroku-test`, and, when ADRs changed, `okf validate docs/adr --strict --profile docs/adr/profile.dhall --profile-enforce --log-enforce`. Commit directly to the current branch with a Conventional Commits message and these three trailers.
+
+```text
+feat(kiroku): add kiroku correctness scenarios
+
+MasterPlan: docs/masterplans/1-build-an-extensive-verification-suite-for-the-keiro-runtime.md
+ExecPlan: docs/plans/9-cover-kiroku-in-isolation.md
+Intention: intention_01m2zvy0gje40tdsdragvzr3tq
+```
+
+
+## Validation and Acceptance
+
+Milestone 1 is accepted when `kenshou list --layer kiroku` shows the eighteen correctness scenarios, each exits 0 under `pg.version=17` and `pg.version=18`, and non-vacuity is demonstrated once by hand: temporarily change the expected third field of `WrongExpectedVersion` in `expected-version-matrix` to 1, observe exit code 1 and a verdict naming the cell, then revert. `all-order-and-gaps` must show the gap checker passing before the hard deletes and reporting exactly the deleted positions after them, with the run as a whole passing, which is the visible proof that gaplessness is labelled `implementation`.
+
+Milestone 2 is accepted when the twelve guarantee scenarios exit 0 under `pg.durability=durable`; when `sigkill-redelivery-window` with `--set kiroku.subscription.target=all` shows, in `verdicts/`, a duplicate count per crash above 100 but at most 1000 at least once for the live path, or the Decision Log's per-path budget is corrected with evidence; when each of the five known-defect scenarios is reported as a known defect with its `mori://` reference in `run-result.json`; and when a plan run containing them does not fail because of them. If a known-defect scenario passes, do not delete the reference: record the evidence in Surprises & Discoveries and check the cohort, because a fix may have landed upstream.
+
+Milestone 3 is accepted when every benchmark writes a histogram per operation under `samples/` and a summary with a `methodology` object; when `expected-version-conflict` reports more than zero successes and a final stream version equal to successes times batch size; when `kenshou compare` on the pool 10 and pool 32 runs returns one of the four comparison verdicts; and when a local macOS run is labelled non-authoritative with the `macos-fsync-does-not-flush` reason.
+
+Milestone 4 is accepted when `append-and-subscribe-reduced` passes locally with every leak verdict `stable` and the delivery invariants holding across at least two subscriber kills; when `kenshou overhead` emits a `kenshou.overhead-report/v1` with one comparison per arm; and when `slow-event-handler-stalls-delivery` shows the throughput collapse and recovery.
+
+For the whole plan: `cabal build all` and `cabal test kenshou-kiroku-test` succeed; `docs/layers/kiroku.md` lists every scenario with its knobs, tier, placement, invariant classes and known-defect reference, maps components to packages (`metrics` to kiroku-metrics, `otel` to kiroku-otel, everything else to kiroku-store and kiroku-store-migrations) for the change-aware planner, and records the methodology rules; and no file outside `kenshou-kiroku/`, `docs/layers/kiroku.md`, `docs/adr/`, this plan and the three registration lines has changed.
+
+
+## Idempotence and Recovery
+
+Every scenario obtains a fresh, migrated database from the kernel and writes only into a new run directory, so any scenario can be re-run at any time. The harness schema `kenshou_kiroku` is created with `CREATE SCHEMA IF NOT EXISTS` and `CREATE TABLE IF NOT EXISTS`; stream and subscription names carry the run tag, so an external PostgreSQL shared between runs does not collide. Prepopulation is skipped when the requested count is already present.
+
+Worker processes are children of the `kenshou` process in one process group and are reaped by the correctness toolkit; if a run is interrupted, check with `pgrep -fl 'kenshou worker'` and remove leftovers with `pkill -f 'kenshou worker'`. Ephemeral PostgreSQL clusters left by a killed run live under the kernel's temporary directory and are reaped on the next start; `pgrep -fl postgres` shows strays. The notify-trigger scenario re-enables both triggers in a `finally` block and, on start, asserts they are enabled (`SELECT tgname, tgenabled FROM pg_trigger WHERE tgrelid = 'kiroku.streams'::regclass`); to repair by hand run `ALTER TABLE kiroku.streams ENABLE TRIGGER stream_events_notify_insert` and the same for `stream_events_notify_update`. The proxy and the metrics server bind port 0, so reruns never collide on ports. On a cell, nothing here provisions cloud resources; leases belong to `docs/plans/17-run-kenshou-on-leased-cells-with-payloads-submission-and-retrieval.md`.
+
+If a milestone is half finished, the bundle must still compile: register only finished scenarios, and keep unfinished modules out of `exposed-modules` until they build. The three-line registration is safe to apply once; applying it twice is a compile error, not silent drift.
+
+
+## Interfaces and Dependencies
+
+`kenshou-kiroku` depends on `kenshou-core`, `kenshou-measure`, `kenshou-check`, `kenshou-diagnose` and `kenshou-telemetry` from this repository, and on these cohort libraries at the versions `cohort/released.project` pins: `kiroku-store` 0.8.0.1 (the store; also `Kiroku.Store.SQL`, `Kiroku.Store.Effect` and `Kiroku.Store.Subscription.EventPublisher`, which are exposed and needed for the ladder rung and the metrics wiring), `kiroku-metrics` 0.1.0.8, `kiroku-otel` 0.2.0.8, `hasql` 1.10, `hasql-pool`, `hasql-transaction`, `effectful-core` below 2.7, `streamly-core` 0.3, `hs-opentelemetry-api` 1.0, plus `aeson`, `async`, `stm`, `text`, `bytestring`, `containers`, `vector`, `uuid`, `time`, `generic-lens`, `lens`, `websockets` and `http-client` (endpoint assertions), and `hedgehog`. It does not depend on `kiroku-store-migrations` (the kernel migrates), on `shibuya-kiroku-adapter`, or on any other layer package. The test suite adds `hspec` and `hspec-hedgehog`.
+
+At the end of Milestone 1 these must exist: `Kenshou.Suite.Kiroku.bundle :: LayerBundle`; `Kenshou.Suite.Kiroku.Knobs` exporting one `KnobSpec` per knob named in Plan of Work; `Kenshou.Suite.Kiroku.Fixture.Store.withKirokuStore` and `storeOptionsFromKnobs`; `Kenshou.Suite.Kiroku.Fixture.Telemetry.composeEventHandler`; `Kenshou.Suite.Kiroku.Fixture.Workload`, `.Facts` and `.Oracle` with the signatures shown; and one `scenarios :: [Scenario]` export per module under `Kenshou.Suite.Kiroku.Correctness`. At the end of Milestone 2: `Kenshou.Suite.Kiroku.Roles.roles :: [WorkerRole]` with the four role names, `Kenshou.Suite.Kiroku.Fixture.Model.stepModel`, and `scenarios` exports under `Kenshou.Suite.Kiroku.Concurrency`, with `KnownDefects.scenarios` carrying the references. At the end of Milestone 3: `scenarios` exports under `Kenshou.Suite.Kiroku.Bench`, and `Kenshou.Suite.Kiroku.Bench.Methodology.methodologySection :: RunContext -> StoreOptions -> IO Value`. At the end of Milestone 4: `scenarios` exports under `Kenshou.Suite.Kiroku.Soak` built by `soakPair :: SoakDefinition -> [Scenario]`, and the two telemetry modules.
+
+Other plans consume the following from this one. The change-aware planner (`docs/plans/3-plan-and-select-runs-from-what-changed.md`) selects `kiroku/**` when kiroku-store or its migrations change, `kiroku/metrics/**` for kiroku-metrics and `kiroku/otel/**` for kiroku-otel, using the component-to-package map in `docs/layers/kiroku.md`. The shibuya plan (`docs/plans/10-cover-shibuya-core-and-its-pgmq-and-kiroku-adapters.md`) and the keiro plans import no code from here, because layer packages never import one another, but they rely on the facts this layer establishes — above all the per-path duplicate budget, the 30-second safety-poll bound, and the wrong reconnect cursor of database-driven live subscriptions, which keiro's sharded subscriptions sit on. The assembled-runtime plan (`docs/plans/15-verify-the-assembled-runtime-end-to-end-and-under-soak.md`) may depend on this package only through `kenshou-runtime`'s own `build-depends` if it chooses to reuse the oracle module; nothing here requires that.
