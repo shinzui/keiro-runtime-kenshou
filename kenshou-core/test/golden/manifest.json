@@ -1,0 +1,1 @@
+{"schema":"kenshou.artifact-manifest/v1","runId":"01997f3a-5b7c-7e21-8a44-0d6c2f9b1e55","createdAt":"2026-09-20T17:20:03.902Z","algorithm":"sha256","files":[{"path":"run-spec.json","sha256":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","bytes":82,"mediaType":"application/json"}]}

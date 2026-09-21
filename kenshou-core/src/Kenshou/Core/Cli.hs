@@ -63,16 +63,19 @@ parserInfo :: [CliCommand] -> ParserInfo (CliEnv -> IO ExitCode)
 parserInfo commands = info (commandParser commands <**> helper) (fullDesc <> header "kenshou - verify the Keiro runtime")
 
 commandParser :: [CliCommand] -> Parser (CliEnv -> IO ExitCode)
-commandParser commands = foldr1 (<|>) (fmap groupParser populatedGroups)
+commandParser commands = visibleParser <|> hiddenParser
   where
+    visibleCommands = filter (not . (.hidden)) commands
+    hiddenCommands = filter (.hidden) commands
     populatedGroups = filter (not . null . commandsIn) [Discovery .. Internal]
-    commandsIn groupValue = filter ((== groupValue) . (.group)) commands
+    commandsIn groupValue = filter ((== groupValue) . (.group)) visibleCommands
+    visibleParser = foldr1 (<|>) (fmap groupParser populatedGroups)
+    hiddenParser = subparser (foldMap hiddenCommand hiddenCommands)
     groupParser groupValue = subparser (groupModifier groupValue <> foldMap commandModifier (commandsIn groupValue))
     groupModifier Internal = mempty
     groupModifier groupValue = commandGroup (groupLabel groupValue)
-    commandModifier commandValue =
-      command commandValue.name (info commandValue.parser (progDesc commandValue.description))
-        <> if commandValue.hidden then hidden else mempty
+    commandModifier commandValue = command commandValue.name (info commandValue.parser (progDesc commandValue.description))
+    hiddenCommand commandValue = command commandValue.name (info commandValue.parser (progDesc commandValue.description)) <> internal
 
 groupLabel :: CliGroup -> String
 groupLabel Discovery = "Discovery"

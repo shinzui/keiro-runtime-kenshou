@@ -1,0 +1,1 @@
+{"schema":"kenshou.run-spec/v1","scenario":"selftest/kernel/correctness/postgres-roundtrip","environment":{"placement":"local","postgres":{"mode":"external","connectionStringEnv":"KENSHOU_PG_URL"}}}

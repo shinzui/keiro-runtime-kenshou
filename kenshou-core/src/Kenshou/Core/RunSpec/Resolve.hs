@@ -1,13 +1,15 @@
 module Kenshou.Core.RunSpec.Resolve (SpecError (..), resolveRunSpec) where
 
 import Data.List.NonEmpty (NonEmpty (..))
+import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Kenshou.Core.Bundle (Registry, lookupScenario)
 import Kenshou.Core.Dimension (resolveDimensions)
-import Kenshou.Core.Env (EnvRequirements (..))
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..))
 import Kenshou.Core.Id (mkSeed, newRunId)
 import Kenshou.Core.Knob (resolveKnobs)
+import Kenshou.Core.Phase (PhasePlan (..))
 import Kenshou.Core.RunSpec
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), Tier (..))
 import System.Info qualified as System
@@ -30,8 +32,11 @@ resolveRunSpec registry spec = case lookupScenario registry spec.scenario of
       checkedDimensions <- mapErrors dimensionsResult
       if maybe True (== scenario.revision) spec.scenarioRevision then pure () else Left (SpecError "scenario revision does not match registry" :| [])
       validatePlacement scenario.placement spec.environment.placement
+      validatePostgres scenario spec.environment.postgres
+      validateExtraPostgres scenario spec.environment.extraPostgres
       let environment = applyEnvironmentDefaults scenario spec.environment
-          effective = EffectiveRunSpec generatedRunId scenario.id scenario.revision checkedKnobs checkedDimensions checkedSeed (maybe scenario.phases id spec.phases) (maybe (tierTimeout scenario.tier) id spec.timeoutSeconds) environment spec.cohortExpectation spec.comparison spec.labels
+          phases = maybe scenario.phases id spec.phases
+          effective = EffectiveRunSpec generatedRunId scenario.id scenario.revision checkedKnobs checkedDimensions checkedSeed phases (maybe (tierTimeout scenario.tier phases) id spec.timeoutSeconds) environment spec.cohortExpectation spec.comparison spec.labels
       pure (scenario, effective)
   where
     firstOne :: Either Text value -> Either (NonEmpty SpecError) value
@@ -44,15 +49,38 @@ validatePlacement PlaceCell RunLocal = Left (SpecError "scenario requires cell p
 validatePlacement PlaceLocal RunOnCell = Left (SpecError "scenario requires local placement" :| [])
 validatePlacement _ _ = Right ()
 
+validatePostgres :: Scenario -> Maybe PostgresSpec -> Either (NonEmpty SpecError) ()
+validatePostgres scenario postgresSpec = case (scenario.requires.postgres, postgresSpec) of
+  (Nothing, Just _) -> Left (SpecError "PostgreSQL is not applicable to this scenario" :| [])
+  (Just requirement, Just (PostgresExternal _)) | requirement.needsServerControl -> Left (SpecError "scenario requires control of an ephemeral PostgreSQL server" :| [])
+  _ -> Right ()
+
+validateExtraPostgres :: Scenario -> Map.Map Text PostgresSpec -> Either (NonEmpty SpecError) ()
+validateExtraPostgres scenario supplied =
+  case errors of
+    [] -> Right ()
+    first : rest -> Left (first :| rest)
+  where
+    required = Map.fromList scenario.requires.extraPostgres
+    unknown = Map.keys (supplied `Map.difference` required)
+    controlErrors =
+      [ SpecError ("extra PostgreSQL " <> name <> " requires an ephemeral server")
+      | (name, requirement) <- Map.toList required,
+        requirement.needsServerControl,
+        Just (PostgresExternal _) <- [Map.lookup name supplied]
+      ]
+    errors = fmap (SpecError . ("unknown extra PostgreSQL environment " <>)) unknown <> controlErrors
+
 applyEnvironmentDefaults :: Scenario -> EnvironmentSpec -> EnvironmentSpec
 applyEnvironmentDefaults scenario environment =
   environment
     { machineProfile = Just (maybe ("local/" <> Text.pack System.os <> "-" <> Text.pack System.arch) id environment.machineProfile),
-      postgres = case (scenario.requires.postgres, environment.postgres) of (Just _, Nothing) -> Just (PostgresEphemeral []); (_, existing) -> existing
+      postgres = case (scenario.requires.postgres, environment.postgres) of (Just _, Nothing) -> Just (PostgresEphemeral []); (_, existing) -> existing,
+      extraPostgres = Map.union environment.extraPostgres (Map.fromList [(name, PostgresEphemeral []) | (name, _) <- scenario.requires.extraPostgres])
     }
 
-tierTimeout :: Tier -> Int
-tierTimeout TierSmoke = 120
-tierTimeout TierStandard = 1200
-tierTimeout TierExtended = 7200
-tierTimeout TierSoak = 86400
+tierTimeout :: Tier -> PhasePlan -> Int
+tierTimeout TierSmoke _ = 120
+tierTimeout TierStandard _ = 1200
+tierTimeout TierExtended _ = 7200
+tierTimeout TierSoak phases = ceiling (phases.warmUpSeconds + phases.steadySeconds + phases.drainSeconds) + 1800

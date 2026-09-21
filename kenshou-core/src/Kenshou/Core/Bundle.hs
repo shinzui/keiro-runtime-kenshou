@@ -18,13 +18,11 @@ where
 import Data.Aeson (Value, object, (.=))
 import Data.List (group, sort, sortOn)
 import Data.List.NonEmpty (NonEmpty (..))
-import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust)
-import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Kenshou.Core.Dimension (DimensionSupport (..), Support (..), Supported (..))
+import Kenshou.Core.Dimension (DimensionSupport (..), PgDurability (..), Support (..), Supported (..))
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..))
 import Kenshou.Core.Id (Kind (..), Layer, ScenarioId (..), renderKind, renderLayer, renderScenarioId, unSegment)
 import Kenshou.Core.Knob (KnobSpec (..), renderKnobName)
@@ -70,7 +68,7 @@ mkRegistry bundles = case errors of
         <> concatMap validateScenario scenarios
 
 duplicateErrors :: Text -> [Text] -> [RegistryError]
-duplicateErrors label values = [RegistryError ("duplicate " <> label <> ": " <> head items) | items <- group (sort values), length items > 1]
+duplicateErrors label values = [RegistryError ("duplicate " <> label <> ": " <> item) | items@(item : _) <- group (sort values), length items > 1]
 
 validateScenario :: Scenario -> [RegistryError]
 validateScenario scenario =
@@ -80,7 +78,7 @@ validateScenario scenario =
     <> benchmarkErrors
     <> knownDefectErrors
   where
-    duplicateNames = [head items | items <- group (sort (fmap (renderKnobName . (.name)) scenario.knobs)), length items > 1]
+    duplicateNames = [item | items@(item : _) <- group (sort (fmap (renderKnobName . (.name)) scenario.knobs)), length items > 1]
     hasPostgres = isJust scenario.requires.postgres
     pgApplicable = case (scenario.dimensions.pgDurability, scenario.dimensions.pgVersion) of
       (NotApplicable, NotApplicable) -> False
@@ -91,14 +89,13 @@ validateScenario scenario =
           Just requirement | SchemaKeiro `elem` requirement.schemas && not (supportsOnly18 scenario.dimensions.pgVersion) -> [RegistryError (renderScenarioId scenario.id <> ": keiro scenarios require PostgreSQL 18")]
           _ -> []
     benchmarkErrors = case (scenario.id.kind, scenario.requires.postgres, scenario.dimensions.pgDurability) of
-      (Benchmark, Just _, Supported support) | any ((== "fsync-off") . showDurability) support.values -> [RegistryError (renderScenarioId scenario.id <> ": benchmark supports fsync-off")]
+      (Benchmark, Just _, Supported support) | PgFsyncOff `elem` support.values -> [RegistryError (renderScenarioId scenario.id <> ": benchmark supports fsync-off")]
       _ -> []
     knownDefectErrors = case scenario.knownDefect of
       Just defect | not ("mori://" `Text.isPrefixOf` defect.reference || "https://" `Text.isPrefixOf` defect.reference) -> [RegistryError (renderScenarioId scenario.id <> ": invalid known-defect reference")]
       _ -> []
     supportsOnly18 NotApplicable = False
     supportsOnly18 (Supported support) = all ((== "Pg18") . show) support.values
-    showDurability value = case show value of "PgFsyncOff" -> "fsync-off"; _ -> "durable"
 
 allScenarios :: Registry -> [Scenario]
 allScenarios (Registry bundles) = sortOn (renderScenarioId . (.id)) (concatMap (.scenarios) bundles)

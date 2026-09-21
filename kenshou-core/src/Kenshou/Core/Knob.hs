@@ -20,7 +20,7 @@ module Kenshou.Core.Knob
   )
 where
 
-import Data.Aeson (FromJSON (..), ToJSON (..), Value (..), withText)
+import Data.Aeson (FromJSON (..), ToJSON (..), Value (..), withObject, withText)
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Char (isAsciiLower, isDigit)
@@ -159,3 +159,14 @@ instance ToJSON KnobValue where
 
 instance ToJSON ResolvedKnobs where
   toJSON (ResolvedKnobs values) = Object (KeyMap.fromList [(Key.fromText (renderKnobName name), toJSON value) | (name, value) <- Map.toAscList values])
+
+instance FromJSON ResolvedKnobs where
+  parseJSON = withObject "ResolvedKnobs" \values -> ResolvedKnobs . Map.fromList <$> traverse parseEntry (KeyMap.toList values)
+    where
+      parseEntry (key, value) = (,) <$> either (fail . Text.unpack) pure (mkKnobName (Key.toText key)) <*> parseJSON value
+
+instance FromJSON KnobValue where
+  parseJSON (Bool value) = pure (VBool value)
+  parseJSON (String value) = pure (VText value)
+  parseJSON (Number value) = pure (maybe (VDouble (Scientific.toRealFloat value)) VInt (Scientific.toBoundedInteger value))
+  parseJSON _ = fail "knob values must be JSON scalars"

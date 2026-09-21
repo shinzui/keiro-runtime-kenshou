@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/run-result-v1.schema.json",
+  "title": "Kenshou run result v1",
+  "type": "object",
+  "required": ["schema", "runId", "scenario", "scenarioRevision", "outcome", "blocking", "exitCode", "seed", "spec", "cohort", "fingerprint", "compatibility", "summaries", "observations"],
+  "properties": {
+    "schema": {"const": "kenshou.run-result/v1"},
+    "runId": {"type": "string", "format": "uuid"},
+    "scenario": {"type": "string"},
+    "scenarioRevision": {"type": "integer", "minimum": 1},
+    "outcome": {"enum": ["passed", "failed", "errored", "inconclusive", "infrastructure-failure"]},
+    "blocking": {"type": "boolean"},
+    "exitCode": {"enum": [0, 1, 3, 4]},
+    "seed": {"type": "integer"},
+    "spec": {"type": "object", "required": ["path", "sha256"]},
+    "cohort": {"type": "object"},
+    "fingerprint": {"type": "object"},
+    "compatibility": {"type": "object", "required": ["algorithm", "comparisonKey", "seriesKey", "inputs"]},
+    "summaries": {"type": "object"},
+    "observations": {"type": "array"}
+  }
+}

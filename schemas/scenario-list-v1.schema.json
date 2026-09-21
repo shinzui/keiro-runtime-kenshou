@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/scenario-list-v1.schema.json",
+  "title": "Kenshou scenario list v1",
+  "type": "object",
+  "required": ["schema", "suiteVersion", "scenarios", "roles"],
+  "properties": {
+    "schema": {"const": "kenshou.scenario-list/v1"},
+    "suiteVersion": {"type": "string"},
+    "scenarios": {"type": "array", "items": {"type": "object", "required": ["id", "layer", "component", "kind", "name", "revision", "summary", "tier", "placement"]}},
+    "roles": {"type": "array", "items": {"type": "object", "required": ["name", "summary"]}}
+  }
+}

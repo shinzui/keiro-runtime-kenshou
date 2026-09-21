@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/artifact-manifest-v1.schema.json",
+  "title": "Kenshou artifact manifest v1",
+  "type": "object",
+  "required": ["schema", "runId", "createdAt", "algorithm", "files"],
+  "properties": {
+    "schema": {"const": "kenshou.artifact-manifest/v1"},
+    "runId": {"type": "string", "format": "uuid"},
+    "createdAt": {"type": "string", "format": "date-time"},
+    "algorithm": {"const": "sha256"},
+    "files": {"type": "array", "items": {"type": "object", "required": ["path", "sha256", "bytes", "mediaType"], "properties": {"path": {"type": "string"}, "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, "bytes": {"type": "integer", "minimum": 0}, "mediaType": {"type": "string"}}}}
+  }
+}

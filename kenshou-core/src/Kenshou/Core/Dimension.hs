@@ -18,6 +18,8 @@ module Kenshou.Core.Dimension
   )
 where
 
+import Data.Aeson (FromJSON (..), ToJSON (..), object, withObject, (.:?), (.=))
+import Data.Aeson.Key qualified as Key
 import Data.List (group, sort)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.List.NonEmpty qualified as NonEmpty
@@ -72,7 +74,7 @@ resolveDimensions support assignments = case errors of
   first : rest -> Left (first :| rest)
   where
     names = fmap fst assignments
-    duplicateErrors = [name <> ": assigned more than once" | values <- group (sort names), let name = head values, length values > 1]
+    duplicateErrors = [name <> ": assigned more than once" | values@(name : _) <- group (sort names), length values > 1]
     unknownErrors = [name <> ": unknown dimension" | name <- names, name `notElem` fmap renderDimensionName [DimTracing, DimMetrics, DimPgDurability, DimPgVersion]]
     lookupValue name = lookup (renderDimensionName name) assignments
     (tracing, tracingErrors) = resolveOne DimTracing renderTracing parseTracing support.tracing (lookupValue DimTracing)
@@ -111,6 +113,7 @@ renderTracing TracingNoop = "noop"
 renderTracing TracingSdkInMemory = "sdk-inmemory"
 renderTracing TracingSdkOtlp = "sdk-otlp"
 
+parseTracing :: Text -> Maybe TracingArm
 parseTracing value = lookup value [(renderTracing item, item) | item <- [TracingOff, TracingNoop, TracingSdkInMemory, TracingSdkOtlp]]
 
 renderMetrics :: MetricsArm -> Text
@@ -119,16 +122,34 @@ renderMetrics MetricsCollect = "collect"
 renderMetrics MetricsServe = "serve"
 renderMetrics MetricsServeScraped = "serve-scraped"
 
+parseMetrics :: Text -> Maybe MetricsArm
 parseMetrics value = lookup value [(renderMetrics item, item) | item <- [MetricsOff, MetricsCollect, MetricsServe, MetricsServeScraped]]
 
 renderDurability :: PgDurability -> Text
 renderDurability PgFsyncOff = "fsync-off"
 renderDurability PgDurable = "durable"
 
+parseDurability :: Text -> Maybe PgDurability
 parseDurability value = lookup value [(renderDurability item, item) | item <- [PgFsyncOff, PgDurable]]
 
 renderVersion :: PgVersion -> Text
 renderVersion Pg17 = "17"
 renderVersion Pg18 = "18"
 
+parseVersion :: Text -> Maybe PgVersion
 parseVersion value = lookup value [(renderVersion item, item) | item <- [Pg17, Pg18]]
+
+instance ToJSON Dimensions where
+  toJSON dimensions = object [Key.fromText name .= value | (name, value) <- renderDimensions dimensions]
+
+instance FromJSON Dimensions where
+  parseJSON = withObject "Dimensions" \value ->
+    Dimensions
+      <$> optionalArm value "telemetry.tracing" parseTracing
+      <*> optionalArm value "telemetry.metrics" parseMetrics
+      <*> optionalArm value "pg.durability" parseDurability
+      <*> optionalArm value "pg.version" parseVersion
+    where
+      optionalArm objectValue name parse = do
+        raw <- objectValue .:? Key.fromText name
+        traverse (maybe (fail ("unknown dimension value for " <> Text.unpack name)) pure . parse) raw

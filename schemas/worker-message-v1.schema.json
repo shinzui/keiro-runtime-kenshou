@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/worker-message-v1.schema.json",
+  "title": "Kenshou worker wire message v1",
+  "type": "object",
+  "required": ["v", "type"],
+  "properties": {
+    "v": {"const": 1},
+    "type": {"enum": ["init", "start", "phase", "stop", "custom", "ready", "progress", "facts", "done", "error"]}
+  }
+}

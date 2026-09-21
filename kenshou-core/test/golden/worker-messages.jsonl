@@ -1,0 +1,4 @@
+{"v":1,"type":"ready"}
+{"v":1,"type":"custom","name":"echo","payload":{"n":1}}
+{"v":1,"type":"stop","graceMillis":2000}
+{"v":1,"type":"done","detail":null}

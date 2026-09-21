@@ -6,8 +6,9 @@ module Kenshou.Core.Phase
   )
 where
 
-import Data.Aeson (FromJSON (..), ToJSON (..), object, withObject, (.:), (.=))
+import Data.Aeson (FromJSON (..), ToJSON (..), object, withObject, withText, (.:), (.=))
 import Data.Text (Text)
+import Data.Text qualified as Text
 
 data PhaseName = WarmUp | Steady | Drain
   deriving stock (Eq, Ord, Show)
@@ -26,6 +27,15 @@ renderPhaseName :: PhaseName -> Text
 renderPhaseName WarmUp = "warm-up"
 renderPhaseName Steady = "steady"
 renderPhaseName Drain = "drain"
+
+instance ToJSON PhaseName where toJSON = toJSON . renderPhaseName
+
+instance FromJSON PhaseName where
+  parseJSON = withText "PhaseName" \case
+    "warm-up" -> pure WarmUp
+    "steady" -> pure Steady
+    "drain" -> pure Drain
+    other -> fail ("unknown phase " <> Text.unpack other)
 
 instance ToJSON PhasePlan where
   toJSON value = object ["warmUpSeconds" .= value.warmUpSeconds, "steadySeconds" .= value.steadySeconds, "drainSeconds" .= value.drainSeconds]

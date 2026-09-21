@@ -30,7 +30,7 @@
     in
     {
       haskellProject.extraDevPackages =
-        [ pkgs.git pkgs.dhall pkgs.dhall-json pgEnvHook ]
+        [ pkgs.git pkgs.dhall pkgs.dhall-json pkgs.check-jsonschema pgEnvHook ]
         ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.procps pkgs.lsof ];
 
       treefmt.programs.fourmolu.package = pkgs.haskell.packages.ghc9124.fourmolu;

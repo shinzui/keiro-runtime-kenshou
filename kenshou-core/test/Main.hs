@@ -2,29 +2,44 @@
 
 module Main (main) where
 
-import Data.Aeson (FromJSON, Value, eitherDecode, eitherDecodeFileStrict', encode, toJSON)
+import Data.Aeson (FromJSON, Value, eitherDecode, eitherDecodeFileStrict', encode, encodeFile, toJSON)
+import Data.ByteString qualified as ByteString
 import Data.Int (Int64)
 import Data.List.NonEmpty (NonEmpty (..))
+import Data.Map.Strict qualified as Map
 import Data.Text (Text)
+import Data.Text qualified as Text
 import Kenshou.Core.Bundle (allScenarios, mkRegistry)
+import Kenshou.Core.Canonical (canonicalEncode)
 import Kenshou.Core.Cohort
+import Kenshou.Core.Compat (comparisonKey, compatInputs, seriesKey)
 import Kenshou.Core.Dimension
+import Kenshou.Core.Env (PostgresRequirement (..), SchemaComponent (..))
+import Kenshou.Core.Env.Postgres (PgSettingsSnapshot (..), PostgresEnv (..), ServerControl (..), StopMode (..), withPostgresEnv)
 import Kenshou.Core.Id
 import Kenshou.Core.Knob
+import Kenshou.Core.Log (nullLogger)
+import Kenshou.Core.Manifest (verifyManifest, writeManifest)
 import Kenshou.Core.RunSpec
 import Kenshou.Core.RunSpec.Resolve (resolveRunSpec)
 import Kenshou.Core.Scenario (Scenario (..))
 import Kenshou.Core.Selector (matchesSelector, parseSelector)
 import Kenshou.Core.Selftest qualified as Selftest
+import System.Environment (lookupEnv)
+import System.Exit (ExitCode (..))
+import System.IO.Temp (withSystemTempDirectory)
+import System.Process (readProcessWithExitCode)
 import Test.Hspec
   ( Spec,
     describe,
     expectationFailure,
     hspec,
     it,
+    pendingWith,
     shouldBe,
     shouldContain,
     shouldNotBe,
+    shouldReturn,
   )
 
 main :: IO ()
@@ -39,6 +54,10 @@ main = hspec do
   knobSpec
   dimensionSpec
   runSpecSpec
+  compatibilitySpec
+  manifestSpec
+  goldenSpec
+  postgresEnvironmentSpec
 
 descriptorSpec :: Spec
 descriptorSpec = describe "cohort identity" do
@@ -121,9 +140,13 @@ registrySpec = describe "scenario registry" do
       Left errors -> expectationFailure (show errors)
       Right registry ->
         fmap (renderScenarioId . (.id)) (allScenarios registry)
-          `shouldBe` [ "selftest/kernel/correctness/always-fail",
+          `shouldBe` [ "selftest/kernel/concurrency/worker-echo",
+                       "selftest/kernel/correctness/always-fail",
                        "selftest/kernel/correctness/always-pass",
-                       "selftest/kernel/correctness/errors"
+                       "selftest/kernel/correctness/errors",
+                       "selftest/kernel/correctness/known-defect",
+                       "selftest/kernel/correctness/outcome",
+                       "selftest/kernel/correctness/postgres-roundtrip"
                      ]
 
 knobSpec :: Spec
@@ -171,8 +194,106 @@ runSpecSpec = describe "run specification" do
       Left err -> err `shouldContain` "UUIDv7"
       Right _ -> expectationFailure "expected UUIDv7 rejection"
 
+compatibilitySpec :: Spec
+compatibilitySpec = describe "compatibility keys" do
+  it "exclude run identity and cohort from comparison keys, but include the cohort in series keys" do
+    registry <- expectRight (mkRegistry [Selftest.bundle])
+    scenarioId <- expectRight (parseScenarioId "selftest/kernel/correctness/always-pass")
+    firstResolution <- resolveRunSpec registry (minimalRunSpec scenarioId)
+    secondResolution <- resolveRunSpec registry (minimalRunSpec scenarioId)
+    (_, firstSpec) <- expectRight firstResolution
+    (_, secondSpec) <- expectRight secondResolution
+    let firstCohort = identityWith []
+        secondCohort = firstCohort {identityPlanHash = PlanHash "sha256:other"}
+        firstInputs = compatInputs firstSpec Nothing [] firstCohort
+        repeatedInputs = compatInputs secondSpec Nothing [] firstCohort
+        otherCohortInputs = compatInputs firstSpec Nothing [] secondCohort
+    comparisonKey firstInputs `shouldBe` comparisonKey repeatedInputs
+    comparisonKey firstInputs `shouldBe` comparisonKey otherCohortInputs
+    seriesKey firstInputs `shouldNotBe` seriesKey otherCohortInputs
+
 knobName :: Text -> KnobName
 knobName = either (error . show) id . mkKnobName
+
+manifestSpec :: Spec
+manifestSpec = describe "artifact manifests" do
+  it "detects a changed file" $ withSystemTempDirectory "kenshou-manifest" \directory -> do
+    runId <- expectRight (parseRunId "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e55")
+    ByteString.writeFile (directory <> "/run-spec.json") "{}\n"
+    manifest <- writeManifest directory runId Map.empty
+    encodeFile (directory <> "/manifest.json") manifest
+    verifyManifest directory `shouldReturn` Right ()
+    ByteString.appendFile (directory <> "/run-spec.json") "x"
+    verification <- verifyManifest directory
+    case verification of
+      Left _ -> pure ()
+      Right () -> expectationFailure "expected a digest mismatch"
+
+goldenSpec :: Spec
+goldenSpec = describe "JSON goldens" do
+  mapM_ roundTrips ["run-spec.minimal.json", "run-spec.effective.json", "run-spec.external.json", "run-result.passed.json", "run-result.known-defect.json", "manifest.json", "scenario-list.json"]
+  where
+    roundTrips name = it ("round-trips " <> name <> " canonically") do
+      original <- decodeGolden name
+      redecoded <- case eitherDecode (encode original) of
+        Left err -> expectationFailure err >> fail "unreachable"
+        Right value -> pure value
+      canonicalEncode original `shouldBe` canonicalEncode (redecoded :: Value)
+    decodeGolden name = do
+      result <- eitherDecodeFileStrict' ("test/golden/" <> name)
+      case result of
+        Left err -> expectationFailure err >> fail "unreachable"
+        Right value -> pure (value :: Value)
+
+postgresEnvironmentSpec :: Spec
+postgresEnvironmentSpec = describe "PostgreSQL environments" do
+  it "migrates, clones, restarts, and crash-restarts PostgreSQL 18" $ withSystemTempDirectory "kenshou-pg18" \directory -> do
+    runId <- expectRight (parseRunId "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e55")
+    let requirement = PostgresRequirement [SchemaKiroku, SchemaKeiro, SchemaPgmq] [] True
+        dimensions = Dimensions Nothing Nothing (Just PgFsyncOff) (Just Pg18)
+    result <- withPostgresEnv nullLogger directory runId requirement (PostgresEphemeral []) dimensions \environment -> do
+      schemas <- psqlTest environment.connectionString "select string_agg(schema_name, ',' order by schema_name) from information_schema.schemata where schema_name in ('kiroku','keiro','pgmq','pgmigrate')"
+      clone <- environment.newDatabase "clone"
+      clonedSchemas <- psqlTest clone "select string_agg(schema_name, ',' order by schema_name) from information_schema.schemata where schema_name in ('kiroku','keiro','pgmq','pgmigrate')"
+      case environment.control of
+        Nothing -> expectationFailure "expected server control"
+        Just control -> do
+          control.restartServer
+          psqlTest environment.connectionString "select 1" `shouldReturn` Right "1"
+          control.stopServer StopImmediate
+          control.startServer
+          psqlTest environment.connectionString "select 1" `shouldReturn` Right "1"
+      pure (schemas, clonedSchemas, Map.lookup "fsync" environment.snapshot.settings)
+    result `shouldBe` Right (Right "keiro,kiroku,pgmigrate,pgmq", Right "keiro,kiroku,pgmigrate,pgmq", Just "off")
+
+  it "creates and drops fresh databases in external mode" $ withSystemTempDirectory "kenshou-pg-external" \directory -> do
+    runId <- expectRight (parseRunId "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e55")
+    let dimensions = Dimensions Nothing Nothing (Just PgFsyncOff) (Just Pg18)
+        outerRequirement = PostgresRequirement [] [] False
+        externalRequirement = PostgresRequirement [SchemaPgmq] [] False
+    outer <- withPostgresEnv nullLogger directory runId outerRequirement (PostgresEphemeral []) dimensions \server -> do
+      inner <- withPostgresEnv nullLogger directory runId externalRequirement (PostgresExternal (ConnLiteral server.adminConnectionString)) dimensions (\environment -> psqlTest environment.connectionString "select to_regnamespace('pgmq') is not null")
+      remaining <- psqlTest server.adminConnectionString "select count(*) from pg_database where datname like 'kenshou_01997f3a5b7c7%'"
+      pure (inner, remaining)
+    outer `shouldBe` Right (Right (Right "t"), Right "0")
+
+  it "selects PostgreSQL 17 and applies a composed Kiroku/PGMQ plan" do
+    available <- lookupEnv "KENSHOU_PG17_BIN"
+    case available of
+      Nothing -> pendingWith "KENSHOU_PG17_BIN is not set"
+      Just _ -> withSystemTempDirectory "kenshou-pg17" \directory -> do
+        runId <- expectRight (parseRunId "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e55")
+        let requirement = PostgresRequirement [SchemaKiroku, SchemaPgmq] [] False
+            dimensions = Dimensions Nothing Nothing (Just PgFsyncOff) (Just Pg17)
+        result <- withPostgresEnv nullLogger directory runId requirement (PostgresEphemeral []) dimensions (pure . (.snapshot.serverVersionNum))
+        case result of
+          Left err -> expectationFailure (show err)
+          Right version -> (version >= 170000 && version < 180000) `shouldBe` True
+
+psqlTest :: Text -> Text -> IO (Either Text Text)
+psqlTest connection query = do
+  (code, output, err) <- readProcessWithExitCode "psql" ["-d", Text.unpack connection, "-Atqc", Text.unpack query] ""
+  pure case code of ExitSuccess -> Right (Text.strip (Text.pack output)); _ -> Left (Text.strip (Text.pack err))
 
 onePackageDescriptor :: CohortDescriptor
 onePackageDescriptor =

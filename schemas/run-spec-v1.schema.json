@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/run-spec-v1.schema.json",
+  "title": "Kenshou run specification v1",
+  "type": "object",
+  "required": ["schema", "scenario"],
+  "properties": {
+    "schema": {"const": "kenshou.run-spec/v1"},
+    "runId": {"type": "string", "format": "uuid"},
+    "scenario": {"type": "string", "pattern": "^[a-z][a-z0-9-]*/[a-z][a-z0-9-]*/(correctness|concurrency|soak|benchmark)/[a-z][a-z0-9-]*$"},
+    "scenarioRevision": {"type": "integer", "minimum": 1},
+    "knobs": {"type": "object", "additionalProperties": {"type": ["boolean", "integer", "number", "string"]}},
+    "dimensions": {"type": "object", "additionalProperties": {"type": "string"}},
+    "seed": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+    "phases": {"$ref": "#/$defs/phases"},
+    "timeoutSeconds": {"type": "integer", "minimum": 1},
+    "environment": {"type": "object"},
+    "cohortExpectation": {"type": ["object", "null"]},
+    "comparison": {"type": ["object", "null"]},
+    "labels": {"type": "object", "additionalProperties": {"type": "string"}}
+  },
+  "$defs": {"phases": {"type": "object", "required": ["warmUpSeconds", "steadySeconds", "drainSeconds"], "properties": {"warmUpSeconds": {"type": "number", "minimum": 0}, "steadySeconds": {"type": "number", "minimum": 0}, "drainSeconds": {"type": "number", "minimum": 0}}}}
+}

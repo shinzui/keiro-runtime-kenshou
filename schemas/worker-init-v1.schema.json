@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/worker-init-v1.schema.json",
+  "title": "Kenshou worker initialization v1",
+  "type": "object",
+  "required": ["schema", "runId", "scenario", "role", "instance", "seed", "knobs", "dimensions", "outDir", "args"],
+  "properties": {
+    "schema": {"const": "kenshou.worker-init/v1"},
+    "runId": {"type": "string", "format": "uuid"},
+    "scenario": {"type": "string"},
+    "role": {"type": "string", "pattern": "^[a-z][a-z0-9-]*/[a-z][a-z0-9-]*$"},
+    "instance": {"type": "string"},
+    "seed": {"type": "integer"},
+    "knobs": {"type": "object"},
+    "dimensions": {"type": "object"},
+    "postgres": {"type": ["object", "null"]},
+    "kafka": {},
+    "telemetry": {},
+    "outDir": {"type": "string"},
+    "args": {}
+  }
+}

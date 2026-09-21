@@ -35,6 +35,7 @@ data EnvironmentSpec = EnvironmentSpec
   { placement :: SpecPlacement,
     machineProfile :: Maybe Text,
     postgres :: Maybe PostgresSpec,
+    extraPostgres :: Map Text PostgresSpec,
     kafka :: Maybe Value,
     telemetry :: Maybe Value
   }
@@ -77,14 +78,26 @@ data EffectiveRunSpec = EffectiveRunSpec
   deriving stock (Eq, Show)
 
 minimalRunSpec :: ScenarioId -> RunSpec
-minimalRunSpec scenario = RunSpec Nothing scenario Nothing [] [] Nothing Nothing Nothing (EnvironmentSpec RunLocal Nothing Nothing Nothing Nothing) Nothing Nothing Map.empty
+minimalRunSpec scenario = RunSpec Nothing scenario Nothing [] [] Nothing Nothing Nothing (EnvironmentSpec RunLocal Nothing Nothing Map.empty Nothing Nothing) Nothing Nothing Map.empty
 
 redactConnectionString :: Text -> Text
-redactConnectionString = Text.unwords . fmap redactWord . Text.words
+redactConnectionString value = redactUri (Text.unwords (fmap redactWord (Text.words value)))
   where
     redactWord word
       | "password=" `Text.isPrefixOf` Text.toCaseFold word = "password=<redacted>"
       | otherwise = word
+    redactUri input = case Text.breakOn "://" input of
+      (scheme, rest)
+        | not (Text.null rest) ->
+            let afterScheme = Text.drop 3 rest
+                (authority, suffix) = Text.breakOn "/" afterScheme
+             in case Text.breakOnEnd "@" authority of
+                  (credentials, host)
+                    | not (Text.null credentials) ->
+                        let (user, password) = Text.breakOn ":" (Text.dropEnd 1 credentials)
+                         in if Text.null password then input else scheme <> "://" <> user <> ":<redacted>@" <> host <> suffix
+                  _ -> input
+      _ -> input
 
 instance FromJSON RunSpec where
   parseJSON = withObject "RunSpec" \value -> do
@@ -99,7 +112,7 @@ instance FromJSON RunSpec where
     seed <- value .:? "seed"
     phases <- value .:? "phases"
     timeoutSeconds <- value .:? "timeoutSeconds"
-    environment <- value .:? "environment" .!= EnvironmentSpec RunLocal Nothing Nothing Nothing Nothing
+    environment <- value .:? "environment" .!= EnvironmentSpec RunLocal Nothing Nothing Map.empty Nothing Nothing
     cohortExpectation <- value .:? "cohortExpectation"
     comparison <- value .:? "comparison"
     labels <- value .:? "labels" .!= Map.empty
@@ -128,16 +141,21 @@ instance ToJSON EffectiveRunSpec where
       ]
 
 instance ToJSON EnvironmentSpec where
-  toJSON environment = object ["placement" .= placementText environment.placement, "machineProfile" .= environment.machineProfile, "postgres" .= environment.postgres, "kafka" .= environment.kafka, "telemetry" .= environment.telemetry]
+  toJSON environment =
+    object $
+      ["placement" .= placementText environment.placement, "machineProfile" .= environment.machineProfile, "postgres" .= environment.postgres]
+        <> ["extraPostgres" .= environment.extraPostgres | not (Map.null environment.extraPostgres)]
+        <> ["kafka" .= environment.kafka, "telemetry" .= environment.telemetry]
 
 instance FromJSON EnvironmentSpec where
-  parseJSON = withObject "EnvironmentSpec" \value -> EnvironmentSpec <$> (value .:? "placement" .!= RunLocal) <*> value .:? "machineProfile" <*> value .:? "postgres" <*> value .:? "kafka" <*> value .:? "telemetry"
+  parseJSON = withObject "EnvironmentSpec" \value -> EnvironmentSpec <$> (value .:? "placement" .!= RunLocal) <*> value .:? "machineProfile" <*> value .:? "postgres" <*> (value .:? "extraPostgres" .!= Map.empty) <*> value .:? "kafka" <*> value .:? "telemetry"
 
 instance ToJSON SpecPlacement where toJSON = String . placementText
 
 instance FromJSON SpecPlacement where parseJSON = withText "SpecPlacement" \case "local" -> pure RunLocal; "cell" -> pure RunOnCell; other -> fail ("unknown placement " <> Text.unpack other)
 
-placementText RunLocal = "local" :: Text
+placementText :: SpecPlacement -> Text
+placementText RunLocal = "local"
 placementText RunOnCell = "cell"
 
 instance ToJSON PostgresSpec where

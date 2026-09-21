@@ -61,30 +61,36 @@ Milestone 2 — Dimensions, knobs and the run specification
 
 Milestone 3 — Environments, the composed migration plan and worker roles
 
-- [ ] `Kenshou.Core.Env.Migration` (one `pg-migrate` plan for kiroku, keiro, PGMQ).
-- [ ] `Kenshou.Core.Env.Postgres` (ephemeral fsync-off, ephemeral durable, external; version selection; template and clones; settings snapshot; server control).
-- [ ] `Kenshou.Core.Role`, `Kenshou.Core.Role.Dispatch`, `Kenshou.Core.Role.Spawn`; hidden `kenshou worker`.
-- [ ] Integration tests against PostgreSQL 18 and, when `KENSHOU_PG17_BIN` is set, 17.
+- [x] (2026-09-20 22:13 PDT) `Kenshou.Core.Env.Migration` (one `pg-migrate` plan for kiroku, keiro, PGMQ).
+- [x] (2026-09-20 22:13 PDT) `Kenshou.Core.Env.Postgres` (ephemeral fsync-off, ephemeral durable, external; version selection; template and clones; settings snapshot; server control).
+- [x] (2026-09-20 22:13 PDT) `Kenshou.Core.Role`, `Kenshou.Core.Role.Dispatch`, `Kenshou.Core.Role.Spawn`; hidden `kenshou worker`.
+- [x] (2026-09-20 22:13 PDT) Integration tests against PostgreSQL 18 and, when `KENSHOU_PG17_BIN` is set, 17.
 
 Milestone 4 — The runner, the run directory, the manifest and exit codes
 
-- [ ] `Kenshou.Core.Log`, `Kenshou.Core.Context` (`RunContext` and its helpers).
-- [ ] `Kenshou.Core.Fingerprint`, `Kenshou.Core.Compat`, `Kenshou.Core.Canonical`.
-- [ ] `Kenshou.Core.RunResult`, `Kenshou.Core.Manifest` (`writeManifest`, `verifyManifest`).
-- [ ] `Kenshou.Core.Run.executeRun`; `kenshou run`; self-tests `outcome` and `known-defect`; exit-code tests.
-- [ ] ADR: this repository owns the runtime-facing `list`/`run`/`compare` protocol.
+- [x] (2026-09-20 22:13 PDT) `Kenshou.Core.Log`, `Kenshou.Core.Context` (`RunContext` and its helpers).
+- [x] (2026-09-20 22:13 PDT) `Kenshou.Core.Fingerprint`, `Kenshou.Core.Compat`, `Kenshou.Core.Canonical`.
+- [x] (2026-09-20 22:13 PDT) `Kenshou.Core.RunResult`, `Kenshou.Core.Manifest` (`writeManifest`, `verifyManifest`).
+- [x] (2026-09-20 22:13 PDT) `Kenshou.Core.Run.executeRun`; `kenshou run`; self-tests `outcome` and `known-defect`; exit-code tests.
+- [x] (2026-09-20 22:13 PDT) ADR: this repository owns the runtime-facing `list`/`run`/`compare` protocol.
 
 Milestone 5 — Published JSON Schemas, golden fixtures and the self-test scenarios
 
-- [ ] `schemas/*.schema.json` for the six kernel documents and `schemas/README.md`.
-- [ ] Golden fixtures under `kenshou-core/test/golden/` and the schema-validation test (`check-jsonschema`).
-- [ ] Self-tests `postgres-roundtrip` and `worker-echo`; `just selftest` and `just schemas-check`.
-- [ ] ADR: scenarios never open a database themselves; one ledger per database. Distil the Decision Log into `docs/adr/`.
+- [x] (2026-09-20 22:13 PDT) `schemas/*.schema.json` for the six kernel documents and `schemas/README.md`.
+- [x] (2026-09-20 22:13 PDT) Golden fixtures under `kenshou-core/test/golden/` and the schema-validation test (`check-jsonschema`).
+- [x] (2026-09-20 22:13 PDT) Self-tests `postgres-roundtrip` and `worker-echo`; `just selftest` and `just schemas-check`.
+- [x] (2026-09-20 22:13 PDT) ADR: scenarios never open a database themselves; one ledger per database. Distil the Decision Log into `docs/adr/`.
 
 
 ## Surprises & Discoveries
 
-(None yet.)
+- `ephemeral-pg` writes `postgresSettings` values verbatim into `postgresql.conf`; values such as listen addresses and log paths therefore require PostgreSQL string quoting. The first live PostgreSQL 18 run exposed this before any scenario executed.
+
+- On macOS an open append handle prevented the manifest pass from reopening `logs/harness.jsonl`. The runner now closes the structured logger before enumerating and hashing artifacts.
+
+- Applying optparse-applicative's `internal` modifier inside the grouped command tree hid the whole Execution group, not only `worker`. The hidden worker parser is composed separately from the visible grouped parser.
+
+- The pinned Nix environment supplies `check-jsonschema` 0.38.0, newer than the 0.37.4 observed while drafting. Both implement the required JSON Schema 2020-12 validation, so no compatibility workaround was needed.
 
 
 ## Decision Log
@@ -159,6 +165,12 @@ Milestone 5 — Published JSON Schemas, golden fixtures and the self-test scenar
 - Milestone 1 delivered the kernel vocabulary, validated bundle registry, value-level CLI extension seam, Settei-backed configuration assembly, embedded help topics, parser-derived completion scripts, and the first three self-test scenarios. `cabal build all` and 14 unit/CLI examples pass; `kenshou list --json` reports `kenshou.scenario-list/v1` with three scenarios.
 
 - Milestone 2 delivered typed knob and closed-dimension resolution, the versioned run-specification codecs and defaulting rules, and `kenshou run --print-spec`. Seventeen core examples and three CLI examples pass; the acceptance transcript emits `kenshou.run-spec/v1` with seed 7 and rejects inapplicable dimensions and malformed scenario identifiers with exit code 2.
+
+- Milestone 3 delivered one composed Kiroku/Keiro/PGMQ migration ledger, PostgreSQL 17/18 selection, both durability modes, migrated template clones, independently provisioned extra servers, validated external-server reset semantics, crash-restart control, and the hidden line-delimited JSON worker protocol. Live integration examples prove PostgreSQL 18 clone/restart/immediate-stop recovery, external database teardown, and the PostgreSQL 17 path.
+
+- Milestone 4 delivered immutable run directories, atomic effective specs and results, canonical compatibility digests, scoped known-defect disposition, host/runtime/harness fingerprints, structured logs, manifest verification, phase marks, invocation provenance, and the documented exit-code contract. Compatibility tests prove that run identity does not poison paired comparisons while cohort changes separate historical series.
+
+- Milestone 5 froze the six kernel schemas, seven golden documents, and seven registered self-test scenarios. `just verify` passes with 29 core examples, 3 CLI examples, 4 runtime link-proof examples, both PostgreSQL 18 durability arms, the PostgreSQL 17 integration path, schema validation of golden and freshly emitted documents, both ADRs, and the complete worker/run evidence smoke suite.
 
 
 ## Context and Orientation

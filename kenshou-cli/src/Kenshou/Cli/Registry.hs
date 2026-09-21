@@ -3,6 +3,7 @@ module Kenshou.Cli.Registry (bundles, commands, topics) where
 import Kenshou.Cli.Command.Cohort (cohortCommand)
 import Kenshou.Cli.Command.List (listCommand)
 import Kenshou.Cli.Command.Run (runCommand)
+import Kenshou.Cli.Command.Worker (workerCommand)
 import Kenshou.Cli.Completions (completionsCommand)
 import Kenshou.Cli.Help qualified as Help
 import Kenshou.Core.Bundle (LayerBundle)
@@ -15,7 +16,7 @@ bundles :: [LayerBundle]
 bundles = [Selftest.bundle]
 
 commands :: [CliCommand]
-commands = [listCommand, Help.helpCommand, runCommand, cohortCommand, completionsCommand]
+commands = [listCommand, Help.helpCommand, runCommand, workerCommand, cohortCommand, completionsCommand]
 
 topics :: [HelpTopic]
 topics = Help.topics
