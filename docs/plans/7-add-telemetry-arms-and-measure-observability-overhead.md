@@ -17,6 +17,11 @@ provenance:
       at: 2026-09-20T21:08:38Z
       mode: "update"
       note: "Adopted relevant Haskell Jitsurei CLI patterns and the bounded Settei configuration contract."
+    - model: "gpt-5.6-sol"
+      harness: "codex-cli"
+      at: 2026-09-21T20:51:29Z
+      mode: "implement"
+      note: "Started implementation against the completed kernel, measurement, and diagnostics APIs."
 ---
 
 # Add telemetry arms and measure observability overhead
@@ -46,10 +51,10 @@ Because latency and throughput are recorded in-process by the measurement toolki
 
 Milestone 1 — Tracing arms
 
-- [ ] Verify the state delivered by `docs/plans/2-build-the-harness-kernel-for-scenarios-dimensions-run-specs-and-results.md` and `docs/plans/4-build-the-measurement-toolkit-for-load-latency-sampling-and-comparison.md`; record every name that differs from this plan's assumptions in the Decision Log.
-- [ ] Confirm the OpenTelemetry SDK packages are pinned in both cohorts; add the missing constraints.
-- [ ] Create the `kenshou-telemetry` package skeleton, its test suite and its cabal file.
-- [ ] Implement `Kenshou.Telemetry.Spec` (arms, knobs, `TelemetrySpec`, `telemetrySpecFromContext`).
+- [x] (2026-09-21 20:55Z) Verified the completed kernel and measurement APIs and recorded the concrete extension names below.
+- [x] (2026-09-21 20:55Z) Confirmed the OpenTelemetry release against Hackage and upstream tags; added the missing `hs-opentelemetry-exporter-prometheus` and `hs-opentelemetry-otlp` 1.0.0.0 pins to both cohorts.
+- [x] (2026-09-21 21:00Z) Created the `kenshou-telemetry` package skeleton, test suite, Cabal file, and manual `otlp-grpc` flag.
+- [x] (2026-09-21 21:00Z) Implemented `Kenshou.Telemetry.Spec` with the shared knobs, resolved arm specification, cross-knob validation, and explicit gRPC feature rejection.
 - [ ] Implement `Kenshou.Telemetry.Tracing`, `.Tracing.Probe` and `.Tracing.Pipeline`.
 - [ ] Implement `Kenshou.Telemetry.Sink` and the worker role `telemetry-otlp-sink`.
 - [ ] Implement `Kenshou.Telemetry.withTelemetry` for the four tracing arms, with timed flush and shutdown.
@@ -93,6 +98,10 @@ implementation. Provide concise evidence.
 
 
 ## Decision Log
+
+- Decision: Reconcile the drafted names to the delivered kernel as follows: telemetry dimensions are `TracingArm` and `MetricsArm` inside `Dimensions`; scenario knobs are read with `knobText`, `knobInt`, and `knobDouble` from `RunContext.knobs`; summaries use `putSummary context Telemetry`; phases use `withPhase`; worker input arrives through `RoleContext.init` and `RoleContext.receive`; and the toolkit registers one `LayerBundle` in `Kenshou.Cli.Registry.bundles`.
+  Rationale: These are the compiled APIs delivered by EP-2 and EP-4. Recording them here keeps the remaining implementation and later coverage plans aligned with the actual extension seam.
+  Date: 2026-09-21
 
 - Decision: `kenshou-telemetry` depends on no runtime library (no keiro, kiroku, shibuya, pgmq or Kafka package). It provides generic handles and helpers; the component-specific wiring is written down as recipes in `docs/guides/wiring-telemetry-arms.md` and implemented inside each layer package.
   Rationale: A toolkit that imports keiro would break whenever a head cohort changes a keiro signature and would make every layer rebuild on any runtime change. The recipes are ten to twenty lines each. It also keeps the self-tests free of PostgreSQL.

@@ -1,0 +1,64 @@
+cabal-version: 3.0
+name: kenshou-telemetry
+version: 0.1.0.0
+synopsis: Telemetry arms and overhead analysis for Kenshou scenarios
+description: Explicit tracing and metrics providers, endpoint scrapers, pipeline diagnostics, and paired observability-overhead reports.
+license: BSD-3-Clause
+author: Nadeem Bitar
+maintainer: Nadeem Bitar
+category: Testing
+build-type: Simple
+tested-with: ghc >=9.12 && <9.13
+
+flag otlp-grpc
+  description: Enable the optional OTLP gRPC exporter
+  default: False
+  manual: True
+
+common warnings
+  ghc-options:
+    -Wall
+    -Wcompat
+    -Widentities
+    -Wincomplete-record-updates
+    -Wincomplete-uni-patterns
+    -Wpartial-fields
+    -Wredundant-constraints
+
+  default-language: GHC2024
+  default-extensions:
+    BlockArguments
+    CPP
+    DuplicateRecordFields
+    ImportQualifiedPost
+    NoFieldSelectors
+    OverloadedLabels
+    OverloadedRecordDot
+    OverloadedStrings
+
+library
+  import: warnings
+  hs-source-dirs: src
+  exposed-modules:
+    Kenshou.Telemetry.Spec
+
+  build-depends:
+    aeson >=2.2 && <2.3,
+    base >=4.21 && <4.22,
+    kenshou-core,
+    text >=2.1 && <2.2,
+
+  if flag(otlp-grpc)
+    cpp-options: -DWITH_OTLP_GRPC
+
+test-suite kenshou-telemetry-test
+  import: warnings
+  type: exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is: Main.hs
+  build-depends:
+    base >=4.21 && <4.22,
+    hspec >=2.11 && <2.12,
+    kenshou-core,
+    kenshou-telemetry,
+    text,
