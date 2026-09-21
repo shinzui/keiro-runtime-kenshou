@@ -11,7 +11,11 @@ default:
     just --list
 
 [group('meta')]
-verify: process-compose-check fmt-check haskell-build haskell-test link-proof cohort-assert-released cohort-check adr-validate schemas-check selftest
+verify: process-compose-check fmt-check haskell-build haskell-test link-proof cohort-assert-released cohort-check graph-check adr-validate schemas-check selftest
+
+[group('verification')]
+graph-check:
+    cabal run -v0 kenshou -- plan --graph-check
 
 [group('docs')]
 adr-validate:
@@ -24,6 +28,8 @@ adr-validate:
 schemas-check:
     check-jsonschema --schemafile schemas/component-graph.v1.schema.json kenshou-core/data/components.json
     check-jsonschema --schemafile schemas/run-plan.v1.schema.json kenshou-core/test/golden/run-plan.minimal.json
+    check-jsonschema --schemafile schemas/plan-summary.v1.schema.json kenshou-core/test/golden/plan-summary.minimal.json
+    check-jsonschema --schemafile schemas/suite.v1.schema.json suites/*.json
     check-jsonschema --schemafile schemas/run-spec-v1.schema.json kenshou-core/test/golden/run-spec.minimal.json kenshou-core/test/golden/run-spec.effective.json kenshou-core/test/golden/run-spec.external.json
     check-jsonschema --schemafile schemas/run-result-v1.schema.json kenshou-core/test/golden/run-result.passed.json kenshou-core/test/golden/run-result.known-defect.json
     check-jsonschema --schemafile schemas/artifact-manifest-v1.schema.json kenshou-core/test/golden/manifest.json

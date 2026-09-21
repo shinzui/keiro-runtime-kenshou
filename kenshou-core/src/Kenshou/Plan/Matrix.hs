@@ -49,8 +49,10 @@ expandScenario policy selected = case dimensionRows of
     scenario = selected.scenario
     effectivePolicy = max policy.dimensionPolicy (maybe DefaultOnly parseMinimum selected.minPolicy)
     dimensionRows = expandDimensions effectivePolicy policy.pinnedDimensions scenario
-    knobRows = expandKnobs policy scenario
+    effectiveKnobPolicy = max policy.knobPolicy (maybe KnobDefaults parseMinimumKnob selected.minKnobPolicy)
+    knobRows = expandKnobs (policy {knobPolicy = effectiveKnobPolicy}) scenario
     parseMinimum value = maybe DefaultOnly (\policyValue -> policyValue) (parseDimensionPolicy value)
+    parseMinimumKnob value = maybe KnobDefaults (\policyValue -> policyValue) (parseKnobPolicy value)
     headOrEmpty [] = Map.empty
     headOrEmpty (first : _) = first
 

@@ -1,0 +1,7 @@
+{
+  "schema": "kenshou.suite/v1",
+  "name": "nightly",
+  "description": "Broad cell evidence every night.",
+  "selection": {"mode": "all", "always": [], "exclude": [{"select": "selftest/kernel/correctness/always-fail", "why": "fails by design"}, {"select": "selftest/kernel/correctness/errors", "why": "errors by design"}]},
+  "policy": {"maxTier": "extended", "kinds": ["correctness", "concurrency", "benchmark"], "placement": "cell", "dimensionPolicy": "pairwise", "knobPolicy": "declared-variants", "trials": 3}
+}

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/plan-summary.v1.schema.json",
+  "title": "Kenshou plan summary v1",
+  "type": "object",
+  "required": ["schema", "planId", "entries", "counts", "worstOutcome", "exitCode"],
+  "properties": {
+    "schema": {"const": "kenshou.plan-summary/v1"},
+    "planId": {"type": "string", "format": "uuid"},
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ordinal", "scenario", "status", "attempts"],
+        "properties": {
+          "ordinal": {"type": "integer", "minimum": 1},
+          "scenario": {"type": "string"},
+          "status": {"enum": ["pending", "running", "completed"]},
+          "attempts": {"type": "array", "items": {"type": "object", "required": ["runId", "startedAt", "knownDefect"]}}
+        }
+      }
+    },
+    "counts": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+    "worstOutcome": {"enum": ["passed", "failed", "errored", "inconclusive", "infrastructure-failure"]},
+    "exitCode": {"enum": [0, 1, 3, 4]}
+  },
+  "additionalProperties": false
+}

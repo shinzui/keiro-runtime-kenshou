@@ -1,13 +1,15 @@
 module Kenshou.PlanSpec (spec) where
 
 import Data.Aeson qualified as Aeson
+import Data.List (find)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Kenshou.Core.Dimension
-import Kenshou.Core.Id (Kind (..), mkSeed, parseScenarioId, renderScenarioId)
+import Kenshou.Core.Id (Kind (..), mkSeed, parseRunId, parseScenarioId, renderScenarioId)
+import Kenshou.Core.Outcome (Outcome (..))
 import Kenshou.Core.RunSpec (SpecPlacement (..))
 import Kenshou.Core.Scenario (Placement (..), Tier (..))
 import Kenshou.Plan.Catalog (ScenarioInfo (..), readCatalogFile)
@@ -21,6 +23,8 @@ import Kenshou.Plan.Policy
 import Kenshou.Plan.Policy qualified as Policy
 import Kenshou.Plan.RunPlan (PlanContext (..), PlanInputs (..), PlanSkeleton (..), SkipReason (..), Skipped (..), buildPlan)
 import Kenshou.Plan.Selector
+import Kenshou.Plan.Suite
+import Kenshou.Plan.Summary qualified as Summary
 import System.Directory (createDirectoryIfMissing)
 import System.FilePath (takeDirectory, (</>))
 import System.IO.Temp (withSystemTempDirectory)
@@ -182,6 +186,37 @@ spec = do
           skeleton = buildPlan testPlanContext policy [selected]
       skeleton.runs `shouldBe` []
       fmap (.reason) skeleton.skipped `shouldContain` [SkipOverBudget]
+
+  describe "Kenshou.Plan.Suite" do
+    it "decodes every checked-in suite" do
+      let names = ["smoke", "change", "nightly", "weekly-soak", "release"] :: [Text]
+      results <- traverse (readSuite . ("../suites/" <>) . (<> ".json") . Text.unpack) names
+      suites <- traverse expectRight results
+      fmap (.name) suites `shouldBe` names
+    it "raises knob policy only for directly selected scenarios" do
+      suite <- readSuite "../suites/change.json" >>= expectRight
+      (_, catalog) <- fixtureInputs
+      scenario <- maybe (expectationFailure "fixture has no scenario with knobs" >> fail "unreachable") pure (find (not . null . (.knobs)) catalog)
+      selector <- expectRight (parseSelector "**")
+      let change = Change (ComponentRef (ComponentId "fixture") Nothing) Named "fixture"
+          selected distance = Selected scenario (Reason change [change.ref] selector distance :| []) Nothing Nothing
+          direct = applySuite suite [scenario] [selected 0]
+          dependent = applySuite suite [scenario] [selected 1]
+      fmap (.minKnobPolicy) direct `shouldBe` [Just "declared-variants"]
+      fmap (.minKnobPolicy) dependent `shouldBe` [Nothing]
+
+  describe "Kenshou.Plan.Summary" do
+    it "treats reproduced known defects as non-blocking" do
+      runId <- expectRight (parseRunId "0199a3f2-7c20-7f00-8a11-0c0d0e0f1011")
+      scenarioId <- expectRight (parseScenarioId "selftest/kernel/correctness/known-defect")
+      let attempt = Summary.Attempt runId (read "2026-09-21 00:00:00 UTC") (Just (read "2026-09-21 00:00:01 UTC")) (Just Failed) True (Just 0)
+          summary = Summary.PlanSummary runId [Summary.SummaryEntry 1 scenarioId Summary.Completed [attempt]] Map.empty Passed 0
+      Summary.worstOutcome summary `shouldBe` Passed
+    it "counts an unfinished entry as errored" do
+      runId <- expectRight (parseRunId "0199a3f2-7c20-7f00-8a11-0c0d0e0f1011")
+      scenarioId <- expectRight (parseScenarioId "selftest/kernel/correctness/always-pass")
+      let summary = Summary.PlanSummary runId [Summary.SummaryEntry 1 scenarioId Summary.Pending []] Map.empty Passed 0
+      Summary.worstOutcome summary `shouldBe` Errored
   where
     isMissing (MissingEdge (ComponentId "pgmq-hs") (ComponentId "kiroku-store") _) = True
     isMissing _ = False
@@ -241,7 +276,7 @@ matrixSelected kind minimumPolicy = do
             knownDefect = Nothing
           }
       change = Change (ComponentRef (ComponentId "kiroku-store") Nothing) Named "fixture"
-  pure (Selected scenario (Reason change [change.ref] selector 0 :| []) minimumPolicy)
+  pure (Selected scenario (Reason change [change.ref] selector 0 :| []) minimumPolicy Nothing)
   where
     kindText Correctness = "correctness"
     kindText Concurrency = "concurrency"

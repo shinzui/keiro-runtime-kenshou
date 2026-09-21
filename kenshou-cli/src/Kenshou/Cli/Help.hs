@@ -17,6 +17,7 @@ topics =
   [ HelpTopic "scenarios" "Scenario identifiers and metadata" (Text.pack $(embedStringFile "help/scenarios.md")),
     HelpTopic "selectors" "Selecting groups of scenarios" (Text.pack $(embedStringFile "help/selectors.md")),
     HelpTopic "run-specs" "Versioned run specification documents" (Text.pack $(embedStringFile "help/run-specs.md")),
+    HelpTopic "planning" "Change-aware plans, suites, and safe resume" (Text.pack $(embedStringFile "help/planning.md")),
     HelpTopic "outcomes" "Run outcomes and known defects" (Text.pack $(embedStringFile "help/outcomes.md")),
     HelpTopic "exit-codes" "Stable process exit codes" (Text.pack $(embedStringFile "help/exit-codes.md"))
   ]

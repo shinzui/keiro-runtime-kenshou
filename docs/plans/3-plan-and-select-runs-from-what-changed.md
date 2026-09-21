@@ -75,11 +75,11 @@ Milestone 3 — Matrix expansion, tier budgets and `kenshou plan`
 
 Milestone 4 — Named suites and resumable `kenshou execute`
 
-- [ ] Add `Kenshou.Plan.Suite`, `schemas/suite.v1.schema.json` and the five files in `suites/`; unit test that every checked-in suite parses and plans.
-- [ ] Add `Kenshou.Plan.Summary` and `Kenshou.Plan.Execute` (child process per run, atomic summary, lock file, `--resume`, `--fail-fast`, `--environment`, opt-in timeout) and `schemas/plan-summary.v1.schema.json`.
-- [ ] Add `kenshou execute`; if `kenshou run` cannot take a run identifier, add `--run-id` to it.
-- [ ] End-to-end check: plan and execute `selftest/kernel/**`, interrupt, resume, and observe exit codes 1 and 0 as described in Validation and Acceptance.
-- [ ] Add `docs/planning.md` (user guide: inputs, policies, suites, reading a plan) and the ADR distillation pass.
+- [x] (2026-09-21T14:33:12Z) Add `Kenshou.Plan.Suite`, `schemas/suite.v1.schema.json` and the five files in `suites/`; unit test that every checked-in suite parses and plans.
+- [x] (2026-09-21T14:33:12Z) Add `Kenshou.Plan.Summary` and `Kenshou.Plan.Execute` (child process per run, atomic summary, lock file, `--resume`, `--fail-fast`, `--environment`, opt-in timeout) and `schemas/plan-summary.v1.schema.json`.
+- [x] (2026-09-21T14:33:12Z) Add `kenshou execute`; EP-2 had already delivered `kenshou run --run-id`, so no kernel CLI change was necessary.
+- [x] (2026-09-21T14:33:12Z) End-to-end check: execute passing and failing plans, interrupt a sleeping self-test, resume it under a fresh run identifier, and observe the required exit codes and preserved attempt history.
+- [x] (2026-09-21T14:33:12Z) Add `docs/planning.md` (user guide: inputs, policies, suites, reading a plan), the embedded `planning` help topic, and the ADR distillation pass.
 
 
 ## Surprises & Discoveries
@@ -95,6 +95,12 @@ Milestone 4 — Named suites and resumable `kenshou execute`
 
 - Observation: Selecting every kernel self-test for a `kiroku-store` change while selecting only the PostgreSQL round-trip self-test for a `pgmq-hs` change requires a harness sub-component that is not visible in Cabal's package graph.
   Evidence: the five Milestone 2 acceptance tests initially exposed the conflict. `kenshou-harness:kernel` now carries `selftest/kernel/**` and a runtime edge to `kiroku-store`; the whole harness retains the narrower PostgreSQL round-trip selector used by its build dependency on `pgmq-hs`.
+
+- Observation: EP-2 already accepted an explicit `--run-id`, so the executor could preserve the plan's pre-assigned identity without changing the runner contract.
+  Evidence: the end-to-end executor runs invoked the existing `kenshou run --spec … --run-id …` path and produced directories with the plan's identifier on the first attempt and a fresh UUIDv7 on resume.
+
+- Observation: a terminal interrupt can leave a valid `running` summary while still releasing the executor lock, which is exactly the durable checkpoint needed for a safe retry.
+  Evidence: interrupting a 30-second `selftest.outcome` run left its first attempt unfinished; `--resume` retained that attempt, appended a distinct run identifier, completed the entry, and exited 0.
 
 
 ## Decision Log
@@ -151,7 +157,9 @@ Milestone 4 — Named suites and resumable `kenshou execute`
 
 ## Outcomes & Retrospective
 
-(To be filled during and after implementation.)
+EP-3 delivered the complete local planning and execution loop. The checked-in component graph models 26 whole components, 15 sub-components and both build and declared runtime edges; change inputs from cohort descriptors, named components and Git paths select the transitive dependent closure with recorded reasons. `kenshou plan` expands dimensions and knob variants under deterministic seeds, trial and budget rules, emits schema-validated run plans, and supports five named suites. `kenshou execute` runs each entry in an isolated child process, atomically checkpoints a schema-validated summary, enforces plan identity and a process lock, supports environment replacement, fail-fast and opt-in timeouts, and safely resumes interrupted entries without reusing their run directories.
+
+Acceptance covered both planner semantics and real execution. The core suite passes 51 examples and the CLI suite passes 3; generated plans and summaries validate against their JSON Schemas; the graph drift check and strict ADR validation pass. A deliberately failing plan exits 1 with `failed` as its worst outcome, the smoke suite exits 0, a mismatched resume is rejected without mixing plans, and an interrupted sleeping run resumes under a fresh UUIDv7 while preserving its original unfinished attempt. The main remaining limitation is intentional: only kernel self-tests are linked today, so most graph selectors become runnable as the later coverage plans register their bundles.
 
 
 ## Context and Orientation

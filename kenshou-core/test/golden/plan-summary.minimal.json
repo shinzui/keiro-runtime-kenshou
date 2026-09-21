@@ -1,0 +1,24 @@
+{
+  "schema": "kenshou.plan-summary/v1",
+  "planId": "0199a3f2-7c1e-7b8a-9d41-3e5f6a7b8c9d",
+  "entries": [
+    {
+      "ordinal": 1,
+      "scenario": "selftest/kernel/correctness/always-pass",
+      "status": "completed",
+      "attempts": [
+        {
+          "runId": "0199a3f2-7c20-7f00-8a11-0c0d0e0f1011",
+          "startedAt": "2026-09-21T14:18:40Z",
+          "finishedAt": "2026-09-21T14:18:41Z",
+          "outcome": "passed",
+          "knownDefect": false,
+          "childExitCode": 0
+        }
+      ]
+    }
+  ],
+  "counts": {"passed": 1},
+  "worstOutcome": "passed",
+  "exitCode": 0
+}

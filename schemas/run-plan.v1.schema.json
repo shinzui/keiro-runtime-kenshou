@@ -1,6 +1,5 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://kenshou.invalid/schemas/run-plan.v1.schema.json",
   "title": "Kenshou run plan v1",
   "type": "object",
   "required": ["schema", "planId", "createdAt", "graphDigest", "cohort", "inputs", "policy", "changes", "runs", "skipped", "warnings", "estimateMinutes"],
@@ -34,14 +33,7 @@
         "estimateMinutes": {"type": "integer", "minimum": 0},
         "reasons": {"type": "array", "minItems": 1, "items": {"type": "object", "required": ["component", "source", "via", "selector", "distance"]}},
         "trial": {"type": ["object", "null"]},
-        "spec": {
-          "type": "object",
-          "required": ["schema", "scenario"],
-          "properties": {
-            "schema": {"const": "kenshou.run-spec/v1"},
-            "scenario": {"type": "string"}
-          }
-        }
+        "spec": {"$ref": "run-spec-v1.schema.json"}
       },
       "additionalProperties": false
     }

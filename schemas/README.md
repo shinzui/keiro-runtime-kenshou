@@ -13,6 +13,10 @@ the meaning of a published `v1` document.
 | Scenario list | `kenshou.scenario-list/v1` | `Kenshou.Core.Bundle` |
 | Worker initialization | `kenshou.worker-init/v1` | `Kenshou.Core.Role` |
 | Worker messages | `kenshou.worker-message/v1` | `Kenshou.Core.Role` |
+| Component graph | `kenshou.component-graph/v1` | `Kenshou.Plan.Components` |
+| Run plan | `kenshou.run-plan/v1` | `Kenshou.Plan.RunPlan` |
+| Named suite | `kenshou.suite/v1` | `Kenshou.Plan.Suite` |
+| Plan summary | `kenshou.plan-summary/v1` | `Kenshou.Plan.Summary` |
 
 Run `just schemas-check` to validate the checked-in goldens and fresh CLI
 documents.

@@ -28,6 +28,7 @@ import Kenshou.Plan.Components.Check
 import Kenshou.Plan.Policy
 import Kenshou.Plan.RunPlan
 import Kenshou.Plan.Selector (Selector, parseSelector, renderSelector)
+import Kenshou.Plan.Suite
 import Options.Applicative hiding (value)
 import System.Exit (ExitCode (..))
 import System.IO (stderr)
@@ -39,6 +40,8 @@ data PlanOptions = PlanOptions
     json :: Bool,
     graphSource :: Maybe InputSource,
     catalogSource :: Maybe InputSource,
+    suiteName :: Maybe Text,
+    suiteSource :: Maybe InputSource,
     changed :: [Text],
     cohortFrom :: Maybe Text,
     cohortTo :: Maybe Text,
@@ -79,6 +82,8 @@ planParser =
     <*> switch (long "json" <> help "Write machine-readable JSON")
     <*> optional (option (parseInputSource <$> str) (long "graph" <> metavar "FILE" <> help "Override the component graph; use - for stdin"))
     <*> optional (option (parseInputSource <$> str) (long "catalog" <> metavar "FILE" <> help "Plan against a scenario catalog; use - for stdin"))
+    <*> optional (Text.pack <$> strOption (long "suite" <> metavar "NAME" <> help "Apply suites/NAME.json"))
+    <*> optional (option (parseInputSource <$> str) (long "suite-file" <> metavar "FILE" <> help "Apply a suite document; use - for stdin"))
     <*> many (Text.pack <$> strOption (long "changed" <> metavar "COMPONENT[,COMPONENT]" <> help "Name changed components or sub-components"))
     <*> optional (Text.pack <$> strOption (long "cohort-from" <> metavar "COHORT" <> help "Baseline cohort name, file, or git object"))
     <*> optional (Text.pack <$> strOption (long "cohort-to" <> metavar "COHORT" <> help "Candidate cohort name, file, or git object"))
@@ -104,19 +109,22 @@ runPlan :: PlanOptions -> CliEnv -> IO ExitCode
 runPlan options environment
   | stdinCount options > 1 = usage "at most one document input may use standard input"
   | options.graphShow && options.graphCheck = usage "choose only one of --graph-show or --graph-check"
+  | options.suiteName /= Nothing && options.suiteSource /= Nothing = usage "choose only one of --suite or --suite-file"
   | otherwise = do
       graphResult <- loadGraph options.graphSource
       catalogResult <- loadCatalog environment options.catalogSource
-      case (graphResult, catalogResult) of
-        (Left err, _) -> usage err
-        (_, Left err) -> usage err
-        (Right graph, Right catalog)
+      suiteResult <- loadSuite options
+      case (graphResult, catalogResult, suiteResult) of
+        (Left err, _, _) -> usage err
+        (_, Left err, _) -> usage err
+        (_, _, Left err) -> usage err
+        (Right graph, Right catalog, Right suite)
           | options.graphShow -> showGraph options.json graph
           | options.graphCheck -> checkGraph graph catalog
-          | otherwise -> planSelection options graph catalog
+          | otherwise -> planSelection options suite graph catalog
 
-planSelection :: PlanOptions -> ComponentGraph -> [ScenarioInfo] -> IO ExitCode
-planSelection options graph catalog = case (traverse (parseSelector) options.includes, traverse parseSelector options.excludes) of
+planSelection :: PlanOptions -> Maybe Suite -> ComponentGraph -> [ScenarioInfo] -> IO ExitCode
+planSelection options suite graph catalog = case (traverse (parseSelector) options.includes, traverse parseSelector options.excludes) of
   (Left err, _) -> usage err
   (_, Left err) -> usage err
   (Right includes, Right excludes) -> do
@@ -124,20 +132,22 @@ planSelection options graph catalog = case (traverse (parseSelector) options.inc
     case gathered of
       Left err -> usage err
       Right (changes, directSelectors, warnings)
-        | null changes && null directSelectors && not options.allScenariosFlag -> usage "say what changed with --changed, --cohort-from/--cohort-to, --since, --upstream-diff, or --all"
+        | null changes && null directSelectors && not options.allScenariosFlag && not (maybe False ((== SuiteAll) . (.mode) . (.selection)) suite) -> usage "say what changed with --changed, --cohort-from/--cohort-to, --since, --upstream-diff, --all, or an all-mode suite"
         | otherwise -> do
             let componentSelected = if options.allScenariosFlag then selectAll catalog else selectScenarios graph catalog changes
                 pathSelected = selectBySelectors Since "repository path" directSelectors catalog
-                selected = applySelectors includes excludes (deduplicate (componentSelected <> pathSelected))
+                changedSelected = deduplicate (componentSelected <> pathSelected)
+                suiteSelected = maybe changedSelected (\suiteValue -> applySuite suiteValue catalog changedSelected) suite
+                selected = applySelectors includes excludes (deduplicate suiteSelected)
             if options.explain
               then renderSelection True changes warnings selected >> pure ExitSuccess
-              else writeRunPlan options graph catalog changes warnings selected
+              else writeRunPlan options suite graph catalog changes warnings selected
 
-writeRunPlan :: PlanOptions -> ComponentGraph -> [ScenarioInfo] -> [Change] -> [Warning] -> [Selected] -> IO ExitCode
-writeRunPlan options graph catalog changes warnings selected = do
+writeRunPlan :: PlanOptions -> Maybe Suite -> ComponentGraph -> [ScenarioInfo] -> [Change] -> [Warning] -> [Selected] -> IO ExitCode
+writeRunPlan options suite graph catalog changes warnings selected = do
   seedResult <- makeSeed options.seedValue
   cohortResult <- first (("unable to resolve cohort identity: " <>) . Text.pack . show) <$> Cohort.resolveCohortIdentity (Cohort.FromProject "." Nothing Nothing)
-  case (seedResult, cohortResult, makePolicy options =<< seedResult) of
+  case (seedResult, cohortResult, (\seed -> makePolicy options suite seed) =<< seedResult) of
     (Left err, _, _) -> usage err
     (_, Left err, _) -> usage err
     (_, _, Left err) -> usage err
@@ -145,7 +155,7 @@ writeRunPlan options graph catalog changes warnings selected = do
       let unknownPins = [name | raw <- options.knobPins, let (name, _) = splitAssignment raw, all (not . declares name) catalog]
           context =
             PlanContext
-              { suite = Nothing,
+              { suite = fmap (.name) suite,
                 graphDigest = Components.graphDigest graph,
                 cohortName = Cohort.unCohortName cohort.identityCohort,
                 cohortPlanHash = Cohort.unPlanHash cohort.identityPlanHash,
@@ -158,6 +168,7 @@ writeRunPlan options graph catalog changes warnings selected = do
       case options.outputPath of
         Nothing -> LazyByteString.putStrLn bytes
         Just path -> LazyByteString.writeFile path bytes
+      Text.IO.hPutStrLn stderr ("planned " <> Text.pack (show (length plan.runs)) <> " runs, estimate " <> Text.pack (show plan.estimateMinutes) <> " min, " <> Text.pack (show (length plan.skipped)) <> " skipped")
       pure ExitSuccess
   where
     declares name scenario = any ((== name) . renderKnobName . (.name)) scenario.knobs
@@ -170,27 +181,29 @@ makeSeed Nothing = do
   value <- randomIO
   pure (Id.mkSeed (value `mod` 9007199254740992))
 
-makePolicy :: PlanOptions -> Id.Seed -> Either Text PlanPolicy
-makePolicy options seed = do
-  maxTier <- maybe (Right TierStandard) parseTierValue options.maxTierText
-  kinds <- if null options.kindTexts then Right (Set.fromList [minBound .. maxBound]) else Set.fromList <$> traverse Id.parseKind options.kindTexts
-  placement <- maybe (Right RunLocal) parsePlacementValue options.placementText
-  dimensionPolicy <- maybe (Right DefaultOnly) (maybe (Left "unknown dimension policy") Right . parseDimensionPolicy) options.dimensionPolicyText
-  knobPolicy <- maybe (Right KnobDefaults) (maybe (Left "unknown knob policy") Right . parseKnobPolicy) options.knobPolicyText
-  let trials = maybe 3 (\value -> value) options.trialCount
+makePolicy :: PlanOptions -> Maybe Suite -> Id.Seed -> Either Text PlanPolicy
+makePolicy options suite seed = do
+  base <- maybe (Right (defaultPlanPolicy seed)) (suitePolicy seed) suite
+  maxTier <- maybe (Right base.maxTier) parseTierValue options.maxTierText
+  let kindInputs = concatMap (filter (not . Text.null) . fmap Text.strip . Text.splitOn ",") options.kindTexts
+  kinds <- if null kindInputs then Right base.kinds else Set.fromList <$> traverse Id.parseKind kindInputs
+  placement <- maybe (Right base.placement) parsePlacementValue options.placementText
+  dimensionPolicy <- maybe (Right base.dimensionPolicy) (maybe (Left "unknown dimension policy") Right . parseDimensionPolicy) options.dimensionPolicyText
+  knobPolicy <- maybe (Right base.knobPolicy) (maybe (Left "unknown knob policy") Right . parseKnobPolicy) options.knobPolicyText
+  let trials = maybe base.trials (\value -> value) options.trialCount
   if trials < 3 then Left "--trials must be at least 3" else pure ()
   case options.budget of Just value | value < 0 -> Left "--budget-minutes must be non-negative"; _ -> pure ()
   pinnedKnobs <- traverse parseAssignmentText options.knobPins
   pinnedDimensions <- traverse parseAssignmentText options.dimensionPins
   pure
-    (defaultPlanPolicy seed)
+    base
       { maxTier,
         kinds,
         placement,
         dimensionPolicy,
         knobPolicy,
         trials,
-        budgetMinutes = options.budget,
+        budgetMinutes = options.budget <|> base.budgetMinutes,
         pinnedKnobs,
         pinnedDimensions
       }
@@ -284,6 +297,13 @@ loadCatalog :: CliEnv -> Maybe InputSource -> IO (Either Text [ScenarioInfo])
 loadCatalog environment Nothing = pure (Right (fmap fromScenario (allScenarios environment.registry)))
 loadCatalog _ (Just source) = decodeCatalog <$> readInputSource source
 
+loadSuite :: PlanOptions -> IO (Either Text (Maybe Suite))
+loadSuite options = case (options.suiteName, options.suiteSource) of
+  (Nothing, Nothing) -> pure (Right Nothing)
+  (Just name, Nothing) -> fmap Just <$> readSuite ("suites/" <> Text.unpack name <> ".json")
+  (Nothing, Just source) -> fmap Just . decodeSuite <$> readInputSource source
+  (Just _, Just _) -> pure (Left "choose only one of --suite or --suite-file")
+
 showGraph :: Bool -> ComponentGraph -> IO ExitCode
 showGraph asJson graph = do
   if asJson
@@ -315,7 +335,7 @@ checkGraph graph catalog = do
       pure if null driftErrors && null lintErrors then ExitSuccess else ExitFailure 1
 
 stdinCount :: PlanOptions -> Int
-stdinCount options = length [() | Just InputStdin <- [options.graphSource, options.catalogSource]]
+stdinCount options = length [() | Just InputStdin <- [options.graphSource, options.catalogSource, options.suiteSource]]
 
 usage :: Text -> IO ExitCode
 usage message = Text.IO.hPutStrLn stderr ("kenshou: " <> message) >> pure (ExitFailure 2)

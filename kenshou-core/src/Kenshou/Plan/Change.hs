@@ -48,7 +48,8 @@ data Reason = Reason
 data Selected = Selected
   { scenario :: ScenarioInfo,
     reasons :: NonEmpty Reason,
-    minPolicy :: Maybe Text
+    minPolicy :: Maybe Text,
+    minKnobPolicy :: Maybe Text
   }
   deriving stock (Eq, Show)
 
@@ -66,7 +67,8 @@ selectScenarios graph catalog changes
           Selected
             { scenario,
               reasons = first :| rest,
-              minPolicy = maximumPolicy [minPolicyForRef graph changeValue.ref | changeValue <- changes, any ((== changeValue) . (.change)) (first : rest)]
+              minPolicy = maximumPolicy [minPolicyForRef graph changeValue.ref | changeValue <- changes, any ((== changeValue) . (.change)) (first : rest)],
+              minKnobPolicy = Nothing
             }
     reasonsFor scenario (changeValue, affected) = do
       affectedValue <- Map.elems affected
@@ -81,7 +83,7 @@ selectAll :: [ScenarioInfo] -> [Selected]
 selectAll catalog = case parseSelector "**" of
   Left _ -> []
   Right selector ->
-    [ Selected scenario (Reason change [change.ref] selector 0 :| []) Nothing
+    [ Selected scenario (Reason change [change.ref] selector 0 :| []) Nothing Nothing
     | scenario <- catalog
     ]
   where
@@ -89,7 +91,7 @@ selectAll catalog = case parseSelector "**" of
 
 selectBySelectors :: ChangeSource -> Text -> [Selector] -> [ScenarioInfo] -> [Selected]
 selectBySelectors source detail selectors catalog =
-  [ Selected scenario (Reason change [change.ref] selector 0 :| []) Nothing
+  [ Selected scenario (Reason change [change.ref] selector 0 :| []) Nothing Nothing
   | scenario <- catalog,
     selector <- take 1 (filter (`matches` scenario.id) selectors)
   ]

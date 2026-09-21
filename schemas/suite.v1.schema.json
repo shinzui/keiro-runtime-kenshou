@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/suite.v1.schema.json",
+  "title": "Kenshou suite v1",
+  "type": "object",
+  "required": ["schema", "name", "description", "selection", "policy"],
+  "properties": {
+    "schema": {"const": "kenshou.suite/v1"},
+    "name": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+    "description": {"type": "string"},
+    "selection": {
+      "type": "object",
+      "required": ["mode", "always", "exclude"],
+      "properties": {
+        "mode": {"enum": ["all", "changed"]},
+        "always": {"type": "array", "items": {"type": "string"}},
+        "exclude": {"type": "array", "items": {"type": "object", "required": ["select", "why"], "properties": {"select": {"type": "string"}, "why": {"type": "string"}}, "additionalProperties": false}}
+      },
+      "additionalProperties": false
+    },
+    "policy": {"$ref": "#/$defs/policy"},
+    "directlyChanged": {"$ref": "#/$defs/policy"}
+  },
+  "$defs": {
+    "policy": {
+      "type": "object",
+      "properties": {
+        "maxTier": {"enum": ["smoke", "standard", "extended", "soak"]},
+        "kinds": {"type": "array", "items": {"enum": ["correctness", "concurrency", "benchmark", "soak"]}},
+        "placement": {"enum": ["local", "cell"]},
+        "dimensionPolicy": {"enum": ["default-only", "telemetry-corners", "pairwise", "full"]},
+        "knobPolicy": {"enum": ["defaults", "declared-variants"]},
+        "trials": {"type": "integer", "minimum": 3},
+        "budgetMinutes": {"type": ["integer", "null"], "minimum": 0}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
