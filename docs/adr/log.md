@@ -1,6 +1,8 @@
 # Bundle Update Log
 
 ## 2026-09-21
+* **Decision**: Accepted real process and PostgreSQL termination as the definition of a crash.
+* **Decision**: Accepted contract-strength classifications and non-vacuous correctness verdicts.
 * **Changed**: Added summarize and compare to the versioned runtime protocol.
 * **Decision**: Accepted an independent measurement channel for benchmark evidence.
 * **Decision**: Accepted controlled benchmark evidence requirements for comparison verdicts.

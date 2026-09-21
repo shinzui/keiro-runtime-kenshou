@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/kenshou.ledger-fact.v1.schema.json",
+  "title": "Kenshou ledger fact v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "kind", "key", "seq", "id", "scope", "proc", "n", "mono", "wall", "attrs"],
+  "properties": {
+    "schema": {"const": "kenshou.ledger-fact/v1"},
+    "kind": {"enum": ["intent", "produced", "observed", "effect", "terminal", "acquired", "acted", "released", "checkpoint", "disturbance-start", "disturbance-end", "mark"]},
+    "key": {"type": "string"},
+    "seq": {"type": "integer"},
+    "id": {"type": "string"},
+    "scope": {"type": "string"},
+    "proc": {"type": "string"},
+    "n": {"type": "integer", "minimum": 1},
+    "mono": {"type": "integer", "minimum": 0},
+    "wall": {"type": "integer"},
+    "attrs": {"type": "object"}
+  }
+}

@@ -36,6 +36,11 @@ provenance:
       at: 2026-09-21T14:43:41Z
       mode: "implement"
       note: "Started EP-4 implementation and moved its registry entry to In Progress."
+    - model: "gpt-5.6-sol"
+      harness: "codex-cli"
+      at: 2026-09-21T16:21:05Z
+      mode: "implement"
+      note: "Started EP-5 implementation and moved its registry entry to In Progress."
 ---
 
 # Build an extensive verification suite for the keiro runtime
@@ -79,7 +84,7 @@ There is no local ADR corpus yet: `docs/adr/` does not exist in this repository,
 | 2 | Build the harness kernel for scenarios, dimensions, run specs and results | docs/plans/2-build-the-harness-kernel-for-scenarios-dimensions-run-specs-and-results.md | EP-1 | None | Complete |
 | 3 | Plan and select runs from what changed | docs/plans/3-plan-and-select-runs-from-what-changed.md | EP-2 | None | Complete |
 | 4 | Build the measurement toolkit for load, latency, sampling and comparison | docs/plans/4-build-the-measurement-toolkit-for-load-latency-sampling-and-comparison.md | EP-2 | None | Complete |
-| 5 | Build the correctness toolkit for ledgers, invariants, faults and process control | docs/plans/5-build-the-correctness-toolkit-for-ledgers-invariants-faults-and-process-control.md | EP-2 | None | Not Started |
+| 5 | Build the correctness toolkit for ledgers, invariants, faults and process control | docs/plans/5-build-the-correctness-toolkit-for-ledgers-invariants-faults-and-process-control.md | EP-2 | None | Complete |
 | 6 | Build the diagnostics toolkit for memory leaks and concurrency stalls | docs/plans/6-build-the-diagnostics-toolkit-for-memory-leaks-and-concurrency-stalls.md | EP-2, EP-4 | EP-5 | Not Started |
 | 7 | Add telemetry arms and measure observability overhead | docs/plans/7-add-telemetry-arms-and-measure-observability-overhead.md | EP-2, EP-4 | EP-6 | Not Started |
 | 8 | Cover pgmq-hs in isolation | docs/plans/8-cover-pgmq-hs-in-isolation.md | EP-2, EP-4, EP-5, EP-6, EP-7 | EP-3 | Not Started |
@@ -216,11 +221,11 @@ Track milestone-level progress across all child plans. Each entry names the chil
 - [x] EP-4: Runtime, process and PostgreSQL samplers
 - [x] EP-4: Summaries and paired comparison with verdicts
 - [x] EP-4: Health gates that separate infrastructure trouble from regressions
-- [ ] EP-5: The bounded ledger and the verdict document
-- [ ] EP-5: The invariant checker library
-- [ ] EP-5: Process control for worker roles
-- [ ] EP-5: PostgreSQL, network and wake-up fault injectors
-- [ ] EP-5: Model-based testing support with replayable seeds
+- [x] EP-5: The bounded ledger and the verdict document
+- [x] EP-5: The invariant checker library
+- [x] EP-5: Process control for worker roles
+- [x] EP-5: PostgreSQL, network and wake-up fault injectors
+- [x] EP-5: Model-based testing support with replayable seeds
 - [ ] EP-6: The leak verdict over sampled series
 - [ ] EP-6: The stall watchdog with thread dumps and lock graphs
 - [ ] EP-6: Profiling build variants and bounded event logs
@@ -307,6 +312,7 @@ Drafting the child plans against real source corrected the research in ways that
 - The pinned nixpkgs has no Redpanda server package and the Seihou Redpanda option is macOS-only, so the local broker is Apache Kafka in KRaft mode; on cells Redpanda runs as a digest-pinned container inside the machine image, because cell machines have no internet egress.
 - Nix has no released Google Cloud Storage store, so payloads travel as `nix-store --export` bundles; and a retention-locked results bucket cannot hold lease heartbeats, so the cell has a second, mutable control bucket.
 - `ephemeral-pg` 0.3.1.0 restarts a server from its default configuration rather than the original one, and listens on a Unix socket unless told otherwise; the kernel therefore owns re-applying settings across a restart and enabling a TCP listener for the fault proxy.
+- PostgreSQL fault targeting must query `pg_stat_activity` through the run database, not the administrative/template connection: its `current_database()` filter otherwise hides every scenario client. Lock healing must terminate the named backend as well as its client because a backend inside `pg_sleep` may not notice a killed client until the query returns.
 - The `haskell-nix` revision the Seihou flake module pins locks keiro 0.16 and kiroku-store 0.8.0.0 with version bounds stripped, so a Nix build does not reproduce the cabal cohort by itself; EP-17's payload therefore uses a local cohort overlay plus an identity gate, and the solver plan hash is undefined under Nix (the cohort identity gains an optional resolver member).
 - The cell's PostgreSQL role as first drafted could not create databases and was trusted on one database only, while the kernel's external mode creates one fresh database per run; EP-16 now grants `CREATEDB` and subnet-wide access and its reset drops every database the role owns.
 - A scenario has one tier but every soak must run both locally and on a cell; all coverage plans converged on registering each soak twice, and the suffix was normalised to `-reduced`.
@@ -406,6 +412,8 @@ docs/adr/. Keep task-local execution and coordination details here.
 - EP-2 established the executable verification protocol consumed by every later child plan: validated layer bundles, scenario selection, typed knobs and dimensions, effective run documents, a real PostgreSQL 17/18 environment with one composed migration ledger, child-process worker roles, immutable evidence directories, canonical compatibility keys, and schema-validated results. Seven self-test scenarios exercise all outcomes, known defects, both PostgreSQL durability arms, and worker IPC. The completion gate is `just verify`: 29 core examples, 3 CLI examples, 4 runtime link-proof examples, strict ADR validation, golden/fresh schema validation, and the full self-test recipe all pass. EP-3, EP-4, and EP-5 are now unblocked against concrete kernel APIs rather than document-only contracts.
 
 - EP-3 established the change-aware planning and resumable execution protocol. A checked component graph and cohort/Git change detectors select transitive dependents with machine-readable reasons; deterministic matrix expansion applies dimensions, knobs, trials, tiers and budgets; and five named suites encode common intentions. `kenshou execute` isolates runs in child processes, writes atomic plan summaries, preserves pre-assigned identities, and resumes interrupted entries with fresh UUIDv7 attempts after verifying the plan digest. Acceptance includes 51 core examples, 3 CLI examples, schema and graph checks, passing and failing real plans, and an interrupt/resume exercise. The run-plan and summary formats are now ready for EP-4's comparisons, EP-17's cell transport and EP-18's completeness checks.
+
+- EP-5 established the independent correctness-evidence toolkit. `kenshou-check` contributes rotating per-incarnation ledgers, bounded external sorts, versioned verdicts, nine non-vacuous invariant folds, durable-truth SQL oracles, real process-group crash control, PostgreSQL and TCP fault injectors, virtual/database clock controls, seeded Hedgehog reports and a memoized linearizability search. Five registered self-tests exercise clean and doctored ledgers, `SIGKILL` restart, backend termination plus durable postmaster recovery, proxy latency/stall/blackhole/reset, and deterministic counter-example replay. Acceptance includes 33 package examples, live schema validation and the repository-wide `just verify` gate. ADR-8 distinguishes contract from implementation invariants; ADR-9 defines crashes as external process or backend termination.
 
 
 Revision note (2026-09-20): Updated the initiative and affected CLI plans to adopt the relevant `mori://shinzui/haskell-jitsurei` patterns. EP-1 now establishes Git-aware version identity; EP-2 owns grouped help, embedded terminal-aware topics, parser-derived completions, explicit stdin document inputs and stdout/stderr discipline; later command plans consume that seam. Legacy or interaction-heavy patterns that do not fit kenshou were explicitly excluded.

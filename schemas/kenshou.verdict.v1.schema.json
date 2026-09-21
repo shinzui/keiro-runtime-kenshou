@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/kenshou.verdict.v1.schema.json",
+  "title": "Kenshou invariant verdict v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "runId", "scenario", "checker", "invariant", "class", "status", "blocking", "summary", "counts", "parameters", "counterExamples", "counterExamplesTruncated", "inputs", "checkedAt", "durationMillis"],
+  "properties": {
+    "schema": {"const": "kenshou.verdict/v1"},
+    "runId": {"type": "string", "format": "uuid"},
+    "scenario": {"type": "string"},
+    "checker": {"type": "string", "minLength": 1},
+    "invariant": {"type": "string", "minLength": 1},
+    "class": {"enum": ["contract", "implementation"]},
+    "status": {"enum": ["held", "violated", "not-evaluated"]},
+    "blocking": {"type": "boolean"},
+    "reason": {"type": ["string", "null"]},
+    "summary": {"type": "string"},
+    "counts": {"type": "object", "required": ["examined", "violations"], "additionalProperties": {"type": "integer"}},
+    "parameters": {},
+    "counterExamples": {"type": "array"},
+    "counterExamplesTruncated": {"type": "boolean"},
+    "inputs": {"type": "array", "items": {"type": "object", "required": ["path", "sha256"], "properties": {"path": {"type": "string"}, "sha256": {"type": "string"}}, "additionalProperties": false}},
+    "replay": {"type": ["object", "null"]},
+    "checkedAt": {"type": "string", "format": "date-time"},
+    "durationMillis": {"type": "integer", "minimum": 0}
+  }
+}

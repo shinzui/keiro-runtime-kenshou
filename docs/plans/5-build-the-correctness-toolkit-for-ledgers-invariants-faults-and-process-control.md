@@ -11,6 +11,12 @@ provenance:
     model: "claude-fable-5-1"
     harness: "claude-code"
     at: 2026-09-20T17:15:35Z
+  revisions:
+    - model: "gpt-5.6-sol"
+      harness: "codex-cli"
+      at: 2026-09-21T16:23:22Z
+      mode: "implement"
+      note: "Started implementation and verified the EP-1/EP-2 foundation gate."
 ---
 
 # Build the correctness toolkit for ledgers, invariants, faults and process control
@@ -33,53 +39,61 @@ You can see it working without any runtime library involved. Five self-test scen
 
 Milestone 1 — The bounded ledger and the verdict document
 
-- [ ] Confirm the state expected from `docs/plans/1-bootstrap-the-kenshou-repository-and-pin-the-runtime-cohort.md` and `docs/plans/2-build-the-harness-kernel-for-scenarios-dimensions-run-specs-and-results.md` (commands in Concrete Steps, step 0).
-- [ ] Create `kenshou-check/kenshou-check.cabal` with the library, the `kenshou-check-test` suite and the `kenshou-check-fixture-worker` test helper executable.
-- [ ] `Kenshou.Check.Fact`: the fact record, its kinds, process identity, JSON codec with a round-trip property.
-- [ ] `Kenshou.Check.Ledger`: per-incarnation writer with header line, segment rotation, buffered and durable recording.
-- [ ] `Kenshou.Check.Ledger.Read`: streaming reader with torn-tail tolerance; `Kenshou.Check.Ledger.Sort`: bounded external sort with capped merge fan-in.
-- [ ] `Kenshou.Check.Verdict`: the `kenshou.verdict/v1` document, writer, outcome rule; `schemas/` entries for the verdict and the ledger fact; golden fixtures.
-- [ ] `Kenshou.Check.Scenario`: the single adapter onto the kernel's `RunContext` (`withCheck`, `finishWithVerdicts`).
-- [ ] `Kenshou.Check.Selftest.bundle` registered in `kenshou-cli`; first form of `selftest/check/correctness/ledger-detects-loss-dup-reorder` (ledger integrity only).
-- [ ] Unit tests: codec, rotation, torn tail, sort equals in-memory sort, memory bound.
+- [x] (2026-09-21 16:22Z) Confirm the state expected from `docs/plans/1-bootstrap-the-kenshou-repository-and-pin-the-runtime-cohort.md` and `docs/plans/2-build-the-harness-kernel-for-scenarios-dimensions-run-specs-and-results.md` (commands in Concrete Steps, step 0).
+- [x] (2026-09-21 17:35Z) Create `kenshou-check/kenshou-check.cabal` with the library, the `kenshou-check-test` suite and the `kenshou-check-fixture-worker` test helper executable.
+- [x] (2026-09-21 17:35Z) `Kenshou.Check.Fact`: the fact record, its kinds, process identity, JSON codec with a round-trip property.
+- [x] (2026-09-21 17:35Z) `Kenshou.Check.Ledger`: per-incarnation writer with header line, segment rotation, buffered and durable recording.
+- [x] (2026-09-21 17:35Z) `Kenshou.Check.Ledger.Read`: streaming reader with torn-tail tolerance; `Kenshou.Check.Ledger.Sort`: bounded external sort with capped merge fan-in.
+- [x] (2026-09-21 17:35Z) `Kenshou.Check.Verdict`: the `kenshou.verdict/v1` document, writer, outcome rule; `schemas/` entries for the verdict and the ledger fact; golden fixtures.
+- [x] (2026-09-21 17:35Z) `Kenshou.Check.Scenario`: the single adapter onto the kernel's `RunContext` (`withCheck`, `finishWithVerdicts`).
+- [x] (2026-09-21 17:35Z) `Kenshou.Check.Selftest.bundle` registered in `kenshou-cli`; first form of `selftest/check/correctness/ledger-detects-loss-dup-reorder` (ledger integrity only).
+- [x] (2026-09-21 17:35Z) Unit tests: codec, rotation, torn tail, sort equals in-memory sort, memory bound.
 
 Milestone 2 — The invariant checker library
 
-- [ ] `Kenshou.Check.Window`: disturbance windows and the clock-skew bound.
-- [ ] `Kenshou.Check.Invariant`: the `Checker` fold abstraction and `runCheckers` (one pass per required sort order).
-- [ ] The nine ledger checkers: no-loss, duplicates-within-windows, per-key order, global order, gapless positions, exactly-N effects, eventual quiescence, monotonic checkpoints, disjoint ownership.
-- [ ] `Kenshou.Check.Oracle` with `.Kiroku`, `.Keiro`, `.Pgmq`: named SQL against the runtime's own tables, the oracle sampler, and the ledger-versus-oracle reconciliation.
-- [ ] Complete `selftest/check/correctness/ledger-detects-loss-dup-reorder` with the doctored ledgers; unit tests per checker (held case, violated case, vacuous case).
-- [ ] Write ADR "invariants are labelled contract or implementation; only contract invariants block".
+- [x] (2026-09-21 17:35Z) `Kenshou.Check.Window`: disturbance windows and the clock-skew bound.
+- [x] (2026-09-21 17:35Z) `Kenshou.Check.Invariant`: the `Checker` fold abstraction and `runCheckers` (one pass per required sort order).
+- [x] (2026-09-21 17:35Z) The nine ledger checkers: no-loss, duplicates-within-windows, per-key order, global order, gapless positions, exactly-N effects, eventual quiescence, monotonic checkpoints, disjoint ownership.
+- [x] (2026-09-21 17:35Z) `Kenshou.Check.Oracle` with `.Kiroku`, `.Keiro`, `.Pgmq`: named SQL against the runtime's own tables, the oracle sampler, and the ledger-versus-oracle reconciliation.
+- [x] (2026-09-21 17:35Z) Complete `selftest/check/correctness/ledger-detects-loss-dup-reorder` with the doctored ledgers; unit tests per checker (held case, violated case, vacuous case).
+- [x] (2026-09-21 17:35Z) Write ADR "invariants are labelled contract or implementation; only contract invariants block".
 
 Milestone 3 — Process control for worker roles
 
-- [ ] `Kenshou.Check.Process`: supervisor, spawn in a process group, control channel, log capture into `logs/`.
-- [ ] Signals (`SIGTERM`, `SIGKILL`, `SIGSTOP`, `SIGCONT`), graceful-stop escalation, restart loop with backoff, crash-window bookkeeping as disturbance facts.
-- [ ] Orphan reaping: process-group kill on exit, the control-channel end-of-file rule in the worker, the pid registry and sweep.
-- [ ] Worker role `selftest-check-consumer` and scenario `selftest/check/concurrency/kill-and-restart-worker` (honest phase and buggy phase).
-- [ ] Unit tests driven by `kenshou-check-fixture-worker`.
-- [ ] Write ADR "crash means SIGKILL of a process or termination of a backend, never a thrown exception".
+- [x] (2026-09-21 17:35Z) `Kenshou.Check.Process`: supervisor, spawn in a process group, control channel, log capture into `logs/`.
+- [x] (2026-09-21 17:35Z) Signals (`SIGTERM`, `SIGKILL`, `SIGSTOP`, `SIGCONT`), graceful-stop escalation, restart loop with backoff, crash-window bookkeeping as disturbance facts.
+- [x] (2026-09-21 17:35Z) Orphan reaping: process-group kill on exit, the control-channel end-of-file rule in the worker, the pid registry and sweep.
+- [x] (2026-09-21 17:35Z) Worker role `selftest-check-consumer` and scenario `selftest/check/concurrency/kill-and-restart-worker` (honest phase and buggy phase).
+- [x] (2026-09-21 17:35Z) Unit tests driven by `kenshou-check-fixture-worker`.
+- [x] (2026-09-21 17:35Z) Write ADR "crash means SIGKILL of a process or termination of a backend, never a thrown exception".
 
 Milestone 4 — PostgreSQL, network and wake-up fault injectors
 
-- [ ] `Kenshou.Check.Fault`: the `Fault` interface, the schedule DSL (`at`, `every`, `during`, `onMark`, `holding`), the schedule runner that records disturbance windows.
-- [ ] `Kenshou.Check.Fault.Postgres`: backend selection and termination, postmaster stop, crash and restart, lock holder, connection hog, per-process `PGAPPNAME` and `PGOPTIONS` helpers.
-- [ ] `Kenshou.Check.Fault.Network`: the in-process TCP proxy with latency, throttle, stall, blackhole, reset and refuse modes.
-- [ ] `Kenshou.Check.Fault.Wake`, `.Time`, `.Cell`: wake-up dropping, virtual `now` and row back-dating, hook-based cell-only injectors.
-- [ ] Scenarios `selftest/check/concurrency/postgres-backend-kill` and `selftest/check/concurrency/proxy-partition`; `kenshou-check/README.md` with the checker catalogue and the three clock regimes.
+- [x] (2026-09-21 17:35Z) `Kenshou.Check.Fault`: the `Fault` interface, the schedule DSL (`at`, `every`, `during`, `onMark`, `holding`), the schedule runner that records disturbance windows.
+- [x] (2026-09-21 17:35Z) `Kenshou.Check.Fault.Postgres`: backend selection and termination, postmaster stop, crash and restart, lock holder, connection hog, per-process `PGAPPNAME` and `PGOPTIONS` helpers.
+- [x] (2026-09-21 17:35Z) `Kenshou.Check.Fault.Network`: the in-process TCP proxy with latency, throttle, stall, blackhole, reset and refuse modes.
+- [x] (2026-09-21 17:35Z) `Kenshou.Check.Fault.Wake`, `.Time`, `.Cell`: wake-up dropping, virtual `now` and row back-dating, hook-based cell-only injectors.
+- [x] (2026-09-21 17:35Z) Scenarios `selftest/check/concurrency/postgres-backend-kill` and `selftest/check/concurrency/proxy-partition`; `kenshou-check/README.md` with the checker catalogue and the three clock regimes.
 
 Milestone 5 — Model-based testing support with replayable seeds
 
-- [ ] `Kenshou.Check.Model`: run a hedgehog property from a scenario with the run seed; verdict carries seed, size, shrink path, rendered counter-example and the replay command.
-- [ ] `Kenshou.Check.Model.Linearizability`: history type, the search with memoisation and a step budget, the register and append-log models, per-key decomposition.
-- [ ] Scenario `selftest/check/correctness/model-replays-counterexample`; unit tests for both models (linearizable and non-linearizable histories).
-- [ ] ADR distillation pass and Outcomes & Retrospective.
+- [x] (2026-09-21 17:35Z) `Kenshou.Check.Model`: run a hedgehog property from a scenario with the run seed; verdict carries seed, size, shrink path, rendered counter-example and the replay command.
+- [x] (2026-09-21 17:35Z) `Kenshou.Check.Model.Linearizability`: history type, the search with memoisation and a step budget, the register and append-log models, per-key decomposition.
+- [x] (2026-09-21 17:35Z) Scenario `selftest/check/correctness/model-replays-counterexample`; unit tests for both models (linearizable and non-linearizable histories).
+- [x] (2026-09-21 17:35Z) ADR distillation pass and Outcomes & Retrospective.
 
 
 ## Surprises & Discoveries
 
-(None yet.)
+- PostgreSQL backend enumeration initially used the administrative database, so
+  its `current_database()` filter could never see scenario clients. Selecting
+  through the run database fixed both targeting and the live self-test.
+- Killing the `psql` lock-holder client does not immediately interrupt a backend
+  sleeping inside a query on macOS; the lock healer must terminate the named
+  backend and then reap the client process.
+- Hedgehog 1.7 exposes deterministic report execution through
+  `Hedgehog.Internal.Runner.checkReport`; the local Mori corpus did not contain
+  Hedgehog, so the exact solver-selected 1.7 source was unpacked and inspected.
 
 
 ## Decision Log
@@ -128,6 +142,14 @@ Milestone 5 — Model-based testing support with replayable seeds
   Rationale: The problem is NP-complete; an honest "could not decide" is better than a hang or a guess.
   Date: 2026-09-20
 
+- Decision: The supervisor uses `System.Process` plus explicit POSIX process
+  groups and signals rather than adding `typed-process`.
+  Rationale: The kernel already exposes process specifications in terms of raw
+  executables, arguments and environments, while correctness depends on the
+  explicit process-group, pid, signal and reaping semantics implemented here.
+  A second process abstraction would not strengthen those guarantees.
+  Date: 2026-09-21
+
 - Decision: A fifth self-test scenario, `selftest/check/correctness/model-replays-counterexample`, is added beyond the four the MasterPlan brief named.
   Rationale: Milestone 5 would otherwise have no behaviour observable through `kenshou run`.
   Date: 2026-09-20
@@ -135,7 +157,20 @@ Milestone 5 — Model-based testing support with replayable seeds
 
 ## Outcomes & Retrospective
 
-(To be filled during and after implementation.)
+EP-5 delivered the `kenshou-check` package and registered five executable
+self-tests. The package provides rotating crash-surviving ledgers, bounded
+external sorting, versioned verdicts, nine non-vacuous invariant checkers, SQL
+oracles, process-group supervision, PostgreSQL/network/wake/time/cell faults,
+seeded Hedgehog reports, and a step-bounded memoized linearizability checker.
+
+Acceptance covers 33 package examples, schema validation of live fact and
+verdict output, real `SIGKILL` worker restart, named PostgreSQL backend
+termination, lock release, durable postmaster crash/recovery, live TCP latency,
+stall, blackhole and reset, and deterministic model replay. ADR-8 records
+contract-versus-implementation classification and ADR-9 records the external
+termination definition of a crash. The package imports no runtime library, so
+the layer plans can use the same evidence machinery without coupling their
+builds.
 
 
 ## Context and Orientation

@@ -38,10 +38,12 @@ schemas-check:
     check-jsonschema --schemafile schemas/scenario-list-v1.schema.json kenshou-core/test/golden/scenario-list.json
     jq -c . kenshou-core/test/golden/worker-messages.jsonl | while IFS= read -r line; do printf '%s\n' "$line" | check-jsonschema --schemafile schemas/worker-message-v1.schema.json -; done
     tmpdir=$(mktemp -d); trap 'rm -rf -- "$tmpdir"' EXIT; K=$(cabal list-bin kenshou); "$K" list --json > "$tmpdir/scenario-list.json"; "$K" run selftest/kernel/correctness/always-pass --out "$tmpdir/runs" >/dev/null; rundir=$(find "$tmpdir/runs" -mindepth 1 -maxdepth 1 -type d | head -1); check-jsonschema --schemafile schemas/scenario-list-v1.schema.json "$tmpdir/scenario-list.json"; check-jsonschema --schemafile schemas/run-spec-v1.schema.json "$rundir/run-spec.json"; check-jsonschema --schemafile schemas/run-result-v1.schema.json "$rundir/run-result.json"; check-jsonschema --schemafile schemas/artifact-manifest-v1.schema.json "$rundir/manifest.json"
+    tmpdir=$(mktemp -d); trap 'rm -rf -- "$tmpdir"' EXIT; K=$(cabal list-bin kenshou); "$K" run selftest/check/correctness/ledger-detects-loss-dup-reorder --set ledger.facts=1000 --out "$tmpdir" >/dev/null; rundir=$(find "$tmpdir" -mindepth 1 -maxdepth 1 -type d | head -1); check-jsonschema --schemafile schemas/kenshou.verdict.v1.schema.json "$rundir"/verdicts/*.json; jq '{"$schema": .["$schema"], "type": "array", "items": .}' schemas/kenshou.ledger-fact.v1.schema.json > "$tmpdir/ledger-array.schema.json"; jq -s 'map(select(.schema == "kenshou.ledger-fact/v1"))' "$rundir"/verdicts/ledger/*.jsonl > "$tmpdir/ledger-facts.json"; check-jsonschema --schemafile "$tmpdir/ledger-array.schema.json" "$tmpdir/ledger-facts.json"
 
 [group('verification')]
 selftest:
     tmpdir=$(mktemp -d); trap 'rm -rf -- "$tmpdir"' EXIT; K=$(cabal list-bin kenshou); "$K" run selftest/kernel/correctness/always-pass --out "$tmpdir"; "$K" run selftest/kernel/correctness/outcome --out "$tmpdir"; "$K" run selftest/kernel/correctness/known-defect --out "$tmpdir"; "$K" run selftest/kernel/correctness/postgres-roundtrip --dim pg.durability=fsync-off --out "$tmpdir"; "$K" run selftest/kernel/correctness/postgres-roundtrip --dim pg.durability=durable --out "$tmpdir"; "$K" run selftest/kernel/concurrency/worker-echo --out "$tmpdir"; set +e; "$K" run selftest/kernel/correctness/always-fail --out "$tmpdir"; fail=$?; "$K" run selftest/kernel/correctness/errors --out "$tmpdir"; errored=$?; set -e; test "$fail" = 1; test "$errored" = 4
+    tmpdir=$(mktemp -d); trap 'rm -rf -- "$tmpdir"' EXIT; K=$(cabal list-bin kenshou); "$K" run selftest/check/correctness/ledger-detects-loss-dup-reorder --set ledger.facts=1000 --out "$tmpdir"; "$K" run selftest/check/concurrency/kill-and-restart-worker --set kill.count=2 --out "$tmpdir"; "$K" run selftest/check/concurrency/postgres-backend-kill --dim pg.durability=fsync-off --out "$tmpdir"; "$K" run selftest/check/concurrency/postgres-backend-kill --dim pg.durability=durable --out "$tmpdir"; "$K" run selftest/check/concurrency/proxy-partition --out "$tmpdir"; "$K" run selftest/check/correctness/model-replays-counterexample --set model.tests=20 --out "$tmpdir"
 
 [group('haskell')]
 haskell-build:
@@ -51,6 +53,7 @@ haskell-build:
 haskell-test:
     cabal test kenshou-core:tests
     cabal test kenshou-measure:test:kenshou-measure-test
+    cabal test kenshou-check:test:kenshou-check-test
     cabal test kenshou-cli:test:kenshou-cli-test
 
 [group('haskell')]
