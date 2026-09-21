@@ -62,7 +62,7 @@ Milestone 2 — Pin the released and head cohorts and print the resolved cohort 
 - [x] (2026-09-21T03:10:43Z) Implement `Kenshou.Core.Cohort` (descriptor, plan reader, identity, plan hash, consistency check) with `kenshou-core-test`.
 - [x] (2026-09-21T03:10:43Z) Create `kenshou-cli` with Git-aware `kenshou --version`, `kenshou cohort show` and `kenshou cohort check`, usage errors exiting 2, and `kenshou-cli-test`.
 - [x] (2026-09-21T03:10:43Z) Add the `use-cohort`, `cohort-show`, `cohort-check` and `cohort-assert-released` recipes; prove a switch to `head` and back changes the printed identity.
-- [ ] Commit.
+- [x] (2026-09-21T03:22:00Z) Commit (`c524951`) and verify clean Cabal and Nix builds both report revision `c524951`.
 
 Milestone 3 — Prove the whole cohort links and migrates in one build
 
@@ -96,6 +96,8 @@ implementation. Provide concise evidence.
 - The `mori://shinzui/shibuya` master revision advanced after the plan was drafted. Re-resolving its upstream branch selected `6461c74cda5235e292d221f36621d09910b3b6f0`; the descriptor and source-repository stanza use that immutable revision rather than the stale draft value.
 
 - The pinned nixpkgs package set contains `optparse-applicative-0.18.1.0`, while the CLI interaction standard requires the 0.19 API. The already-locked extension from `mori://shinzui/haskell-nix` supplies its audited 0.19 package; composing that extension into the GHC 9.12.4 package set made the Nix build and its tests pass without weakening Cabal bounds.
+
+- `githash` did not re-run Template Haskell after a commit that changed only Git metadata, so the existing Cabal artifact initially retained revision `8aff79a`; `cabal clean` followed by a build reported the current clean revision `c524951`, matching the Nix build. Clean checkouts and CI are correct, while a long-lived local build tree may need a clean rebuild after a HEAD-only change when accurate `--version` output matters.
 
 
 ## Decision Log
@@ -184,7 +186,7 @@ this section into docs/adr/. Keep task-local execution details here.
 
 - Milestone 1 produced the locked Nix shell and the first buildable `kenshou-core` package. The shell reports GHC 9.12.4, cabal 3.16.1.0, PostgreSQL 18.6 on `PATH`, PostgreSQL 17.11 through `KENSHOU_PG17_BIN`, and librdkafka 2.15.0; `cabal build all`, a second `nix fmt -- --fail-on-change`, and `just process-compose-check` all pass. The generated commit hook also rejected a real commit attempt whose subject contained a literal `\n` escape.
 
-- Milestone 2 now has self-contained released and head cohort definitions, schema-validated descriptors, deterministic resolved identities, explicit mismatch diagnostics, and a Git-aware CLI built by both Cabal and Nix. Switching through the recipe changes the shibuya and hw-kafka-client sources to their pinned git revisions and back; the core and CLI suites pass 9 examples, an unknown cohort command exits 2, and a dirty Nix source reports `kenshou v0.1.0.0 (dirty)` instead of a stale revision. The clean-commit equality check remains the final acceptance step after this milestone is committed.
+- Milestone 2 now has self-contained released and head cohort definitions, schema-validated descriptors, deterministic resolved identities, explicit mismatch diagnostics, and a Git-aware CLI built by both Cabal and Nix. Switching through the recipe changes the shibuya and hw-kafka-client sources to their pinned git revisions and back; the core and CLI suites pass 9 examples, an unknown cohort command exits 2, and a dirty Nix source reports `kenshou v0.1.0.0 (dirty)` instead of a stale revision. From clean builds at commit `c524951`, both the Cabal and Nix executables report `kenshou v0.1.0.0 (c524951)`.
 
 
 ## Context and Orientation
