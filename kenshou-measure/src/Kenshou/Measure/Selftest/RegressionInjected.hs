@@ -25,7 +25,7 @@ regressionInjectedScenario :: Scenario
 regressionInjectedScenario =
   Scenario
     { id = either (error . show) id (parseScenarioId "selftest/measure/benchmark/regression-injected"),
-      revision = 1,
+      revision = 2,
       summary = "Produces controlled slowdown and noise for comparator verification.",
       tier = TierSmoke,
       placement = PlaceEither,
@@ -50,7 +50,8 @@ runRegressionInjected context = case (loadModelFromKnobs context.knobs, measureC
         operation = Operation (OpName "work") (\_ _ -> threadDelay delay >> pure (OpOk 1))
     (_, report) <- withMeasurement context config (\measurement -> runLoad measurement model operation)
     let count = case report.recorder.operations of operationReport : _ -> sum [successes | (successes, _, _) <- Map.elems operationReport.phaseCounts]; [] -> 0
-    pure (if count >= 1_000 then passed else failedWith ["insufficient-samples"] ("steady samples=" <> Text.pack (show count)))
+        scenarioReport = if count >= 1_000 then passed else failedWith ["insufficient-samples"] ("steady samples=" <> Text.pack (show count))
+    pure (scenarioReport {outcome = measuredOutcome report scenarioReport.outcome})
 
 noiseFactor :: Word64 -> Double
 noiseFactor seed =

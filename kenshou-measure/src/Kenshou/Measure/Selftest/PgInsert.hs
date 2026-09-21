@@ -34,7 +34,7 @@ pgInsertScenario :: Scenario
 pgInsertScenario =
   Scenario
     { id = either (error . show) id (parseScenarioId "selftest/measure/benchmark/pg-insert"),
-      revision = 1,
+      revision = 2,
       summary = "Verifies runtime, process, host, and PostgreSQL measurement series.",
       tier = TierSmoke,
       placement = PlaceEither,
@@ -85,7 +85,8 @@ assess context report counted = do
         [] -> 0
       rowCount = either (const Nothing) (Just . fromIntegral) counted
       failures = ["row-count" | rowCount /= Just successful] <> ["series-rows" | not seriesOk]
-  pure (if null failures then passed else failedWith failures ("row count=" <> showText rowCount <> ", recorded successes=" <> showText successful))
+      scenarioReport = if null failures then passed else failedWith failures ("row count=" <> showText rowCount <> ", recorded successes=" <> showText successful)
+  pure (scenarioReport {outcome = measuredOutcome report scenarioReport.outcome})
   where
     expectedSeries = ["sampler.csv", "rts.csv", "proc.csv", "load.csv", "pg-activity.csv", "pg-checkpointer.csv", "pg-wal.csv", "pg-database.csv", "pg-relations.csv", "pg-statements.csv"]
     hasRows file = do

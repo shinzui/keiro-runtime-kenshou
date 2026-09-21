@@ -10,6 +10,7 @@ category: Testing
 build-type: Simple
 tested-with: ghc >=9.12 && <9.13
 extra-source-files:
+  test/fixtures/health-notice.json
   test/fixtures/proc/host-stat.txt
   test/fixtures/proc/loadavg.txt
   test/fixtures/proc/meminfo.txt
@@ -48,6 +49,7 @@ library
     Kenshou.Measure.Compare.Compatibility
     Kenshou.Measure.Compare.Ordering
     Kenshou.Measure.Compare.Policy
+    Kenshou.Measure.Health
     Kenshou.Measure.Histogram
     Kenshou.Measure.Histogram.Codec
     Kenshou.Measure.Knobs
@@ -88,6 +90,7 @@ library
     kenshou-core,
     optparse-applicative >=0.19 && <0.20,
     primitive >=0.9 && <0.10,
+    process >=1.6 && <1.7,
     splitmix >=0.1 && <0.2,
     stm,
     text >=2.1 && <2.2,
@@ -112,6 +115,7 @@ test-suite kenshou-measure-test
     Kenshou.Measure.SamplesSpec
 
   build-depends:
+    aeson,
     base >=4.21 && <4.22,
     bytestring,
     directory,
@@ -119,6 +123,7 @@ test-suite kenshou-measure-test
     hedgehog >=1.4 && <1.8,
     hspec >=2.11 && <2.12,
     hspec-hedgehog >=0.0 && <0.4,
+    kenshou-core,
     kenshou-measure,
     splitmix >=0.1 && <0.2,
     temporary,

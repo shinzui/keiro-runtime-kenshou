@@ -89,12 +89,12 @@ Milestone 4 — Summaries and paired comparison with verdicts
 
 Milestone 5 — Health gates that separate infrastructure trouble from regressions
 
-- [ ] `Kenshou.Measure.Health`: observation type, severity mapping to outcomes, gate evaluation over series and load reports.
-- [ ] Gates: driver CPU saturation, CPU steal, open-loop backlog growth, checkpoint-inside-window annotation, clock anomalies and sampler lateness, recorder back-pressure, insufficient samples.
-- [ ] Host-maintenance notice hook: `KENSHOU_HEALTH_NOTICES` JSON-lines file, `kenshou.health-notice/v1` schema.
-- [ ] Comparison integration: hard observations give `infrastructure-failure`, soft observations and checkpoint asymmetry give `inconclusive`, never `regression`.
-- [ ] `selftest.inject` knob on the sleep-service scenario; demonstrate exit codes 3 and 4 for the injected conditions.
-- [ ] ADR work: create the comparison-evidence ADR, contribute to the measurement-channel ADR and the protocol ADR, validate the bundle; final `just verify`.
+- [x] (2026-09-21 16:18Z) `Kenshou.Measure.Health`: observation type, severity mapping to outcomes, and gate evaluation from persisted run artifacts.
+- [x] (2026-09-21 16:18Z) Gates: driver CPU saturation, CPU steal, open-loop backlog growth, checkpoint-inside-window annotation, clock anomalies and sampler lateness, recorder back-pressure, insufficient samples.
+- [x] (2026-09-21 16:18Z) Host-maintenance notice hook: `KENSHOU_HEALTH_NOTICES` JSON-lines file, `kenshou.health-notice/v1` schema, and capture into the sealed run directory.
+- [x] (2026-09-21 16:18Z) Comparison integration: hard observations give `infrastructure-failure`, soft observations and checkpoint asymmetry give `inconclusive`, never `regression`.
+- [x] (2026-09-21 16:18Z) `selftest.inject` knob on the sleep-service scenario; demonstrated backlog/3, process-pause/4, and maintenance-notice/4 with the expected gate names.
+- [x] (2026-09-21 16:18Z) ADR work: created the comparison-evidence and independent-measurement-channel ADRs, extended the protocol ADR, validated the bundle, and passed `just verify`.
 
 
 ## Surprises & Discoveries
@@ -106,6 +106,8 @@ Milestone 5 — Health gates that separate infrastructure trouble from regressio
 - The kernel enforces its completed protocol rule that PostgreSQL benchmark scenarios may advertise only durable operation, so the draft's request for an `fsync-off` arm on `selftest/measure/benchmark/pg-insert` cannot be represented in the registered scenario. The selftest therefore supports `pg.durability=durable`; Milestone 4 tests exploratory grading and refusal directly from run documents instead of weakening the kernel invariant.
 - Full-duration `pg-insert` runs passed on PostgreSQL 17 at `/tmp/kenshou-ep4-m3-pg17/01a0c493-fc93-707b-8620-cc71c2d0c0e1` and PostgreSQL 18 at `/tmp/kenshou-ep4-m3-pg18-load-series/01a0c496-f07d-73c7-9e64-8cb210f7868c`. Each PostgreSQL series had 23 or more lines, `pg-activity.csv` contained `kenshou-selftest-writer` and excluded `kenshou-sampler`, steady RTS rows contained derived `live_bytes_major_mean` values, and the manifest included every emitted CSV. The final PostgreSQL 18 run inserted and recorded 780,959 rows and also retained four phase-boundary rows in `series/load.csv`.
 - The Milestone 4 live acceptance corpus used distinct seeds for all paired trials. The injected slowdown produced `regression` with exit 1 and a median-latency ratio of about 1.48; equal arms produced `pass` with exit 0 and a ratio of about 1.00; mixed fast and slow arms produced `inconclusive` with exit 3. Repeating the regression comparison produced byte-identical `metrics` objects, and the emitted measurement, policy and comparison documents all passed their JSON Schemas. Declaring the wrong varying axis was rejected with exit 2 before statistical comparison.
+- Health evaluation had to be reproducible by `kenshou summarize`, so it derives gates from the persisted CSV, sample metadata and run specification rather than from in-memory reports. Host notices are copied into `health-notices.jsonl` inside the run and declared in the manifest. The maintenance run still passed `summarize --verify` after `KENSHOU_HEALTH_NOTICES` was removed.
+- The live health injections produced the intended evidence: backlog reached 22.80 seconds of lag and ended inconclusive with soft `open-loop-backlog`; the eight-second whole-process stop produced 8.03 seconds of sampler lateness and ended infrastructure-failure with hard `clock-anomaly`; the captured hard maintenance notice ended infrastructure-failure with `host-notice`.
 
 
 ## Decision Log
@@ -165,7 +167,27 @@ Milestone 5 — Health gates that separate infrastructure trouble from regressio
 
 ## Outcomes & Retrospective
 
-(To be filled during and after implementation.)
+The measurement toolkit now supplies monotonic intended-start latency recording,
+bounded histograms and retained raw samples, closed and open load generation,
+runtime/process/host/PostgreSQL series, reproducible summaries, paired comparison,
+and health-aware verdicts through one scenario-facing session API. The three
+self-test scenarios prove coordinated-omission correction, deterministic
+regression classification, PostgreSQL 17/18 sampling, and every health exit path.
+
+The implementation completed all five milestones in six Conventional Commits.
+`kenshou-measure-test` has 29 focused examples including property tests and the
+ten-million-record cost check. Full live acceptance covered all command exit
+codes, untouched/tampered/truncated summary verification, deterministic
+comparison metrics, schema validation, both supported PostgreSQL versions, and
+the three health injections. The repository-wide `just verify` passed, and the
+recipe now runs the measurement test suite explicitly.
+
+Two draft details were adjusted without weakening the contracts. The kernel
+already forbids fsync-off benchmark scenarios, so exploratory grading was tested
+from run documents rather than by registering an invalid PostgreSQL benchmark
+arm. Health gates read sealed files so later summary verification can reproduce
+the exact measurement section; this also gives remote-cell and evidence plans a
+stable artifact boundary.
 
 
 ## Context and Orientation

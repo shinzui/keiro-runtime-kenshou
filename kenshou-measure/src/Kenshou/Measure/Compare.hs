@@ -6,6 +6,7 @@ module Kenshou.Measure.Compare
     CompareError (..),
     compareRuns,
     compareMetricPairs,
+    decideVerdict,
     verdictExitCode,
   )
 where
@@ -26,6 +27,7 @@ import Kenshou.Core.Id (newRunId, renderRunId)
 import Kenshou.Measure.Compare.Compatibility
 import Kenshou.Measure.Compare.Ordering
 import Kenshou.Measure.Compare.Policy
+import Kenshou.Measure.Health
 import Kenshou.Measure.Metrics
 import Kenshou.Measure.Stats
 import Kenshou.Measure.Summary
@@ -124,21 +126,23 @@ compareRuns policy axes baselineDirs candidateDirs
           let referenceFingerprint = maybe Null (.fingerprint) (headMay baselines)
               environmentChanged = any ((/= referenceFingerprint) . (.fingerprint)) (tailSafe baselines <> candidates)
               badOutcomes = any ((`elem` ["errored", "infrastructure-failure"]) . (.outcome)) (baselines <> candidates)
+              hardHealth = any (hasSeverity Hard . (.summary)) (baselines <> candidates)
+              softHealth = any (hasSeverity Soft . (.summary)) (baselines <> candidates)
+              checkpointAsymmetry = any (uncurry (checkpointDiffers policy.maxCheckpointAsymmetry)) (zip baselines candidates)
               metricComparisons = compareMetrics policy baselines candidates
               interleaving = validateInterleaving (catMaybes (concat (zipWith trialRows [0 ..] (zip baselines candidates))))
               lowGrade = any ((/= policy.requireGrade) . (.grade) . (.summary)) (baselines <> candidates)
               reasons =
                 ["machine profiles differ" | environmentChanged]
                   <> ["an input run has an infrastructure outcome" | badOutcomes]
+                  <> ["an input run has a hard health observation" | hardHealth]
                   <> ["fewer than the required number of pairs" | length baselines < policy.minimumPairs]
                   <> ["runs are not interleaved" | policy.requireInterleaving && either (const True) (const False) interleaving]
                   <> ["an input run is below the required evidence grade" | lowGrade]
+                  <> ["an input run has a soft health observation" | softHealth]
+                  <> ["checkpoint overlap differs too much within a pair" | checkpointAsymmetry]
               statuses = fmap (.status) (Map.elems metricComparisons)
-              verdict
-                | environmentChanged || badOutcomes = VerdictInfrastructureFailure
-                | MetricRegression `elem` statuses = VerdictRegression
-                | not (null reasons) || null statuses || MetricInconclusive `elem` statuses = VerdictInconclusive
-                | otherwise = VerdictPass
+              verdict = decideVerdict (environmentChanged || badOutcomes || hardHealth) reasons statuses
           pure (Right (Comparison identifier policy (toList axes) (length baselines) metricComparisons reasons verdict))
 
 loadRun :: FilePath -> IO (Either CompareError RunData)
@@ -211,6 +215,26 @@ compareMetricPairs policy name unit rule pairedValues =
     adverseRatio HigherIsBetter (baseline, candidate) = baseline / max 1e-12 candidate
     adverseDelta LowerIsBetter (baseline, candidate) = candidate - baseline
     adverseDelta HigherIsBetter (baseline, candidate) = baseline - candidate
+
+hasSeverity :: Severity -> MeasurementSummary -> Bool
+hasSeverity wanted summary = any ((== wanted) . (.severity)) summary.health
+
+checkpointDiffers :: Double -> RunData -> RunData -> Bool
+checkpointDiffers limit baseline candidate = abs (checkpointOverlap baseline.summary - checkpointOverlap candidate.summary) > limit
+
+checkpointOverlap :: MeasurementSummary -> Double
+checkpointOverlap summary = fromMaybe 0 do
+  health <- find ((== "checkpoint-in-window") . (.gate)) summary.health
+  case health.evidence of
+    Object value -> case KeyMap.lookup "overlapFraction" value of Just (Number number) -> Just (realToFrac number); _ -> Nothing
+    _ -> Nothing
+
+decideVerdict :: Bool -> [Text] -> [MetricStatus] -> Verdict
+decideVerdict infrastructureIssue reasons statuses
+  | infrastructureIssue = VerdictInfrastructureFailure
+  | not (null reasons) || null statuses || MetricInconclusive `elem` statuses = VerdictInconclusive
+  | MetricRegression `elem` statuses = VerdictRegression
+  | otherwise = VerdictPass
 
 trialRows :: Int -> (RunData, RunData) -> [Maybe (Arm, Int, UTCTime)]
 trialRows pair (baseline, candidate) = [fmap (Baseline,pair,) baseline.startedAt, fmap (Candidate,pair,) candidate.startedAt]

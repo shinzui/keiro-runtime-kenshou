@@ -11,7 +11,22 @@
     "window": {"type": "object", "required": ["steadyStartMonoNs", "steadyEndMonoNs", "steadySeconds"]},
     "ops": {"type": "object"},
     "metrics": {"type": "object", "additionalProperties": {"type": "object", "required": ["value", "unit"], "properties": {"value": {"type": "number"}, "unit": {"type": "string"}}}},
-    "health": {"type": "array"}
+    "health": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["gate", "severity", "fromMonoNs", "toMonoNs", "detail", "evidence"],
+        "properties": {
+          "gate": {"type": "string"},
+          "severity": {"enum": ["info", "soft", "hard"]},
+          "fromMonoNs": {"type": "integer", "minimum": 0},
+          "toMonoNs": {"type": "integer", "minimum": 0},
+          "detail": {"type": "string"},
+          "evidence": {}
+        },
+        "additionalProperties": false
+      }
+    }
   },
   "additionalProperties": false
 }

@@ -12,11 +12,12 @@ module Kenshou.Measure.Session
     measurementConfig,
     measurementEnv,
     appendLoadReport,
+    measuredOutcome,
   )
 where
 
 import Control.Exception (SomeException, mask, throwIO, try)
-import Control.Monad (when)
+import Control.Monad (forM_, when)
 import Data.Aeson (Value, toJSON)
 import Data.IORef
 import Data.Text (Text)
@@ -28,8 +29,10 @@ import Kenshou.Core.Id (Kind, ScenarioId (..), unSeed)
 import Kenshou.Core.Knob (ResolvedKnobs)
 import Kenshou.Core.Knob qualified as Knob
 import Kenshou.Core.Log qualified as Log
+import Kenshou.Core.Outcome (Outcome (..))
 import Kenshou.Core.Phase qualified as Core
 import Kenshou.Measure.Clock
+import Kenshou.Measure.Health
 import Kenshou.Measure.Histogram (HistogramConfig (..), defaultHistogramConfig)
 import Kenshou.Measure.Load.Types (LoadReport)
 import Kenshou.Measure.Phase
@@ -72,7 +75,8 @@ data MeasurementReport = MeasurementReport
   { recorder :: RecorderReport,
     loads :: [LoadReport],
     samplers :: SamplerReport,
-    summary :: MeasurementSummary
+    summary :: MeasurementSummary,
+    health :: [HealthObservation]
   }
 
 measureEnvFromRunContext :: Core.RunContext -> IO MeasureEnv
@@ -180,10 +184,12 @@ withMeasurement context config action = mask \restore -> do
   case result of
     Left exception -> throwIO (exception :: SomeException)
     Right value -> do
+      capturedNotices <- captureHealthNotices env.runDir
+      forM_ capturedNotices (\path -> env.declareArtifact path "application/x-ndjson")
       summarized <- summarizeRunDir env.runDir
       summary <- either (ioError . userError . show) pure summarized
       env.registerSection "measurements" (toJSON summary)
-      pure (value, MeasurementReport recorderReport loads samplerReport summary)
+      pure (value, MeasurementReport recorderReport loads samplerReport summary summary.health)
 
 measurementPhaseClock :: Measurement -> PhaseClock
 measurementPhaseClock (Measurement _ phaseClock _ _ _) = phaseClock
@@ -199,6 +205,12 @@ measurementEnv (Measurement env _ _ _ _) = env
 
 appendLoadReport :: Measurement -> LoadReport -> IO ()
 appendLoadReport (Measurement _ _ _ _ loadReports) report = modifyIORef' loadReports (<> [report])
+
+measuredOutcome :: MeasurementReport -> Outcome -> Outcome
+measuredOutcome report scenarioOutcome = case healthOutcome report.health of
+  Just InfrastructureFailure -> InfrastructureFailure
+  Just Inconclusive | scenarioOutcome `elem` [Passed, Failed] -> Inconclusive
+  _ -> scenarioOutcome
 
 knobName :: Text -> Knob.KnobName
 knobName = either (error . show) id . Knob.mkKnobName

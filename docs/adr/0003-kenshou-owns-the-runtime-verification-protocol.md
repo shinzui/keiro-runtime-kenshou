@@ -2,7 +2,7 @@
 type: Architecture Decision Record
 title: Kenshou owns the runtime verification protocol
 description: The harness kernel owns versioned list, run, result, worker, and manifest documents so every layer and external runner shares one stable protocol.
-timestamp: 2026-09-21T05:00:00Z
+timestamp: 2026-09-21T16:14:01Z
 generated:
   by: process:codex
   at: "2026-09-21T05:00:00Z"
@@ -45,6 +45,14 @@ the truthful outcome and resolved cohort, and the manifest covers both plus all
 artifacts. Process exit codes are part of the protocol: 0 passed or reproduced
 non-blocking defect, 1 failed, 2 usage error, 3 inconclusive, and 4 errored or
 infrastructure failure.
+
+Analysis commands consume the same sealed protocol. `kenshou summarize`
+recomputes the versioned measurements section from retained run artifacts and
+can verify it against `run-result.json`. `kenshou compare` reads paired sealed
+run directories, checks their compatibility and evidence grade, and writes a
+separate versioned comparison document without changing either input run. Its
+pass, regression, inconclusive, and infrastructure-failure verdicts use the
+same exit-code meanings as scenario execution.
 
 ## Consequences
 

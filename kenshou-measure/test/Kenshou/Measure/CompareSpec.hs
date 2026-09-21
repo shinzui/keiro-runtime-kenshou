@@ -1,9 +1,12 @@
 module Kenshou.Measure.CompareSpec (spec) where
 
+import Data.Aeson (Value (Null))
 import Data.ByteString.Char8 qualified as ByteString
+import Kenshou.Core.Outcome (Outcome (..))
 import Kenshou.Measure.Compare
 import Kenshou.Measure.Compare.Ordering
 import Kenshou.Measure.Compare.Policy
+import Kenshou.Measure.Health
 import Kenshou.Measure.Stats
 import Test.Hspec
 
@@ -47,6 +50,17 @@ spec = do
       let result = compareMetricPairs testPolicy "latency" "ns" latencyRule [(100, 140), (100, 60), (100, 100)]
       result.status `shouldBe` MetricInconclusive
 
+    it "lets a hard health observation override a statistical regression" do
+      decideVerdict True [] [MetricRegression] `shouldBe` VerdictInfrastructureFailure
+
+    it "lets checkpoint asymmetry make a statistical regression inconclusive" do
+      decideVerdict False ["checkpoint overlap differs"] [MetricRegression] `shouldBe` VerdictInconclusive
+
+  describe "health outcomes" do
+    it "maps soft observations to inconclusive and hard observations to infrastructure failure" do
+      healthOutcome [health Soft] `shouldBe` Just Inconclusive
+      healthOutcome [health Hard] `shouldBe` Just InfrastructureFailure
+
 pairSeedsMatch :: (Eq a) => [a] -> Bool
 pairSeedsMatch [firstA, firstB, secondA, secondB, thirdA, thirdB] = firstA == firstB && secondA == secondB && thirdA == thirdB
 pairSeedsMatch _ = False
@@ -56,6 +70,9 @@ testPolicy = Policy "test" 3 0.95 1_000 42 False "benchmark" 0.5 1 []
 
 latencyRule :: MetricRule
 latencyRule = MetricRule "latency" LowerIsBetter 0.1 5
+
+health :: Severity -> HealthObservation
+health severity = HealthObservation "test" severity 0 1 "test observation" Null
 
 policyJson :: Int -> Int -> ByteString.ByteString
 policyJson pairs iterations =

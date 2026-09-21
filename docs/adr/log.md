@@ -1,6 +1,9 @@
 # Bundle Update Log
 
 ## 2026-09-21
+* **Changed**: Added summarize and compare to the versioned runtime protocol.
+* **Decision**: Accepted an independent measurement channel for benchmark evidence.
+* **Decision**: Accepted controlled benchmark evidence requirements for comparison verdicts.
 * **Addition**: ADR-5 accepts checked-in change selection with fail-safe over-selection.
 * **Changed**: Record the Git-aware CLI release identity alongside the resolved cohort.
 * **Changed**: Record the resolved cohort identity and cache-safe cohort switching contract.

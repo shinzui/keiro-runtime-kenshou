@@ -1,0 +1,7 @@
+{
+  "schema": "kenshou.health-notice/v1",
+  "source": "selftest-maintenance",
+  "severity": "hard",
+  "at": "2026-09-21T16:00:00Z",
+  "detail": "fixture host-maintenance notice"
+}

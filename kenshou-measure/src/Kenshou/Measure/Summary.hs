@@ -18,6 +18,7 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.IO qualified as Text
 import Data.Word (Word64)
+import Kenshou.Measure.Health
 import Kenshou.Measure.Histogram qualified as Histogram
 import Kenshou.Measure.Histogram.Codec (decodeHistogram)
 import Kenshou.Measure.Metrics
@@ -42,7 +43,7 @@ data MeasurementSummary = MeasurementSummary
     window :: SummaryWindow,
     ops :: Map Text Value,
     metrics :: Map Text Metric,
-    health :: [Value]
+    health :: [HealthObservation]
   }
   deriving stock (Eq, Show)
 
@@ -110,7 +111,10 @@ summarize runDir = do
               totalOps = sum [metric.value | (name, metric) <- Map.toList operationMetrics, ".throughput" `Text.isSuffixOf` name] * window.steadySeconds
           runtimeMetrics <- summarizeSeries runDir window totalOps
           reasons <- gradeReasonsFromRun runDir (all (\(_, _, _, full) -> full) operations)
-          pure (Right (MeasurementSummary (if null reasons then "benchmark" else "exploratory") reasons window operationMap (operationMetrics <> runtimeMetrics) []))
+          health <- evaluateHealth defaultHealthConfig runDir
+          let healthReasons = ["health:" <> item.gate | item <- health, item.severity /= Info]
+              allReasons = reasons <> healthReasons
+          pure (Right (MeasurementSummary (if null allReasons then "benchmark" else "exploratory") allReasons window operationMap (operationMetrics <> runtimeMetrics) health))
 
 summarizeOperation :: FilePath -> SummaryWindow -> FilePath -> IO (Either SummaryError (Text, Value, Map Text Metric, Bool))
 summarizeOperation runDir window metaFile = do
@@ -204,13 +208,14 @@ summarizeSeries runDir window totalOps = do
       maximumOf column rows = maximumMaybe (mapMaybe (Map.lookup column) rows)
       meanOf column rows = case mapMaybe (Map.lookup column) rows of [] -> Nothing; values -> Just (arithmeticMean values)
       elapsed = fromIntegral (window.steadyEndMonoNs - window.steadyStartMonoNs)
+      capabilities = max 1 (maybe 1 id (Map.lookup "capabilities" =<< lastMay rts))
       metrics =
         [ metric "rts.alloc-rate" "bytes/s" ((/ window.steadySeconds) <$> delta "allocated_bytes" rts),
           metric "rts.alloc-bytes-per-op" "bytes/op" ((/ max 1 totalOps) <$> delta "allocated_bytes" rts),
           metric "rts.gc-productivity" "ratio" ((\gc total -> 1 - gc / max 1 total) <$> delta "gc_elapsed_ns" rts <*> delta "elapsed_ns" rts),
           metric "rts.max-live-bytes" "bytes" (maximumOf "max_live_bytes" rts),
           metric "rts.live-bytes-major-mean" "bytes" (meanOf "live_bytes_major_mean" rts),
-          metric "proc.cpu-utilisation" "ratio" ((/ max 1 elapsed) <$> delta "cpu_total_ns" proc),
+          metric "proc.cpu-utilisation" "ratio" ((/ (max 1 elapsed * capabilities)) <$> delta "cpu_total_ns" proc),
           metric "proc.rss-max" "bytes" (maximumOf "rss_bytes" proc),
           metric "pg.wal-bytes-per-op" "bytes/op" ((/ max 1 totalOps) <$> delta "wal_bytes" wal),
           metric "pg.checkpoints-in-window" "count" ((+) <$> delta "num_timed" checkpointer <*> delta "num_requested" checkpointer)

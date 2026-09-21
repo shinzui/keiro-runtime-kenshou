@@ -78,7 +78,7 @@ There is no local ADR corpus yet: `docs/adr/` does not exist in this repository,
 | 1 | Bootstrap the kenshou repository and pin the runtime cohort | docs/plans/1-bootstrap-the-kenshou-repository-and-pin-the-runtime-cohort.md | None | None | Complete |
 | 2 | Build the harness kernel for scenarios, dimensions, run specs and results | docs/plans/2-build-the-harness-kernel-for-scenarios-dimensions-run-specs-and-results.md | EP-1 | None | Complete |
 | 3 | Plan and select runs from what changed | docs/plans/3-plan-and-select-runs-from-what-changed.md | EP-2 | None | Complete |
-| 4 | Build the measurement toolkit for load, latency, sampling and comparison | docs/plans/4-build-the-measurement-toolkit-for-load-latency-sampling-and-comparison.md | EP-2 | None | In Progress |
+| 4 | Build the measurement toolkit for load, latency, sampling and comparison | docs/plans/4-build-the-measurement-toolkit-for-load-latency-sampling-and-comparison.md | EP-2 | None | Complete |
 | 5 | Build the correctness toolkit for ledgers, invariants, faults and process control | docs/plans/5-build-the-correctness-toolkit-for-ledgers-invariants-faults-and-process-control.md | EP-2 | None | Not Started |
 | 6 | Build the diagnostics toolkit for memory leaks and concurrency stalls | docs/plans/6-build-the-diagnostics-toolkit-for-memory-leaks-and-concurrency-stalls.md | EP-2, EP-4 | EP-5 | Not Started |
 | 7 | Add telemetry arms and measure observability overhead | docs/plans/7-add-telemetry-arms-and-measure-observability-overhead.md | EP-2, EP-4 | EP-6 | Not Started |
@@ -215,7 +215,7 @@ Track milestone-level progress across all child plans. Each entry names the chil
 - [x] EP-4: Closed-loop and open-loop load generators
 - [x] EP-4: Runtime, process and PostgreSQL samplers
 - [x] EP-4: Summaries and paired comparison with verdicts
-- [ ] EP-4: Health gates that separate infrastructure trouble from regressions
+- [x] EP-4: Health gates that separate infrastructure trouble from regressions
 - [ ] EP-5: The bounded ledger and the verdict document
 - [ ] EP-5: The invariant checker library
 - [ ] EP-5: Process control for worker roles
@@ -316,6 +316,7 @@ Drafting the child plans against real source corrected the research in ways that
 - Mori exposes `shinzui/haskell-jitsurei` as the active CLI pattern catalog and shows it adopted by existing house tools. Its current catalog requires `optparse-applicative` 0.19 for option groups, uses `file-embed` for topics, uses `terminal-size` rather than `ansi-terminal` for non-blocking ioctl width detection, derives completions from the parser tree, and treats hierarchical Dhall configuration as legacy. Hackage on 2026-09-20 lists `githash` 0.1.7.0, `file-embed` 0.0.16.0 and `terminal-size` 0.3.4; upstream tags confirm `githash-0.1.7.0` and `terminal-size` 0.3.4, while `file-embed`'s upstream tag list stops at 0.0.15.0, so EP-1 must record the Hackage-versus-tag discrepancy when it refreshes and pins harness dependencies.
 - Mori exposes `shinzui/settei` as the house typed, layered, provenance-aware configuration family. Hackage on 2026-09-20 lists 0.2.0.0 as the latest release of `settei`, `settei-env`, `settei-optparse-applicative`, and `settei-yaml`, and upstream has the matching annotated `v0.2.0.0` tag. Its reference CLI uses built-ins below ordered files below explicit environment bindings below named CLI sources, preserves shadowed origins, redacts secret settings, and reserves stdout for requested JSON. That model fits operator defaults but not run-defining evidence, which must be frozen into kenshou documents.
 - EP-3's checked graph contains 26 whole components, 15 sub-components and 65 edges after reconciliation with Cabal's real solver plan. The important cross-plan consequence is that later coverage plans can add scenarios without changing planner code: they register a bundle and keep their owned component selectors current. The executor also proved that an interrupted attempt can remain immutable while a resumed attempt receives a fresh UUIDv7, which is the identity behavior EP-17 and EP-18 consume.
+- EP-4 completed the shared measurement boundary consumed by the diagnostics, telemetry, layer-coverage, cell and evidence plans. Health gates are reproduced from sealed run artifacts; external cell notices enter through `KENSHOU_HEALTH_NOTICES` and are captured as manifested `health-notices.jsonl`. Hard evidence conditions override regressions as infrastructure failures, while soft conditions and checkpoint asymmetry make comparisons inconclusive.
 
 
 ## Decision Log
