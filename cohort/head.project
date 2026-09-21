@@ -40,6 +40,8 @@ extra-packages:
   hs-opentelemetry-propagator-w3c,
   hs-opentelemetry-exporter-in-memory,
   hs-opentelemetry-exporter-otlp,
+  hs-opentelemetry-exporter-prometheus,
+  hs-opentelemetry-otlp,
   hs-opentelemetry-semantic-conventions
 
 constraints:
@@ -81,6 +83,8 @@ constraints:
   hs-opentelemetry-propagator-w3c ==1.0.0.0,
   hs-opentelemetry-exporter-in-memory ==1.0.0.0,
   hs-opentelemetry-exporter-otlp ==1.0.0.0,
+  hs-opentelemetry-exporter-prometheus ==1.0.0.0,
+  hs-opentelemetry-otlp ==1.0.0.0,
   hs-opentelemetry-semantic-conventions ==1.40.0.0
 
 allow-newer:

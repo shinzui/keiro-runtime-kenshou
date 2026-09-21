@@ -72,6 +72,8 @@
       { "name": "hs-opentelemetry-propagator-w3c", "version": "1.0.0.0" },
       { "name": "hs-opentelemetry-exporter-in-memory", "version": "1.0.0.0" },
       { "name": "hs-opentelemetry-exporter-otlp", "version": "1.0.0.0" },
+      { "name": "hs-opentelemetry-exporter-prometheus", "version": "1.0.0.0" },
+      { "name": "hs-opentelemetry-otlp", "version": "1.0.0.0" },
       { "name": "hs-opentelemetry-semantic-conventions", "version": "1.40.0.0" }
     ] }
   ],
