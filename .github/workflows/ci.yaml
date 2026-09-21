@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CABAL_DIR: ${{ github.workspace }}/.cabal
+
+jobs:
+  build-test-format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: |
+            extra-substituters = https://shinzui.cachix.org
+            extra-trusted-public-keys = shinzui.cachix.org-1:QEmAoJrA9WwLP0uxfDgktLi2BRrcvQQWdz8NzcMg4/E=
+
+      - name: Cache Nix store
+        uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Cache Cabal store
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.cabal
+            dist-newstyle
+          key: cabal-${{ runner.os }}-ghc9.12.4-${{ hashFiles('cabal.project', 'cohort/*.project', '**/*.cabal') }}
+          restore-keys: |
+            cabal-${{ runner.os }}-ghc9.12.4-
+
+      - name: Assert released cohort
+        run: nix develop --command just cohort-assert-released
+
+      - name: Update Hackage index
+        run: nix develop --command cabal update
+
+      - name: Build workspace
+        run: nix develop --command cabal build all
+
+      - name: Run unit tests
+        run: nix develop --command just haskell-test
+
+      - name: Prove runtime cohort links
+        run: nix develop --command just link-proof
+
+      - name: Check resolved cohort identity
+        run: nix develop --command just cohort-check
+
+      - name: Validate architecture decisions
+        run: nix shell github:shinzui/okf/v0.9.0.0#okf-cli nixpkgs#dhall -c okf validate docs/adr --strict --profile docs/adr/profile.dhall --profile-enforce --log-enforce
+
+      - name: Check Nix flake
+        run: nix flake check
+
+      - name: Check formatting
+        run: nix fmt -- --fail-on-change

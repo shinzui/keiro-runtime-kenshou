@@ -64,15 +64,38 @@ multi-run, and comparative-over-time verification.
 
 ## Status
 
-New repository. Nothing has been built yet — the structure below is the intended
-shape, not a description of what exists.
+The repository builds, pins, and identifies the complete runtime cohort. Its
+bootstrap packages and cross-package link-proof are present; the layer and
+toolkit packages are added by the remaining execution plans.
 
 ```text
-correctness/   executable properties for the runtime's stated guarantees
-concurrency/   interleaving, contention, crash-restart, and fault injection
-bench/         benchmarks with retained baselines for cross-release comparison
-docs/          methodology, baselines, and findings
+cabal.project       imports the active cohort; discovers every kenshou-* package
+cohort/             released/head solver inputs and machine-readable descriptors
+kenshou-core/       present: cohort identity; planned: shared harness kernel
+kenshou-cli/        present: CLI and whole-cohort link-proof
+kenshou-measure/    planned: measurement toolkit
+kenshou-check/      planned: correctness toolkit
+kenshou-diagnose/   planned: diagnostics toolkit
+kenshou-telemetry/  planned: telemetry toolkit
+kenshou-pgmq/       planned: isolated PGMQ coverage
+kenshou-kiroku/     planned: isolated Kiroku coverage
+kenshou-shibuya/    planned: Shibuya and PostgreSQL-backed adapter coverage
+kenshou-kafka/      planned: Kafka transport coverage and broker fixture
+kenshou-keiro/      planned: Keiro component coverage and fixture domain
+kenshou-runtime/    planned: assembled-system verification
+schemas/            versioned JSON Schemas
+suites/             planned: named run suites
+docs/adr/            durable architecture decisions
+docs/verification/  planned: methodology and operator documentation
 ```
+
+## Getting started
+
+Enter the locked development environment with `nix develop`, build the workspace
+with `cabal build all`, and inspect the resolved dependency identity with
+`cabal run kenshou -- cohort show`. Use `just use-cohort head` to select the
+head cohort safely, and return to released before committing. Run the complete
+local gate with `just verify`.
 
 ## Related
 

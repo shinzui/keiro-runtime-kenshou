@@ -22,7 +22,87 @@ in  Schema.Project::{
         , github = Some "shinzui/keiro-runtime-kenshou"
         }
       ]
-    , dependencies = [ "shinzui/keiro" ]
+    , packages =
+      [ Schema.Package::{
+        , name = "kenshou-core"
+        , type = Schema.PackageType.Library
+        , language = Schema.Language.Haskell
+        , path = Some "./kenshou-core"
+        , description = Some
+            "Cohort identity and the shared kernel for Keiro runtime verification"
+        }
+      , Schema.Package::{
+        , name = "kenshou-cli"
+        , type = Schema.PackageType.Application
+        , language = Schema.Language.Haskell
+        , path = Some "./kenshou-cli"
+        , description = Some
+            "Operator interface and aggregate runtime verification executable"
+        }
+      ]
+    , dependencies =
+      [ "shinzui/keiro"
+      , "shinzui/keiki"
+      , "shinzui/kiroku"
+      , "shinzui/shibuya"
+      , "shinzui/shibuya-pgmq-adapter"
+      , "shinzui/shibuya-kafka-adapter"
+      , "shinzui/kafka-effectful"
+      , "shinzui/hw-kafka-streamly"
+      , "shinzui/hw-kafka-client"
+      , "haskell-works/hw-kafka-client"
+      , "shinzui/pgmq-hs"
+      , "shinzui/pg-migrate"
+      , "shinzui/ephemeral-pg"
+      , "iand675/hs-opentelemetry"
+      ]
     , dependencyRefs =
-      [ Schema.MoriRef::{ namespace = "shinzui", name = "keiro" } ]
+      [ Schema.MoriRef::{ namespace = "shinzui", name = "keiro" }
+      , Schema.MoriRef::{ namespace = "shinzui", name = "keiki" }
+      , Schema.MoriRef::{ namespace = "shinzui", name = "kiroku" }
+      , Schema.MoriRef::{ namespace = "shinzui", name = "shibuya" }
+      , Schema.MoriRef::{
+        , namespace = "shinzui"
+        , name = "shibuya-pgmq-adapter"
+        }
+      , Schema.MoriRef::{
+        , namespace = "shinzui"
+        , name = "shibuya-kafka-adapter"
+        }
+      , Schema.MoriRef::{ namespace = "shinzui", name = "kafka-effectful" }
+      , Schema.MoriRef::{ namespace = "shinzui", name = "hw-kafka-streamly" }
+      , Schema.MoriRef::{ namespace = "shinzui", name = "hw-kafka-client" }
+      , Schema.MoriRef::{
+        , namespace = "haskell-works"
+        , name = "hw-kafka-client"
+        }
+      , Schema.MoriRef::{ namespace = "shinzui", name = "pgmq-hs" }
+      , Schema.MoriRef::{ namespace = "shinzui", name = "pg-migrate" }
+      , Schema.MoriRef::{ namespace = "shinzui", name = "ephemeral-pg" }
+      , Schema.MoriRef::{
+        , namespace = "iand675"
+        , name = "hs-opentelemetry"
+        }
+      ]
+    , docs =
+      [ Schema.DocRef::{
+        , key = "masterplan"
+        , kind = Schema.DocKind.Spec
+        , audience = Schema.DocAudience.Module
+        , description = Some
+            "Initiative plan for the extensive Keiro runtime verification suite"
+        , location =
+            Schema.DocLocation.LocalFile
+              "./docs/masterplans/1-build-an-extensive-verification-suite-for-the-keiro-runtime.md"
+        }
+      ]
+    , okfBundles =
+      [ Schema.OkfBundle::{
+        , name = "adrs"
+        , path = "docs/adr"
+        , profile = Some "docs/adr/profile.dhall"
+        , okfVersion = "0.2"
+        , description = Some "Durable architecture decisions"
+        }
+      ]
     }

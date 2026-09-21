@@ -73,10 +73,10 @@ Milestone 3 — Prove the whole cohort links and migrates in one build
 
 Milestone 4 — Adopt the ADR bundle, update mori.dhall and the README, add CI
 
-- [ ] Draft the first ADR, run the `adopt-architecture-decisions` blueprint (or the manual fallback), allocate the second ADR with `okf id next`, and record the adopted `haskell-jitsurei` CLI interaction standard in the appropriate ADR before validating strictly.
-- [ ] Extend `mori.dhall` (packages, dependencies, `okfBundles`, docs) and run `mori validate --check-deps` and `mori register`.
-- [ ] Replace the README "Status" block with the layer-package layout.
-- [ ] Add `.github/workflows/ci.yaml` and finish `just verify`.
+- [x] (2026-09-21T03:49:15Z) Draft the first ADR, run the `adopt-architecture-decisions` blueprint (or the manual fallback), allocate the second ADR with `okf id next`, and record the adopted `haskell-jitsurei` CLI interaction standard in the appropriate ADR before validating strictly.
+- [x] (2026-09-21T03:49:15Z) Extend `mori.dhall` (packages, dependencies, `okfBundles`, docs) and run `mori validate --check-deps` and `mori register`.
+- [x] (2026-09-21T03:49:15Z) Replace the README "Status" block with the layer-package layout.
+- [x] (2026-09-21T03:49:15Z) Add `.github/workflows/ci.yaml` and finish `just verify`.
 - [ ] Run `just verify` from a clean clone; commit; update the MasterPlan's Progress and registry status.
 
 
@@ -98,6 +98,10 @@ implementation. Provide concise evidence.
 - The pinned nixpkgs package set contains `optparse-applicative-0.18.1.0`, while the CLI interaction standard requires the 0.19 API. The already-locked extension from `mori://shinzui/haskell-nix` supplies its audited 0.19 package; composing that extension into the GHC 9.12.4 package set made the Nix build and its tests pass without weakening Cabal bounds.
 
 - `githash` did not re-run Template Haskell after a commit that changed only Git metadata, so the existing Cabal artifact initially retained revision `8aff79a`; `cabal clean` followed by a build reported the current clean revision `c524951`, matching the Nix build. Clean checkouts and CI are correct, while a long-lived local build tree may need a clean rebuild after a HEAD-only change when accurate `--version` output matters.
+
+- The installed `adopt-architecture-decisions` blueprint was 0.15.0 while the authoritative `mori://shinzui/okf-profiles` checkout and upstream tag were 0.18.0. Refreshing it before adoption installed the 0.18.0 profile descriptor; the batch agent then preserved ADR prose, assigned `ADR-1`, created the OKF v0.2 index and log, registered the bundle, and recorded its receipt in `.seihou/manifest.json`.
+
+- The blueprint retained the bootstrap-era conditional Hackage probe in `haskell-test`, which skipped the now-local `kenshou-cli-test`. The assembled `just verify` run exposed that omission; making both local unit-suite targets unconditional gives the gate 9 unit examples plus the 4 live link-proof examples.
 
 
 ## Decision Log
@@ -189,6 +193,8 @@ this section into docs/adr/. Keep task-local execution details here.
 - Milestone 2 now has self-contained released and head cohort definitions, schema-validated descriptors, deterministic resolved identities, explicit mismatch diagnostics, and a Git-aware CLI built by both Cabal and Nix. Switching through the recipe changes the shibuya and hw-kafka-client sources to their pinned git revisions and back; the core and CLI suites pass 9 examples, an unknown cohort command exits 2, and a dirty Nix source reports `kenshou v0.1.0.0 (dirty)` instead of a stale revision. From clean builds at commit `c524951`, both the Cabal and Nix executables report `kenshou v0.1.0.0 (c524951)`.
 
 - Milestone 3 links every descriptor package into one test component and proves four live boundaries on both cohorts: the shared migration ledger contains exactly `kiroku`, `keiro`, and `pgmq`; a Kiroku event round-trips; a PGMQ message round-trips; and a librdkafka producer handle is created, flushed, and closed. Both released and head runs pass 4 examples, so the unreleased shibuya revision `6461c74cda52…` and hw-kafka-client fork revision `6caed636898a…` require no compatibility exclusions. The tracked selector and regenerated plan are restored to released.
+
+- Milestone 4 has an OKF v0.2 ADR bundle at the v0.18.0 shared profile with canonical `ADR-1` and `ADR-2` handles, complete Mori package/dependency/doc registration, a current repository layout and getting-started guide, and a released-cohort CI workflow. Strict ADR validation, `mori validate --check-deps` (14 dependencies resolved), `actionlint`, `nix flake check`, formatting, the unit suites, and the live link-proof pass in the working repository. A clean-clone `just verify` remains the final acceptance step after committing these artifacts.
 
 
 ## Context and Orientation
@@ -627,7 +633,7 @@ shibuya    shibuya-core 0.9.0.3, shibuya-metrics 0.9.0.3                 hackage
 …
 ```
 
-Until Milestone 3 adds the link-proof, most descriptor packages are absent from the plan and `cohort check` reports `MissingPackage` for them; that is expected, and the check becomes meaningful once the link-proof exists. Exercise the switch now anyway:
+The cohort files list their Hackage members in `extra-packages`, so every descriptor package is present in the plan and `cohort check` is meaningful before Milestone 3 adds the link-proof. Exercise the switch now:
 
 ```bash
 just use-cohort head && cabal build all --dry-run | tail -2

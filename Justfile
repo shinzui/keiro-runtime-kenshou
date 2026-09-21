@@ -11,7 +11,14 @@ default:
     just --list
 
 [group('meta')]
-verify: process-compose-check fmt-check haskell-build haskell-test
+verify: process-compose-check fmt-check haskell-build haskell-test link-proof cohort-assert-released cohort-check adr-validate
+
+[group('docs')]
+adr-validate:
+    okf validate docs/adr --strict \
+      --profile docs/adr/profile.dhall \
+      --profile-enforce \
+      --log-enforce
 
 [group('haskell')]
 haskell-build:
@@ -20,7 +27,7 @@ haskell-build:
 [group('haskell')]
 haskell-test:
     cabal test kenshou-core:tests
-    if cabal list --simple-output kenshou-cli 2>/dev/null | rg -q '^kenshou-cli '; then cabal test kenshou-cli:test:kenshou-cli-test; fi
+    cabal test kenshou-cli:test:kenshou-cli-test
 
 [group('haskell')]
 link-proof:
