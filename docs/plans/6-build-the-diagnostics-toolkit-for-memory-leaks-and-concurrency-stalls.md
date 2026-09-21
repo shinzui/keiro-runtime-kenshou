@@ -70,12 +70,12 @@ Milestone 2 — The stall watchdog with thread dumps and lock graphs
 
 Milestone 3 — Profiling build variants and bounded event logs
 
-- [ ] Spike: prove `endEventLogging` can be called from Haskell through the foreign function interface and stops event-log growth; record the result.
-- [ ] `cabal.diagnose-info-table.project` and `cabal.diagnose-profiled.project`, build directories under `dist-diagnose/`, ignore rules.
-- [ ] `Kenshou.Diagnose.Profile`: modes, run-time system flag assembly, profile sessions, the worker re-exec hook, phase markers in the event log, harness-driven heap censuses.
-- [ ] `Kenshou.Diagnose.Profile.EventlogGuard`: in-process size guard, parent-side backstop, free-disk preflight.
-- [ ] `Kenshou.Diagnose.Profile.GhcDebug` behind the cabal flag `ghc-debug`.
-- [ ] `just diagnose-tools`, `just diagnose-build-info-table`, `just diagnose-build-profiled`.
+- [x] (2026-09-21T19:35:34Z) Spike: prove `endEventLogging` can be called from Haskell through the foreign function interface and stops event-log growth; record the result.
+- [x] (2026-09-21T19:35:34Z) `cabal.diagnose-info-table.project` and `cabal.diagnose-profiled.project`, build directories under `dist-diagnose/`, ignore rules.
+- [x] (2026-09-21T19:35:34Z) `Kenshou.Diagnose.Profile`: modes, run-time system flag assembly, profile sessions, the worker re-exec hook, phase markers in the event log, harness-driven heap censuses.
+- [x] (2026-09-21T19:35:34Z) `Kenshou.Diagnose.Profile.EventlogGuard`: in-process size guard, parent-side backstop, free-disk preflight.
+- [x] (2026-09-21T19:35:34Z) `Kenshou.Diagnose.Profile.GhcDebug` behind the cabal flag `ghc-debug`.
+- [x] (2026-09-21T19:35:34Z) `just diagnose-tools`, `just diagnose-build-info-table`, `just diagnose-build-profiled`.
 
 Milestone 4 — `kenshou diagnose` recipes and the diagnosis guide
 
@@ -106,6 +106,12 @@ Milestone 5 — Seeded leak and deadlock self-tests that prove the detectors fir
 
 - Observation: The live PostgreSQL capture produces the same waiter-to-holder edge on PostgreSQL 17 and 18, and the watchdog writes `diagnosis/stall-1.json` and aborts a deliberately silent scenario within a 200-millisecond test deadline. The complete diagnostics suite now passes 26 examples.
   Evidence: `nix develop -c cabal test kenshou-diagnose:tests --test-show-details=direct` exercised both ephemeral server majors and the watchdog integration test successfully on 2026-09-21.
+
+- Observation: GHC 9.12.4's `endEventLogging` symbol is callable through a safe foreign import. The spike crossed 1 MiB, stopped at 3,448,607 bytes after buffered data was flushed, and remained exactly that size while its producer continued emitting events.
+  Evidence: `scripts/spikes/eventlog-stop/Main.hs`, built with the repository compiler and run with `+RTS -l`, printed `stoppedAt=3448607 finalSize=3448607`.
+
+- Observation: The full info-table variant, including the released cohort and every Kenshou package, builds on GHC 9.12.4. An ordinary closure-type profile produced a 10,582-byte event log which `ghc-events-0.21.0.0 show` parsed; a scheduler-heavy session with a 1 MiB limit stopped in-process at 1,163,671 bytes, stayed below the 2 MiB parent backstop, and recorded `truncated: true`.
+  Evidence: `nix develop -c just diagnose-build-info-table` exited 0; the two sessions are `profile-20260921T193159Z-closure-type` and `profile-20260921T193408Z-eventlog` under the ignored `.dev/profiles/` directory.
 
 
 ## Decision Log
@@ -145,6 +151,10 @@ Milestone 5 — Seeded leak and deadlock self-tests that prove the detectors fir
 - Decision: Worker processes dump their threads when they receive `SIGUSR2`; heartbeats from workers reach the watchdog through whoever reads the worker's control channel.
   Rationale: `docs/plans/5-build-the-correctness-toolkit-for-ledgers-invariants-faults-and-process-control.md` is only a soft dependency. A signal handler and a counter need nothing from it, and work identically whether the worker was spawned by that toolkit's supervisor or directly.
   Date: 2026-09-20
+
+- Decision: Promote the in-process `endEventLogging` guard and retain the parent-side twice-the-limit termination check as a backstop.
+  Rationale: The GHC 9.12.4 spike proved that `endEventLogging` flushes and closes the active writer safely while the Haskell process and event producer continue. A real scheduler-heavy profile then stopped at about 1.11 times its 1 MiB limit, reflecting bounded buffered data, without reaching the parent's 2 MiB hard stop.
+  Date: 2026-09-21
 
 - Decision: Profiling variants are root-level cabal project files that import `cabal.project`, built into `dist-diagnose/<variant>`; post-processing tools are installed with `cabal install --ignore-project` into `.dev/bin`. A Nix-built variant for GCP cells is left to `docs/plans/17-run-kenshou-on-leased-cells-with-payloads-submission-and-retrieval.md`.
   Rationale: The house dev shell supplies GHC and cabal and builds happen with cabal, so a project-file variant is the smallest working mechanism; Nix package outputs do not exist in this repository until the cell payload plan creates them. nixpkgs frequently marks `eventlog2html` broken for a new GHC, and `--ignore-project` keeps the tools out of the cohort's constraints (the cohort forces `aeson <2.3`).

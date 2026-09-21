@@ -63,6 +63,20 @@ haskell-test:
 link-proof:
     cabal test kenshou-cli:test:kenshou-linkproof
 
+[group('diagnostics')]
+diagnose-build-info-table:
+    cabal --project-file=cabal.diagnose-info-table.project --builddir=dist-diagnose/info-table build kenshou-cli:exe:kenshou
+
+[group('diagnostics')]
+diagnose-build-profiled:
+    cabal --project-file=cabal.diagnose-profiled.project --builddir=dist-diagnose/profiled build kenshou-cli:exe:kenshou
+
+[group('diagnostics')]
+diagnose-tools:
+    mkdir -p .dev/bin
+    cabal install --ignore-project --installdir=.dev/bin --install-method=copy --overwrite-policy=always eventlog2html-0.12.0
+    cabal install --ignore-project --installdir=.dev/bin --install-method=copy --overwrite-policy=always ghc-events-0.21.0.0
+
 [group('format')]
 fmt:
     nix fmt

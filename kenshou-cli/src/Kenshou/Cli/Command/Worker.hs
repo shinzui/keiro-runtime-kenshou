@@ -6,6 +6,7 @@ import Data.Text qualified as Text
 import Kenshou.Core.Cli (CliCommand (..), CliEnv (..), CliGroup (..))
 import Kenshou.Core.Role (mkRoleName, renderRoleName)
 import Kenshou.Core.Role.Dispatch (runWorker)
+import Kenshou.Diagnose.Profile (reexecWithWorkerRts)
 import Kenshou.Diagnose.Threads (installThreadDumpSignal)
 import Options.Applicative
 
@@ -14,5 +15,6 @@ workerCommand = CliCommand "worker" "Run an internal worker role" Execution True
   where
     parser = (,) <$> option (eitherReader (first Text.unpack . mkRoleName . Text.pack)) (long "role" <> metavar "ROLE") <*> optional (strOption (long "diagnosis-root" <> metavar "DIR" <> internal))
     handler role diagnosisRoot environment = do
+      reexecWithWorkerRts (renderRoleName role)
       traverse_ (\root -> installThreadDumpSignal root (renderRoleName role)) diagnosisRoot
       runWorker environment.registry role

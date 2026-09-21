@@ -1,0 +1,5 @@
+import: cabal.project
+
+profiling: True
+library-profiling: True
+profiling-detail: late
