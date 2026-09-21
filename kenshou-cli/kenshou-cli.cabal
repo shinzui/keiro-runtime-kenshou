@@ -39,6 +39,7 @@ library
     Kenshou.Cli.Cohort
     Kenshou.Cli.Command.Cohort
     Kenshou.Cli.Command.List
+    Kenshou.Cli.Command.Run
     Kenshou.Cli.Completions
     Kenshou.Cli.Config
     Kenshou.Cli.Help
@@ -61,6 +62,7 @@ library
     optparse-applicative >=0.19 && <0.20,
     settei ^>=0.2.0.0,
     settei-env ^>=0.2.0.0,
+    settei-optparse-applicative ^>=0.2.0.0,
     terminal-size >=0.3.4 && <0.4,
     text >=2.1 && <2.2,
 

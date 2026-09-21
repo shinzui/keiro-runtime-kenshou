@@ -54,10 +54,10 @@ Milestone 1 — Scenario model, layer bundles, registry and `kenshou list`
 
 Milestone 2 — Dimensions, knobs and the run specification
 
-- [ ] `Kenshou.Core.Knob` (specs, typed values, `--set` parsing, validation, accessors).
-- [ ] `Kenshou.Core.Dimension` (four closed dimensions, `Supported`, `resolveDimensions`).
-- [ ] `Kenshou.Core.Phase`, `Kenshou.Core.RunSpec` (document, hand-written JSON codecs, redaction) and `Kenshou.Core.RunSpec.Resolve` (`resolveRunSpec`).
-- [ ] `kenshou run … --print-spec` prints the effective run specification; usage errors exit 2.
+- [x] (2026-09-20 21:22 PDT) `Kenshou.Core.Knob` (specs, typed values, `--set` parsing, validation, accessors).
+- [x] (2026-09-20 21:22 PDT) `Kenshou.Core.Dimension` (four closed dimensions, `Supported`, `resolveDimensions`).
+- [x] (2026-09-20 21:22 PDT) `Kenshou.Core.Phase`, `Kenshou.Core.RunSpec` (document, hand-written JSON codecs, redaction) and `Kenshou.Core.RunSpec.Resolve` (`resolveRunSpec`).
+- [x] (2026-09-20 21:22 PDT) `kenshou run … --print-spec` prints the effective run specification; usage errors exit 2.
 
 Milestone 3 — Environments, the composed migration plan and worker roles
 
@@ -157,6 +157,8 @@ Milestone 5 — Published JSON Schemas, golden fixtures and the self-test scenar
 ## Outcomes & Retrospective
 
 - Milestone 1 delivered the kernel vocabulary, validated bundle registry, value-level CLI extension seam, Settei-backed configuration assembly, embedded help topics, parser-derived completion scripts, and the first three self-test scenarios. `cabal build all` and 14 unit/CLI examples pass; `kenshou list --json` reports `kenshou.scenario-list/v1` with three scenarios.
+
+- Milestone 2 delivered typed knob and closed-dimension resolution, the versioned run-specification codecs and defaulting rules, and `kenshou run --print-spec`. Seventeen core examples and three CLI examples pass; the acceptance transcript emits `kenshou.run-spec/v1` with seed 7 and rejects inapplicable dimensions and malformed scenario identifiers with exit code 2.
 
 
 ## Context and Orientation

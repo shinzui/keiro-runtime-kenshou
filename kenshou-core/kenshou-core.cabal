@@ -46,6 +46,8 @@ library
     Kenshou.Core.Outcome
     Kenshou.Core.Phase
     Kenshou.Core.Role
+    Kenshou.Core.RunSpec
+    Kenshou.Core.RunSpec.Resolve
     Kenshou.Core.Scenario
     Kenshou.Core.Selector
     Kenshou.Core.Selftest
@@ -62,6 +64,7 @@ library
     mmzk-typeid >=0.7 && <0.8,
     optparse-applicative >=0.19 && <0.20,
     random >=1.2.1 && <1.4,
+    scientific,
     settei ^>=0.2.0.0,
     settei-optparse-applicative ^>=0.2.0.0,
     settei-yaml ^>=0.2.0.0,

@@ -2,10 +2,17 @@
 
 module Main (main) where
 
-import Data.Aeson (FromJSON, Value, eitherDecodeFileStrict', toJSON)
+import Data.Aeson (FromJSON, Value, eitherDecode, eitherDecodeFileStrict', encode, toJSON)
+import Data.Int (Int64)
+import Data.List.NonEmpty (NonEmpty (..))
+import Data.Text (Text)
 import Kenshou.Core.Bundle (allScenarios, mkRegistry)
 import Kenshou.Core.Cohort
+import Kenshou.Core.Dimension
 import Kenshou.Core.Id
+import Kenshou.Core.Knob
+import Kenshou.Core.RunSpec
+import Kenshou.Core.RunSpec.Resolve (resolveRunSpec)
 import Kenshou.Core.Scenario (Scenario (..))
 import Kenshou.Core.Selector (matchesSelector, parseSelector)
 import Kenshou.Core.Selftest qualified as Selftest
@@ -29,6 +36,9 @@ main = hspec do
   identifierSpec
   selectorSpec
   registrySpec
+  knobSpec
+  dimensionSpec
+  runSpecSpec
 
 descriptorSpec :: Spec
 descriptorSpec = describe "cohort identity" do
@@ -115,6 +125,54 @@ registrySpec = describe "scenario registry" do
                        "selftest/kernel/correctness/always-pass",
                        "selftest/kernel/correctness/errors"
                      ]
+
+knobSpec :: Spec
+knobSpec = describe "knob resolution" do
+  let workers = knobName "selftest.workers"
+      enabled = knobName "selftest.enabled"
+      declarations =
+        [ KnobSpec workers "Worker count" KnobInt (VInt 2) (IntRange 1 8) [VInt 1, VInt 8],
+          KnobSpec enabled "Enable work" KnobBool (VBool False) AnyValue []
+        ]
+  it "fills defaults and parses typed command-line values" do
+    resolved <- expectRight (resolveKnobs declarations [(workers, RawText "4"), (enabled, RawText "true")])
+    knobInt resolved workers `shouldBe` (4 :: Int64)
+    knobBool resolved enabled `shouldBe` True
+  it "reports duplicates, unknown names and range violations together" do
+    let unknown = knobName "selftest.unknown"
+        result = resolveKnobs declarations [(workers, RawText "9"), (workers, RawText "1"), (unknown, RawText "x")]
+    case result of
+      Left problems -> length problems `shouldBe` 3
+      Right _ -> expectationFailure "expected knob errors"
+
+dimensionSpec :: Spec
+dimensionSpec = describe "dimension resolution" do
+  let support = postgresDimensions (PgFsyncOff :| [PgDurable]) (Pg18 :| []) noDimensions
+  it "fills every applicable default" do
+    resolveDimensions support [] `shouldBe` Right (Dimensions Nothing Nothing (Just PgFsyncOff) (Just Pg18))
+  it "rejects unsupported and inapplicable values" do
+    case resolveDimensions support [("pg.version", "17"), ("telemetry.tracing", "off")] of
+      Left problems -> length problems `shouldBe` 2
+      Right _ -> expectationFailure "expected dimension errors"
+
+runSpecSpec :: Spec
+runSpecSpec = describe "run specification" do
+  it "decodes a minimal document and emits a round-trippable effective document" do
+    input <- case eitherDecode "{\"schema\":\"kenshou.run-spec/v1\",\"scenario\":\"selftest/kernel/correctness/always-pass\",\"seed\":7}" of
+      Left err -> expectationFailure err >> fail "unreachable"
+      Right value -> pure value
+    registry <- expectRight (mkRegistry [Selftest.bundle])
+    resolution <- resolveRunSpec registry input
+    (_, effective) <- expectRight resolution
+    eitherDecode (encode effective) `shouldBe` Right (toJSON effective :: Value)
+  it "rejects a non-v7 run id while decoding" do
+    let document = "{\"schema\":\"kenshou.run-spec/v1\",\"scenario\":\"selftest/kernel/correctness/always-pass\",\"runId\":\"550e8400-e29b-41d4-a716-446655440000\"}"
+    case (eitherDecode document :: Either String RunSpec) of
+      Left err -> err `shouldContain` "UUIDv7"
+      Right _ -> expectationFailure "expected UUIDv7 rejection"
+
+knobName :: Text -> KnobName
+knobName = either (error . show) id . mkKnobName
 
 onePackageDescriptor :: CohortDescriptor
 onePackageDescriptor =

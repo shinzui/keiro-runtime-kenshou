@@ -3,6 +3,7 @@ module Kenshou.Cli.Config
     runDefaultsConfig,
     runEnvironmentBindings,
     resolveRunDefaults,
+    outputRootKey,
   )
 where
 
