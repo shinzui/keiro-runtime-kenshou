@@ -1,0 +1,10 @@
+-- One cabal project. A plan adds a package by creating
+-- kenshou-<name>/kenshou-<name>.cabal; nobody edits this list.
+-- The cohort (index-state, exact constraints, git pins) comes from cohort/.
+-- Switch with `just use-cohort <name>`, never by editing cohort/active.project
+-- alone: cabal does not notice changes to imported project files.
+import: cohort/active.project
+with-compiler: ghc-9.12.4
+packages: kenshou-*/*.cabal
+tests: True
+test-show-details: direct

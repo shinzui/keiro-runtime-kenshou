@@ -16,6 +16,11 @@ provenance:
       at: 2026-09-20T21:08:38Z
       mode: "update"
       note: "Adopted relevant Haskell Jitsurei CLI patterns and the bounded Settei configuration contract."
+    - model: "gpt-5.6-sol"
+      harness: "codex-cli"
+      at: 2026-09-21T02:35:53Z
+      mode: "implement"
+      note: "Started EP-1 implementation and moved its registry entry to In Progress."
 ---
 
 # Build an extensive verification suite for the keiro runtime
@@ -55,7 +60,7 @@ There is no local ADR corpus yet: `docs/adr/` does not exist in this repository,
 
 | # | Title | Path | Hard Deps | Soft Deps | Status |
 |---|-------|------|-----------|-----------|--------|
-| 1 | Bootstrap the kenshou repository and pin the runtime cohort | docs/plans/1-bootstrap-the-kenshou-repository-and-pin-the-runtime-cohort.md | None | None | Not Started |
+| 1 | Bootstrap the kenshou repository and pin the runtime cohort | docs/plans/1-bootstrap-the-kenshou-repository-and-pin-the-runtime-cohort.md | None | None | In Progress |
 | 2 | Build the harness kernel for scenarios, dimensions, run specs and results | docs/plans/2-build-the-harness-kernel-for-scenarios-dimensions-run-specs-and-results.md | EP-1 | None | Not Started |
 | 3 | Plan and select runs from what changed | docs/plans/3-plan-and-select-runs-from-what-changed.md | EP-2 | None | Not Started |
 | 4 | Build the measurement toolkit for load, latency, sampling and comparison | docs/plans/4-build-the-measurement-toolkit-for-load-latency-sampling-and-comparison.md | EP-2 | None | Not Started |

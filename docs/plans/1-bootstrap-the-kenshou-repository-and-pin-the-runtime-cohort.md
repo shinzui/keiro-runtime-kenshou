@@ -17,6 +17,11 @@ provenance:
       at: 2026-09-20T21:08:38Z
       mode: "update"
       note: "Adopted relevant Haskell Jitsurei CLI patterns and the bounded Settei configuration contract."
+    - model: "gpt-5.6-sol"
+      harness: "codex-cli"
+      at: 2026-09-21T02:35:53Z
+      mode: "implement"
+      note: "Implemented EP-1 milestones and maintained living plan evidence."
 ---
 
 # Bootstrap the kenshou repository and pin the runtime cohort
@@ -41,12 +46,12 @@ This plan owns Integration Points 1 and 2 of `docs/masterplans/1-build-an-extens
 
 Milestone 1 — Scaffold the repository, development shell and formatting hooks
 
-- [ ] Confirm the starting state (no `flake.nix`, no `cabal.project`, no `docs/adr/`) and that `seihou`, `nix`, `just`, `okf`, `dhall` and `mori` are on the `PATH`.
-- [ ] Add the `nix-haskell-flake` variables to `.seihou/config.dhall` and apply the module with `seihou run nix-haskell-flake`.
-- [ ] Write `flake.module.nix` (PostgreSQL 17 and 18 bin directories as environment variables, `dhall`, `git`, Linux-only `procps` and `lsof`, fourmolu from the `ghc9124` package set) and `git add` it together with `flake.lock`.
-- [ ] Write `cabal.project`, the placeholder `cohort/active.project` and `cohort/released.project`, and the skeleton `kenshou-core` package so that the package glob matches something.
-- [ ] Write the `Justfile` (meta, haskell, cohort, docs and database groups).
-- [ ] Enter `nix develop`, check tool versions and both PostgreSQL variables, run `cabal build all`, `nix fmt` and `just process-compose-check`.
+- [x] (2026-09-21T02:35:34Z) Confirm the starting state (no `flake.nix`, no `cabal.project`, no `docs/adr/`) and that `seihou`, `nix`, `just`, `okf`, `dhall` and `mori` are on the `PATH`.
+- [x] (2026-09-21T02:39:01Z) Add the `nix-haskell-flake` variables to `.seihou/config.dhall` and apply the module with `seihou run nix-haskell-flake`.
+- [x] (2026-09-21T02:39:01Z) Write `flake.module.nix` (PostgreSQL 17 and 18 bin directories as environment variables, `dhall`, `git`, Linux-only `procps` and `lsof`, fourmolu from the `ghc9124` package set) and `git add` it together with `flake.lock`.
+- [x] (2026-09-21T02:39:01Z) Write `cabal.project`, the placeholder `cohort/active.project` and `cohort/released.project`, and the skeleton `kenshou-core` package so that the package glob matches something.
+- [x] (2026-09-21T02:39:01Z) Write the `Justfile` (meta, haskell, cohort, docs and database groups).
+- [x] (2026-09-21T02:39:01Z) Enter `nix develop`, check tool versions and both PostgreSQL variables, run `cabal build all`, `nix fmt` and `just process-compose-check`.
 - [ ] Commit.
 
 Milestone 2 — Pin the released and head cohorts and print the resolved cohort identity
@@ -80,7 +85,7 @@ Milestone 4 — Adopt the ADR bundle, update mori.dhall and the README, add CI
 Document unexpected behaviors, bugs, optimizations, or insights discovered during
 implementation. Provide concise evidence.
 
-(None yet.)
+- The installed and upstream `nix-haskell-flake` module is 0.25.0, while the plan was drafted against 0.24.0 and Mori's cached template metadata still reports 0.14.0. Evidence: both `/Users/shinzui/.config/seihou/installed/nix-haskell-flake/module.dhall` and the Mori-located source at `/Users/shinzui/Keikaku/bokuno/seihou-modules/modules/haskell/nix-haskell-flake/module.dhall` declare `version = Some "0.25.0"`. Implementation follows 0.25.0's current variable and extension contracts.
 
 
 ## Decision Log
@@ -159,7 +164,7 @@ Compare the result against the original purpose. Before marking the plan complet
 distill durable project context from the Decision Log, Surprises & Discoveries, and
 this section into docs/adr/. Keep task-local execution details here.
 
-(To be filled during and after implementation.)
+- Milestone 1 produced the locked Nix shell and the first buildable `kenshou-core` package. The shell reports GHC 9.12.4, cabal 3.16.1.0, PostgreSQL 18.6 on `PATH`, PostgreSQL 17.11 through `KENSHOU_PG17_BIN`, and librdkafka 2.15.0; `cabal build all`, a second `nix fmt -- --fail-on-change`, and `just process-compose-check` all pass. The generated commit hook also rejected a real commit attempt whose subject contained a literal `\n` escape.
 
 
 ## Context and Orientation
