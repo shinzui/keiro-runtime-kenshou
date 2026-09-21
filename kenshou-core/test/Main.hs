@@ -25,6 +25,7 @@ import Kenshou.Core.RunSpec.Resolve (resolveRunSpec)
 import Kenshou.Core.Scenario (Scenario (..))
 import Kenshou.Core.Selector (matchesSelector, parseSelector)
 import Kenshou.Core.Selftest qualified as Selftest
+import Kenshou.PlanSpec qualified
 import System.Environment (lookupEnv)
 import System.Exit (ExitCode (..))
 import System.IO.Temp (withSystemTempDirectory)
@@ -58,6 +59,7 @@ main = hspec do
   manifestSpec
   goldenSpec
   postgresEnvironmentSpec
+  Kenshou.PlanSpec.spec
 
 descriptorSpec :: Spec
 descriptorSpec = describe "cohort identity" do

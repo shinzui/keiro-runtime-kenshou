@@ -39,6 +39,7 @@ library
     Kenshou.Cli.Cohort
     Kenshou.Cli.Command.Cohort
     Kenshou.Cli.Command.List
+    Kenshou.Cli.Command.Plan
     Kenshou.Cli.Command.Run
     Kenshou.Cli.Command.Worker
     Kenshou.Cli.Completions

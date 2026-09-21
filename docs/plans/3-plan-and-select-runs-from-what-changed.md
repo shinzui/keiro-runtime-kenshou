@@ -17,6 +17,11 @@ provenance:
       at: 2026-09-20T21:08:38Z
       mode: "update"
       note: "Adopted relevant Haskell Jitsurei CLI patterns and the bounded Settei configuration contract."
+    - model: "gpt-5.6-sol"
+      harness: "codex-cli"
+      at: 2026-09-21T13:23:15Z
+      mode: "implement"
+      note: "Implemented EP-3 from prerequisite validation through the change-aware planner and resumable executor."
 ---
 
 # Plan and select runs from what changed
@@ -45,13 +50,13 @@ The first prints the changed component, every dependent component with the depen
 
 Milestone 1 — The component graph of the runtime
 
-- [ ] Confirm the prerequisites from `docs/plans/1-…` and `docs/plans/2-…` (build, `kenshou list`, self-test scenarios, `docs/adr/profile.dhall`) and record the real EP-2 type and function names in Surprises & Discoveries.
-- [ ] Add `Kenshou.Plan.Selector` (selector grammar, parser, matcher) with unit tests.
-- [ ] Add `Kenshou.Plan.Catalog` (`ScenarioInfo`, projection from `Scenario`, decoder for `kenshou list --json`) and the fixture catalog `kenshou-core/test/fixtures/plan/catalog-planned.json`.
-- [ ] Write `kenshou-core/data/components.json` and `schemas/component-graph.v1.schema.json`; embed the file in `Kenshou.Plan.Components`.
-- [ ] Implement graph validation (unknown references, acyclicity, duplicate packages) and the dependents closure with shortest paths; unit tests including the two acceptance selections.
-- [ ] Implement `Kenshou.Plan.Components.Check`: drift check against `dist-newstyle/cache/plan.json` and lint against a catalog.
-- [ ] Add `kenshou plan --graph-show` and `kenshou plan --graph-check`; reconcile the `kenshou-harness` edges with what the check reports.
+- [x] (2026-09-21T13:22:51Z) Confirm the prerequisites from `docs/plans/1-…` and `docs/plans/2-…` (build, `kenshou list`, self-test scenarios, `docs/adr/profile.dhall`) and record the real EP-2 type and function names in Surprises & Discoveries.
+- [x] (2026-09-21T13:35:10Z) Add `Kenshou.Plan.Selector` (selector grammar, parser, matcher) with unit tests.
+- [x] (2026-09-21T13:35:10Z) Add `Kenshou.Plan.Catalog` (`ScenarioInfo`, projection from `Scenario`, decoder for `kenshou list --json`) and the fixture catalog `kenshou-core/test/fixtures/plan/catalog-planned.json`.
+- [x] (2026-09-21T13:35:10Z) Write `kenshou-core/data/components.json` and `schemas/component-graph.v1.schema.json`; embed the file in `Kenshou.Plan.Components`.
+- [x] (2026-09-21T13:35:10Z) Implement graph validation (unknown references, acyclicity, duplicate packages) and the dependents closure with shortest paths; unit tests including the two acceptance selections.
+- [x] (2026-09-21T13:35:10Z) Implement `Kenshou.Plan.Components.Check`: drift check against `dist-newstyle/cache/plan.json` and lint against a catalog.
+- [x] (2026-09-21T13:35:10Z) Add `kenshou plan --graph-show` and `kenshou plan --graph-check`; reconcile the `kenshou-harness` edges with what the check reports.
 
 Milestone 2 — Change detection from cohort diffs, named components and repository paths
 
@@ -79,7 +84,14 @@ Milestone 4 — Named suites and resumable `kenshou execute`
 
 ## Surprises & Discoveries
 
-(None yet.)
+- Observation: EP-2 delivered seven kernel self-test scenarios rather than the five named by this plan; the additional scenarios are `selftest/kernel/correctness/known-defect` and `selftest/kernel/correctness/outcome`.
+  Evidence: `nix develop -c cabal run kenshou -- list --json` on 2026-09-21 returned seven scenarios and an empty role list.
+
+- Observation: The actual kernel names closely match the draft, but selector ownership already lives in `Kenshou.Core.Selector`, `ScenarioId` and `Seed` live in `Kenshou.Core.Id`, registry projection uses `Kenshou.Core.Bundle.allScenarios`, and run resolution is `Kenshou.Core.RunSpec.Resolve.resolveRunSpec`.
+  Evidence: prerequisite build and source inspection of `kenshou-core/src/Kenshou/Core/{Selector,Id,Bundle,RunSpec/Resolve}.hs`; `nix develop -c cabal build all` passed before EP-3 code changes.
+
+- Observation: The reconciled graph has 26 whole components, 15 sub-components, and 65 edges (57 build and 8 runtime), one fewer edge than the plan's illustrative transcript; the actual Cabal-plan drift check reports no missing or extra build edges.
+  Evidence: `nix develop -c cabal run kenshou -- plan --graph-show` and `nix develop -c cabal run kenshou -- plan --graph-check` on 2026-09-21. The check reports only `kenshou-runtime` as not yet in the build and the intentionally dormant `selftest/telemetry/**` selector as a warning.
 
 
 ## Decision Log

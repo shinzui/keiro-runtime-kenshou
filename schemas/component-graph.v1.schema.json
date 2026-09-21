@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shinzui.github.io/keiro-runtime-kenshou/schemas/component-graph.v1.schema.json",
+  "title": "Kenshou component graph v1",
+  "type": "object",
+  "required": ["schema", "components", "repositoryPaths"],
+  "properties": {
+    "schema": {"const": "kenshou.component-graph/v1"},
+    "ignoredPackages": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "components": {"type": "array", "items": {"$ref": "#/$defs/component"}},
+    "repositoryPaths": {"type": "array", "items": {"$ref": "#/$defs/pathRule"}}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "selectorArray": {"type": "array", "items": {"type": "string"}},
+    "edge": {
+      "type": "object", "required": ["to", "kind"],
+      "properties": {"to":{"type":"string"},"kind":{"enum":["build","runtime"]},"toSubs":{"type":"array","items":{"type":"string"}},"fromSubs":{"type":"array","items":{"type":"string"}}},
+      "additionalProperties": false
+    },
+    "subcomponent": {
+      "type":"object", "required":["id","pathPrefixes","selectors","uses"],
+      "properties":{"id":{"type":"string"},"pathPrefixes":{"type":"array","items":{"type":"string"}},"selectors":{"$ref":"#/$defs/selectorArray"},"uses":{"type":"array","items":{"type":"string"}},"changeImplies":{"type":["object","null"]}},
+      "additionalProperties": false
+    },
+    "component": {
+      "type":"object", "required":["id","kind","repository","sourceRoots","packages","selectors","verifiedAgainst","dependsOn"],
+      "properties":{"id":{"type":"string"},"kind":{"enum":["library","migrations","service","harness","assembly"]},"uri":{"type":["string","null"]},"repository":{"type":"string"},"sourceRoots":{"type":"array","items":{"type":"string"}},"packages":{"type":"array","items":{"type":"string"}},"selectors":{"$ref":"#/$defs/selectorArray"},"verifiedAgainst":{"type":"string"},"changeImplies":{"type":["object","null"]},"subcomponents":{"type":"array","items":{"$ref":"#/$defs/subcomponent"}},"dependsOn":{"type":"array","items":{"$ref":"#/$defs/edge"}}},
+      "additionalProperties": false
+    },
+    "pathRule": {
+      "type":"object", "required":["prefix","effect"],
+      "properties":{"prefix":{"type":"string"},"effect":{"type":"object"}},
+      "additionalProperties": false
+    }
+  }
+}

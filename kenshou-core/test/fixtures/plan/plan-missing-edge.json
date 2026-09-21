@@ -1,0 +1,6 @@
+{
+  "install-plan": [
+    {"id":"krk-str-0.8.0.1-8c49cfa0","pkg-name":"kiroku-store","pkg-version":"0.8.0.1","component-name":"lib","depends":[]},
+    {"id":"pgmq-hsql-0.6.1.0-c3f074ba","pkg-name":"pgmq-hasql","pkg-version":"0.6.1.0","component-name":"lib","depends":["krk-str-0.8.0.1-8c49cfa0"]}
+  ]
+}

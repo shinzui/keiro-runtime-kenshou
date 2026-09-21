@@ -9,6 +9,8 @@ maintainer: Nadeem Bitar
 category: Testing
 build-type: Simple
 tested-with: ghc >=9.12 && <9.13
+extra-source-files:
+  data/components.json
 
 common warnings
   ghc-options:
@@ -63,6 +65,10 @@ library
     Kenshou.Core.Selector
     Kenshou.Core.Selftest
     Kenshou.Core.Version
+    Kenshou.Plan.Catalog
+    Kenshou.Plan.Components
+    Kenshou.Plan.Components.Check
+    Kenshou.Plan.Selector
 
   other-modules: Paths_kenshou_core
   build-depends:
@@ -74,6 +80,7 @@ library
     cryptohash-sha256 >=0.11 && <0.12,
     directory,
     ephemeral-pg >=0.3.1 && <0.4,
+    file-embed >=0.0.16 && <0.1,
     filepath >=1.5 && <1.6,
     hasql >=1.10 && <1.11,
     keiro-migrations,
@@ -100,6 +107,9 @@ test-suite kenshou-core-test
   type: exitcode-stdio-1.0
   hs-source-dirs: test
   main-is: Main.hs
+  other-modules:
+    Kenshou.PlanSpec
+
   build-depends:
     aeson >=2.2 && <2.3,
     base >=4.21 && <4.22,

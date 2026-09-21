@@ -15,6 +15,14 @@ module Kenshou.Core.Dimension
     resolveDimensions,
     renderDimensions,
     renderDimensionName,
+    renderTracing,
+    parseTracing,
+    renderMetrics,
+    parseMetrics,
+    renderDurability,
+    parseDurability,
+    renderVersion,
+    parseVersion,
   )
 where
 

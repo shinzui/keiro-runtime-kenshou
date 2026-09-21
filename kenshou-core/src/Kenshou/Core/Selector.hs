@@ -1,6 +1,7 @@
 module Kenshou.Core.Selector
   ( ScenarioSelector,
     parseSelector,
+    renderSelector,
     matchesSelector,
   )
 where
@@ -25,6 +26,9 @@ parseSelector value
     initSafe [] = []
     initSafe xs = init xs
     invalid piece = Text.null piece || (piece /= "*" && piece /= "**" && Text.any (== '*') piece)
+
+renderSelector :: ScenarioSelector -> Text
+renderSelector (ScenarioSelector pieces) = Text.intercalate "/" pieces
 
 matchesSelector :: ScenarioSelector -> ScenarioId -> Bool
 matchesSelector (ScenarioSelector patterns) scenario = go patterns (Text.splitOn "/" (renderScenarioId scenario))
