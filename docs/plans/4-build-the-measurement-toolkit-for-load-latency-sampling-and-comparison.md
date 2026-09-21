@@ -57,13 +57,13 @@ Milestone 1 — Clocks, the latency recorder and warm-up exclusion
 
 Milestone 2 — Closed-loop and open-loop load generators
 
-- [ ] `Kenshou.Measure.Load.Types` and `Kenshou.Measure.Knobs`: `Operation`, `OpResult`, `LoadModel`, the shared `load.*` and `measure.*` knob specifications and their parser.
-- [ ] `Kenshou.Measure.Load.Arrival`: constant-rate and seeded Poisson schedules; tests for exact constant spacing, Poisson mean and reproducibility from the seed.
-- [ ] `Kenshou.Measure.Load.Closed`: N workers back to back with staggered start, think time, duration or count bound, drain.
-- [ ] `Kenshou.Measure.Session`, second part: the `Measurement` record and a first `withMeasurement` returning a `MeasurementReport` with the recorder and load reports.
-- [ ] `Kenshou.Measure.Load.Open`: shared schedule with atomically claimed tickets, latency from intended start, bounded executors, lag and backlog accounting, overload evidence, abort on runaway lag; `series/load.csv`.
-- [ ] `Kenshou.Measure.Selftest.SleepService` and `Kenshou.Measure.Selftest.bundle`; register the bundle in `kenshou-cli` (one import, one list element, one `build-depends` entry).
-- [ ] Run `selftest/measure/benchmark/sleep-service` in all three load models and record the observed percentiles in this plan.
+- [x] (2026-09-21 15:08Z) `Kenshou.Measure.Load.Types` and `Kenshou.Measure.Knobs`: `Operation`, `OpResult`, `LoadModel`, the shared `load.*` and `measure.*` knob specifications and their parser.
+- [x] (2026-09-21 15:08Z) `Kenshou.Measure.Load.Arrival`: constant-rate and seeded Poisson schedules; tests for exact constant spacing, Poisson mean and reproducibility from the seed.
+- [x] (2026-09-21 15:08Z) `Kenshou.Measure.Load.Closed`: N workers back to back with staggered start, think time, duration or count bound, drain.
+- [x] (2026-09-21 15:08Z) `Kenshou.Measure.Session`, second part: the `Measurement` record and a first `withMeasurement` returning a `MeasurementReport` with the recorder and load reports.
+- [x] (2026-09-21 15:08Z) `Kenshou.Measure.Load.Open`: shared schedule with atomically claimed tickets, latency from intended start, bounded executors, lag and backlog accounting, overload evidence, abort on runaway lag; `series/load.csv`.
+- [x] (2026-09-21 15:08Z) `Kenshou.Measure.Selftest.SleepService` and `Kenshou.Measure.Selftest.bundle`; register the bundle in `kenshou-cli` (one import, one list element, one `build-depends` entry).
+- [x] (2026-09-21 15:08Z) Run `selftest/measure/benchmark/sleep-service` in all three load models and record the observed percentiles in this plan.
 
 Milestone 3 — Runtime, process and PostgreSQL samplers
 
@@ -102,6 +102,7 @@ Milestone 5 — Health gates that separate infrastructure trouble from regressio
 - The completed kernel registers seven self-test scenarios rather than the five anticipated by this draft; the additional `outcome` and `postgres-roundtrip` scenarios are intentional EP-2 acceptance coverage. The preflight still passed: `cabal build all` succeeded in `nix develop`, `always-pass` produced `run-spec.json`, `run-result.json`, `manifest.json`, and `logs/harness.jsonl`, and `kenshou-cli` already enables `-T`.
 - The real kernel adapter surface is `RunContext.knobs`, `.dimensions`, `.seed`, `.phases`, `.env`, `.outDir`, `.logger`, and `.state`. Measurement sections are registered with `putSummary context Measurements`, artifacts are allocated with `artifactPath`, media types with `declareMediaType`, and phase timings with `withPhase`; there is no separate structured phase-marker callback.
 - The default HDR layout is 33,792 counters as planned, and ten million in-memory records completed within a 0.133-second test-suite run on the development machine. The same acceptance test also rebuilds the steady histogram from the retained KSMP records and checks structural equality with the stored KHST histogram.
+- The three full-duration sleep-service arms passed. Open constant recorded 3,000 steady samples with intended-start p99 924.84 ms, service-time p99 4.52 ms, and max 1.012 s. Open Poisson recorded 3,042 samples with intended-start p99 927.99 ms, service-time p99 4.96 ms, and max 1.005 s. Closed loop recorded 17,767 samples with p99 4.92 ms and max 1.006 s, exposing exactly the coordinated-omission contrast the scenario is meant to demonstrate.
 
 
 ## Decision Log

@@ -2,6 +2,8 @@
 module Kenshou.Measure
   ( module Kenshou.Measure.Clock,
     module Kenshou.Measure.Histogram,
+    module Kenshou.Measure.Knobs,
+    module Kenshou.Measure.Load,
     module Kenshou.Measure.Phase,
     module Kenshou.Measure.Recorder,
     module Kenshou.Measure.Session,
@@ -10,6 +12,8 @@ where
 
 import Kenshou.Measure.Clock
 import Kenshou.Measure.Histogram
+import Kenshou.Measure.Knobs
+import Kenshou.Measure.Load
 import Kenshou.Measure.Phase
 import Kenshou.Measure.Recorder
 import Kenshou.Measure.Session
