@@ -11,8 +11,10 @@ dist-diagnose/
 cabal-dev
 .direnv
 .dev/
+.tmp/
 cabal.project.local
 db/
 result
 result-*
+runs/
 .pre-commit-config.yaml

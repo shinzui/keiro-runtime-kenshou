@@ -40,13 +40,41 @@ library
   import: warnings
   hs-source-dirs: src
   exposed-modules:
+    Kenshou.Telemetry
+    Kenshou.Telemetry.SelfTest
+    Kenshou.Telemetry.SelfTest.Arms
+    Kenshou.Telemetry.SelfTest.Service
+    Kenshou.Telemetry.Sink
     Kenshou.Telemetry.Spec
+    Kenshou.Telemetry.Tracing
+    Kenshou.Telemetry.Tracing.Pipeline
+    Kenshou.Telemetry.Tracing.Probe
 
   build-depends:
     aeson >=2.2 && <2.3,
+    async >=2.2 && <2.3,
     base >=4.21 && <4.22,
+    bytestring >=0.12 && <0.13,
+    containers >=0.7 && <0.8,
+    hs-opentelemetry-api ==1.0.0.0,
+    hs-opentelemetry-exporter-otlp ==1.0.0.0,
+    hs-opentelemetry-otlp ==1.0.0.0,
+    hs-opentelemetry-propagator-w3c ==1.0.0.0,
+    hs-opentelemetry-sdk ==1.0.0.0,
+    http-types,
     kenshou-core,
+    kenshou-measure,
+    microlens,
+    network,
+    proto-lens,
+    proto-lens-runtime,
     text >=2.1 && <2.2,
+    time,
+    unordered-containers,
+    vector,
+    wai,
+    warp,
+    zlib,
 
   if flag(otlp-grpc)
     cpp-options: -DWITH_OTLP_GRPC
@@ -56,8 +84,14 @@ test-suite kenshou-telemetry-test
   type: exitcode-stdio-1.0
   hs-source-dirs: test
   main-is: Main.hs
+  ghc-options:
+    -threaded
+    -rtsopts
+
   build-depends:
     base >=4.21 && <4.22,
+    hs-opentelemetry-api,
+    hs-opentelemetry-sdk,
     hspec >=2.11 && <2.12,
     kenshou-core,
     kenshou-telemetry,

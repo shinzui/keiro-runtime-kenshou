@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shinzui.dev/kenshou/schemas/kenshou.telemetry-summary.v1.schema.json",
+  "type": "object",
+  "required": ["schema", "arms", "settings", "ambientEnv", "pipeline", "sink", "endpoints", "handlers", "findings"],
+  "properties": {
+    "schema": {"const": "kenshou.telemetry-summary/v1"},
+    "arms": {
+      "type": "object",
+      "required": ["tracing", "metrics"],
+      "properties": {
+        "tracing": {"enum": ["off", "noop", "sdk-inmemory", "sdk-otlp"]},
+        "metrics": {"enum": ["off", "collect", "serve", "serve-scraped"]}
+      },
+      "additionalProperties": false
+    },
+    "settings": {"type": "object"},
+    "ambientEnv": {"type": "object", "additionalProperties": {"type": "string"}},
+    "pipeline": {
+      "type": ["object", "null"],
+      "properties": {
+        "spansStarted": {"type": "integer", "minimum": 0},
+        "spansEnded": {"type": "integer", "minimum": 0},
+        "spansExportedOk": {"type": "integer", "minimum": 0},
+        "spansExportFailed": {"type": "integer", "minimum": 0},
+        "spansDropped": {"type": "integer", "minimum": 0},
+        "maxQueueDepth": {"type": "integer", "minimum": 0},
+        "exportCalls": {"type": "integer", "minimum": 0},
+        "exportLatencyNs": {"type": "object"},
+        "lastExportError": {"type": ["string", "null"]},
+        "flush": {"type": ["object", "null"]},
+        "shutdown": {"type": ["object", "null"]}
+      },
+      "required": ["spansStarted", "spansEnded", "spansExportedOk", "spansExportFailed", "spansDropped", "maxQueueDepth", "exportCalls", "exportLatencyNs", "lastExportError", "flush", "shutdown"],
+      "additionalProperties": false
+    },
+    "sink": {"type": ["object", "null"]},
+    "endpoints": {"type": "array"},
+    "handlers": {"type": "array"},
+    "findings": {"type": "array"}
+  },
+  "additionalProperties": false
+}

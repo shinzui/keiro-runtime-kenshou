@@ -68,6 +68,7 @@ data TelemetrySpec = TelemetrySpec
     scrapeMs :: Int,
     wsSubscribers :: Int,
     helpers :: HelperPlacement,
+    workerContext :: Maybe RunContext,
     outDir :: FilePath,
     report :: Value -> IO ()
   }
@@ -121,6 +122,7 @@ telemetrySpecFromContext context = do
         scrapeMs = integer "metrics.scrape-interval-ms",
         wsSubscribers = integer "metrics.ws-subscribers",
         helpers = HelperProcess "kenshou",
+        workerContext = Just context,
         outDir = context.outDir,
         report = putSummary context Telemetry "telemetry"
       }

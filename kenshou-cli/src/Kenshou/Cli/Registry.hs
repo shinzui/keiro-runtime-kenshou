@@ -16,11 +16,12 @@ import Kenshou.Core.Selftest qualified as Selftest
 import Kenshou.Diagnose.SelfTest qualified as DiagnoseSelftest
 import Kenshou.Measure.Cli qualified as Measure
 import Kenshou.Measure.Selftest qualified as MeasureSelftest
+import Kenshou.Telemetry.SelfTest qualified as TelemetrySelftest
 
 -- Extension contract: coverage plans add one imported bundle and one list element;
 -- tool plans add command and topic values here without changing a central sum type.
 bundles :: [LayerBundle]
-bundles = [Selftest.bundle, MeasureSelftest.bundle, CheckSelftest.bundle, DiagnoseSelftest.bundle]
+bundles = [Selftest.bundle, MeasureSelftest.bundle, CheckSelftest.bundle, DiagnoseSelftest.bundle, TelemetrySelftest.selfTestBundle]
 
 commands :: [CliCommand]
 commands = [listCommand, planCommand, Help.helpCommand, runCommand, executeCommand, Measure.summarizeCommand, Measure.compareCommand, Diagnose.diagnoseCommand, workerCommand, cohortCommand, completionsCommand]

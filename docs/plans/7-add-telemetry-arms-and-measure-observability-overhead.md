@@ -55,11 +55,11 @@ Milestone 1 — Tracing arms
 - [x] (2026-09-21 20:55Z) Confirmed the OpenTelemetry release against Hackage and upstream tags; added the missing `hs-opentelemetry-exporter-prometheus` and `hs-opentelemetry-otlp` 1.0.0.0 pins to both cohorts.
 - [x] (2026-09-21 21:00Z) Created the `kenshou-telemetry` package skeleton, test suite, Cabal file, and manual `otlp-grpc` flag.
 - [x] (2026-09-21 21:00Z) Implemented `Kenshou.Telemetry.Spec` with the shared knobs, resolved arm specification, cross-knob validation, and explicit gRPC feature rejection.
-- [ ] Implement `Kenshou.Telemetry.Tracing`, `.Tracing.Probe` and `.Tracing.Pipeline`.
-- [ ] Implement `Kenshou.Telemetry.Sink` and the worker role `telemetry-otlp-sink`.
-- [ ] Implement `Kenshou.Telemetry.withTelemetry` for the four tracing arms, with timed flush and shutdown.
-- [ ] Implement the synthetic service and `selftest/telemetry/benchmark/arms-on-synthetic-service` (tracing part); register the self-test bundle.
-- [ ] Unit tests for arms, probe bounds, pipeline accounting and the sink; run the scenario under all four tracing arms.
+- [x] (2026-09-21 21:38Z) Implemented `Kenshou.Telemetry.Tracing`, `.Tracing.Probe` and `.Tracing.Pipeline`, including bounded retention and queue high-water accounting.
+- [x] (2026-09-21 21:38Z) Implemented `Kenshou.Telemetry.Sink` and registered the worker role `selftest/telemetry-otlp-sink` under the kernel's required layer-qualified role naming contract.
+- [x] (2026-09-21 21:38Z) Implemented `Kenshou.Telemetry.withTelemetry` for the four tracing arms, with timed flush and shutdown and the built-in sink isolated in a worker process.
+- [x] (2026-09-21 21:38Z) Implemented the synthetic service and `selftest/telemetry/benchmark/arms-on-synthetic-service` (tracing part); registered the self-test bundle.
+- [x] (2026-09-21 21:38Z) Added unit coverage for arms, propagation, probe bounds, exact failure accounting, non-blocking queue saturation, and plain/gzip OTLP; ran the scenario successfully under all four tracing arms.
 
 Milestone 2 — Metrics arms and the harness scraper
 
@@ -94,7 +94,9 @@ Milestone 4 — Detectors for telemetry-induced problems
 Document unexpected behaviors, bugs, optimizations, or insights discovered during
 implementation. Provide concise evidence.
 
-(None yet.)
+- The local Mori checkout has post-release OpenTelemetry changes in the OTLP modules. The exact Hackage 1.0.0.0 source has the older monolithic `OTLPExporterConfig`, so the implementation follows that released record after checking the upstream release tag. The compiled end-to-end exporter test protects this release-specific seam.
+
+- With the selected WAI release, `lazyRequestBody` yielded an empty OTLP request body while `strictRequestBody` returned the protobuf payload. The initial exporter-side counters therefore reported success while the sink decoded zero spans; the end-to-end plain/gzip tests now catch that false-success mode.
 
 
 ## Decision Log
@@ -156,7 +158,7 @@ Compare the result against the original purpose. Before marking the plan complet
 distill durable project context from the Decision Log, Surprises & Discoveries, and
 this section into docs/adr/. Keep task-local execution details here.
 
-(To be filled during and after implementation.)
+Milestone 1 is complete. The four tracing arms are registered and exercised through the CLI. A short controlled run produced measurements under every arm; the SDK in-memory arm ended and retained/accounted for 2,968 spans with zero drops, and the SDK OTLP arm exported 2,920 spans in eight requests with the worker sink independently receiving all 2,920. The off and noop arms produced measurements without a pipeline. The worker's stderr artifact was empty, and the telemetry summary records ambient `OTEL_*` variables without allowing them to configure the explicit provider.
 
 
 ## Context and Orientation

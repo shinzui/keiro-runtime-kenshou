@@ -68,6 +68,7 @@ library
     kenshou-core,
     kenshou-diagnose,
     kenshou-measure,
+    kenshou-telemetry,
     optparse-applicative >=0.19 && <0.20,
     process >=1.6 && <1.7,
     random >=1.2.1 && <1.4,
