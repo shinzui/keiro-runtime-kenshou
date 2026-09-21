@@ -3,7 +3,12 @@
 module Main (main) where
 
 import Data.Aeson (FromJSON, Value, eitherDecodeFileStrict', toJSON)
+import Kenshou.Core.Bundle (allScenarios, mkRegistry)
 import Kenshou.Core.Cohort
+import Kenshou.Core.Id
+import Kenshou.Core.Scenario (Scenario (..))
+import Kenshou.Core.Selector (matchesSelector, parseSelector)
+import Kenshou.Core.Selftest qualified as Selftest
 import Test.Hspec
   ( Spec,
     describe,
@@ -21,6 +26,9 @@ main = hspec do
   hashSpec
   mismatchSpec
   activeCohortSpec
+  identifierSpec
+  selectorSpec
+  registrySpec
 
 descriptorSpec :: Spec
 descriptorSpec = describe "cohort identity" do
@@ -73,6 +81,41 @@ activeCohortSpec = describe "activeCohortName" do
       Left (CohortInvalidActive _) -> pure ()
       other -> expectationFailure ("expected CohortInvalidActive, got " <> show other)
 
+identifierSpec :: Spec
+identifierSpec = describe "scenario identifiers" do
+  it "round-trips canonical identifiers" do
+    let rendered = "kiroku/append/concurrency/expected-version-race"
+    fmap renderScenarioId (parseScenarioId rendered) `shouldBe` Right rendered
+
+  it "rejects malformed identifiers" do
+    parseScenarioId "kiroku/append/correctness" `shouldBe` Left "scenario identifier must have four segments: \"kiroku/append/correctness\""
+    parseScenarioId "KIROKU/append/correctness/example" `shouldBe` Left "unknown layer \"KIROKU\""
+
+  it "generates canonical UUIDv7 run ids" do
+    generated <- newRunId
+    parseRunId (renderRunId generated) `shouldBe` Right generated
+
+selectorSpec :: Spec
+selectorSpec = describe "scenario selectors" do
+  it "supports one-segment and recursive wildcards" do
+    scenario <- expectRight (parseScenarioId "selftest/kernel/correctness/always-pass")
+    one <- expectRight (parseSelector "*/*/correctness/*")
+    recursive <- expectRight (parseSelector "selftest/**")
+    matchesSelector one scenario `shouldBe` True
+    matchesSelector recursive scenario `shouldBe` True
+
+registrySpec :: Spec
+registrySpec = describe "scenario registry" do
+  it "sorts the kernel self-tests by identifier" do
+    case mkRegistry [Selftest.bundle] of
+      Left errors -> expectationFailure (show errors)
+      Right registry ->
+        fmap (renderScenarioId . (.id)) (allScenarios registry)
+          `shouldBe` [ "selftest/kernel/correctness/always-fail",
+                       "selftest/kernel/correctness/always-pass",
+                       "selftest/kernel/correctness/errors"
+                     ]
+
 onePackageDescriptor :: CohortDescriptor
 onePackageDescriptor =
   CohortDescriptor
@@ -116,3 +159,7 @@ decodeFixture name = do
 
 fixtures :: FilePath
 fixtures = "test/fixtures"
+
+expectRight :: (Show problem) => Either problem value -> IO value
+expectRight (Right value) = pure value
+expectRight (Left problem) = expectationFailure (show problem) >> fail "unreachable"

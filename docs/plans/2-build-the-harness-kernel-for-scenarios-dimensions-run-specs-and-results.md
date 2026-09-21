@@ -17,6 +17,11 @@ provenance:
       at: 2026-09-20T21:08:38Z
       mode: "update"
       note: "Adopted relevant Haskell Jitsurei CLI patterns and the bounded Settei configuration contract."
+    - model: "gpt-5.6-sol"
+      harness: "codex-cli"
+      at: 2026-09-21T03:59:09Z
+      mode: "implement"
+      note: "Started implementation of the harness kernel and CLI contracts."
 ---
 
 # Build the harness kernel for scenarios, dimensions, run specs and results
@@ -39,13 +44,13 @@ Seven self-test scenarios under the `selftest` layer prove each of those behavio
 
 Milestone 1 — Scenario model, layer bundles, registry and `kenshou list`
 
-- [ ] Confirm the state EP-1 left behind (build, dev shell, `kenshou cohort show`, `docs/adr/`), as listed in Context and Orientation.
-- [ ] Extend `kenshou-core/kenshou-core.cabal` (dependencies, modules, `kenshou-core-test`) and restructure `kenshou-cli` into library, executable and `kenshou-cli-test`.
-- [ ] `Kenshou.Core.Id`, `Kenshou.Core.Outcome`, `Kenshou.Core.Selector` with property tests.
-- [ ] `Kenshou.Core.Scenario`, `Kenshou.Core.Bundle` (`LayerBundle`, `Registry`, `mkRegistry`) with validation tests.
-- [ ] `Kenshou.Core.Cli` (`CliCommand`, command groups, `InputSource`, exit-code-2 parse handling), `Kenshou.Core.Cli.Config` (Settei source ordering and diagnostics), `Kenshou.Cli.Config` (run declaration and bindings), `Kenshou.Cli.Registry`, and `Kenshou.Cli.Main`.
-- [ ] `Kenshou.Cli.Help` with embedded terminal-aware topics, `Kenshou.Cli.Completions`, retained Git-aware `Kenshou.Cli.Version`, and parser/PTY/completion tests.
-- [ ] `Kenshou.Core.Selftest` with `always-pass`, `always-fail`, `errors`; `kenshou list` in text and `--json` form.
+- [x] (2026-09-20 21:00 PDT) Confirm the state EP-1 left behind (build, dev shell, `kenshou cohort show`, `docs/adr/`), as listed in Context and Orientation.
+- [x] (2026-09-20 21:24 PDT) Extend `kenshou-core/kenshou-core.cabal` (dependencies, modules, `kenshou-core-test`) and restructure `kenshou-cli` into library, executable and `kenshou-cli-test`.
+- [x] (2026-09-20 21:24 PDT) `Kenshou.Core.Id`, `Kenshou.Core.Outcome`, `Kenshou.Core.Selector` with property tests.
+- [x] (2026-09-20 21:24 PDT) `Kenshou.Core.Scenario`, `Kenshou.Core.Bundle` (`LayerBundle`, `Registry`, `mkRegistry`) with validation tests.
+- [x] (2026-09-20 21:24 PDT) `Kenshou.Core.Cli` (`CliCommand`, command groups, `InputSource`, exit-code-2 parse handling), `Kenshou.Core.Cli.Config` (Settei source ordering and diagnostics), `Kenshou.Cli.Config` (run declaration and bindings), `Kenshou.Cli.Registry`, and `Kenshou.Cli.Main`.
+- [x] (2026-09-20 21:24 PDT) `Kenshou.Cli.Help` with embedded terminal-aware topics, `Kenshou.Cli.Completions`, retained Git-aware `Kenshou.Cli.Version`, and parser/PTY/completion tests.
+- [x] (2026-09-20 21:24 PDT) `Kenshou.Core.Selftest` with `always-pass`, `always-fail`, `errors`; `kenshou list` in text and `--json` form.
 
 Milestone 2 — Dimensions, knobs and the run specification
 
@@ -151,7 +156,7 @@ Milestone 5 — Published JSON Schemas, golden fixtures and the self-test scenar
 
 ## Outcomes & Retrospective
 
-(To be filled during and after implementation.)
+- Milestone 1 delivered the kernel vocabulary, validated bundle registry, value-level CLI extension seam, Settei-backed configuration assembly, embedded help topics, parser-derived completion scripts, and the first three self-test scenarios. `cabal build all` and 14 unit/CLI examples pass; `kenshou list --json` reports `kenshou.scenario-list/v1` with three scenarios.
 
 
 ## Context and Orientation

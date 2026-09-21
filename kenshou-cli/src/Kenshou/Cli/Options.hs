@@ -2,6 +2,7 @@ module Kenshou.Cli.Options
   ( Command (..),
     CohortCommand (..),
     commandParserInfo,
+    cohortCommandParser,
   )
 where
 
