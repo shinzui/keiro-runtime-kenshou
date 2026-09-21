@@ -17,6 +17,7 @@ import Kenshou.Measure.Phase qualified as Measure
 import Kenshou.Measure.Recorder (OpName (..))
 import Kenshou.Measure.Session
 import Kenshou.Telemetry
+import Kenshou.Telemetry.SelfTest.Endpoints (withSyntheticEndpoints)
 import Kenshou.Telemetry.SelfTest.Service
 
 armsScenario :: Scenario
@@ -44,12 +45,14 @@ runArms context = case (telemetrySpecFromContext context, loadModelFromKnobs con
   (_, _, Left message) -> pure (failedWith ["invalid-measure-config"] message)
   (Right telemetrySpec, Right loadModel, Right measureConfig) ->
     withTelemetry telemetrySpec \telemetry -> do
-      let spanCount = integer "work.spans-per-op"
-          attributeCount = integer "work.attributes-per-span"
-          cpuMicros = integer "work.cpu-micros"
-          operation = Operation (OpName "synthetic") (\_ _ -> runSyntheticOperation telemetry.tracer spanCount attributeCount cpuMicros)
-      (_, measurement) <- withMeasurement context measureConfig (\session -> runLoad session loadModel operation)
-      pure (passed {outcome = measuredOutcome measurement passed.outcome})
+      withSyntheticEndpoints telemetry.servesEndpoints telemetry.registerEndpoint do
+        syntheticMetrics <- traverse newSyntheticMetrics telemetry.meter
+        let spanCount = integer "work.spans-per-op"
+            attributeCount = integer "work.attributes-per-span"
+            cpuMicros = integer "work.cpu-micros"
+            operation = Operation (OpName "synthetic") (\_ _ -> runSyntheticOperation telemetry.tracer syntheticMetrics spanCount attributeCount cpuMicros)
+        (_, measurement) <- withMeasurement context measureConfig (\session -> runLoad session loadModel operation)
+        pure (passed {outcome = measuredOutcome measurement passed.outcome})
   where
     duration = fromIntegral (knobInt context.knobs (name "load.duration-seconds")) * 1_000_000_000
     phases = Measure.PhasePlan (Nanos 100_000_000) (Measure.SteadyFor (Nanos duration)) (Nanos 100_000_000)

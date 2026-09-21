@@ -41,8 +41,12 @@ library
   hs-source-dirs: src
   exposed-modules:
     Kenshou.Telemetry
+    Kenshou.Telemetry.Endpoint
+    Kenshou.Telemetry.Metrics
+    Kenshou.Telemetry.Scrape
     Kenshou.Telemetry.SelfTest
     Kenshou.Telemetry.SelfTest.Arms
+    Kenshou.Telemetry.SelfTest.Endpoints
     Kenshou.Telemetry.SelfTest.Service
     Kenshou.Telemetry.Sink
     Kenshou.Telemetry.Spec
@@ -56,11 +60,15 @@ library
     base >=4.21 && <4.22,
     bytestring >=0.12 && <0.13,
     containers >=0.7 && <0.8,
+    directory,
+    filepath,
     hs-opentelemetry-api ==1.0.0.0,
     hs-opentelemetry-exporter-otlp ==1.0.0.0,
+    hs-opentelemetry-exporter-prometheus ==1.0.0.0,
     hs-opentelemetry-otlp ==1.0.0.0,
     hs-opentelemetry-propagator-w3c ==1.0.0.0,
     hs-opentelemetry-sdk ==1.0.0.0,
+    http-client,
     http-types,
     kenshou-core,
     kenshou-measure,
@@ -73,7 +81,9 @@ library
     unordered-containers,
     vector,
     wai,
+    wai-websockets,
     warp,
+    websockets,
     zlib,
 
   if flag(otlp-grpc)
@@ -89,10 +99,18 @@ test-suite kenshou-telemetry-test
     -rtsopts
 
   build-depends:
+    async,
     base >=4.21 && <4.22,
+    directory,
     hs-opentelemetry-api,
     hs-opentelemetry-sdk,
     hspec >=2.11 && <2.12,
+    http-types,
     kenshou-core,
     kenshou-telemetry,
+    network,
     text,
+    wai,
+    wai-websockets,
+    warp,
+    websockets,

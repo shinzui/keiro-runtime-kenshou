@@ -3,6 +3,7 @@ module Kenshou.Telemetry.Tracing
     startTracing,
     flushTracing,
     stopTracing,
+    otlpExporterConfig,
   )
 where
 
@@ -41,7 +42,7 @@ startTracing spec = case spec.tracing of
     pure (runtime provider (Just probe) (Just stats))
   TracingSdkOtlp -> do
     stats <- newPipelineStats
-    exporter <- instrumentExporter stats <$> OtlpSpan.otlpExporter (exporterConfig spec)
+    exporter <- instrumentExporter stats <$> OtlpSpan.otlpExporter (otlpExporterConfig spec)
     processor <- makeProcessor spec.processor exporter
     provider <- createTracerProvider [countingProcessor stats, processor] (providerOptions spec)
     pure (runtime provider Nothing (Just stats))
@@ -82,8 +83,8 @@ makeProcessor (BatchProcessor queue delay batch timeoutMs) exporter =
       }
     exporter
 
-exporterConfig :: TelemetrySpec -> OtlpSpan.OTLPExporterConfig
-exporterConfig spec =
+otlpExporterConfig :: TelemetrySpec -> OtlpSpan.OTLPExporterConfig
+otlpExporterConfig spec =
   OtlpSpan.OTLPExporterConfig
     { OtlpSpan.otlpEndpoint = Just (Text.unpack (endpointBase spec.endpoint)),
       OtlpSpan.otlpTracesEndpoint = Nothing,

@@ -63,12 +63,12 @@ Milestone 1 — Tracing arms
 
 Milestone 2 — Metrics arms and the harness scraper
 
-- [ ] Implement `Kenshou.Telemetry.Metrics` (meter provider per arm, Prometheus exposition of the OpenTelemetry meter, periodic OTLP reader).
-- [ ] Implement `Kenshou.Telemetry.Endpoint` (endpoint type, registry, free-port reservation, readiness wait).
-- [ ] Implement `Kenshou.Telemetry.Scrape` (fixed-schedule HTTP scraper, WebSocket subscriber, slot-leak probe) and the worker role `telemetry-scraper`.
-- [ ] Write `series/scrape-*.csv` and the per-endpoint summary.
-- [ ] Extend the synthetic service with Prometheus, JSON and WebSocket endpoints; run it under all four metrics arms.
-- [ ] Write `docs/guides/wiring-telemetry-arms.md` with the per-component adapter recipes.
+- [x] (2026-09-21 22:28Z) Implemented `Kenshou.Telemetry.Metrics` with explicit providers, Prometheus exposition, final collection, and the periodic OTLP reader.
+- [x] (2026-09-21 22:28Z) Implemented `Kenshou.Telemetry.Endpoint` with the endpoint contract, free-port reservation, and readiness polling.
+- [x] (2026-09-21 22:28Z) Implemented the fixed-schedule HTTP scraper, WebSocket subscribers, slot-leak probe, and the isolated `selftest/telemetry-scraper` worker role.
+- [x] (2026-09-21 22:28Z) Wrote line-flushed HTTP and WebSocket series and per-endpoint latency, body-size, failure, and skipped-tick summaries.
+- [x] (2026-09-21 22:28Z) Extended the synthetic service and exercised off, collect, serve, serve-scraped, and periodic-OTLP configurations.
+- [x] (2026-09-21 22:28Z) Wrote `docs/guides/wiring-telemetry-arms.md`; compiled its Kiroku recipe against the released cohort in a disposable scratch package.
 
 Milestone 3 — The paired overhead protocol and `kenshou overhead`
 
@@ -97,6 +97,10 @@ implementation. Provide concise evidence.
 - The local Mori checkout has post-release OpenTelemetry changes in the OTLP modules. The exact Hackage 1.0.0.0 source has the older monolithic `OTLPExporterConfig`, so the implementation follows that released record after checking the upstream release tag. The compiled end-to-end exporter test protects this release-specific seam.
 
 - With the selected WAI release, `lazyRequestBody` yielded an empty OTLP request body while `strictRequestBody` returned the protobuf payload. The initial exporter-side counters therefore reported success while the sink decoded zero spans; the end-to-end plain/gzip tests now catch that false-success mode.
+
+- The scraper initially caught `SomeException` around `httpLbs`, which also caught the asynchronous exception used to cancel its worker. The test teardown exposed the resulting immortal loop. The scraper now rethrows `SomeAsyncException` and records only synchronous request failures.
+
+- The plan's draft adapter recipe used `/ws/metrics` for both runtime servers. The released Kiroku Metrics 0.1.0.8 and Shibuya Metrics 0.9.0.3 sources expose `/ws`; Shibuya's subscription message is `subscribe_all`, while Kiroku's is `subscribe_metrics`. The compiled guide records those released interfaces.
 
 
 ## Decision Log
@@ -159,6 +163,8 @@ distill durable project context from the Decision Log, Surprises & Discoveries, 
 this section into docs/adr/. Keep task-local execution details here.
 
 Milestone 1 is complete. The four tracing arms are registered and exercised through the CLI. A short controlled run produced measurements under every arm; the SDK in-memory arm ended and retained/accounted for 2,968 spans with zero drops, and the SDK OTLP arm exported 2,920 spans in eight requests with the worker sink independently receiving all 2,920. The off and noop arms produced measurements without a pipeline. The worker's stderr artifact was empty, and the telemetry summary records ambient `OTEL_*` variables without allowing them to configure the explicit provider.
+
+Milestone 2 is complete. In the ten-second acceptance run, each HTTP endpoint produced ten successful non-empty scrapes, the WebSocket series recorded two connects and 202 frames, and all three endpoints appeared in the telemetry summary. The serve arm recorded the same endpoints without scrape files; collect recorded two live instruments and opened no endpoints; off constructed no metric provider. A periodic-OTLP collect run sent three metric requests to the isolated sink. Unit tests cover slow-endpoint tick skipping and distinguish an exhausted WebSocket-slot server from a correct server. The Kiroku adapter recipe compiled against Kiroku Store 0.8.0.1, Kiroku Metrics 0.1.0.8, and Kiroku OTel 0.2.0.8.
 
 
 ## Context and Orientation

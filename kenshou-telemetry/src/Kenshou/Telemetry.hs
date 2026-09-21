@@ -8,22 +8,28 @@ module Kenshou.Telemetry
 where
 
 import Control.Exception (SomeException, displayException, mask, throwIO, try)
+import Control.Monad (void)
 import Data.Aeson (FromJSON (parseJSON), ToJSON (..), Value (..), object, (.=))
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Aeson.Types (parseMaybe, withObject, (.:))
+import Data.IORef
 import Data.Text (Text)
 import Data.Text qualified as Text
 import GHC.Clock (getMonotonicTimeNSec)
 import Kenshou.Core.Dimension (renderMetrics, renderTracing)
 import Kenshou.Core.Role (ControlMessage (..), WorkerMessage (..), mkRoleName)
 import Kenshou.Core.Role.Spawn (WorkerHandle (..), withWorker)
+import Kenshou.Telemetry.Endpoint
+import Kenshou.Telemetry.Metrics
+import Kenshou.Telemetry.Scrape
 import Kenshou.Telemetry.Sink
 import Kenshou.Telemetry.Spec
 import Kenshou.Telemetry.Spec qualified as Spec
 import Kenshou.Telemetry.Tracing
 import Kenshou.Telemetry.Tracing.Pipeline
 import Kenshou.Telemetry.Tracing.Probe
+import OpenTelemetry.Metric.Core (Meter, MeterProvider)
 import OpenTelemetry.Trace.Core (Tracer, TracerProvider)
 import System.Environment (getEnvironment)
 
@@ -37,49 +43,73 @@ instance ToJSON ProviderCallReport where
   toJSON report = object ["result" .= report.result, "durationMs" .= report.durationMs]
 
 data FlushReport = FlushReport
-  { tracing :: Maybe ProviderCallReport
+  { tracing :: Maybe ProviderCallReport,
+    metrics :: Maybe ProviderCallReport
   }
   deriving stock (Eq, Show)
 
 instance ToJSON FlushReport where
-  toJSON report = object ["tracing" .= report.tracing]
+  toJSON report = object ["tracing" .= report.tracing, "metrics" .= report.metrics]
 
 data TelemetryHandles = TelemetryHandles
   { tracer :: Maybe Tracer,
     tracerProvider :: Maybe TracerProvider,
+    meter :: Maybe Meter,
+    meterProvider :: Maybe MeterProvider,
     spans :: Maybe SpanProbe,
     pipeline :: Maybe PipelineStats,
     metricsLive :: Bool,
     servesEndpoints :: Bool,
+    registerEndpoint :: Endpoint -> IO (),
     setSinkFault :: SinkFault -> IO (),
     flushTelemetry :: IO FlushReport
   }
 
 withTelemetry :: TelemetrySpec -> (TelemetryHandles -> IO value) -> IO value
-withTelemetry spec action = case spec.endpoint of
-  BuiltinSink fault | requiresSink spec -> withConfiguredSink spec fault (\sink -> runWith (spec {Spec.endpoint = ExternalEndpoint sink.endpoint}) (Just sink))
-  _ -> runWith spec Nothing
+withTelemetry spec action = withConfiguredScraper spec \scraper -> case spec.endpoint of
+  BuiltinSink fault | requiresSink spec -> withConfiguredSink spec fault (\sink -> runWith scraper (spec {Spec.endpoint = ExternalEndpoint sink.endpoint}) (Just sink))
+  _ -> runWith scraper spec Nothing
   where
-    runWith effectiveSpec sink = mask \restore -> do
+    runWith scraper effectiveSpec sink = mask \restore -> do
       runtime <- startTracing effectiveSpec
+      metricsRuntime <- startMetrics effectiveSpec
+      endpointsRef <- newIORef (maybe [] pure metricsRuntime.endpoint)
+      traverse_ (\endpoint -> traverse_ (\active -> active.register endpoint) scraper) metricsRuntime.endpoint
+      let register endpoint
+            | spec.metrics `notElem` [MetricsServe, MetricsServeScraped] = ioError (userError "metrics endpoint registered while telemetry.metrics does not serve endpoints")
+            | otherwise = do
+                ready <- if endpoint.kind == WebSocketPush then pure True else awaitHttpReady endpoint.url 10_000
+                if ready
+                  then do
+                    modifyIORef' endpointsRef (<> [endpoint])
+                    traverse_ (\active -> active.register endpoint) scraper
+                  else ioError (userError ("metrics endpoint did not become ready: " <> Text.unpack endpoint.url))
       let handles =
             TelemetryHandles
               { tracer = runtime.tracer,
                 tracerProvider = runtime.provider,
+                meter = metricsRuntime.meter,
+                meterProvider = metricsRuntime.provider,
                 spans = runtime.probe,
                 pipeline = runtime.pipeline,
                 metricsLive = spec.metrics /= MetricsOff,
                 servesEndpoints = spec.metrics `elem` [MetricsServe, MetricsServeScraped],
+                registerEndpoint = register,
                 setSinkFault = maybe (const (pure ())) (.setFault) sink,
-                flushTelemetry = FlushReport <$> timedCall (flushTracing spec.shutdownMs runtime)
+                flushTelemetry = FlushReport <$> timedCall (flushTracing spec.shutdownMs runtime) <*> timedCall (flushMetrics spec.shutdownMs metricsRuntime)
               }
       bodyResult <- tryAny (restore (action handles))
       flushResult <- timedCall (flushTracing spec.shutdownMs runtime)
+      metricsFlushResult <- timedCall (flushMetrics spec.shutdownMs metricsRuntime)
+      endpointSummaries <- maybe (pure Nothing) (fmap Just . (.finish)) scraper
+      (metricsSnapshot, metricsShutdownResult) <- timedStopMetrics spec.shutdownMs metricsRuntime
       shutdownResult <- timedCall (stopTracing spec.shutdownMs runtime)
       pipelineSnapshot <- traverse snapshotPipeline runtime.pipeline
       sinkSnapshot <- traverse (.snapshot) sink
       ambient <- ambientOtelEnvironment
-      let summary = telemetrySummary spec ambient pipelineSnapshot sinkSnapshot flushResult shutdownResult
+      endpoints <- readIORef endpointsRef
+      let endpointValues = maybe (fmap toJSON endpoints) (fmap toJSON) endpointSummaries
+          summary = telemetrySummary spec ambient pipelineSnapshot sinkSnapshot metricsSnapshot endpointValues flushResult metricsFlushResult shutdownResult metricsShutdownResult
       _ <- tryAny (spec.report summary)
       either throwIO pure bodyResult
 
@@ -106,8 +136,32 @@ withConfiguredSink spec fault action = case (spec.helpers, spec.workerContext) o
       action (SinkHandle endpoint setFault snapshot)
   _ -> withSink fault action
 
-telemetrySummary :: TelemetrySpec -> [(Text, Text)] -> Maybe PipelineSnapshot -> Maybe SinkStats -> Maybe ProviderCallReport -> Maybe ProviderCallReport -> Value
-telemetrySummary spec ambient pipelineSnapshot sinkSnapshot flushResult shutdownResult =
+withConfiguredScraper :: TelemetrySpec -> (Maybe ScraperHandle -> IO value) -> IO value
+withConfiguredScraper spec action
+  | spec.metrics /= MetricsServeScraped = action Nothing
+  | otherwise = case (spec.helpers, spec.workerContext) of
+      (HelperProcess _, Just context) -> do
+        roleName <- either (ioError . userError . Text.unpack) pure (mkRoleName "selftest/telemetry-scraper")
+        withWorker context roleName "telemetry-scraper" (object ["intervalMs" .= spec.scrapeMs, "wsSubscribers" .= spec.wsSubscribers]) \worker -> do
+          ready <- worker.receive 10_000
+          case ready of
+            Just WrkReady -> pure ()
+            Just (WrkError message) -> ioError (userError (Text.unpack message))
+            _ -> ioError (userError "telemetry scraper did not become ready within 10 seconds")
+          let register endpoint = worker.send (CtlCustom "endpoint" (toJSON endpoint))
+              finish = do
+                worker.send (CtlCustom "finish" Null)
+                response <- worker.receive 10_000
+                case response of
+                  Just (WrkCustom "scrape-summary" payload) -> maybe (ioError (userError "telemetry scraper sent an invalid summary")) pure (parseMaybe parseJSON payload)
+                  _ -> ioError (userError "telemetry scraper did not return its summary")
+          action (Just (ScraperHandle register finish))
+      _ -> do
+        scraper <- startScraperInProcess spec.outDir spec.scrapeMs spec.wsSubscribers
+        action (Just scraper)
+
+telemetrySummary :: TelemetrySpec -> [(Text, Text)] -> Maybe PipelineSnapshot -> Maybe SinkStats -> Maybe MetricsSnapshot -> [Value] -> Maybe ProviderCallReport -> Maybe ProviderCallReport -> Maybe ProviderCallReport -> Maybe ProviderCallReport -> Value
+telemetrySummary spec ambient pipelineSnapshot sinkSnapshot metricsSnapshot endpoints flushResult metricsFlushResult shutdownResult metricsShutdownResult =
   object
     [ "schema" .= ("kenshou.telemetry-summary/v1" :: Text),
       "arms" .= object ["tracing" .= renderTracing spec.tracing, "metrics" .= renderMetrics spec.metrics],
@@ -115,7 +169,8 @@ telemetrySummary spec ambient pipelineSnapshot sinkSnapshot flushResult shutdown
       "ambientEnv" .= object [Key.fromText key .= value | (key, value) <- ambient],
       "pipeline" .= pipelineValue pipelineSnapshot flushResult shutdownResult,
       "sink" .= sinkSnapshot,
-      "endpoints" .= ([] :: [Value]),
+      "metrics" .= object ["snapshot" .= metricsSnapshot, "flush" .= metricsFlushResult, "shutdown" .= metricsShutdownResult],
+      "endpoints" .= endpoints,
       "handlers" .= ([] :: [Value]),
       "findings" .= ([] :: [Value])
     ]
@@ -166,6 +221,17 @@ timedCall operation = do
     Right Nothing -> ProviderCallReport "not-applicable" elapsed
     Right (Just result) -> ProviderCallReport (Text.pack (show result)) elapsed
 
+timedStopMetrics :: Int -> MetricsRuntime -> IO (Maybe MetricsSnapshot, Maybe ProviderCallReport)
+timedStopMetrics timeoutMs runtime = do
+  started <- getMonotonicTimeNSec
+  outcome <- tryAny (stopMetrics timeoutMs runtime)
+  finished <- getMonotonicTimeNSec
+  let elapsed = fromIntegral (finished - started) / 1_000_000
+  pure $ case outcome of
+    Left exception -> (Nothing, Just (ProviderCallReport ("exception: " <> Text.pack (displayException exception)) elapsed))
+    Right (snapshot, Nothing) -> (snapshot, Just (ProviderCallReport "not-applicable" elapsed))
+    Right (snapshot, Just result) -> (snapshot, Just (ProviderCallReport (Text.pack (show result)) elapsed))
+
 ambientOtelEnvironment :: IO [(Text, Text)]
 ambientOtelEnvironment = do
   environment <- getEnvironment
@@ -173,3 +239,7 @@ ambientOtelEnvironment = do
 
 tryAny :: IO value -> IO (Either SomeException value)
 tryAny = try
+
+traverse_ :: (a -> IO b) -> Maybe a -> IO ()
+traverse_ _ Nothing = pure ()
+traverse_ action (Just value) = void (action value)
