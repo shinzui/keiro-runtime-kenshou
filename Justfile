@@ -42,6 +42,17 @@ cohort-show:
 cohort-check:
     cabal run -v0 kenshou -- cohort check
 
+[group('cohort')]
+cohort-assert-released:
+    test "$(cat cohort/active.project)" = "import: released.project"
+
+[group('cohort')]
+use-cohort name:
+    test -f "cohort/{{name}}.project" && test -f "cohort/{{name}}.json"
+    printf 'import: %s.project\n' "{{name}}" > cohort/active.project
+    rm -f dist-newstyle/cache/config dist-newstyle/cache/plan.json
+    @echo "active cohort: {{name}} (run cabal build all, then just cohort-check)"
+
 [group('database')]
 postgres-init:
     mkdir -p "{{pg_host}}" .dev

@@ -1,0 +1,86 @@
+{
+  "schema": "kenshou.cohort/v1",
+  "name": "released",
+  "description": "What a service resolves from Hackage today.",
+  "verifiedAt": "2026-09-20",
+  "compiler": "ghc-9.12.4",
+  "indexState": "2026-09-20T13:44:47Z",
+  "projectFile": "cohort/released.project",
+  "components": [
+    { "id": "keiki", "moriUri": "mori://shinzui/keiki", "source": { "type": "hackage" }, "packages": [
+      { "name": "keiki", "version": "0.9.1.0" },
+      { "name": "keiki-codec-json", "version": "0.9.1.0" }
+    ] },
+    { "id": "kiroku", "moriUri": "mori://shinzui/kiroku", "source": { "type": "hackage" }, "packages": [
+      { "name": "kiroku-store", "version": "0.8.0.1" },
+      { "name": "kiroku-store-migrations", "version": "0.4.0.0" },
+      { "name": "kiroku-otel", "version": "0.2.0.8" },
+      { "name": "kiroku-metrics", "version": "0.1.0.8" },
+      { "name": "kiroku-cli", "version": "0.2.0.6" },
+      { "name": "shibuya-kiroku-adapter", "version": "0.5.1.2" }
+    ] },
+    { "id": "keiro", "moriUri": "mori://shinzui/keiro", "source": { "type": "hackage" }, "packages": [
+      { "name": "keiro", "version": "0.17.0.0" },
+      { "name": "keiro-core", "version": "0.17.0.0" },
+      { "name": "keiro-pgmq", "version": "0.17.0.0" },
+      { "name": "keiro-migrations", "version": "0.17.0.0" },
+      { "name": "keiro-test-support", "version": "0.17.0.0" }
+    ] },
+    { "id": "shibuya", "moriUri": "mori://shinzui/shibuya", "source": { "type": "hackage" }, "packages": [
+      { "name": "shibuya-core", "version": "0.9.0.3" },
+      { "name": "shibuya-metrics", "version": "0.9.0.3" }
+    ] },
+    { "id": "shibuya-pgmq-adapter", "moriUri": "mori://shinzui/shibuya-pgmq-adapter", "source": { "type": "hackage" }, "packages": [
+      { "name": "shibuya-pgmq-adapter", "version": "0.16.0.0" }
+    ] },
+    { "id": "shibuya-kafka-adapter", "moriUri": "mori://shinzui/shibuya-kafka-adapter", "source": { "type": "hackage" }, "packages": [
+      { "name": "shibuya-kafka-adapter", "version": "0.9.0.1" }
+    ] },
+    { "id": "kafka-effectful", "moriUri": "mori://shinzui/kafka-effectful", "source": { "type": "hackage" }, "packages": [
+      { "name": "kafka-effectful", "version": "0.3.1.0" }
+    ] },
+    { "id": "hw-kafka-streamly", "moriUri": "mori://shinzui/hw-kafka-streamly", "source": { "type": "hackage" }, "packages": [
+      { "name": "hw-kafka-streamly", "version": "0.2.0.0" }
+    ] },
+    { "id": "hw-kafka-client", "moriUri": "mori://haskell-works/hw-kafka-client", "source": { "type": "hackage" }, "packages": [
+      { "name": "hw-kafka-client", "version": "5.3.0" }
+    ] },
+    { "id": "pgmq-hs", "moriUri": "mori://shinzui/pgmq-hs", "source": { "type": "hackage" }, "packages": [
+      { "name": "pgmq-core", "version": "0.6.1.0" },
+      { "name": "pgmq-hasql", "version": "0.6.1.0" },
+      { "name": "pgmq-effectful", "version": "0.6.1.0" },
+      { "name": "pgmq-config", "version": "0.6.1.0" },
+      { "name": "pgmq-migration", "version": "0.6.1.0" }
+    ] },
+    { "id": "pg-migrate", "moriUri": "mori://shinzui/pg-migrate", "source": { "type": "hackage" }, "packages": [
+      { "name": "pg-migrate", "version": "1.1.0.0" },
+      { "name": "pg-migrate-embed", "version": "1.1.0.0" },
+      { "name": "pg-migrate-cli", "version": "1.1.0.0" },
+      { "name": "pg-migrate-import-codd", "version": "1.1.0.0" },
+      { "name": "pg-migrate-import-hasql-migration", "version": "1.1.0.0" }
+    ] },
+    { "id": "ephemeral-pg", "moriUri": "mori://shinzui/ephemeral-pg", "source": { "type": "hackage" }, "packages": [
+      { "name": "ephemeral-pg", "version": "0.3.1.0" }
+    ] },
+    { "id": "effectful", "moriUri": "mori://effectful/effectful", "source": { "type": "hackage" }, "packages": [
+      { "name": "effectful", "version": "2.6.1.0" },
+      { "name": "effectful-core", "version": "2.6.1.0" }
+    ] },
+    { "id": "hs-opentelemetry", "moriUri": "mori://iand675/hs-opentelemetry", "source": { "type": "hackage" }, "packages": [
+      { "name": "hs-opentelemetry-api", "version": "1.0.0.0" },
+      { "name": "hs-opentelemetry-sdk", "version": "1.0.0.0" },
+      { "name": "hs-opentelemetry-propagator-w3c", "version": "1.0.0.0" },
+      { "name": "hs-opentelemetry-exporter-in-memory", "version": "1.0.0.0" },
+      { "name": "hs-opentelemetry-exporter-otlp", "version": "1.0.0.0" },
+      { "name": "hs-opentelemetry-semantic-conventions", "version": "1.40.0.0" }
+    ] }
+  ],
+  "allowNewer": ["keiro-test-support:ephemeral-pg"],
+  "exceptions": [
+    { "package": "kiroku-store-migrations", "selected": "0.4.0.0", "latestObserved": "0.5.0.0", "reason": "keiro-migrations 0.17.0.0 bounds ^>=0.4.0.0", "recheckAfter": "2026-12-20" },
+    { "package": "pg-migrate", "selected": "1.1.0.0", "latestObserved": "1.2.0.0", "reason": "keiro-migrations and pgmq-migration bound ^>=1.1.0.0", "recheckAfter": "2026-12-20" },
+    { "package": "effectful", "selected": "2.6.1.0", "latestObserved": "2.7.1.0", "reason": "keiro 0.17.0.0 requires effectful <2.7", "recheckAfter": "2026-12-20" },
+    { "package": "aeson", "selected": "2.2.5.1", "latestObserved": "2.3.2.0", "reason": "resolved transitively by the released runtime bounds", "recheckAfter": "2026-12-20" },
+    { "package": "hw-kafka-client", "selected": "5.3.0", "latestObserved": "5.3.0", "reason": "the head cohort uses a fork with unreleased correctness fixes", "recheckAfter": "2026-12-20" }
+  ]
+}

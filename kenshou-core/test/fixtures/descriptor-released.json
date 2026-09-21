@@ -1,0 +1,29 @@
+{
+  "schema": "kenshou.cohort/v1",
+  "name": "released",
+  "description": "Trimmed unit-test cohort.",
+  "verifiedAt": "2026-09-20",
+  "compiler": "ghc-9.12.4",
+  "indexState": "2026-09-20T13:44:47Z",
+  "projectFile": "cohort/released.project",
+  "components": [
+    {
+      "id": "foo",
+      "moriUri": "mori://example/foo",
+      "source": { "type": "hackage" },
+      "packages": [{ "name": "foo", "version": "1.0.0" }]
+    },
+    {
+      "id": "bar",
+      "moriUri": "mori://example/bar",
+      "source": {
+        "type": "git",
+        "location": "https://example.com/bar.git",
+        "rev": "0123456789abcdef0123456789abcdef01234567"
+      },
+      "packages": [{ "name": "bar", "version": "2.0.0", "subdir": "bar" }]
+    }
+  ],
+  "allowNewer": [],
+  "exceptions": []
+}

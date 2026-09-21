@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/kenshou.cohort-identity.v1.schema.json",
+  "title": "Kenshou resolved cohort identity",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "cohort", "compiler", "cabalVersion", "os", "arch", "indexState", "planHash", "descriptorSha256", "components"],
+  "properties": {
+    "schema": { "const": "kenshou.cohort-identity/v1" },
+    "cohort": { "type": "string", "minLength": 1 }, "compiler": { "type": "string", "minLength": 1 },
+    "cabalVersion": { "type": "string", "minLength": 1 }, "os": { "type": "string", "minLength": 1 }, "arch": { "type": "string", "minLength": 1 },
+    "indexState": { "type": ["string", "null"] }, "planHash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "descriptorSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "components": { "type": "array", "items": { "$ref": "#/$defs/component" } }
+  },
+  "$defs": {
+    "component": { "type": "object", "additionalProperties": false, "required": ["id", "moriUri", "packages"], "properties": { "id": { "type": "string" }, "moriUri": { "type": "string", "pattern": "^mori://" }, "packages": { "type": "array", "items": { "$ref": "#/$defs/package" } } } },
+    "package": { "type": "object", "additionalProperties": false, "required": ["name", "version", "source"], "properties": { "name": { "type": "string" }, "version": { "type": "string" }, "source": { "$ref": "#/$defs/source" } } },
+    "source": { "oneOf": [
+      { "type": "object", "additionalProperties": false, "required": ["type", "sha256"], "properties": { "type": { "const": "hackage" }, "sha256": { "type": ["string", "null"] } } },
+      { "type": "object", "additionalProperties": false, "required": ["type", "location", "rev", "subdir"], "properties": { "type": { "const": "git" }, "location": { "type": "string" }, "rev": { "type": "string" }, "subdir": { "type": ["string", "null"] } } },
+      { "type": "object", "additionalProperties": false, "required": ["type"], "properties": { "type": { "const": "boot" } } },
+      { "type": "object", "additionalProperties": false, "required": ["type", "path"], "properties": { "type": { "const": "local" }, "path": { "type": "string" } } }
+    ] }
+  }
+}

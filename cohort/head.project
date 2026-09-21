@@ -1,9 +1,9 @@
--- RELEASED COHORT: what a service resolves from Hackage today.
--- Descriptor: cohort/released.json. Verified by dry-run on 2026-09-20.
+-- HEAD COHORT: released packages with selected unreleased fixes.
+-- Descriptor: cohort/head.json. Verified by dry-run on 2026-09-20.
 index-state: 2026-09-20T13:44:47Z
 
--- Keep every cohort package in plan.json even before a local package imports it.
--- Versions remain single-sourced in constraints below.
+-- Source-repository packages below are already project packages. Keep every
+-- remaining cohort package in plan.json even before a local package imports it.
 extra-packages:
   keiro,
   keiro-core,
@@ -18,12 +18,9 @@ extra-packages:
   kiroku-metrics,
   kiroku-cli,
   shibuya-kiroku-adapter,
-  shibuya-core,
-  shibuya-metrics,
   shibuya-pgmq-adapter,
   shibuya-kafka-adapter,
   kafka-effectful,
-  hw-kafka-client,
   hw-kafka-streamly,
   pgmq-core,
   pgmq-hasql,
@@ -54,7 +51,6 @@ constraints:
   keiki ==0.9.1.0,
   keiki-codec-json ==0.9.1.0,
   kiroku-store ==0.8.0.1,
-  -- 0.5.0.0 exists; keiro-migrations 0.17.0.0 bounds ^>=0.4.0.0.
   kiroku-store-migrations ==0.4.0.0,
   kiroku-otel ==0.2.0.8,
   kiroku-metrics ==0.1.0.8,
@@ -72,14 +68,12 @@ constraints:
   pgmq-effectful ==0.6.1.0,
   pgmq-config ==0.6.1.0,
   pgmq-migration ==0.6.1.0,
-  -- 1.2.0.0 exists; keiro-migrations and pgmq-migration bound ^>=1.1.0.0.
   pg-migrate ==1.1.0.0,
   pg-migrate-embed ==1.1.0.0,
   pg-migrate-cli ==1.1.0.0,
   pg-migrate-import-codd ==1.1.0.0,
   pg-migrate-import-hasql-migration ==1.1.0.0,
   ephemeral-pg ==0.3.1.0,
-  -- keiro and shibuya-kiroku-adapter forbid effectful 2.7.
   effectful ==2.6.1.0,
   effectful-core ==2.6.1.0,
   hs-opentelemetry-api ==1.0.0.0,
@@ -89,11 +83,21 @@ constraints:
   hs-opentelemetry-exporter-otlp ==1.0.0.0,
   hs-opentelemetry-semantic-conventions ==1.40.0.0
 
--- Lifted bound: keiro-test-support 0.17.0.0 declares ephemeral-pg >=0.2 && <0.3.
--- Why it does not reach us: 0.3.0.0's only breaking change is a new Config field;
--- the released fixture passes defaultConfig through unchanged, and every symbol
--- it uses exists at ephemeral-pg tag v0.3.1.0.
--- Evidence: kenshou-linkproof starts the fixture and migrates three components.
--- Discharge: remove when keiro releases the bound in its commit 9fb54d56.
 allow-newer:
   keiro-test-support:ephemeral-pg
+
+-- shibuya master: unreleased lifecycle remediation.
+source-repository-package
+  type: git
+  location: https://github.com/shinzui/shibuya.git
+  tag: 6461c74cda5235e292d221f36621d09910b3b6f0
+  subdir:
+    shibuya-core
+    shibuya-metrics
+
+-- hw-kafka-client fork: surfaces consumer fatal errors in async poll mode and
+-- stops leaking polled messages.
+source-repository-package
+  type: git
+  location: https://github.com/shinzui/hw-kafka-client.git
+  tag: 6caed636898a78e9f6e5a9c93eeb5562cbb2580a

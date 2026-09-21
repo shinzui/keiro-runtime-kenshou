@@ -1,0 +1,8 @@
+{
+  "compiler-id": "ghc-9.12.4", "cabal-version": "3.16.1.0", "os": "linux", "arch": "x86_64",
+  "install-plan": [
+    { "type": "pre-existing", "id": "base", "pkg-name": "base", "pkg-version": "4.21.2.0" },
+    { "type": "configured", "style": "global", "id": "foo", "pkg-name": "foo", "pkg-version": "1.0.0", "pkg-src": { "type": "repo-tar" }, "pkg-src-sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "flags": { "fast": true } },
+    { "type": "configured", "style": "global", "id": "bar", "pkg-name": "bar", "pkg-version": "2.0.0", "pkg-src": { "type": "source-repo", "source-repo": { "type": "git", "location": "https://example.com/bar.git", "tag": "fedcba9876543210fedcba9876543210fedcba98", "subdir": "bar" } }, "flags": {} }
+  ]
+}

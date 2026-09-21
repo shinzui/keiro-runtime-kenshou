@@ -183,7 +183,7 @@ The following cross-plan decisions should become ADRs in `docs/adr/` when the ow
 
 Track milestone-level progress across all child plans. Each entry names the child plan and the milestone.
 
-- [ ] EP-1: Scaffold the repository, development shell and formatting hooks
+- [x] EP-1: Scaffold the repository, development shell and formatting hooks
 - [ ] EP-1: Pin the released and head cohorts, print the resolved cohort identity, and establish Git-aware CLI release identity
 - [ ] EP-1: Prove the whole cohort links and migrates in one build
 - [ ] EP-1: Adopt the ADR bundle, update mori.dhall and the README, add CI

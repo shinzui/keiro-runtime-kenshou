@@ -52,16 +52,16 @@ Milestone 1 — Scaffold the repository, development shell and formatting hooks
 - [x] (2026-09-21T02:39:01Z) Write `cabal.project`, the placeholder `cohort/active.project` and `cohort/released.project`, and the skeleton `kenshou-core` package so that the package glob matches something.
 - [x] (2026-09-21T02:39:01Z) Write the `Justfile` (meta, haskell, cohort, docs and database groups).
 - [x] (2026-09-21T02:39:01Z) Enter `nix develop`, check tool versions and both PostgreSQL variables, run `cabal build all`, `nix fmt` and `just process-compose-check`.
-- [ ] Commit.
+- [x] (2026-09-21T02:39:28Z) Commit (`8aff79a`).
 
 Milestone 2 — Pin the released and head cohorts and print the resolved cohort identity
 
-- [ ] Run `cabal update`, read the index ceiling it prints, and re-verify every cohort version against Hackage.
-- [ ] Write the full `cohort/released.project` and `cohort/head.project`; re-resolve the head commits with `git ls-remote`.
-- [ ] Write the descriptors `cohort/released.json` and `cohort/head.json` and the two JSON Schemas under `schemas/`.
-- [ ] Implement `Kenshou.Core.Cohort` (descriptor, plan reader, identity, plan hash, consistency check) with `kenshou-core-test`.
-- [ ] Create `kenshou-cli` with Git-aware `kenshou --version`, `kenshou cohort show` and `kenshou cohort check`, usage errors exiting 2, and `kenshou-cli-test`.
-- [ ] Add the `use-cohort`, `cohort-show`, `cohort-check` and `cohort-assert-released` recipes; prove a switch to `head` and back changes the printed identity.
+- [x] (2026-09-21T03:10:43Z) Run `cabal update`, read the index ceiling it prints, and re-verify every cohort version against Hackage.
+- [x] (2026-09-21T03:10:43Z) Write the full `cohort/released.project` and `cohort/head.project`; re-resolve the head commits with `git ls-remote`.
+- [x] (2026-09-21T03:10:43Z) Write the descriptors `cohort/released.json` and `cohort/head.json` and the two JSON Schemas under `schemas/`.
+- [x] (2026-09-21T03:10:43Z) Implement `Kenshou.Core.Cohort` (descriptor, plan reader, identity, plan hash, consistency check) with `kenshou-core-test`.
+- [x] (2026-09-21T03:10:43Z) Create `kenshou-cli` with Git-aware `kenshou --version`, `kenshou cohort show` and `kenshou cohort check`, usage errors exiting 2, and `kenshou-cli-test`.
+- [x] (2026-09-21T03:10:43Z) Add the `use-cohort`, `cohort-show`, `cohort-check` and `cohort-assert-released` recipes; prove a switch to `head` and back changes the printed identity.
 - [ ] Commit.
 
 Milestone 3 — Prove the whole cohort links and migrates in one build
@@ -87,12 +87,22 @@ implementation. Provide concise evidence.
 
 - The installed and upstream `nix-haskell-flake` module is 0.25.0, while the plan was drafted against 0.24.0 and Mori's cached template metadata still reports 0.14.0. Evidence: both `/Users/shinzui/.config/seihou/installed/nix-haskell-flake/module.dhall` and the Mori-located source at `/Users/shinzui/Keikaku/bokuno/seihou-modules/modules/haskell/nix-haskell-flake/module.dhall` declare `version = Some "0.25.0"`. Implementation follows 0.25.0's current variable and extension contracts.
 
+- Cabal 3.16.1.0 reused the same `dist-newstyle/cache/plan.json` after `cohort/active.project` was edited directly from released to head. Running `just use-cohort head`, which deletes the project cache files first, produced the git-based identity and plan hash `sha256:db589e…`; switching back restored the released identity and `sha256:48e6be…`. This confirms the selector recipe is part of the cohort correctness boundary, not just a convenience.
+
+- Exact `constraints` do not make otherwise-unused packages solver goals, so the first released plan omitted the runtime and `cohort check` correctly reported every component missing. Cabal's `extra-packages` project field makes the Hackage cohort members explicit solver goals without adding them to the repository package glob; source-repository packages are already project packages. With that field, both descriptors match their generated plans before the link-proof package exists.
+
+- The authoritative Hackage index ceiling had advanced to `2026-09-20T20:47:43Z`, but the released cohort retains `2026-09-20T13:44:47Z`: the latter is the exact upload time of its newest selected package, `shibuya-metrics-0.9.0.3`, and no cohort member requires the later index state.
+
+- The `mori://shinzui/shibuya` master revision advanced after the plan was drafted. Re-resolving its upstream branch selected `6461c74cda5235e292d221f36621d09910b3b6f0`; the descriptor and source-repository stanza use that immutable revision rather than the stale draft value.
+
+- The pinned nixpkgs package set contains `optparse-applicative-0.18.1.0`, while the CLI interaction standard requires the 0.19 API. The already-locked extension from `mori://shinzui/haskell-nix` supplies its audited 0.19 package; composing that extension into the GHC 9.12.4 package set made the Nix build and its tests pass without weakening Cabal bounds.
+
 
 ## Decision Log
 
 Record every decision made while working on the plan.
 
-- Decision: Scaffold the Nix side with the Seihou module `nix-haskell-flake` 0.24.0 and hand-write the Haskell side; do not use the `haskell-cli-app` module.
+- Decision: Scaffold the Nix side with the Seihou module `nix-haskell-flake` 0.25.0 and hand-write the Haskell side; do not use the `haskell-cli-app` module.
   Rationale: `nix-haskell-flake` is what keiro, kiroku and shibuya use, so the toolchain locks byte-identically with theirs. `haskell-cli-app` would overwrite `README.md`, write a managed `cabal.project` that conflicts with the cohort import, default to tasty rather than hspec, and needs `project.name = kenshou` while the flake module needs `project.name = keiro-runtime-kenshou`.
   Date: 2026-09-20
 
@@ -102,6 +112,10 @@ Record every decision made while working on the plan.
 
 - Decision: Each cohort file is self-contained; `head.project` does not import `released.project`.
   Rationale: cabal `constraints` accumulate and cannot be removed by a later file, so a head component whose version differs from the released pin would be unsatisfiable. Duplication is the honest cost of a cohort being a complete statement; `kenshou cohort check` catches drift.
+  Date: 2026-09-20
+
+- Decision: List every Hackage-backed cohort member in `extra-packages` as well as constraining its exact version; omit head-cohort git packages from that list because source-repository stanzas already make them project packages.
+  Rationale: Constraints restrict a package only if the solver needs it. The resolved cohort identity and its consistency check must cover the full cohort before the link-proof or later suites import every member, and Cabal documents `extra-packages` as the project mechanism for making external packages explicit project goals.
   Date: 2026-09-20
 
 - Decision: The released cohort pins `kiroku-store-migrations ==0.4.0.0` and the `pg-migrate` family `==1.1.0.0` although 0.5.0.0 and 1.2.0.0 are on Hackage.
@@ -152,6 +166,10 @@ Record every decision made while working on the plan.
   Rationale: EP-1 already owns the executable skeleton and Nix build. Later run results record a full harness revision, but operators and scripts need the executable to identify itself before any run exists. Keeping the version implementation in one module also gives EP-2's final parser a value to expose without duplicating build logic.
   Date: 2026-09-20
 
+- Decision: Build Nix Haskell packages with the shared extension from `mori://shinzui/haskell-nix`.
+  Rationale: The CLI standard requires `optparse-applicative` 0.19, while the pinned nixpkgs set exposes 0.18.1.0. The shared extension already owns the audited 0.19 package expression and is locked through the repository's flake inputs, so reusing it keeps the Cabal and Nix builds on the same API without duplicating dependency packaging here.
+  Date: 2026-09-20
+
 - Decision: Reserve Settei 0.2.0.0 as the harness configuration family that EP-2 adds, without putting it in the runtime cohort descriptors.
   Rationale: `settei`, `settei-env`, `settei-optparse-applicative`, and `settei-yaml` configure the harness executable, not the runtime under test. Mixing them into the cohort identity would make an operator-interface dependency look like a runtime comparison axis.
   Date: 2026-09-20
@@ -165,6 +183,8 @@ distill durable project context from the Decision Log, Surprises & Discoveries, 
 this section into docs/adr/. Keep task-local execution details here.
 
 - Milestone 1 produced the locked Nix shell and the first buildable `kenshou-core` package. The shell reports GHC 9.12.4, cabal 3.16.1.0, PostgreSQL 18.6 on `PATH`, PostgreSQL 17.11 through `KENSHOU_PG17_BIN`, and librdkafka 2.15.0; `cabal build all`, a second `nix fmt -- --fail-on-change`, and `just process-compose-check` all pass. The generated commit hook also rejected a real commit attempt whose subject contained a literal `\n` escape.
+
+- Milestone 2 now has self-contained released and head cohort definitions, schema-validated descriptors, deterministic resolved identities, explicit mismatch diagnostics, and a Git-aware CLI built by both Cabal and Nix. Switching through the recipe changes the shibuya and hw-kafka-client sources to their pinned git revisions and back; the core and CLI suites pass 9 examples, an unknown cohort command exits 2, and a dirty Nix source reports `kenshou v0.1.0.0 (dirty)` instead of a stale revision. The clean-commit equality check remains the final acceptance step after this milestone is committed.
 
 
 ## Context and Orientation

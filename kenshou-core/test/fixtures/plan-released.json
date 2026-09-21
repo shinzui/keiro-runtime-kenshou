@@ -1,0 +1,34 @@
+{
+  "compiler-id": "ghc-9.12.4",
+  "cabal-version": "3.16.1.0",
+  "os": "linux",
+  "arch": "x86_64",
+  "install-plan": [
+    { "type": "pre-existing", "id": "base", "pkg-name": "base", "pkg-version": "4.21.2.0" },
+    {
+      "type": "configured", "style": "global", "id": "foo", "pkg-name": "foo", "pkg-version": "1.0.0",
+      "pkg-src": { "type": "repo-tar" },
+      "pkg-src-sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "flags": { "fast": true }
+    },
+    {
+      "type": "configured", "style": "global", "id": "bar", "pkg-name": "bar", "pkg-version": "2.0.0",
+      "pkg-src": {
+        "type": "source-repo",
+        "source-repo": {
+          "type": "git", "location": "https://example.com/bar.git",
+          "tag": "0123456789abcdef0123456789abcdef01234567", "subdir": "bar"
+        }
+      },
+      "flags": {}
+    },
+    {
+      "type": "configured", "style": "local", "id": "kenshou-core-lib", "pkg-name": "kenshou-core", "pkg-version": "0.1.0.0",
+      "pkg-src": { "type": "local", "path": "/checkout/one/kenshou-core" }, "flags": {}
+    },
+    {
+      "type": "configured", "style": "local", "id": "kenshou-core-test", "pkg-name": "kenshou-core", "pkg-version": "0.1.0.0",
+      "pkg-src": { "type": "local", "path": "/checkout/one/kenshou-core" }, "flags": {}
+    }
+  ]
+}

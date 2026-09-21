@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/kenshou.cohort.v1.schema.json",
+  "title": "Kenshou cohort descriptor",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "name", "description", "verifiedAt", "compiler", "indexState", "projectFile", "components", "allowNewer", "exceptions"],
+  "properties": {
+    "schema": { "const": "kenshou.cohort/v1" },
+    "name": { "type": "string", "minLength": 1 },
+    "description": { "type": "string", "minLength": 1 },
+    "verifiedAt": { "type": "string", "format": "date" },
+    "compiler": { "type": "string", "minLength": 1 },
+    "indexState": { "type": "string", "format": "date-time" },
+    "projectFile": { "type": "string", "minLength": 1 },
+    "components": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/component" } },
+    "allowNewer": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "exceptions": { "type": "array", "items": { "$ref": "#/$defs/exception" } }
+  },
+  "$defs": {
+    "component": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "moriUri", "source", "packages"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "moriUri": { "type": "string", "pattern": "^mori://" },
+        "source": { "$ref": "#/$defs/source" },
+        "packages": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/package" } }
+      }
+    },
+    "source": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["type"], "properties": { "type": { "const": "hackage" } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "location", "rev"], "properties": { "type": { "const": "git" }, "location": { "type": "string", "pattern": "^https://" }, "rev": { "type": "string", "pattern": "^[0-9a-f]{40}$" } } }
+      ]
+    },
+    "package": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": { "name": { "type": "string", "minLength": 1 }, "version": { "type": "string", "minLength": 1 }, "subdir": { "type": "string", "minLength": 1 } }
+    },
+    "exception": {
+      "type": "object", "additionalProperties": false,
+      "required": ["package", "selected", "latestObserved", "reason", "recheckAfter"],
+      "properties": {
+        "package": { "type": "string", "minLength": 1 }, "selected": { "type": "string", "minLength": 1 },
+        "latestObserved": { "type": "string", "minLength": 1 }, "reason": { "type": "string", "minLength": 1 },
+        "recheckAfter": { "type": "string", "format": "date" }
+      }
+    }
+  }
+}

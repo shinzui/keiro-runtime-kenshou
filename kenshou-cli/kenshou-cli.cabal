@@ -1,8 +1,8 @@
 cabal-version: 3.0
-name: kenshou-core
+name: kenshou-cli
 version: 0.1.0.0
-synopsis: Shared contracts for Keiro runtime verification
-description: Shared contracts and utilities for the Kenshou verification harness.
+synopsis: Command-line interface for Keiro runtime verification
+description: Operator and automation interface for the Kenshou verification harness.
 license: BSD-3-Clause
 author: Nadeem Bitar
 maintainer: Nadeem Bitar
@@ -33,24 +33,44 @@ common warnings
 library
   import: warnings
   hs-source-dirs: src
-  exposed-modules: Kenshou.Core.Cohort
+  exposed-modules:
+    Kenshou.Cli
+    Kenshou.Cli.Cohort
+    Kenshou.Cli.Options
+    Kenshou.Cli.Version
+
+  other-modules: Paths_kenshou_cli
   build-depends:
     aeson >=2.2 && <2.3,
     base >=4.21 && <4.22,
     bytestring >=0.12 && <0.13,
-    containers >=0.7 && <0.8,
-    cryptohash-sha256 >=0.11 && <0.12,
     filepath >=1.5 && <1.6,
+    githash >=0.1.7 && <0.2,
+    kenshou-core,
+    optparse-applicative >=0.19 && <0.20,
     text >=2.1 && <2.2,
 
-test-suite kenshou-core-test
+executable kenshou
+  import: warnings
+  hs-source-dirs: app
+  main-is: Main.hs
+  ghc-options:
+    -threaded
+    -rtsopts
+    -with-rtsopts=-N
+    -with-rtsopts=-T
+
+  build-depends:
+    base >=4.21 && <4.22,
+    kenshou-cli,
+
+test-suite kenshou-cli-test
   import: warnings
   type: exitcode-stdio-1.0
   hs-source-dirs: test
   main-is: Main.hs
   build-depends:
-    aeson >=2.2 && <2.3,
     base >=4.21 && <4.22,
     hspec >=2.11 && <2.12,
-    kenshou-core,
+    kenshou-cli,
     text >=2.1 && <2.2,

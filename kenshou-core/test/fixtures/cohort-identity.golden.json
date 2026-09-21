@@ -1,0 +1,19 @@
+{
+  "schema": "kenshou.cohort-identity/v1",
+  "cohort": "released",
+  "compiler": "ghc-9.12.4",
+  "cabalVersion": "3.16.1.0",
+  "os": "linux",
+  "arch": "x86_64",
+  "indexState": "2026-09-20T13:44:47Z",
+  "planHash": "sha256:857e6ff76844ccdf1903dc62d6518fe59b64e34d4bc626873efe2534934f1cc7",
+  "descriptorSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "components": [
+    { "id": "foo", "moriUri": "mori://example/foo", "packages": [
+      { "name": "foo", "version": "1.0.0", "source": { "type": "hackage", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } }
+    ] },
+    { "id": "bar", "moriUri": "mori://example/bar", "packages": [
+      { "name": "bar", "version": "2.0.0", "source": { "type": "git", "location": "https://example.com/bar.git", "rev": "0123456789abcdef0123456789abcdef01234567", "subdir": "bar" } }
+    ] }
+  ]
+}
