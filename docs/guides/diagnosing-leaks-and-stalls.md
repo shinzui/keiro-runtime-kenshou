@@ -67,7 +67,8 @@ with that binary:
 
 ```console
 just diagnose-build-info-table
-$(nix develop -c cabal list-bin --project-file=cabal.diagnose-info-table.project kenshou) \
+$(nix develop -c cabal --project-file=cabal.diagnose-info-table.project \
+  --builddir=dist-diagnose/info-table list-bin kenshou-cli:exe:kenshou) \
   diagnose profile SCENARIO --mode info-table --out .dev/profiles
 ```
 

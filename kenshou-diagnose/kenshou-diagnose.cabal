@@ -59,6 +59,9 @@ library
     Kenshou.Diagnose.Profile.GhcDebug
     Kenshou.Diagnose.Progress
     Kenshou.Diagnose.Render
+    Kenshou.Diagnose.SelfTest
+    Kenshou.Diagnose.SelfTest.Leak
+    Kenshou.Diagnose.SelfTest.Stall
     Kenshou.Diagnose.Series
     Kenshou.Diagnose.Series.Catalog
     Kenshou.Diagnose.Stall

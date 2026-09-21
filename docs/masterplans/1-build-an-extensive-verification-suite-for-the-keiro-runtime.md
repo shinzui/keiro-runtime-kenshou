@@ -90,7 +90,7 @@ There is no local ADR corpus yet: `docs/adr/` does not exist in this repository,
 | 3 | Plan and select runs from what changed | docs/plans/3-plan-and-select-runs-from-what-changed.md | EP-2 | None | Complete |
 | 4 | Build the measurement toolkit for load, latency, sampling and comparison | docs/plans/4-build-the-measurement-toolkit-for-load-latency-sampling-and-comparison.md | EP-2 | None | Complete |
 | 5 | Build the correctness toolkit for ledgers, invariants, faults and process control | docs/plans/5-build-the-correctness-toolkit-for-ledgers-invariants-faults-and-process-control.md | EP-2 | None | Complete |
-| 6 | Build the diagnostics toolkit for memory leaks and concurrency stalls | docs/plans/6-build-the-diagnostics-toolkit-for-memory-leaks-and-concurrency-stalls.md | EP-2, EP-4 | EP-5 | In Progress |
+| 6 | Build the diagnostics toolkit for memory leaks and concurrency stalls | docs/plans/6-build-the-diagnostics-toolkit-for-memory-leaks-and-concurrency-stalls.md | EP-2, EP-4 | EP-5 | Complete |
 | 7 | Add telemetry arms and measure observability overhead | docs/plans/7-add-telemetry-arms-and-measure-observability-overhead.md | EP-2, EP-4 | EP-6 | Not Started |
 | 8 | Cover pgmq-hs in isolation | docs/plans/8-cover-pgmq-hs-in-isolation.md | EP-2, EP-4, EP-5, EP-6, EP-7 | EP-3 | Not Started |
 | 9 | Cover kiroku in isolation | docs/plans/9-cover-kiroku-in-isolation.md | EP-2, EP-4, EP-5, EP-6, EP-7 | EP-3 | Not Started |
@@ -231,11 +231,11 @@ Track milestone-level progress across all child plans. Each entry names the chil
 - [x] EP-5: Process control for worker roles
 - [x] EP-5: PostgreSQL, network and wake-up fault injectors
 - [x] EP-5: Model-based testing support with replayable seeds
-- [ ] EP-6: The leak verdict over sampled series
-- [ ] EP-6: The stall watchdog with thread dumps and lock graphs
-- [ ] EP-6: Profiling build variants and bounded event logs
-- [ ] EP-6: `kenshou diagnose` recipes and the diagnosis guide
-- [ ] EP-6: Seeded leak and deadlock self-tests that prove the detectors fire
+- [x] EP-6: The leak verdict over sampled series
+- [x] EP-6: The stall watchdog with thread dumps and lock graphs
+- [x] EP-6: Profiling build variants and bounded event logs
+- [x] EP-6: `kenshou diagnose` recipes and the diagnosis guide
+- [x] EP-6: Seeded leak and deadlock self-tests that prove the detectors fire
 - [ ] EP-7: Tracing arms
 - [ ] EP-7: Metrics arms and the harness scraper
 - [ ] EP-7: The paired overhead protocol and `kenshou overhead`
@@ -419,6 +419,8 @@ docs/adr/. Keep task-local execution and coordination details here.
 - EP-3 established the change-aware planning and resumable execution protocol. A checked component graph and cohort/Git change detectors select transitive dependents with machine-readable reasons; deterministic matrix expansion applies dimensions, knobs, trials, tiers and budgets; and five named suites encode common intentions. `kenshou execute` isolates runs in child processes, writes atomic plan summaries, preserves pre-assigned identities, and resumes interrupted entries with fresh UUIDv7 attempts after verifying the plan digest. Acceptance includes 51 core examples, 3 CLI examples, schema and graph checks, passing and failing real plans, and an interrupt/resume exercise. The run-plan and summary formats are now ready for EP-4's comparisons, EP-17's cell transport and EP-18's completeness checks.
 
 - EP-5 established the independent correctness-evidence toolkit. `kenshou-check` contributes rotating per-incarnation ledgers, bounded external sorts, versioned verdicts, nine non-vacuous invariant folds, durable-truth SQL oracles, real process-group crash control, PostgreSQL and TCP fault injectors, virtual/database clock controls, seeded Hedgehog reports and a memoized linearizability search. Five registered self-tests exercise clean and doctored ledgers, `SIGKILL` restart, backend termination plus durable postmaster recovery, proxy latency/stall/blackhole/reset, and deterministic counter-example replay. Acceptance includes 33 package examples, live schema validation and the repository-wide `just verify` gate. ADR-8 distinguishes contract from implementation invariants; ADR-9 defines crashes as external process or backend termination.
+
+- EP-6 established the memory-leak, concurrency-stall and bounded-profiling toolkit. Robust leak judgments cover Haskell heap after major collections, native memory, threads, descriptors and PostgreSQL resources; the watchdog combines labelled Haskell thread dumps, PostgreSQL wait graphs, pool observations and progress counters into actionable classifications. `kenshou diagnose` provides immutable offline analysis and four profiling modes, backed by schemas, golden output, all five exit-code paths and an end-to-end guide that resolves an info-table profile to `SelfTest/Leak.hs`. Seven real self-tests pass with PostgreSQL 18, all five database fixtures pass with PostgreSQL 17, each leak kind and the envelope fallback pass, and deliberately disabling either detector turns its fixture red. The repository-wide `just verify` gate passes with 32 diagnostics and 10 CLI examples in addition to the existing suites. ADR-10 fixes the major-GC heap basis; ADR-11 preserves sealed runs during offline diagnosis.
 
 
 Revision note (2026-09-20): Updated the initiative and affected CLI plans to adopt the relevant `mori://shinzui/haskell-jitsurei` patterns. EP-1 now establishes Git-aware version identity; EP-2 owns grouped help, embedded terminal-aware topics, parser-derived completions, explicit stdin document inputs and stdout/stderr discipline; later command plans consume that seam. Legacy or interaction-heavy patterns that do not fit kenshou were explicitly excluded.

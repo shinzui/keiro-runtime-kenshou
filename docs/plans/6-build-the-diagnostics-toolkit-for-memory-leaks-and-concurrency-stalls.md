@@ -86,11 +86,11 @@ Milestone 4 — `kenshou diagnose` recipes and the diagnosis guide
 
 Milestone 5 — Seeded leak and deadlock self-tests that prove the detectors fire
 
-- [ ] `Kenshou.Diagnose.SelfTest.Leak`: `leaking-worker` (heap, threads and file-descriptor kinds) and `stable-worker`.
-- [ ] `Kenshou.Diagnose.SelfTest.Stall`: `deadlocked-workers`, `pool-starved`, `lock-waiter`, `idle-spinner`, `healthy-progress`.
-- [ ] `Kenshou.Diagnose.SelfTest.bundle` registered in `kenshou-cli/src/Kenshou/Cli/Registry.hs`.
-- [ ] Run all seven scenarios locally on PostgreSQL 18 and the four PostgreSQL ones also on 17; walk the guide end to end with `leaking-worker`; record transcripts here.
-- [ ] ADR distillation pass; update the MasterPlan's Progress and registry status.
+- [x] (2026-09-21T20:40:25Z) `Kenshou.Diagnose.SelfTest.Leak`: `leaking-worker` (heap, threads and file-descriptor kinds) and `stable-worker`.
+- [x] (2026-09-21T20:40:25Z) `Kenshou.Diagnose.SelfTest.Stall`: `deadlocked-workers`, `pool-starved`, `lock-waiter`, `idle-spinner`, `healthy-progress`.
+- [x] (2026-09-21T20:40:25Z) `Kenshou.Diagnose.SelfTest.bundle` registered in `kenshou-cli/src/Kenshou/Cli/Registry.hs`.
+- [x] (2026-09-21T20:40:25Z) Run all seven scenarios locally on PostgreSQL 18 and the five PostgreSQL ones also on 17; walk the guide end to end with `leaking-worker`; record transcripts here.
+- [x] (2026-09-21T20:40:25Z) ADR distillation pass; update the MasterPlan's Progress and registry status.
 
 
 ## Surprises & Discoveries
@@ -115,6 +115,15 @@ Milestone 5 — Seeded leak and deadlock self-tests that prove the detectors fir
 
 - Observation: The full info-table variant, including the released cohort and every Kenshou package, builds on GHC 9.12.4. An ordinary closure-type profile produced a 10,582-byte event log which `ghc-events-0.21.0.0 show` parsed; a scheduler-heavy session with a 1 MiB limit stopped in-process at 1,163,671 bytes, stayed below the 2 MiB parent backstop, and recorded `truncated: true`.
   Evidence: `nix develop -c just diagnose-build-info-table` exited 0; the two sessions are `profile-20260921T193159Z-closure-type` and `profile-20260921T193408Z-eventlog` under the ignored `.dev/profiles/` directory.
+
+- Observation: All seven detector self-tests pass with their documented defaults on PostgreSQL 18. The five PostgreSQL scenarios also pass on PostgreSQL 17; heap, thread and file-descriptor leaks pass independently, and heap growth remains detectable with forced major collections disabled. The stable worker required a strict bounded ring: a lazy replacement retained update thunks and correctly looked like a leak.
+  Evidence: Default PostgreSQL 18 runs were `01a0c5b0-d83b-715a-acb6-d3860315d8de` (deadlock), `01a0c5b2-2103-7709-af77-5ec1c39f3517` (pool), `01a0c5b2-2103-703e-8a1e-cb0085b5f9da` (lock), `01a0c5b0-d83a-738d-bf46-5b1872ad9faf` (spin), and `01a0c5b0-d83a-7723-a205-c8a9d06aa8ba` (healthy). Default leak runs were `01a0c5af-dae2-7263-aaa1-f5d10dd36ccc` and `01a0c5af-dae2-7223-b92a-c0057e5aefa1`. PostgreSQL 17 runs were `01a0c5a2-b52f-73b6-bc1c-0a97bd00c7c3`, `01a0c5a2-c6ae-7679-a871-d5aef7e61d59`, `01a0c5a2-d7c3-7730-a78b-3e1061baaa5d`, `01a0c5a2-e87d-70ad-a3a6-4a51aaab6a37`, and `01a0c5a2-f6ce-709a-98f9-bb45e3d3a38c`. Short leak runs were `01a0c59e-52bc-7747-aa7c-f78fd86e925e` (heap), `01a0c5a0-2fa8-774d-a409-7a8fd57d95f3` (threads), `01a0c5a0-84fc-7125-926c-759d025a7b68` (file descriptors), and `01a0c59f-da1b-7467-9fc0-4d8bff4e1a59` (envelope basis).
+
+- Observation: The detector self-tests are non-vacuous. Temporarily forcing the stall classifier to `Unknown` made the deadlock scenario fail with exit code 1, and temporarily forcing the rising leak rule to `Stable` made the leaking worker fail with exit code 1; restoring each implementation restored the passes.
+  Evidence: The deliberately broken runs were `01a0c5a3-9240-76ee-b3c7-0a0784c205ea` and `01a0c5a5-668e-717f-8ee3-680fb0bd0e0b`.
+
+- Observation: The documented info-table workflow reaches source locations in the intended self-test module. The 47,754,633-byte event log from `profile-20260921T203044Z-info-table` parses with `ghc-events show` and contains cost-centre entries naming `kenshou-diagnose/src/Kenshou/Diagnose/SelfTest/Leak.hs`, including line 152.
+  Evidence: `nix develop -c just diagnose-build-info-table`, the guide's `kenshou diagnose profile ... --mode info-table` command, and `.dev/bin/ghc-events show` all exited 0.
 
 
 ## Decision Log
@@ -171,6 +180,10 @@ Milestone 5 — Seeded leak and deadlock self-tests that prove the detectors fir
   Rationale: How per-process series files are named for worker processes is not fixed by any contract yet, and the main process is always sampled. PostgreSQL resolves a deadlock by itself after `deadlock_timeout` (one second by default) by aborting one transaction, which would race the watchdog; raising it makes the cycle persist until it has been captured.
   Date: 2026-09-20
 
+- Decision: Leak self-tests drive the measurement samplers directly and close the major-GC probe before judging the resulting files; stall self-tests construct real PostgreSQL waits and real hasql-pool saturation rather than synthesising snapshots.
+  Rationale: `withMeasurement` owns the full benchmark summary contract and expects load-generator series that a detector fixture intentionally does not produce. Directly using the same samplers gives authentic series without inventing load data. Scoped asynchronous probe lifetime guarantees the CSV handle is closed before offline analysis. Real waits keep the scenarios sensitive to capture, graph construction, pool observation and classification together.
+  Date: 2026-09-21
+
 - Decision: Add a fourth profile mode, `profiled`, and three scenarios beyond the four named in the drafting brief (`lock-waiter`, `idle-spinner`, `healthy-progress`). The five milestone titles are the MasterPlan's, unchanged.
   Rationale: The brief asks for a profiled-libraries variant as an explicit heavier option, which needs a mode to select it. Every classification the watchdog can emit should be proven to fire by a run, and a negative control proves it stays quiet.
   Date: 2026-09-20
@@ -183,7 +196,9 @@ Milestone 5 — Seeded leak and deadlock self-tests that prove the detectors fir
 
 ## Outcomes & Retrospective
 
-(To be filled during and after implementation.)
+EP-6 delivered the complete diagnostics toolkit. `kenshou-diagnose` now turns sampled heap, native-memory, thread, descriptor and PostgreSQL series into robust leak verdicts; captures Haskell threads, PostgreSQL activity and locks, pool occupancy and progress at a stall; classifies deadlocks, lock waits, pool starvation, blocked threads and idle spin; and wraps scenarios in bounded closure-type, info-table, eventlog or profiled sessions. The CLI exposes offline leak and stall analysis plus profiling recipes without mutating sealed runs, with schema-backed JSON, stable human output and the shared exit-code contract. The operator guide was executed through to a source location in `SelfTest/Leak.hs`.
+
+The seven registered self-tests prove both positive and negative behaviour on the real machinery: all pass locally with PostgreSQL 18, all five database scenarios pass with PostgreSQL 17, every leak resource kind and the no-forced-GC envelope path pass, and deliberate classifier/rule breakage turns the matching scenario red. The repository-wide `just verify` gate passes with 51 core, 29 measurement, 33 correctness, 32 diagnostics and 10 CLI examples, schema checks, strict ADR validation and live self-tests. ADR-10 records the major-GC heap basis and ADR-11 records the sealed-run boundary for offline diagnosis.
 
 
 ## Context and Orientation

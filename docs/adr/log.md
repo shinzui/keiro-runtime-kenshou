@@ -1,6 +1,7 @@
 # Bundle Update Log
 
 ## 2026-09-21
+* **Decision**: Accepted sealed-run immutability for offline diagnosis.
 * **Decision**: Accepted post-major live bytes as the heap leak basis and separated native-memory evidence.
 * **Decision**: Accepted real process and PostgreSQL termination as the definition of a crash.
 * **Decision**: Accepted contract-strength classifications and non-vacuous correctness verdicts.

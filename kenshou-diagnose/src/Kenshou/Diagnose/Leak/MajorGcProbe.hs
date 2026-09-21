@@ -3,8 +3,8 @@ module Kenshou.Diagnose.Leak.MajorGcProbe
   )
 where
 
-import Control.Concurrent (forkIO, killThread, threadDelay)
-import Control.Exception (bracket)
+import Control.Concurrent (threadDelay)
+import Control.Concurrent.Async (withAsync)
 import Control.Monad (forever, when)
 import Data.Text qualified as Text
 import Data.Text.IO qualified as Text
@@ -26,7 +26,7 @@ withMajorGcProbe context intervalMilliseconds action
       path <- Core.artifactPath context Core.SeriesDir "rts-major.csv"
       Core.declareMediaType context "series/rts-major.csv" "text/csv"
       Text.writeFile path "t_mono_ns,live_bytes,major_gcs,gc_gen,pause_ns\n"
-      bracket (forkIO (sampleLoop path)) killThread (const action)
+      withAsync (sampleLoop path) (const action)
   where
     delay = max 1 (floor (intervalMilliseconds * 1000))
     sampleLoop path = withFile path AppendMode \handle -> do
