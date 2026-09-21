@@ -185,7 +185,7 @@ Track milestone-level progress across all child plans. Each entry names the chil
 
 - [x] EP-1: Scaffold the repository, development shell and formatting hooks
 - [x] EP-1: Pin the released and head cohorts, print the resolved cohort identity, and establish Git-aware CLI release identity
-- [ ] EP-1: Prove the whole cohort links and migrates in one build
+- [x] EP-1: Prove the whole cohort links and migrates in one build
 - [ ] EP-1: Adopt the ADR bundle, update mori.dhall and the README, add CI
 - [ ] EP-2: Scenario model, layer bundles, registry, `kenshou list`, the shared CLI discovery surface, and the Settei configuration seam
 - [ ] EP-2: Dimensions, knobs and the run specification

@@ -69,7 +69,7 @@ Milestone 3 — Prove the whole cohort links and migrates in one build
 - [x] (2026-09-21T03:38:30Z) Add the `kenshou-linkproof` test suite to `kenshou-cli/kenshou-cli.cabal` with a dependency on every runtime package.
 - [x] (2026-09-21T03:38:30Z) Write `kenshou-cli/linkproof/Main.hs` and `kenshou-cli/linkproof/LinkProof/Imports.hs`.
 - [x] (2026-09-21T03:38:30Z) Run it green on the released cohort; run it on the head cohort and record the outcome.
-- [ ] Commit.
+- [x] (2026-09-21T03:39:37Z) Commit (`60dc3cf`).
 
 Milestone 4 — Adopt the ADR bundle, update mori.dhall and the README, add CI
 
