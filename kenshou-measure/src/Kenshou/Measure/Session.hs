@@ -23,7 +23,7 @@ import Data.Text (Text)
 import Data.Word (Word64)
 import Kenshou.Core.Context qualified as Core
 import Kenshou.Core.Dimension (Dimensions (..), renderDurability)
-import Kenshou.Core.Env.Postgres (PostgresEnv)
+import Kenshou.Core.Env.Postgres (PgSettingsSnapshot (..), PostgresEnv (..))
 import Kenshou.Core.Id (Kind, ScenarioId (..), unSeed)
 import Kenshou.Core.Knob (ResolvedKnobs)
 import Kenshou.Core.Knob qualified as Knob
@@ -34,6 +34,8 @@ import Kenshou.Measure.Histogram (HistogramConfig (..), defaultHistogramConfig)
 import Kenshou.Measure.Load.Types (LoadReport)
 import Kenshou.Measure.Phase
 import Kenshou.Measure.Recorder
+import Kenshou.Measure.Sampler
+import Kenshou.Measure.Sampler.Postgres
 import System.FilePath (makeRelative)
 
 data MeasureEnv = MeasureEnv
@@ -58,15 +60,17 @@ data MeasureConfig = MeasureConfig
     histogram :: HistogramConfig,
     rawSamples :: RawSamplePolicy,
     sampleIntervalMs :: Int,
-    intervalHistogramSeconds :: Word64
+    intervalHistogramSeconds :: Word64,
+    postgres :: Maybe PgSamplerConfig,
+    extraSamplers :: [Sampler]
   }
-  deriving stock (Eq, Show)
 
 data Measurement = Measurement MeasureEnv PhaseClock Recorder MeasureConfig (IORef [LoadReport])
 
 data MeasurementReport = MeasurementReport
   { recorder :: RecorderReport,
-    loads :: [LoadReport]
+    loads :: [LoadReport],
+    samplers :: SamplerReport
   }
 
 measureEnvFromRunContext :: Core.RunContext -> IO MeasureEnv
@@ -115,8 +119,25 @@ measureConfigFromKnobs context defaultPhases = do
         histogram = defaultHistogramConfig {significantDigits = fromIntegral (Knob.knobInt context.knobs (knobName "measure.histogram-digits"))},
         rawSamples,
         sampleIntervalMs = fromIntegral (Knob.knobInt context.knobs (knobName "measure.sample-interval-ms")),
-        intervalHistogramSeconds = fromIntegral (Knob.knobInt context.knobs (knobName "measure.interval-histogram-seconds"))
+        intervalHistogramSeconds = fromIntegral (Knob.knobInt context.knobs (knobName "measure.interval-histogram-seconds")),
+        postgres = postgresConfig,
+        extraSamplers = []
       }
+  where
+    postgresConfig =
+      fmap
+        ( \environment ->
+            PgSamplerConfig
+              { connectionString = environment.connectionString,
+                relations = [],
+                statements = case Knob.knobText context.knobs (knobName "measure.pg-statements") of
+                  "off" -> PgStatementsOff
+                  "periodic" -> PgStatementsPeriodic
+                  _ -> PgStatementsSnapshots,
+                serverVersionNum = environment.snapshot.serverVersionNum
+              }
+        )
+        context.env.postgres
 
 withMeasurement :: Core.RunContext -> MeasureConfig -> (Measurement -> IO value) -> IO (value, MeasurementReport)
 withMeasurement context config action = mask \restore -> do
@@ -136,14 +157,27 @@ withMeasurement context config action = mask \restore -> do
       phaseClock
   loadReports <- newIORef []
   let measurement = Measurement env phaseClock recorder config loadReports
+  sampling <-
+    startSampling
+      SamplerConfig
+        { runDir = env.runDir,
+          origin = env.origin,
+          intervalMs = config.sampleIntervalMs,
+          postgres = config.postgres,
+          extraSamplers = config.extraSamplers,
+          phaseClock,
+          declareArtifact = env.declareArtifact,
+          logLine = env.logLine
+        }
   result <- try (restore (action measurement))
   phase <- currentPhase phaseClock
   when (phase /= Done) (enterPhase phaseClock Done)
+  samplerReport <- stopSampling sampling
   recorderReport <- finishRecorder recorder
   loads <- readIORef loadReports
   case result of
     Left exception -> throwIO (exception :: SomeException)
-    Right value -> pure (value, MeasurementReport recorderReport loads)
+    Right value -> pure (value, MeasurementReport recorderReport loads samplerReport)
 
 measurementPhaseClock :: Measurement -> PhaseClock
 measurementPhaseClock (Measurement _ phaseClock _ _ _) = phaseClock

@@ -7,6 +7,7 @@ module Kenshou.Measure.Phase
     enterPhase,
     currentPhase,
     phaseOf,
+    addBoundaryListener,
     renderPhase,
   )
 where
@@ -32,6 +33,7 @@ data PhasePlan = PhasePlan
 data PhaseClock = PhaseClock
   { current :: !(IORef Phase),
     boundaries :: !(IORef [(Word64, Phase)]),
+    boundaryListeners :: !(IORef [IO ()]),
     onPhase :: !(Phase -> Origin -> IO ())
   }
 
@@ -40,8 +42,9 @@ newPhaseClock onPhase _plan = do
   origin <- captureOrigin
   current <- newIORef Setup
   boundaries <- newIORef [(origin.monoNs, Setup)]
+  boundaryListeners <- newIORef []
   onPhase Setup origin
-  pure PhaseClock {current, boundaries, onPhase}
+  pure PhaseClock {current, boundaries, boundaryListeners, onPhase}
 
 enterPhase :: PhaseClock -> Phase -> IO ()
 enterPhase clock phase = do
@@ -49,6 +52,7 @@ enterPhase clock phase = do
   writeIORef clock.current phase
   modifyIORef' clock.boundaries (<> [(origin.monoNs, phase)])
   clock.onPhase phase origin
+  readIORef clock.boundaryListeners >>= sequence_
 
 currentPhase :: PhaseClock -> IO Phase
 currentPhase = readIORef . (.current)
@@ -59,6 +63,9 @@ phaseOf clock intendedStart = do
   pure (foldl choose Setup boundaries)
   where
     choose selected (at, phase) = if at <= intendedStart then phase else selected
+
+addBoundaryListener :: PhaseClock -> IO () -> IO ()
+addBoundaryListener clock listener = modifyIORef' clock.boundaryListeners (<> [listener])
 
 renderPhase :: Phase -> Text
 renderPhase Setup = "setup"

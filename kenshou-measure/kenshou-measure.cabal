@@ -10,6 +10,11 @@ category: Testing
 build-type: Simple
 tested-with: ghc >=9.12 && <9.13
 extra-source-files:
+  test/fixtures/proc/host-stat.txt
+  test/fixtures/proc/loadavg.txt
+  test/fixtures/proc/meminfo.txt
+  test/fixtures/proc/stat.txt
+  test/fixtures/proc/status.txt
   test/golden/histogram-v1.hex
 
 common warnings
@@ -45,11 +50,19 @@ library
     Kenshou.Measure.Load.Arrival
     Kenshou.Measure.Load.Closed
     Kenshou.Measure.Load.Open
+    Kenshou.Measure.Load.Series
     Kenshou.Measure.Load.Types
     Kenshou.Measure.Phase
     Kenshou.Measure.Recorder
+    Kenshou.Measure.Sampler
+    Kenshou.Measure.Sampler.Csv
+    Kenshou.Measure.Sampler.Host
+    Kenshou.Measure.Sampler.Postgres
+    Kenshou.Measure.Sampler.Process
+    Kenshou.Measure.Sampler.Rts
     Kenshou.Measure.Samples
     Kenshou.Measure.Selftest
+    Kenshou.Measure.Selftest.PgInsert
     Kenshou.Measure.Selftest.SleepService
     Kenshou.Measure.Session
 
@@ -61,12 +74,17 @@ library
     containers >=0.7 && <0.8,
     directory,
     filepath >=1.5 && <1.6,
+    hasql >=1.10 && <1.11,
     kenshou-core,
     primitive >=0.9 && <0.10,
     splitmix >=0.1 && <0.2,
     stm,
     text >=2.1 && <2.2,
     time,
+    unix,
+
+  if os(osx)
+    c-sources: cbits/kenshou_proc_darwin.c
 
 test-suite kenshou-measure-test
   import: warnings
@@ -78,6 +96,7 @@ test-suite kenshou-measure-test
     Kenshou.Measure.HistogramSpec
     Kenshou.Measure.LoadSpec
     Kenshou.Measure.RecorderSpec
+    Kenshou.Measure.SamplerSpec
     Kenshou.Measure.SamplesSpec
 
   build-depends:

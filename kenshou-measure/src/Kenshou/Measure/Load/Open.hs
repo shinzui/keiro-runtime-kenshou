@@ -4,17 +4,14 @@ import Control.Concurrent.Async
 import Control.Exception (SomeException, try)
 import Control.Monad (forM, when)
 import Data.IORef
-import Data.Text qualified as Text
-import Data.Text.IO qualified as Text.IO
 import Data.Word (Word64)
 import Kenshou.Measure.Clock
 import Kenshou.Measure.Load.Arrival
+import Kenshou.Measure.Load.Series
 import Kenshou.Measure.Load.Types
 import Kenshou.Measure.Phase
 import Kenshou.Measure.Recorder
 import Kenshou.Measure.Session
-import System.Directory (createDirectoryIfMissing)
-import System.FilePath ((</>))
 import System.Random.SplitMix (SMGen, mkSMGen)
 import System.Timeout (timeout)
 
@@ -29,24 +26,30 @@ runOpen measurement config operation = do
   failed <- newIORef 0
   maxLag <- newIORef 0
   aborted <- newIORef False
+  loadSeries <- openLoadSeries measurement
   start <- nowNs
   tickets <- newIORef (TicketState 0 start (mkSMGen (measurementEnv measurement).seed))
   let phaseClock = measurementPhaseClock measurement
       plan = (measurementConfig measurement).defaultPhases
   enterPhase phaseClock WarmUp
+  sampleLoadSeries loadSeries measurement offered started completed failed maxLag
   executors <- forM [0 .. config.executors - 1] \executorId -> do
     workerRecorder <- newWorkerRecorder opHandle executorId
     async (executorLoop phaseClock workerRecorder executorId tickets offered started completed failed maxLag aborted)
   sleepNanos (unNanos plan.warmUp)
   enterPhase phaseClock Steady
+  sampleLoadSeries loadSeries measurement offered started completed failed maxLag
   case plan.steady of
     SteadyFor duration -> sleepNanos (unNanos duration)
     SteadyCount target -> waitForCount completed target
   enterPhase phaseClock Drain
+  sampleLoadSeries loadSeries measurement offered started completed failed maxLag
   let drainMicros = fromIntegral (min (unNanos plan.drain `div` 1_000) (fromIntegral (maxBound :: Int)))
   drained <- timeout drainMicros (mapM_ wait executors)
   case drained of Just () -> pure (); Nothing -> mapM_ cancel executors
   enterPhase phaseClock Done
+  sampleLoadSeries loadSeries measurement offered started completed failed maxLag
+  closeLoadSeries loadSeries
   offeredValue <- readIORef offered
   startedValue <- readIORef started
   completedValue <- readIORef completed
@@ -55,7 +58,6 @@ runOpen measurement config operation = do
   abortedValue <- readIORef aborted
   let overload = if maxLagValue > config.overload.maxLagNs then Just (OverloadEvidence config.overload.maxLagNs maxLagValue) else Nothing
       report = LoadReport (OpenLoop config) offeredValue startedValue completedValue failedValue maxLagValue overload abortedValue
-  writeLoadSeries measurement report
   appendLoadReport measurement report
   pure report
   where
@@ -86,15 +88,6 @@ runOpen measurement config operation = do
           atomicModifyIORef' completed (\value -> (value + 1, ()))
           case opResult of OpFailed _ -> atomicModifyIORef' failed (\value -> (value + 1, ())); OpOk _ -> pure ()
           executorLoop phaseClock workerRecorder executorId tickets offered started completed failed maxLag aborted
-
-writeLoadSeries :: Measurement -> LoadReport -> IO ()
-writeLoadSeries measurement report = do
-  let directory = (measurementEnv measurement).runDir </> "series"
-      path = directory </> "load.csv"
-      row = Text.intercalate "," (fmap (Text.pack . show) [report.offered, report.started, report.completed, report.failed, report.maxLagNs])
-  createDirectoryIfMissing True directory
-  Text.IO.writeFile path ("offered,started,completed,failed,max_lag_ns\n" <> row <> "\n")
-  (measurementEnv measurement).declareArtifact path "text/csv"
 
 waitForCount :: IORef Word64 -> Word64 -> IO ()
 waitForCount counter target = do

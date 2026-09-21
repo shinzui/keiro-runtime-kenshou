@@ -1,0 +1,6 @@
+Name:	kenshou worker
+VmHWM:	2048 kB
+VmRSS:	1024 kB
+Threads:	9
+voluntary_ctxt_switches:	31
+nonvoluntary_ctxt_switches:	7

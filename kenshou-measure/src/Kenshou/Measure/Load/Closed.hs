@@ -7,6 +7,7 @@ import Control.Monad (forM, when)
 import Data.IORef
 import Data.Word (Word64)
 import Kenshou.Measure.Clock
+import Kenshou.Measure.Load.Series
 import Kenshou.Measure.Load.Types
 import Kenshou.Measure.Phase
 import Kenshou.Measure.Recorder
@@ -20,9 +21,12 @@ runClosed measurement config operation = do
   completed <- newIORef 0
   failed <- newIORef 0
   steadyCompleted <- newIORef 0
+  maxLag <- newIORef 0
+  loadSeries <- openLoadSeries measurement
   let phaseClock = measurementPhaseClock measurement
       plan = (measurementConfig measurement).defaultPhases
   enterPhase phaseClock WarmUp
+  sampleLoadSeries loadSeries measurement offered offered completed failed maxLag
   workers <- forM [0 .. config.workers - 1] \workerId -> do
     workerRecorder <- newWorkerRecorder opHandle workerId
     async do
@@ -30,16 +34,20 @@ runClosed measurement config operation = do
       workerLoop phaseClock workerRecorder workerId 0 offered completed failed steadyCompleted
   sleepNanos (unNanos plan.warmUp)
   enterPhase phaseClock Steady
+  sampleLoadSeries loadSeries measurement offered offered completed failed maxLag
   case plan.steady of
     SteadyFor duration -> sleepNanos (unNanos duration)
     SteadyCount target -> waitForCount steadyCompleted target
   enterPhase phaseClock Drain
+  sampleLoadSeries loadSeries measurement offered offered completed failed maxLag
   let drainMicros = fromIntegral (min (unNanos plan.drain `div` 1_000) (fromIntegral (maxBound :: Int)))
   drained <- timeout drainMicros (mapM_ wait workers)
   case drained of
     Just () -> pure ()
     Nothing -> mapM_ cancel workers
   enterPhase phaseClock Done
+  sampleLoadSeries loadSeries measurement offered offered completed failed maxLag
+  closeLoadSeries loadSeries
   offeredValue <- readIORef offered
   completedValue <- readIORef completed
   failedValue <- readIORef failed

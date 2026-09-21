@@ -67,12 +67,12 @@ Milestone 2 — Closed-loop and open-loop load generators
 
 Milestone 3 — Runtime, process and PostgreSQL samplers
 
-- [ ] `Kenshou.Measure.Sampler` and `Kenshou.Measure.Sampler.Csv`: absolute-deadline ticking, boundary samples at phase changes, `series/sampler.csv` with lateness and cost per tick.
-- [ ] `Kenshou.Measure.Sampler.Rts`: `GHC.Stats` columns, live bytes after major collections derived from cumulative counters, Haskell thread count; graceful absence when `-T` is off.
-- [ ] `Kenshou.Measure.Sampler.Process` and `Kenshou.Measure.Sampler.Host`: `/proc` readers with fixture-based parser tests, the macOS fallback in `kenshou-measure/cbits/kenshou_proc_darwin.c`.
-- [ ] `Kenshou.Measure.Sampler.Postgres`: dedicated connection, activity, checkpointer, WAL, database, relation and statement series for PostgreSQL 17 and 18; graceful absence of `pg_stat_statements`.
-- [ ] `Kenshou.Measure.Session`, third part: `MeasureConfig`, `measureConfigFromKnobs`, and `withMeasurement` starting and stopping the samplers around the body.
-- [ ] `Kenshou.Measure.Selftest.PgInsert`; run it under `pg.version=17` and `pg.version=18` and confirm every `series/pg-*.csv` file has rows.
+- [x] (2026-09-21 15:30Z) `Kenshou.Measure.Sampler` and `Kenshou.Measure.Sampler.Csv`: absolute-deadline ticking, boundary samples at phase changes, `series/sampler.csv` with lateness and cost per tick.
+- [x] (2026-09-21 15:30Z) `Kenshou.Measure.Sampler.Rts`: `GHC.Stats` columns, live bytes after major collections derived from cumulative counters, Haskell thread count; graceful absence when `-T` is off.
+- [x] (2026-09-21 15:30Z) `Kenshou.Measure.Sampler.Process` and `Kenshou.Measure.Sampler.Host`: `/proc` readers with fixture-based parser tests, the macOS fallback in `kenshou-measure/cbits/kenshou_proc_darwin.c`.
+- [x] (2026-09-21 15:30Z) `Kenshou.Measure.Sampler.Postgres`: dedicated connection, activity, checkpointer, WAL, database, relation and statement series for PostgreSQL 17 and 18; graceful absence of `pg_stat_statements`.
+- [x] (2026-09-21 15:30Z) `Kenshou.Measure.Session`, third part: `MeasureConfig`, `measureConfigFromKnobs`, and `withMeasurement` starting and stopping the samplers around the body.
+- [x] (2026-09-21 15:30Z) `Kenshou.Measure.Selftest.PgInsert`; run it under `pg.version=17` and `pg.version=18` and confirm every `series/pg-*.csv` file has rows.
 
 Milestone 4 — Summaries and paired comparison with verdicts
 
@@ -103,6 +103,8 @@ Milestone 5 — Health gates that separate infrastructure trouble from regressio
 - The real kernel adapter surface is `RunContext.knobs`, `.dimensions`, `.seed`, `.phases`, `.env`, `.outDir`, `.logger`, and `.state`. Measurement sections are registered with `putSummary context Measurements`, artifacts are allocated with `artifactPath`, media types with `declareMediaType`, and phase timings with `withPhase`; there is no separate structured phase-marker callback.
 - The default HDR layout is 33,792 counters as planned, and ten million in-memory records completed within a 0.133-second test-suite run on the development machine. The same acceptance test also rebuilds the steady histogram from the retained KSMP records and checks structural equality with the stored KHST histogram.
 - The three full-duration sleep-service arms passed. Open constant recorded 3,000 steady samples with intended-start p99 924.84 ms, service-time p99 4.52 ms, and max 1.012 s. Open Poisson recorded 3,042 samples with intended-start p99 927.99 ms, service-time p99 4.96 ms, and max 1.005 s. Closed loop recorded 17,767 samples with p99 4.92 ms and max 1.006 s, exposing exactly the coordinated-omission contrast the scenario is meant to demonstrate.
+- The kernel enforces its completed protocol rule that PostgreSQL benchmark scenarios may advertise only durable operation, so the draft's request for an `fsync-off` arm on `selftest/measure/benchmark/pg-insert` cannot be represented in the registered scenario. The selftest therefore supports `pg.durability=durable`; Milestone 4 tests exploratory grading and refusal directly from run documents instead of weakening the kernel invariant.
+- Full-duration `pg-insert` runs passed on PostgreSQL 17 at `/tmp/kenshou-ep4-m3-pg17/01a0c493-fc93-707b-8620-cc71c2d0c0e1` and PostgreSQL 18 at `/tmp/kenshou-ep4-m3-pg18-load-series/01a0c496-f07d-73c7-9e64-8cb210f7868c`. Each PostgreSQL series had 23 or more lines, `pg-activity.csv` contained `kenshou-selftest-writer` and excluded `kenshou-sampler`, steady RTS rows contained derived `live_bytes_major_mean` values, and the manifest included every emitted CSV. The final PostgreSQL 18 run inserted and recorded 780,959 rows and also retained four phase-boundary rows in `series/load.csv`.
 
 
 ## Decision Log
