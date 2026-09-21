@@ -60,7 +60,7 @@ There is no local ADR corpus yet: `docs/adr/` does not exist in this repository,
 
 | # | Title | Path | Hard Deps | Soft Deps | Status |
 |---|-------|------|-----------|-----------|--------|
-| 1 | Bootstrap the kenshou repository and pin the runtime cohort | docs/plans/1-bootstrap-the-kenshou-repository-and-pin-the-runtime-cohort.md | None | None | In Progress |
+| 1 | Bootstrap the kenshou repository and pin the runtime cohort | docs/plans/1-bootstrap-the-kenshou-repository-and-pin-the-runtime-cohort.md | None | None | Complete |
 | 2 | Build the harness kernel for scenarios, dimensions, run specs and results | docs/plans/2-build-the-harness-kernel-for-scenarios-dimensions-run-specs-and-results.md | EP-1 | None | Not Started |
 | 3 | Plan and select runs from what changed | docs/plans/3-plan-and-select-runs-from-what-changed.md | EP-2 | None | Not Started |
 | 4 | Build the measurement toolkit for load, latency, sampling and comparison | docs/plans/4-build-the-measurement-toolkit-for-load-latency-sampling-and-comparison.md | EP-2 | None | Not Started |
@@ -186,7 +186,7 @@ Track milestone-level progress across all child plans. Each entry names the chil
 - [x] EP-1: Scaffold the repository, development shell and formatting hooks
 - [x] EP-1: Pin the released and head cohorts, print the resolved cohort identity, and establish Git-aware CLI release identity
 - [x] EP-1: Prove the whole cohort links and migrates in one build
-- [ ] EP-1: Adopt the ADR bundle, update mori.dhall and the README, add CI
+- [x] EP-1: Adopt the ADR bundle, update mori.dhall and the README, add CI
 - [ ] EP-2: Scenario model, layer bundles, registry, `kenshou list`, the shared CLI discovery surface, and the Settei configuration seam
 - [ ] EP-2: Dimensions, knobs and the run specification
 - [ ] EP-2: Environments, the composed migration plan and worker roles
@@ -384,7 +384,7 @@ Compare the result against the original vision. Before marking the MasterPlan co
 distill durable project context from this MasterPlan and its child ExecPlans into
 docs/adr/. Keep task-local execution and coordination details here.
 
-(To be filled during and after implementation.)
+- EP-1 established the reproducible repository foundation and the two contracts every later plan consumes: a package layout that isolates layer verification libraries, and a released/head runtime cohort whose resolved identity is stable and machine-checkable. The Cabal and Nix builds expose the same Git-aware CLI identity; every pinned runtime package links in one test component; and the live proof composes the keiro, kiroku, and pgmq migrations in one ledger, round-trips Kiroku and PGMQ data, and opens a librdkafka producer. The repository now has strict ADR governance, complete Mori dependency registration, a released-cohort CI gate, and a clean-clone `just verify` acceptance path. Commit `fa691b7` passed that path with 9 unit examples and 4 live link-proof examples. EP-2 can now add packages through the existing glob and extend the established CLI without revisiting bootstrap or cohort selection.
 
 
 Revision note (2026-09-20): Updated the initiative and affected CLI plans to adopt the relevant `mori://shinzui/haskell-jitsurei` patterns. EP-1 now establishes Git-aware version identity; EP-2 owns grouped help, embedded terminal-aware topics, parser-derived completions, explicit stdin document inputs and stdout/stderr discipline; later command plans consume that seam. Legacy or interaction-heavy patterns that do not fit kenshou were explicitly excluded.

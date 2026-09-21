@@ -77,7 +77,7 @@ Milestone 4 — Adopt the ADR bundle, update mori.dhall and the README, add CI
 - [x] (2026-09-21T03:49:15Z) Extend `mori.dhall` (packages, dependencies, `okfBundles`, docs) and run `mori validate --check-deps` and `mori register`.
 - [x] (2026-09-21T03:49:15Z) Replace the README "Status" block with the layer-package layout.
 - [x] (2026-09-21T03:49:15Z) Add `.github/workflows/ci.yaml` and finish `just verify`.
-- [ ] Run `just verify` from a clean clone; commit; update the MasterPlan's Progress and registry status.
+- [x] (2026-09-21T03:53:04Z) Commit the Milestone 4 implementation (`fa691b7`), run `just verify` from a clean clone, and update the MasterPlan's Progress and registry status.
 
 
 ## Surprises & Discoveries
@@ -194,7 +194,7 @@ this section into docs/adr/. Keep task-local execution details here.
 
 - Milestone 3 links every descriptor package into one test component and proves four live boundaries on both cohorts: the shared migration ledger contains exactly `kiroku`, `keiro`, and `pgmq`; a Kiroku event round-trips; a PGMQ message round-trips; and a librdkafka producer handle is created, flushed, and closed. Both released and head runs pass 4 examples, so the unreleased shibuya revision `6461c74cda52…` and hw-kafka-client fork revision `6caed636898a…` require no compatibility exclusions. The tracked selector and regenerated plan are restored to released.
 
-- Milestone 4 has an OKF v0.2 ADR bundle at the v0.18.0 shared profile with canonical `ADR-1` and `ADR-2` handles, complete Mori package/dependency/doc registration, a current repository layout and getting-started guide, and a released-cohort CI workflow. Strict ADR validation, `mori validate --check-deps` (14 dependencies resolved), `actionlint`, `nix flake check`, formatting, the unit suites, and the live link-proof pass in the working repository. A clean-clone `just verify` remains the final acceptance step after committing these artifacts.
+- Milestone 4 has an OKF v0.2 ADR bundle at the v0.18.0 shared profile with canonical `ADR-1` and `ADR-2` handles, complete Mori package/dependency/doc registration, a current repository layout and getting-started guide, and a released-cohort CI workflow. Strict ADR validation, `mori validate --check-deps` (14 dependencies resolved), `actionlint`, and `nix flake check` pass. From a clean clone of commit `fa691b7`, `just verify` built every package and passed formatting, process-compose validation, 9 unit examples, 4 live link-proof examples, the released-cohort assertion and identity check, and strict ADR validation. EP-1 is complete.
 
 
 ## Context and Orientation
