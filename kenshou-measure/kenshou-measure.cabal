@@ -42,7 +42,12 @@ library
   hs-source-dirs: src
   exposed-modules:
     Kenshou.Measure
+    Kenshou.Measure.Cli
     Kenshou.Measure.Clock
+    Kenshou.Measure.Compare
+    Kenshou.Measure.Compare.Compatibility
+    Kenshou.Measure.Compare.Ordering
+    Kenshou.Measure.Compare.Policy
     Kenshou.Measure.Histogram
     Kenshou.Measure.Histogram.Codec
     Kenshou.Measure.Knobs
@@ -52,6 +57,8 @@ library
     Kenshou.Measure.Load.Open
     Kenshou.Measure.Load.Series
     Kenshou.Measure.Load.Types
+    Kenshou.Measure.Methodology
+    Kenshou.Measure.Metrics
     Kenshou.Measure.Phase
     Kenshou.Measure.Recorder
     Kenshou.Measure.Sampler
@@ -63,8 +70,11 @@ library
     Kenshou.Measure.Samples
     Kenshou.Measure.Selftest
     Kenshou.Measure.Selftest.PgInsert
+    Kenshou.Measure.Selftest.RegressionInjected
     Kenshou.Measure.Selftest.SleepService
     Kenshou.Measure.Session
+    Kenshou.Measure.Stats
+    Kenshou.Measure.Summary
 
   build-depends:
     aeson >=2.2 && <2.3,
@@ -76,6 +86,7 @@ library
     filepath >=1.5 && <1.6,
     hasql >=1.10 && <1.11,
     kenshou-core,
+    optparse-applicative >=0.19 && <0.20,
     primitive >=0.9 && <0.10,
     splitmix >=0.1 && <0.2,
     stm,
@@ -93,6 +104,7 @@ test-suite kenshou-measure-test
   main-is: Main.hs
   other-modules:
     Kenshou.Measure.ClockSpec
+    Kenshou.Measure.CompareSpec
     Kenshou.Measure.HistogramSpec
     Kenshou.Measure.LoadSpec
     Kenshou.Measure.RecorderSpec

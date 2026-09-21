@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/sample-meta-v1.schema.json",
+  "type": "object",
+  "required": ["schema", "operation", "latencyBasis", "clock", "rawSamples", "phaseCounts", "errorCauses", "files", "backpressureCount"],
+  "properties": {
+    "schema": {"const": "kenshou.sample-meta/v1"},
+    "operation": {"type": "string"},
+    "latencyBasis": {"enum": ["intended-start", "actual-start"]},
+    "clock": {"enum": ["monotonic", "wall"]},
+    "rawSamples": {},
+    "phaseCounts": {"type": "object"},
+    "errorCauses": {"type": "object"},
+    "files": {"type": "object"},
+    "backpressureCount": {"type": "integer", "minimum": 0}
+  },
+  "additionalProperties": false
+}

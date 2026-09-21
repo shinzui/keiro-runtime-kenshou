@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/measurements-v1.schema.json",
+  "type": "object",
+  "required": ["schema", "algorithm", "grade", "gradeReasons", "window", "ops", "metrics", "health"],
+  "properties": {
+    "schema": {"const": "kenshou.measurements/v1"},
+    "algorithm": {"type": "object", "required": ["name", "version"]},
+    "grade": {"enum": ["benchmark", "exploratory"]},
+    "gradeReasons": {"type": "array", "items": {"type": "string"}},
+    "window": {"type": "object", "required": ["steadyStartMonoNs", "steadyEndMonoNs", "steadySeconds"]},
+    "ops": {"type": "object"},
+    "metrics": {"type": "object", "additionalProperties": {"type": "object", "required": ["value", "unit"], "properties": {"value": {"type": "number"}, "unit": {"type": "string"}}}},
+    "health": {"type": "array"}
+  },
+  "additionalProperties": false
+}

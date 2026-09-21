@@ -11,6 +11,7 @@ import Kenshou.Cli.Help qualified as Help
 import Kenshou.Core.Bundle (LayerBundle)
 import Kenshou.Core.Cli (CliCommand, HelpTopic)
 import Kenshou.Core.Selftest qualified as Selftest
+import Kenshou.Measure.Cli qualified as Measure
 import Kenshou.Measure.Selftest qualified as MeasureSelftest
 
 -- Extension contract: coverage plans add one imported bundle and one list element;
@@ -19,7 +20,7 @@ bundles :: [LayerBundle]
 bundles = [Selftest.bundle, MeasureSelftest.bundle]
 
 commands :: [CliCommand]
-commands = [listCommand, planCommand, Help.helpCommand, runCommand, executeCommand, workerCommand, cohortCommand, completionsCommand]
+commands = [listCommand, planCommand, Help.helpCommand, runCommand, executeCommand, Measure.summarizeCommand, Measure.compareCommand, workerCommand, cohortCommand, completionsCommand]
 
 topics :: [HelpTopic]
 topics = Help.topics

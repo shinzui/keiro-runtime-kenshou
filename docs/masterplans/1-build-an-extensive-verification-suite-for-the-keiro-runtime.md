@@ -211,10 +211,10 @@ Track milestone-level progress across all child plans. Each entry names the chil
 - [x] EP-3: Change detection from cohort diffs, named components and repository paths
 - [x] EP-3: Matrix expansion, tier budgets and `kenshou plan`
 - [x] EP-3: Named suites and resumable `kenshou execute`
-- [ ] EP-4: Clocks, the latency recorder and warm-up exclusion
-- [ ] EP-4: Closed-loop and open-loop load generators
-- [ ] EP-4: Runtime, process and PostgreSQL samplers
-- [ ] EP-4: Summaries and paired comparison with verdicts
+- [x] EP-4: Clocks, the latency recorder and warm-up exclusion
+- [x] EP-4: Closed-loop and open-loop load generators
+- [x] EP-4: Runtime, process and PostgreSQL samplers
+- [x] EP-4: Summaries and paired comparison with verdicts
 - [ ] EP-4: Health gates that separate infrastructure trouble from regressions
 - [ ] EP-5: The bounded ledger and the verdict document
 - [ ] EP-5: The invariant checker library

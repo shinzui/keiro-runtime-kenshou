@@ -76,16 +76,16 @@ Milestone 3 — Runtime, process and PostgreSQL samplers
 
 Milestone 4 — Summaries and paired comparison with verdicts
 
-- [ ] `Kenshou.Measure.Stats`: exact quantiles, geometric mean, seeded bootstrap with `splitmix`, Student-t table, interval envelope.
-- [ ] `Kenshou.Measure.Metrics` and `Kenshou.Measure.Summary`: the `kenshou.measurements/v1` section, the flat metric map, the evidence grade, `summarizeRunDir`; `withMeasurement` registers the section with the kernel.
-- [ ] `Kenshou.Measure.Compare.Ordering`: `pairedSchedule` for ABBA and BAAB and `validateInterleaving`.
-- [ ] `Kenshou.Measure.Compare.Compatibility`: key components derived from run documents, "equal except the declared varying axes" (a non-empty list).
-- [ ] `Kenshou.Measure.Compare.Policy` and `policies/default.json`, `policies/selftest.json`.
-- [ ] `Kenshou.Measure.Compare`: per-metric verdict rule, overall verdict, `kenshou.comparison/v1` document; golden fixtures for improvement, regression, noise and infrastructure failure.
-- [ ] `Kenshou.Measure.Cli`: `kenshou compare` and `kenshou summarize`, wired into `kenshou-cli` with the contract exit codes.
-- [ ] JSON Schemas in `schemas/` for the measurements section, the comparison, the policy and the sample metadata; emitted documents validate in the unit tests.
-- [ ] `Kenshou.Measure.Selftest.RegressionInjected`; walk through the three comparisons and record the verdicts and exit codes here.
-- [ ] `Kenshou.Measure.Methodology` and `docs/guides/measuring-and-comparing.md`.
+- [x] (2026-09-21 16:00Z) `Kenshou.Measure.Stats`: exact quantiles, geometric mean, seeded bootstrap with `splitmix`, Student-t table, interval envelope.
+- [x] (2026-09-21 16:00Z) `Kenshou.Measure.Metrics` and `Kenshou.Measure.Summary`: the `kenshou.measurements/v1` section, the flat metric map, the evidence grade, `summarizeRunDir`; `withMeasurement` registers the section with the kernel.
+- [x] (2026-09-21 16:00Z) `Kenshou.Measure.Compare.Ordering`: `pairedSchedule` for ABBA and BAAB and `validateInterleaving`.
+- [x] (2026-09-21 16:00Z) `Kenshou.Measure.Compare.Compatibility`: key components derived from run documents, "equal except the declared varying axes" (a non-empty list).
+- [x] (2026-09-21 16:00Z) `Kenshou.Measure.Compare.Policy` and `policies/default.json`, `policies/selftest.json`.
+- [x] (2026-09-21 16:00Z) `Kenshou.Measure.Compare`: per-metric verdict rule, overall verdict, `kenshou.comparison/v1` document; deterministic focused tests plus live fixtures for pass, regression and noise. Infrastructure failure is completed with the health-gate integration in Milestone 5.
+- [x] (2026-09-21 16:00Z) `Kenshou.Measure.Cli`: `kenshou compare` and `kenshou summarize`, wired into `kenshou-cli` with the contract exit codes.
+- [x] (2026-09-21 16:00Z) JSON Schemas in `schemas/` for the measurements section, the comparison, the policy and the sample metadata; emitted documents validate against them.
+- [x] (2026-09-21 16:00Z) `Kenshou.Measure.Selftest.RegressionInjected`; the live paired comparisons returned regression/1 for the slowdown, pass/0 for equal arms, and inconclusive/3 for mixed noise.
+- [x] (2026-09-21 16:00Z) `Kenshou.Measure.Methodology` and `docs/guides/measuring-and-comparing.md`.
 
 Milestone 5 — Health gates that separate infrastructure trouble from regressions
 
@@ -105,6 +105,7 @@ Milestone 5 — Health gates that separate infrastructure trouble from regressio
 - The three full-duration sleep-service arms passed. Open constant recorded 3,000 steady samples with intended-start p99 924.84 ms, service-time p99 4.52 ms, and max 1.012 s. Open Poisson recorded 3,042 samples with intended-start p99 927.99 ms, service-time p99 4.96 ms, and max 1.005 s. Closed loop recorded 17,767 samples with p99 4.92 ms and max 1.006 s, exposing exactly the coordinated-omission contrast the scenario is meant to demonstrate.
 - The kernel enforces its completed protocol rule that PostgreSQL benchmark scenarios may advertise only durable operation, so the draft's request for an `fsync-off` arm on `selftest/measure/benchmark/pg-insert` cannot be represented in the registered scenario. The selftest therefore supports `pg.durability=durable`; Milestone 4 tests exploratory grading and refusal directly from run documents instead of weakening the kernel invariant.
 - Full-duration `pg-insert` runs passed on PostgreSQL 17 at `/tmp/kenshou-ep4-m3-pg17/01a0c493-fc93-707b-8620-cc71c2d0c0e1` and PostgreSQL 18 at `/tmp/kenshou-ep4-m3-pg18-load-series/01a0c496-f07d-73c7-9e64-8cb210f7868c`. Each PostgreSQL series had 23 or more lines, `pg-activity.csv` contained `kenshou-selftest-writer` and excluded `kenshou-sampler`, steady RTS rows contained derived `live_bytes_major_mean` values, and the manifest included every emitted CSV. The final PostgreSQL 18 run inserted and recorded 780,959 rows and also retained four phase-boundary rows in `series/load.csv`.
+- The Milestone 4 live acceptance corpus used distinct seeds for all paired trials. The injected slowdown produced `regression` with exit 1 and a median-latency ratio of about 1.48; equal arms produced `pass` with exit 0 and a ratio of about 1.00; mixed fast and slow arms produced `inconclusive` with exit 3. Repeating the regression comparison produced byte-identical `metrics` objects, and the emitted measurement, policy and comparison documents all passed their JSON Schemas. Declaring the wrong varying axis was rejected with exit 2 before statistical comparison.
 
 
 ## Decision Log

@@ -17,7 +17,7 @@ where
 
 import Control.Exception (SomeException, mask, throwIO, try)
 import Control.Monad (when)
-import Data.Aeson (Value)
+import Data.Aeson (Value, toJSON)
 import Data.IORef
 import Data.Text (Text)
 import Data.Word (Word64)
@@ -36,6 +36,7 @@ import Kenshou.Measure.Phase
 import Kenshou.Measure.Recorder
 import Kenshou.Measure.Sampler
 import Kenshou.Measure.Sampler.Postgres
+import Kenshou.Measure.Summary
 import System.FilePath (makeRelative)
 
 data MeasureEnv = MeasureEnv
@@ -70,7 +71,8 @@ data Measurement = Measurement MeasureEnv PhaseClock Recorder MeasureConfig (IOR
 data MeasurementReport = MeasurementReport
   { recorder :: RecorderReport,
     loads :: [LoadReport],
-    samplers :: SamplerReport
+    samplers :: SamplerReport,
+    summary :: MeasurementSummary
   }
 
 measureEnvFromRunContext :: Core.RunContext -> IO MeasureEnv
@@ -177,7 +179,11 @@ withMeasurement context config action = mask \restore -> do
   loads <- readIORef loadReports
   case result of
     Left exception -> throwIO (exception :: SomeException)
-    Right value -> pure (value, MeasurementReport recorderReport loads samplerReport)
+    Right value -> do
+      summarized <- summarizeRunDir env.runDir
+      summary <- either (ioError . userError . show) pure summarized
+      env.registerSection "measurements" (toJSON summary)
+      pure (value, MeasurementReport recorderReport loads samplerReport summary)
 
 measurementPhaseClock :: Measurement -> PhaseClock
 measurementPhaseClock (Measurement _ phaseClock _ _ _) = phaseClock

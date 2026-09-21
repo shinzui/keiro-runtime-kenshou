@@ -1,6 +1,7 @@
 module Main (main) where
 
 import Kenshou.Measure.ClockSpec qualified
+import Kenshou.Measure.CompareSpec qualified
 import Kenshou.Measure.HistogramSpec qualified
 import Kenshou.Measure.LoadSpec qualified
 import Kenshou.Measure.RecorderSpec qualified
@@ -11,6 +12,7 @@ import Test.Hspec (hspec)
 main :: IO ()
 main = hspec do
   Kenshou.Measure.ClockSpec.spec
+  Kenshou.Measure.CompareSpec.spec
   Kenshou.Measure.HistogramSpec.spec
   Kenshou.Measure.LoadSpec.spec
   Kenshou.Measure.SamplesSpec.spec

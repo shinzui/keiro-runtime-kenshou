@@ -1,0 +1,16 @@
+{
+  "schema": "kenshou.comparison-policy/v1",
+  "name": "selftest",
+  "minimumPairs": 3,
+  "confidenceLevel": 0.95,
+  "bootstrapIterations": 10000,
+  "resamplingSeed": 20260920,
+  "requireInterleaving": true,
+  "requireGrade": "benchmark",
+  "maxCiRelativeWidth": 0.5,
+  "maxCheckpointAsymmetry": 0.34,
+  "metrics": [
+    {"match": "op.*.throughput", "direction": "higher-is-better", "relativeLimit": 0.05, "absoluteFloor": 1.0},
+    {"match": "op.*.latency.p50", "direction": "lower-is-better", "relativeLimit": 0.10, "absoluteFloor": 50000}
+  ]
+}
