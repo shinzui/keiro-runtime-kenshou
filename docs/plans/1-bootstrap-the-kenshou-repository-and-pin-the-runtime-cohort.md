@@ -11,6 +11,12 @@ provenance:
     model: "claude-fable-5-1"
     harness: "claude-code"
     at: 2026-09-20T17:15:35Z
+  revisions:
+    - model: "gpt-5.6-sol"
+      harness: "codex-cli"
+      at: 2026-09-20T21:08:38Z
+      mode: "update"
+      note: "Adopted relevant Haskell Jitsurei CLI patterns and the bounded Settei configuration contract."
 ---
 
 # Bootstrap the kenshou repository and pin the runtime cohort
@@ -22,7 +28,7 @@ If durable project context changes, update or create ADRs in docs/adr/ in the sa
 
 ## Purpose / Big Picture
 
-Today `keiro-runtime-kenshou` holds a README, a project manifest and nineteen plan documents, and nothing that compiles. After this plan a contributor can clone the repository, run `nix develop`, and land in a shell with GHC 9.12.4, cabal 3.16, PostgreSQL 18 on the `PATH`, PostgreSQL 17 reachable through an environment variable, librdkafka, formatters and git hooks. From that shell `cabal build all` builds two small packages against an exactly pinned set of runtime libraries, and `cabal run kenshou -- cohort show --json` prints which version (or which git commit) of every runtime component the dependency solver actually chose, together with a hash of that choice. `just use-cohort head` switches the whole build from "what services get from Hackage today" to "the same, with chosen components replaced by unreleased git commits", and `just use-cohort released` switches back.
+Today `keiro-runtime-kenshou` holds a README, a project manifest and nineteen plan documents, and nothing that compiles. After this plan a contributor can clone the repository, run `nix develop`, and land in a shell with GHC 9.12.4, cabal 3.16, PostgreSQL 18 on the `PATH`, PostgreSQL 17 reachable through an environment variable, librdkafka, formatters and git hooks. From that shell `cabal build all` builds two small packages against an exactly pinned set of runtime libraries, and `cabal run kenshou -- cohort show --json` prints which version (or which git commit) of every runtime component the dependency solver actually chose, together with a hash of that choice. `kenshou --version` prints the Cabal package version and the build's short Git revision for both local Cabal builds and Nix builds, so a captured command transcript identifies the harness itself as well as its runtime cohort. `just use-cohort head` switches the whole build from "what services get from Hackage today" to "the same, with chosen components replaced by unreleased git commits", and `just use-cohort released` switches back.
 
 The second thing a contributor gains is proof that the verification suite is possible at all. One test suite, `kenshou-linkproof`, depends on every runtime package at once (keiro and its family, kiroku, shibuya and its three adapters, the Kafka client stack, the PGMQ client family), starts a throwaway PostgreSQL, migrates the kiroku, keiro and PGMQ schemas through one migration ledger, appends an event, sends and reads a queue message, and creates a Kafka producer handle. If that suite is green, one build plan can link the whole runtime including the C library librdkafka, and every later plan can assume it.
 
@@ -49,7 +55,7 @@ Milestone 2 — Pin the released and head cohorts and print the resolved cohort 
 - [ ] Write the full `cohort/released.project` and `cohort/head.project`; re-resolve the head commits with `git ls-remote`.
 - [ ] Write the descriptors `cohort/released.json` and `cohort/head.json` and the two JSON Schemas under `schemas/`.
 - [ ] Implement `Kenshou.Core.Cohort` (descriptor, plan reader, identity, plan hash, consistency check) with `kenshou-core-test`.
-- [ ] Create `kenshou-cli` with `kenshou cohort show` and `kenshou cohort check`, usage errors exiting 2, and `kenshou-cli-test`.
+- [ ] Create `kenshou-cli` with Git-aware `kenshou --version`, `kenshou cohort show` and `kenshou cohort check`, usage errors exiting 2, and `kenshou-cli-test`.
 - [ ] Add the `use-cohort`, `cohort-show`, `cohort-check` and `cohort-assert-released` recipes; prove a switch to `head` and back changes the printed identity.
 - [ ] Commit.
 
@@ -62,7 +68,7 @@ Milestone 3 — Prove the whole cohort links and migrates in one build
 
 Milestone 4 — Adopt the ADR bundle, update mori.dhall and the README, add CI
 
-- [ ] Draft the first ADR, run the `adopt-architecture-decisions` blueprint (or the manual fallback), allocate the second ADR with `okf id next`, validate strictly.
+- [ ] Draft the first ADR, run the `adopt-architecture-decisions` blueprint (or the manual fallback), allocate the second ADR with `okf id next`, and record the adopted `haskell-jitsurei` CLI interaction standard in the appropriate ADR before validating strictly.
 - [ ] Extend `mori.dhall` (packages, dependencies, `okfBundles`, docs) and run `mori validate --check-deps` and `mori register`.
 - [ ] Replace the README "Status" block with the layer-package layout.
 - [ ] Add `.github/workflows/ci.yaml` and finish `just verify`.
@@ -135,6 +141,14 @@ Record every decision made while working on the plan.
 
 - Decision: Leave `nix.redpanda` and `nix.haskell-nix` false.
   Rationale: The private Redpanda scripts belong to the broker fixture plan (`docs/plans/11-cover-the-kafka-transport-edge-with-a-disposable-broker.md`) and Nix-built payloads to `docs/plans/17-run-kenshou-on-leased-cells-with-payloads-submission-and-retrieval.md`; both can turn the variable on later with `seihou run nix-haskell-flake --var …`.
+  Date: 2026-09-20
+
+- Decision: Establish `kenshou --version` in the bootstrap plan with the Git-aware dual path from `mori://shinzui/haskell-jitsurei/docs/cli-version-git-sha`: `githash` reads `.git` in local Cabal builds and `flake.module.nix` injects `GIT_HASH` for Nix builds where `.git` is absent.
+  Rationale: EP-1 already owns the executable skeleton and Nix build. Later run results record a full harness revision, but operators and scripts need the executable to identify itself before any run exists. Keeping the version implementation in one module also gives EP-2's final parser a value to expose without duplicating build logic.
+  Date: 2026-09-20
+
+- Decision: Reserve Settei 0.2.0.0 as the harness configuration family that EP-2 adds, without putting it in the runtime cohort descriptors.
+  Rationale: `settei`, `settei-env`, `settei-optparse-applicative`, and `settei-yaml` configure the harness executable, not the runtime under test. Mixing them into the cohort identity would make an operator-interface dependency look like a runtime comparison axis.
   Date: 2026-09-20
 
 
@@ -426,6 +440,12 @@ renderCohortIdentity  :: CohortIdentity -> Text
 
 Create `kenshou-cli` with `app/Main.hs` (calls `Kenshou.Cli.main`), `src/Kenshou/Cli.hs`, `src/Kenshou/Cli/Options.hs` and `src/Kenshou/Cli/Cohort.hs`, executable `kenshou` built with `-threaded -rtsopts "-with-rtsopts=-N -T"` (the measurement toolkit needs `-T` for `GHC.Stats`), and `kenshou-cli-test`.
 
+Also create `kenshou-cli/src/Kenshou/Cli/Version.hs` following `mori://shinzui/haskell-jitsurei/docs/cli-version-git-sha`. It reads the package version from `Paths_kenshou_cli`, uses `GitHash.tGitInfoCwdTry` for a local build, falls back to a CPP string literal `GIT_HASH`, and exports `appVersionWithGit` in the form `kenshou v0.1.0.0 (a1b2c3d)`. Add `githash >=0.1.7 && <0.2` to the library dependency set. Hackage listed 0.1.7.0 on 2026-09-20 and the upstream tag `githash-0.1.7.0` resolves, but recheck both during the existing `cabal update` and `git ls-remote --tags` refresh before changing that bound.
+
+During the same dependency refresh, confirm that the fixed Hackage index contains `settei`, `settei-env`, `settei-optparse-applicative`, and `settei-yaml` 0.2.0.0 and that upstream tag `v0.2.0.0` still resolves in `mori://shinzui/settei`. These are harness dependencies for EP-2, not members of `cohort/released.json` or `cohort/head.json`; do not add them to the runtime identity or solver-plan comparison. EP-2 uses bounds `^>=0.2.0.0` unless a newer release is verified there first.
+
+For the Nix package, use the same proven wiring as `mori://shinzui/okf` in `flake.module.nix` and `okf-cli/src/Okf/Cli/Version.hs`: bind `gitRev = inputs.self.shortRev or "dirty"`, wrap the `kenshou-cli` derivation with `overrideCabal`, and append `--ghc-option=-DGIT_HASH=\"${builtins.substring 0 7 gitRev}\"` to its configure flags. These are project-relative paths within the canonical project reference; no code-artifact URI exists yet. Keep this in the unmanaged `flake.module.nix`; do not edit Seihou-managed `flake.nix` or `nix/*.nix`. The Template Haskell path wins when `.git` is available, the CPP path wins in Nix, and a source tarball with neither prints the package version without a fabricated hash.
+
 ```haskell
 -- Kenshou.Cli.Options
 data Command = CohortCommand CohortCommand   -- docs/plans/2-… adds list, run, worker
@@ -442,6 +462,8 @@ runCohortCommand    :: CohortCommand -> IO ExitCode
 main :: IO ()
 runWithArgs :: [String] -> IO ExitCode
 ```
+
+Attach `infoOption (Text.unpack appVersionWithGit) (long "version" <> help "Show version")` at the root parser. EP-2 will replace the closed command sum with the open registry and add grouped help, topics and completions; it must retain this version module and top-level option unchanged.
 
 optparse-applicative exits 1 on a parse failure, but the contract says 2. `runWithArgs` therefore uses `execParserPure`, and on `Failure` calls `renderFailure`: if its exit code is `ExitSuccess` (that is `--help`) print to stdout and return 0, otherwise print to stderr and return `ExitFailure 2`. `cohort show` exits 0, or 4 when no plan or identity can be read, with the message `no dist-newstyle/cache/plan.json; run cabal build all first`. `cohort check` exits 0 when consistent, 1 with one line per mismatch, 4 when inputs are unreadable. Add the Justfile cohort group: `cohort-show`, `cohort-check`, `cohort-assert-released` (fails unless `cohort/active.project` is exactly `import: released.project`, which is what must be committed), and:
 
@@ -641,7 +663,7 @@ git clone . ../kenshou-verify-clone && cd ../kenshou-verify-clone && nix develop
 
 Milestone 1 is accepted when, inside `nix develop`, GHC reports 9.12.4 and cabal 3.16.x; `postgres --version` reports 18 and `$KENSHOU_PG17_BIN/postgres --version` reports 17; `pkg-config --modversion rdkafka` prints a version; `cabal build all` builds `kenshou-core`; `nix fmt -- --fail-on-change` exits 0 on a second run; `just process-compose-check` exits 0; and an attempted commit whose message contains a literal `\n` is rejected by the hook.
 
-Milestone 2 is accepted when `cabal run kenshou -- cohort show --json` prints a document whose `schema` is `kenshou.cohort-identity/v1`, that validates against `schemas/kenshou.cohort-identity.v1.schema.json`, and whose `planHash` is identical across two consecutive builds; when `just use-cohort head` followed by a build changes the reported source of shibuya and hw-kafka-client to git commits and changes the plan hash, and `just use-cohort released` restores the first hash exactly; when editing `cohort/active.project` by hand without the recipe demonstrably leaves the old plan in place (this proves why the recipe exists; note it in Surprises & Discoveries); when an unknown subcommand exits 2 and `--help` exits 0; and when `cabal test kenshou-core:tests` passes, including the doctored-fixture tests that produce every `CohortMismatch` constructor.
+Milestone 2 is accepted when `cabal run kenshou -- cohort show --json` prints a document whose `schema` is `kenshou.cohort-identity/v1`, that validates against `schemas/kenshou.cohort-identity.v1.schema.json`, and whose `planHash` is identical across two consecutive builds; when `just use-cohort head` followed by a build changes the reported source of shibuya and hw-kafka-client to git commits and changes the plan hash, and `just use-cohort released` restores the first hash exactly; when editing `cohort/active.project` by hand without the recipe demonstrably leaves the old plan in place (this proves why the recipe exists; note it in Surprises & Discoveries); when an unknown subcommand exits 2 and `--help` exits 0; when the Cabal-built and Nix-built executables both report `kenshou v0.1.0.0 (<seven-character revision>)` for the same clean commit and a dirty Nix source reports `(dirty)` rather than a stale revision; and when `cabal test kenshou-core:tests kenshou-cli:tests` passes, including the doctored-fixture tests that produce every `CohortMismatch` constructor and a version-format test.
 
 Milestone 3 is accepted when `just link-proof` reports four passing examples on the released cohort; `cabal run kenshou -- cohort check` exits 0 on it; and the head cohort either passes the same four examples or has a recorded, explained reduction. To see that the proof is not vacuous, temporarily remove `pgmq` from the component list passed to the fixture and observe the ledger example fail, then restore it.
 
@@ -665,8 +687,13 @@ The link-proof leaves nothing behind when it exits normally. If it is killed, a 
 
 Toolchain: GHC 9.12.4, cabal-install 3.16.1.0, fourmolu, cabal-gild and nixpkgs-fmt from `github:shinzui/haskell-nix-dev/206ecd25bcb4a07581210bdae3e6f43c8fd179d8` through Seihou module `nix-haskell-flake` 0.24.0; PostgreSQL 18 on the `PATH` and PostgreSQL 17 by variable; librdkafka from nixpkgs `rdkafka`; `okf` 0.9.0.0 or later; `mori`; `seihou`; blueprint `adopt-architecture-decisions` 0.18.0.
 
-Released cohort: keiro, keiro-core, keiro-pgmq, keiro-migrations, keiro-test-support 0.17.0.0; keiki, keiki-codec-json 0.9.1.0; kiroku-store 0.8.0.1; kiroku-store-migrations 0.4.0.0; kiroku-otel 0.2.0.8; kiroku-metrics 0.1.0.8; kiroku-cli 0.2.0.6; shibuya-kiroku-adapter 0.5.1.2; shibuya-core, shibuya-metrics 0.9.0.3; shibuya-pgmq-adapter 0.16.0.0; shibuya-kafka-adapter 0.9.0.1; kafka-effectful 0.3.1.0; hw-kafka-client 5.3.0; hw-kafka-streamly 0.2.0.0; pgmq-core, pgmq-hasql, pgmq-effectful, pgmq-config, pgmq-migration 0.6.1.0; pg-migrate, pg-migrate-embed, pg-migrate-cli, pg-migrate-import-codd, pg-migrate-import-hasql-migration 1.1.0.0; ephemeral-pg 0.3.1.0; effectful, effectful-core 2.6.1.0; the hs-opentelemetry packages 1.0.0.0 and semantic-conventions 1.40.0.0. Head cohort: the same with shibuya at `a26d60609f118f8ca5357c6c16f02317e10fb819` and hw-kafka-client at `6caed636898a78e9f6e5a9c93eeb5562cbb2580a`. Harness libraries: aeson 2.2.x, cryptohash-sha256, optparse-applicative 0.19, hspec 2.11, hspec-hedgehog 0.3.
+Released cohort: keiro, keiro-core, keiro-pgmq, keiro-migrations, keiro-test-support 0.17.0.0; keiki, keiki-codec-json 0.9.1.0; kiroku-store 0.8.0.1; kiroku-store-migrations 0.4.0.0; kiroku-otel 0.2.0.8; kiroku-metrics 0.1.0.8; kiroku-cli 0.2.0.6; shibuya-kiroku-adapter 0.5.1.2; shibuya-core, shibuya-metrics 0.9.0.3; shibuya-pgmq-adapter 0.16.0.0; shibuya-kafka-adapter 0.9.0.1; kafka-effectful 0.3.1.0; hw-kafka-client 5.3.0; hw-kafka-streamly 0.2.0.0; pgmq-core, pgmq-hasql, pgmq-effectful, pgmq-config, pgmq-migration 0.6.1.0; pg-migrate, pg-migrate-embed, pg-migrate-cli, pg-migrate-import-codd, pg-migrate-import-hasql-migration 1.1.0.0; ephemeral-pg 0.3.1.0; effectful, effectful-core 2.6.1.0; the hs-opentelemetry packages 1.0.0.0 and semantic-conventions 1.40.0.0. Head cohort: the same with shibuya at `a26d60609f118f8ca5357c6c16f02317e10fb819` and hw-kafka-client at `6caed636898a78e9f6e5a9c93eeb5562cbb2580a`. Harness libraries: aeson 2.2.x, cryptohash-sha256, optparse-applicative 0.19, githash 0.1.7.x, Settei family 0.2.0.0 (added by EP-2 and excluded from the runtime cohort identity), hspec 2.11, hspec-hedgehog 0.3.
 
-At the end of Milestone 1 these exist: `flake.nix`, `flake.lock`, `flake.module.nix`, `nix/haskell.nix`, `nix/treefmt.nix`, `nix/pre-commit.nix`, `fourmolu.yaml`, `process-compose.yaml`, `Justfile`, `cabal.project`, `cohort/active.project`, `kenshou-core/kenshou-core.cabal`, and the environment variables `KENSHOU_PG17_BIN` and `KENSHOU_PG18_BIN`. At the end of Milestone 2: `cohort/released.project`, `cohort/head.project`, `cohort/released.json`, `cohort/head.json`, the two schema files, module `Kenshou.Core.Cohort` with the signatures given in Plan of Work, package `kenshou-cli` with `Kenshou.Cli`, `Kenshou.Cli.Options`, `Kenshou.Cli.Cohort` and executable `kenshou`, and the recipes `use-cohort`, `cohort-show`, `cohort-check`, `cohort-assert-released`. At the end of Milestone 3: test suite `kenshou-cli:test:kenshou-linkproof` and recipe `link-proof`. At the end of Milestone 4: `docs/adr/` with `profile.dhall`, `index.md`, `log.md`, ADR-1 and ADR-2; recipes `adr-validate` and `verify`; `.github/workflows/ci.yaml`.
+At the end of Milestone 1 these exist: `flake.nix`, `flake.lock`, `flake.module.nix`, `nix/haskell.nix`, `nix/treefmt.nix`, `nix/pre-commit.nix`, `fourmolu.yaml`, `process-compose.yaml`, `Justfile`, `cabal.project`, `cohort/active.project`, `kenshou-core/kenshou-core.cabal`, and the environment variables `KENSHOU_PG17_BIN` and `KENSHOU_PG18_BIN`. At the end of Milestone 2: `cohort/released.project`, `cohort/head.project`, `cohort/released.json`, `cohort/head.json`, the two schema files, module `Kenshou.Core.Cohort` with the signatures given in Plan of Work, package `kenshou-cli` with `Kenshou.Cli`, `Kenshou.Cli.Options`, `Kenshou.Cli.Cohort`, `Kenshou.Cli.Version` and executable `kenshou`, the Nix `GIT_HASH` injection, and the recipes `use-cohort`, `cohort-show`, `cohort-check`, `cohort-assert-released`. At the end of Milestone 3: test suite `kenshou-cli:test:kenshou-linkproof` and recipe `link-proof`. At the end of Milestone 4: `docs/adr/` with `profile.dhall`, `index.md`, `log.md`, ADR-1 and ADR-2; recipes `adr-validate` and `verify`; `.github/workflows/ci.yaml`.
 
 What other plans consume. `docs/plans/2-build-the-harness-kernel-for-scenarios-dimensions-run-specs-and-results.md` extends both packages: it replaces the closed `Kenshou.Cli.Options.Command` sum with an open registry of `CliCommand` values defined in `kenshou-core` (so that later plans can add verbs without editing a central type), re-registers `cohort show` and `cohort check` through that registry with their behaviour unchanged, keeps `runWithArgs`' exit-code handling, embeds `CohortIdentity` in the run result through `resolveCohortIdentity`, reads `KENSHOU_PG17_BIN` and `KENSHOU_PG18_BIN` to choose a PostgreSQL major, takes over `schemas/` using the file naming started here, and should note that `ephemeral-pg` is 0.3.1.0, so `withCachedConfig`, `temporaryRoot` and the stale-cluster sweep are available. `docs/plans/3-plan-and-select-runs-from-what-changed.md` diffs two `kenshou.cohort/v1` descriptors at package granularity and maps packages to its own component graph. `docs/plans/17-run-kenshou-on-leased-cells-with-payloads-submission-and-retrieval.md` ships an identity file and points `KENSHOU_COHORT_IDENTITY` at it on the cell. `docs/plans/18-record-runs-and-attestations-in-a-historic-okf-evidence-bundle.md` writes each component's `moriUri` and version or commit into run records. `docs/plans/11-cover-the-kafka-transport-edge-with-a-disposable-broker.md` may turn on `nix.redpanda` and add a cohort that pairs released packages with the hw-kafka-client fork. Every later plan adds a package by creating `kenshou-<name>/kenshou-<name>.cabal` and adds a runtime dependency only if the cohort already pins it; a new runtime package means editing both cohort files and both descriptors and re-running `just cohort-check`.
+
+
+Revision note (2026-09-20): Added the EP-1 portion of the `mori://shinzui/haskell-jitsurei` CLI standard. The bootstrap now provides a Git-aware top-level `--version` for both Cabal and Nix builds, verifies its registry and upstream release inputs, and hands that release-identity module to EP-2's shared CLI framework.
+
+Revision note (2026-09-20): Added release verification and cohort-boundary guidance for the Settei 0.2.0.0 harness configuration family.

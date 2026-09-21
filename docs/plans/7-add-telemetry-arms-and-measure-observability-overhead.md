@@ -11,6 +11,12 @@ provenance:
     model: "claude-fable-5-1"
     harness: "claude-code"
     at: 2026-09-20T17:15:35Z
+  revisions:
+    - model: "gpt-5.6-sol"
+      harness: "codex-cli"
+      at: 2026-09-20T21:08:38Z
+      mode: "update"
+      note: "Adopted relevant Haskell Jitsurei CLI patterns and the bounded Settei configuration contract."
 ---
 
 # Add telemetry arms and measure observability overhead
@@ -126,6 +132,11 @@ implementation. Provide concise evidence.
 
 - Decision: One extra series file, `series/otel-pipeline.csv`, is added beside `series/scrape-*.csv`.
   Rationale: Queue growth can only be seen over time, and the diagnostics toolkit fits slopes to series files. The MasterPlan lists `series/*.csv` as shared between the measurement toolkit and this plan and names `scrape-*.csv` as an example; the new file is reported to the MasterPlan owner as a small extension.
+  Date: 2026-09-20
+
+
+- Decision: Register `overhead` in the Execution command group and compose its dense option surface from the shared intent-based groups, with policy documents using EP-2's explicit `-` input convention.
+  Rationale: Although the command produces a comparison, it primarily schedules and executes fresh workload arms. Reusing the CLI contract keeps its completion, help and JSON channel behavior aligned without introducing a second telemetry-specific interaction framework.
   Date: 2026-09-20
 
 
@@ -370,7 +381,7 @@ withKirokuTelemetry th connStr bridge scenarioHandlers body = do
 
 Scope: turning "run this scenario under these arms" into interleaved, fresh-process runs, comparing each arm with the baseline through the measurement toolkit, and emitting one report with a verdict and an exit code. At the end the headline command from Purpose runs to completion on a laptop in about two and a half minutes and writes `overhead-report.json`; identical arms give `pass`; an arm made artificially expensive gives `regression` and exit code 1.
 
-The command line is `kenshou overhead <scenario-id> --arms <factor>=<v1>,<v2>,… [--arms …] [--mode one-factor|full] [--control] [--trials N] [--set knob=value]… [--dim name=value]… [--policy FILE] [--seed N] [--settle-seconds S] [--retries R] [--resume] [--analyse-only] [--json] --out DIR`. A factor is `tracing` or `metrics`, shorthand for the two dimension names; repeating a value inside one factor is a usage error. The first value listed for a factor is its baseline. In mode `one-factor` (the default) the arms are the baseline cell plus one arm per non-baseline value with the other factor held at its baseline, so the headline command has four arms and three comparisons. In mode `full` the arms are the whole cross product, each compared with the baseline cell, which also exposes interactions. `--control` adds a second, identical copy of the baseline arm and compares it with the baseline like any other arm (an A/A test); if that comparison is anything but `pass`, the machine is too noisy to judge small overheads and the report's verdict is capped at `inconclusive`. `--trials` defaults to 3 and values below 3 are a usage error, because a single trial is never quoted. `--set` and `--dim` apply to every arm; if the scenario requires PostgreSQL and no `pg.durability` is given, `durable` is applied, because an `fsync-off` run is not a benchmark result. Every requested arm value must be in the scenario's declared dimension support; otherwise the command exits with code 2 and lists what is supported.
+Register `kenshou overhead` as an Execution `CliCommand`. The command line is `kenshou overhead <scenario-id> --arms <factor>=<v1>,<v2>,… [--arms …] [--mode one-factor|full] [--control] [--trials N] [--set knob=value]… [--dim name=value]… [--policy FILE] [--seed N] [--settle-seconds S] [--retries R] [--resume] [--analyse-only] [--json] --out DIR`. Follow EP-2's option-group contract: Arms for factors and mode, Parameters for `--set`/`--dim`, Methodology for policy/trials/seed/control/settling, Execution for resume/retries/analyse-only, and Output for the directory and JSON mode. `--policy -` uses `InputSource`; JSON output is the only content on standard output. A factor is `tracing` or `metrics`, shorthand for the two dimension names; repeating a value inside one factor is a usage error. The first value listed for a factor is its baseline. In mode `one-factor` (the default) the arms are the baseline cell plus one arm per non-baseline value with the other factor held at its baseline, so the headline command has four arms and three comparisons. In mode `full` the arms are the whole cross product, each compared with the baseline cell, which also exposes interactions. `--control` adds a second, identical copy of the baseline arm and compares it with the baseline like any other arm (an A/A test); if that comparison is anything but `pass`, the machine is too noisy to judge small overheads and the report's verdict is capped at `inconclusive`. `--trials` defaults to 3 and values below 3 are a usage error, because a single trial is never quoted. `--set` and `--dim` apply to every arm; if the scenario requires PostgreSQL and no `pg.durability` is given, `durable` is applied, because an `fsync-off` run is not a benchmark result. Every requested arm value must be in the scenario's declared dimension support; otherwise the command exits with code 2 and lists what is supported.
 
 `kenshou-telemetry/src/Kenshou/Telemetry/Overhead.hs` has three entry points so that a cell can execute the slots elsewhere.
 
@@ -620,8 +631,11 @@ At the end of Milestone 1 these must exist: `Kenshou.Telemetry` exporting `withT
 
 At the end of Milestone 2: `Kenshou.Telemetry.Metrics`; `Kenshou.Telemetry.Endpoint` with `Endpoint (..)`, `EndpointKind (..)`, `reserveFreePort`, `awaitHttpReady`; `Kenshou.Telemetry.Scrape` with `runScraperRole`, `runScraperInProcess`, `wsSlotLeakProbe`; the run-directory files `series/scrape-<name>.csv` and `series/scrape-<name>-ws.csv`; and `docs/guides/wiring-telemetry-arms.md`.
 
-At the end of Milestone 3: `Kenshou.Telemetry.Overhead` with `planOverhead`, `executeOverhead`, `analyseOverhead`, `OverheadHooks (..)`, `OverheadReport`; `Kenshou.Telemetry.Overhead.Policy`; `Kenshou.Cli.Overhead`; `policies/telemetry-overhead.json`; `schemas/kenshou.overhead-report.v1.schema.json`; and the subcommand `kenshou overhead` with the exit codes 0, 1, 2, 3 and 4.
+At the end of Milestone 3: `Kenshou.Telemetry.Overhead` with `planOverhead`, `executeOverhead`, `analyseOverhead`, `OverheadHooks (..)`, `OverheadReport`; `Kenshou.Telemetry.Overhead.Policy`; Execution `Kenshou.Cli.Overhead` using EP-2's `InputSource` and option-group contract; `policies/telemetry-overhead.json`; `schemas/kenshou.overhead-report.v1.schema.json`; and the subcommand `kenshou overhead` with the exit codes 0, 1, 2, 3 and 4.
 
 At the end of Milestone 4: `Kenshou.Telemetry.Compose` with `composeHandlers`, `timedHandler`, `slowHandler`, `asyncHandler`; `Kenshou.Telemetry.Continuity` with `checkContinuity`, `checkIsolation`, `SpanSelector (..)`; `Kenshou.Telemetry.Detect`; the file `series/otel-pipeline.csv`; the two remaining self-test scenarios; and one new record in `docs/adr/`.
 
 Other plans consume this one as follows. The five coverage plans (`docs/plans/8-cover-pgmq-hs-in-isolation.md` through `docs/plans/12-cover-the-keiro-command-processor-process-managers-and-routers.md`, and through the shared keiro package `docs/plans/13-cover-the-keiro-outbox-inbox-and-job-queue.md` and `docs/plans/14-cover-keiro-durable-execution-timers-and-sharded-subscriptions.md`) append `telemetryKnobs` to their scenarios, declare their dimension support as the guide prescribes, wrap their component in `withTelemetry`, and each deliver a "telemetry arms" milestone whose headline is a `kenshou overhead` run on one of their benchmarks. `docs/plans/3-plan-and-select-runs-from-what-changed.md` expands the two dimensions under its `telemetry-corners` policy, which means the all-off cell and the `sdk-otlp` with `serve-scraped` cell; that is how a correctness failure that appears only with telemetry on becomes visible. `docs/plans/15-verify-the-assembled-runtime-end-to-end-and-under-soak.md` measures whole-system overhead with the same command. `docs/plans/17-run-kenshou-on-leased-cells-with-payloads-submission-and-retrieval.md` sets `otel.endpoint` to the cell's collector and may ship `planOverhead`'s slots as a run plan and call `analyseOverhead` on the fetched results. `docs/plans/18-record-runs-and-attestations-in-a-historic-okf-evidence-bundle.md` may link an overhead report as a data artifact of the runs it records.
+
+
+Revision note (2026-09-20): Aligned `kenshou overhead` with EP-2's `haskell-jitsurei`-based CLI contract: Execution grouping, intent-based option sections, explicit stdin for policy documents, and clean JSON output.
