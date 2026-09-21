@@ -1,0 +1,19 @@
+{
+  "schema": "kenshou.leak-policy/v1",
+  "warmupCutSeconds": 300,
+  "minPoints": 30,
+  "minDurationSeconds": 1200,
+  "envelopeWindowSeconds": 60,
+  "resamples": 1000,
+  "confidence": 0.95,
+  "probes": [
+    {"name":"heap.live-bytes","unit":"bytes","file":"rts.csv","valueColumn":"live_bytes_last_gc","aggregation":"window-min","expectation":"bounded","floorPerHour":1048576,"minGrowth":2097152,"minRelativeGrowth":0.01,"limit":null},
+    {"name":"process.native-bytes","unit":"bytes","file":"proc.csv","valueColumn":"rss_bytes","aggregation":"window-median","expectation":"bounded","floorPerHour":8388608,"minGrowth":8388608,"minRelativeGrowth":0.05,"limit":null},
+    {"name":"haskell.threads","unit":"count","file":"rts.csv","valueColumn":"haskell_threads","aggregation":"window-median","expectation":"bounded","floorPerHour":1,"minGrowth":5,"minRelativeGrowth":0,"limit":null},
+    {"name":"os.threads","unit":"count","file":"proc.csv","valueColumn":"os_threads","aggregation":"window-median","expectation":"bounded","floorPerHour":1,"minGrowth":5,"minRelativeGrowth":0,"limit":null},
+    {"name":"os.fds","unit":"count","file":"proc.csv","valueColumn":"open_fds","aggregation":"window-median","expectation":"bounded","floorPerHour":1,"minGrowth":5,"minRelativeGrowth":0,"limit":null},
+    {"name":"pg.connections","unit":"count","file":"pg-activity.csv","valueColumn":"connections","aggregation":"window-median","expectation":"bounded","floorPerHour":1,"minGrowth":5,"minRelativeGrowth":0,"limit":null},
+    {"name":"pg.relation-bytes","unit":"bytes","file":"pg-relations.csv","valueColumn":"total_bytes","aggregation":"window-min","expectation":"informational","floorPerHour":0,"minGrowth":0,"minRelativeGrowth":0,"limit":null},
+    {"name":"pg.dead-tuples","unit":"count","file":"pg-relations.csv","valueColumn":"dead_tuples","aggregation":"window-min","expectation":"informational","floorPerHour":0,"minGrowth":0,"minRelativeGrowth":0,"limit":null}
+  ]
+}

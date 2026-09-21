@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shinzui.dev/kenshou/schemas/diagnosis.v1.schema.json",
+  "type": "object",
+  "required": ["schema", "kind", "runId", "scenario", "generatedAt", "generator", "body"],
+  "properties": {
+    "schema": {"const": "kenshou.diagnosis/v1"},
+    "kind": {"enum": ["leak", "stall", "thread-dump", "profile"]},
+    "runId": {"type": "string"},
+    "scenario": {"type": "string"},
+    "generatedAt": {"type": "string", "format": "date-time"},
+    "generator": {
+      "type": "object",
+      "required": ["package", "version", "algorithm"],
+      "properties": {"package":{"type":"string"},"version":{"type":"string"},"algorithm":{"type":"string"}},
+      "additionalProperties": false
+    },
+    "body": {"type": "object"}
+  },
+  "additionalProperties": false
+}

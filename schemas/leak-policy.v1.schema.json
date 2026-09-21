@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shinzui.dev/kenshou/schemas/leak-policy.v1.schema.json",
+  "type": "object",
+  "required": ["schema", "warmupCutSeconds", "minPoints", "minDurationSeconds", "envelopeWindowSeconds", "resamples", "confidence", "probes"],
+  "properties": {
+    "schema": {"const": "kenshou.leak-policy/v1"},
+    "warmupCutSeconds": {"type":"number","minimum":0},
+    "minPoints": {"type":"integer","minimum":2},
+    "minDurationSeconds": {"type":"number","minimum":0},
+    "envelopeWindowSeconds": {"type":"number","exclusiveMinimum":0},
+    "resamples": {"type":"integer","minimum":1},
+    "confidence": {"type":"number","exclusiveMinimum":0,"exclusiveMaximum":1},
+    "probes": {"type":"array","minItems":1,"items":{"type":"object","required":["name","unit","file","valueColumn","aggregation","expectation","floorPerHour","minGrowth","minRelativeGrowth"],"properties":{"name":{"type":"string"},"unit":{"type":"string"},"file":{"type":"string"},"timeColumn":{"type":"string"},"valueColumn":{"type":"string"},"aggregation":{"enum":["window-min","window-median"]},"expectation":{"enum":["bounded","informational"]},"floorPerHour":{"type":"number"},"minGrowth":{"type":"number"},"minRelativeGrowth":{"type":"number"},"limit":{"type":["number","null"]}},"additionalProperties":false}}
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,90 @@
+cabal-version: 3.0
+name: kenshou-diagnose
+version: 0.1.0.0
+synopsis: Leak and stall diagnostics for Kenshou scenarios
+description: Offline leak verdicts, live stall capture, profiling recipes, and diagnostic self-tests.
+license: BSD-3-Clause
+author: Nadeem Bitar
+maintainer: Nadeem Bitar
+category: Testing
+build-type: Simple
+tested-with: ghc >=9.12 && <9.13
+extra-source-files:
+  test/fixtures/series/*.csv
+  test/golden/*.json
+
+common warnings
+  ghc-options:
+    -Wall
+    -Wcompat
+    -Widentities
+    -Wincomplete-record-updates
+    -Wincomplete-uni-patterns
+    -Wpartial-fields
+    -Wredundant-constraints
+
+  default-language: GHC2024
+  default-extensions:
+    BlockArguments
+    DuplicateRecordFields
+    ImportQualifiedPost
+    NoFieldSelectors
+    OverloadedLabels
+    OverloadedRecordDot
+    OverloadedStrings
+
+library
+  import: warnings
+  hs-source-dirs: src
+  exposed-modules:
+    Kenshou.Diagnose
+    Kenshou.Diagnose.Context
+    Kenshou.Diagnose.Document
+    Kenshou.Diagnose.Leak
+    Kenshou.Diagnose.Leak.MajorGcProbe
+    Kenshou.Diagnose.Series
+    Kenshou.Diagnose.Series.Catalog
+    Kenshou.Diagnose.Stats
+
+  build-depends:
+    aeson >=2.2 && <2.3,
+    base >=4.21 && <4.22,
+    bytestring >=0.12 && <0.13,
+    containers >=0.7 && <0.8,
+    directory,
+    filepath >=1.5 && <1.6,
+    kenshou-core,
+    kenshou-measure,
+    splitmix >=0.1 && <0.2,
+    text >=2.1 && <2.2,
+    time,
+    vector >=0.13 && <0.14,
+
+test-suite kenshou-diagnose-test
+  import: warnings
+  type: exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is: Main.hs
+  other-modules:
+    Kenshou.Diagnose.LeakSpec
+    Kenshou.Diagnose.StatsSpec
+
+  ghc-options:
+    -threaded
+    -rtsopts
+    -with-rtsopts=-N
+    -with-rtsopts=-T
+
+  build-depends:
+    aeson,
+    base >=4.21 && <4.22,
+    bytestring,
+    containers,
+    directory,
+    filepath,
+    hspec >=2.11 && <2.12,
+    kenshou-core,
+    kenshou-diagnose,
+    temporary,
+    text,
+    vector,

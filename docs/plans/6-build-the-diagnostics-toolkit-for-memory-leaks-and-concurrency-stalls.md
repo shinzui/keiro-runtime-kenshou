@@ -17,6 +17,11 @@ provenance:
       at: 2026-09-20T21:08:38Z
       mode: "update"
       note: "Adopted relevant Haskell Jitsurei CLI patterns and the bounded Settei configuration contract."
+    - model: "gpt-5.6-sol"
+      harness: "codex-cli"
+      at: 2026-09-21T18:10:58Z
+      mode: "implement"
+      note: "Started implementation and verified the kernel and measurement baseline."
 ---
 
 # Build the diagnostics toolkit for memory leaks and concurrency stalls
@@ -43,16 +48,16 @@ To see it working, run the seven self-test scenarios this plan adds. `selftest/d
 
 Milestone 1 — The leak verdict over sampled series
 
-- [ ] Confirm the state delivered by `docs/plans/2-build-the-harness-kernel-for-scenarios-dimensions-run-specs-and-results.md` and `docs/plans/4-build-the-measurement-toolkit-for-load-latency-sampling-and-comparison.md` (build green, `series/rts.csv` headers recorded in Surprises & Discoveries).
-- [ ] Create the package `kenshou-diagnose` (cabal file, `Kenshou.Diagnose`, test suite `kenshou-diagnose-test`).
-- [ ] `Kenshou.Diagnose.Context`: the single adapter over the kernel's `RunContext`.
-- [ ] `Kenshou.Diagnose.Document`: the `kenshou.diagnosis/v1` envelope, its JSON codecs and `schemas/diagnosis.v1.schema.json`.
-- [ ] `Kenshou.Diagnose.Stats`: Theil–Sen slope, moving-block bootstrap interval, window minima and medians, with property tests.
-- [ ] `Kenshou.Diagnose.Series` and `Kenshou.Diagnose.Series.Catalog`: header-driven CSV reading and the probe-to-column bindings, reconciled with the real headers.
-- [ ] `Kenshou.Diagnose.Leak`: probe specifications, the verdict rules, `judgeLeaks`, `analyseRunDirectory`, `leakOutcome`, and `policies/leak-default.json` with `schemas/leak-policy.v1.schema.json`.
-- [ ] `Kenshou.Diagnose.Leak.MajorGcProbe`: the opt-in forced major collection sampler writing `series/rts-major.csv`, refusing benchmark scenarios.
-- [ ] Synthetic-series fixtures and unit tests: leak, sawtooth-stable, plateau-after-growth, too-short, interval-straddles-floor.
-- [ ] Create the ADR "leak verdicts are judged on live bytes after major garbage collections, not on resident memory".
+- [x] (2026-09-21T18:10:25Z) Confirm the state delivered by `docs/plans/2-build-the-harness-kernel-for-scenarios-dimensions-run-specs-and-results.md` and `docs/plans/4-build-the-measurement-toolkit-for-load-latency-sampling-and-comparison.md` (build green, `series/rts.csv` headers recorded in Surprises & Discoveries).
+- [x] (2026-09-21T18:31:31Z) Create the package `kenshou-diagnose` (cabal file, `Kenshou.Diagnose`, test suite `kenshou-diagnose-test`).
+- [x] (2026-09-21T18:31:31Z) `Kenshou.Diagnose.Context`: the single adapter over the kernel's `RunContext`.
+- [x] (2026-09-21T18:31:31Z) `Kenshou.Diagnose.Document`: the `kenshou.diagnosis/v1` envelope, its JSON codecs and `schemas/diagnosis.v1.schema.json`.
+- [x] (2026-09-21T18:31:31Z) `Kenshou.Diagnose.Stats`: Theil–Sen slope, moving-block bootstrap interval, window minima and medians, with property tests.
+- [x] (2026-09-21T18:31:31Z) `Kenshou.Diagnose.Series` and `Kenshou.Diagnose.Series.Catalog`: header-driven CSV reading and the probe-to-column bindings, reconciled with the real headers.
+- [x] (2026-09-21T18:31:31Z) `Kenshou.Diagnose.Leak`: probe specifications, the verdict rules, `judgeLeaks`, `analyseRunDirectory`, `leakOutcome`, and `policies/leak-default.json` with `schemas/leak-policy.v1.schema.json`.
+- [x] (2026-09-21T18:31:31Z) `Kenshou.Diagnose.Leak.MajorGcProbe`: the opt-in forced major collection sampler writing `series/rts-major.csv`, refusing benchmark scenarios.
+- [x] (2026-09-21T18:31:31Z) Synthetic-series fixtures and unit tests: leak, sawtooth-stable, plateau-after-growth, too-short, interval-straddles-floor.
+- [x] (2026-09-21T18:31:31Z) Create the ADR "leak verdicts are judged on live bytes after major garbage collections, not on resident memory".
 
 Milestone 2 — The stall watchdog with thread dumps and lock graphs
 
@@ -90,7 +95,14 @@ Milestone 5 — Seeded leak and deadlock self-tests that prove the detectors fir
 
 ## Surprises & Discoveries
 
-(None yet.)
+- Observation: The dependency baseline builds cleanly under `nix develop`; the host shell alone cannot find the project-pinned `ghc-9.12.4`. The measurement self-test `selftest/measure/benchmark/sleep-service` passed and sealed run `01a0c528-80fe-7407-b0f1-971d7d45e0b7`.
+  Evidence: `nix develop -c cabal build all` exited 0, followed by the scenario result `passed`.
+
+- Observation: The real RTS series is richer than the draft catalog and uses `live_bytes_last_gc` rather than `live_bytes`; it already carries both `last_gc_gen` and `major_gcs`. The process series uses `cpu_total_ns` rather than the draft's `cpu_ns`.
+  Evidence: `series/rts.csv` begins `t_mono_ns,t_wall_ms,phase,gcs,major_gcs,allocated_bytes,max_live_bytes,cumulative_live_bytes,live_bytes_major_mean,live_bytes_last_gc,last_gc_gen,mem_in_use_bytes,...,haskell_threads,capabilities`; `series/proc.csv` begins `t_mono_ns,t_wall_ms,phase,rss_bytes,rss_max_bytes,os_threads,open_fds,cpu_user_ns,cpu_system_ns,cpu_total_ns,...`.
+
+- Observation: Milestone 1's acceptance suite passes 14 examples, including the required 90-of-100 moving-block interval coverage check, sawtooth and plateau discrimination, insufficient-data cases, diagnosis/policy codecs, and benchmark refusal. Both new schemas and the ten-record ADR bundle pass their strict validators.
+  Evidence: `nix develop -c cabal test kenshou-diagnose:tests`, `nix develop -c just schemas-check`, and strict `okf validate` all exited 0 on 2026-09-21.
 
 
 ## Decision Log
@@ -106,6 +118,10 @@ Milestone 5 — Seeded leak and deadlock self-tests that prove the detectors fir
 - Decision: Implement Theil–Sen and a seeded moving-block bootstrap inside `Kenshou.Diagnose.Stats` rather than reusing the measurement toolkit's bootstrap.
   Rationale: The measurement toolkit resamples independent paired trials. A sampled series is autocorrelated, so resampling individual points understates the interval; blocks are required. The code is about 150 pure lines and is property-tested here.
   Date: 2026-09-20
+
+- Decision: Stream Kenshou's owned sampler CSV one line at a time with a small header-driven reader rather than adding `cassava` solely for this boundary.
+  Rationale: Mori has no registered `cassava` source to inspect, while every consumed file is emitted by `Kenshou.Measure.Sampler.Csv` with a fixed header and RFC-style quoting. The local reader keeps 24-hour inputs bounded in memory, supports quoted commas and escaped quote pairs, and reports the exact missing column or malformed line. This avoids guessing an uninspected dependency API while preserving the behavior the plan requires.
+  Date: 2026-09-21
 
 - Decision: The watchdog opens its own PostgreSQL connection when it starts, not when it fires, and never borrows from a scenario's pool.
   Rationale: The situations being diagnosed include an exhausted pool and an exhausted `max_connections`. A connection acquired in advance is the only one guaranteed to exist at that moment.

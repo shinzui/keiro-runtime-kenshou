@@ -1,0 +1,7 @@
+t_mono_ns,phase,live_bytes_last_gc
+0,steady,100
+1000000000,steady,200
+2000000000,steady,300
+3000000000,steady,400
+4000000000,steady,500
+5000000000,steady,600

@@ -9,6 +9,7 @@ dist
 dist-*
 cabal-dev
 .direnv
+.dev/
 cabal.project.local
 db/
 result

@@ -33,8 +33,10 @@ schemas-check:
     check-jsonschema --schemafile schemas/run-spec-v1.schema.json kenshou-core/test/golden/run-spec.minimal.json kenshou-core/test/golden/run-spec.effective.json kenshou-core/test/golden/run-spec.external.json
     check-jsonschema --schemafile schemas/run-result-v1.schema.json kenshou-core/test/golden/run-result.passed.json kenshou-core/test/golden/run-result.known-defect.json
     check-jsonschema --schemafile schemas/artifact-manifest-v1.schema.json kenshou-core/test/golden/manifest.json
-    check-jsonschema --schemafile schemas/comparison-policy-v1.schema.json policies/*.json
+    check-jsonschema --schemafile schemas/comparison-policy-v1.schema.json policies/default.json policies/selftest.json
     check-jsonschema --schemafile schemas/health-notice-v1.schema.json kenshou-measure/test/fixtures/health-notice.json
+    check-jsonschema --schemafile schemas/diagnosis.v1.schema.json kenshou-diagnose/test/golden/leak-diagnosis.json
+    check-jsonschema --schemafile schemas/leak-policy.v1.schema.json policies/leak-default.json
     check-jsonschema --schemafile schemas/scenario-list-v1.schema.json kenshou-core/test/golden/scenario-list.json
     jq -c . kenshou-core/test/golden/worker-messages.jsonl | while IFS= read -r line; do printf '%s\n' "$line" | check-jsonschema --schemafile schemas/worker-message-v1.schema.json -; done
     tmpdir=$(mktemp -d); trap 'rm -rf -- "$tmpdir"' EXIT; K=$(cabal list-bin kenshou); "$K" list --json > "$tmpdir/scenario-list.json"; "$K" run selftest/kernel/correctness/always-pass --out "$tmpdir/runs" >/dev/null; rundir=$(find "$tmpdir/runs" -mindepth 1 -maxdepth 1 -type d | head -1); check-jsonschema --schemafile schemas/scenario-list-v1.schema.json "$tmpdir/scenario-list.json"; check-jsonschema --schemafile schemas/run-spec-v1.schema.json "$rundir/run-spec.json"; check-jsonschema --schemafile schemas/run-result-v1.schema.json "$rundir/run-result.json"; check-jsonschema --schemafile schemas/artifact-manifest-v1.schema.json "$rundir/manifest.json"
@@ -54,6 +56,7 @@ haskell-test:
     cabal test kenshou-core:tests
     cabal test kenshou-measure:test:kenshou-measure-test
     cabal test kenshou-check:test:kenshou-check-test
+    cabal test kenshou-diagnose:test:kenshou-diagnose-test
     cabal test kenshou-cli:test:kenshou-cli-test
 
 [group('haskell')]
