@@ -66,9 +66,9 @@ Milestone 2 — Pin the released and head cohorts and print the resolved cohort 
 
 Milestone 3 — Prove the whole cohort links and migrates in one build
 
-- [ ] Add the `kenshou-linkproof` test suite to `kenshou-cli/kenshou-cli.cabal` with a dependency on every runtime package.
-- [ ] Write `kenshou-cli/linkproof/Main.hs` and `kenshou-cli/linkproof/LinkProof/Imports.hs`.
-- [ ] Run it green on the released cohort; run it on the head cohort and record the outcome.
+- [x] (2026-09-21T03:38:30Z) Add the `kenshou-linkproof` test suite to `kenshou-cli/kenshou-cli.cabal` with a dependency on every runtime package.
+- [x] (2026-09-21T03:38:30Z) Write `kenshou-cli/linkproof/Main.hs` and `kenshou-cli/linkproof/LinkProof/Imports.hs`.
+- [x] (2026-09-21T03:38:30Z) Run it green on the released cohort; run it on the head cohort and record the outcome.
 - [ ] Commit.
 
 Milestone 4 — Adopt the ADR bundle, update mori.dhall and the README, add CI
@@ -187,6 +187,8 @@ this section into docs/adr/. Keep task-local execution details here.
 - Milestone 1 produced the locked Nix shell and the first buildable `kenshou-core` package. The shell reports GHC 9.12.4, cabal 3.16.1.0, PostgreSQL 18.6 on `PATH`, PostgreSQL 17.11 through `KENSHOU_PG17_BIN`, and librdkafka 2.15.0; `cabal build all`, a second `nix fmt -- --fail-on-change`, and `just process-compose-check` all pass. The generated commit hook also rejected a real commit attempt whose subject contained a literal `\n` escape.
 
 - Milestone 2 now has self-contained released and head cohort definitions, schema-validated descriptors, deterministic resolved identities, explicit mismatch diagnostics, and a Git-aware CLI built by both Cabal and Nix. Switching through the recipe changes the shibuya and hw-kafka-client sources to their pinned git revisions and back; the core and CLI suites pass 9 examples, an unknown cohort command exits 2, and a dirty Nix source reports `kenshou v0.1.0.0 (dirty)` instead of a stale revision. From clean builds at commit `c524951`, both the Cabal and Nix executables report `kenshou v0.1.0.0 (c524951)`.
+
+- Milestone 3 links every descriptor package into one test component and proves four live boundaries on both cohorts: the shared migration ledger contains exactly `kiroku`, `keiro`, and `pgmq`; a Kiroku event round-trips; a PGMQ message round-trips; and a librdkafka producer handle is created, flushed, and closed. Both released and head runs pass 4 examples, so the unreleased shibuya revision `6461c74cda52…` and hw-kafka-client fork revision `6caed636898a…` require no compatibility exclusions. The tracked selector and regenerated plan are restored to released.
 
 
 ## Context and Orientation
