@@ -1,0 +1,51 @@
+cabal-version: 3.0
+name: kenshou-measure
+version: 0.1.0.0
+synopsis: Measurement and comparison toolkit for Kenshou scenarios
+description: Load generation, latency recording, sampling, summaries, health gates, and paired comparisons.
+license: BSD-3-Clause
+author: Nadeem Bitar
+maintainer: Nadeem Bitar
+category: Testing
+build-type: Simple
+tested-with: ghc >=9.12 && <9.13
+
+common warnings
+  ghc-options:
+    -Wall
+    -Wcompat
+    -Widentities
+    -Wincomplete-record-updates
+    -Wincomplete-uni-patterns
+    -Wpartial-fields
+    -Wredundant-constraints
+
+  default-language: GHC2024
+  default-extensions:
+    BlockArguments
+    DuplicateRecordFields
+    ImportQualifiedPost
+    NoFieldSelectors
+    OverloadedLabels
+    OverloadedRecordDot
+    OverloadedStrings
+
+library
+  import: warnings
+  hs-source-dirs: src
+  exposed-modules:
+    Kenshou.Measure
+
+  build-depends:
+    base >=4.21 && <4.22,
+    kenshou-core,
+
+test-suite kenshou-measure-test
+  import: warnings
+  type: exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is: Main.hs
+  build-depends:
+    base >=4.21 && <4.22,
+    hspec >=2.11 && <2.12,
+    kenshou-measure,

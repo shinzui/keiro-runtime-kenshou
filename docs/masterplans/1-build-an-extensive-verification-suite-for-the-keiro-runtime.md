@@ -31,6 +31,11 @@ provenance:
       at: 2026-09-21T13:20:28Z
       mode: "implement"
       note: "Started EP-3 implementation and moved its registry entry to In Progress."
+    - model: "gpt-5.6-sol"
+      harness: "codex-cli"
+      at: 2026-09-21T14:43:41Z
+      mode: "implement"
+      note: "Started EP-4 implementation and moved its registry entry to In Progress."
 ---
 
 # Build an extensive verification suite for the keiro runtime
@@ -73,7 +78,7 @@ There is no local ADR corpus yet: `docs/adr/` does not exist in this repository,
 | 1 | Bootstrap the kenshou repository and pin the runtime cohort | docs/plans/1-bootstrap-the-kenshou-repository-and-pin-the-runtime-cohort.md | None | None | Complete |
 | 2 | Build the harness kernel for scenarios, dimensions, run specs and results | docs/plans/2-build-the-harness-kernel-for-scenarios-dimensions-run-specs-and-results.md | EP-1 | None | Complete |
 | 3 | Plan and select runs from what changed | docs/plans/3-plan-and-select-runs-from-what-changed.md | EP-2 | None | Complete |
-| 4 | Build the measurement toolkit for load, latency, sampling and comparison | docs/plans/4-build-the-measurement-toolkit-for-load-latency-sampling-and-comparison.md | EP-2 | None | Not Started |
+| 4 | Build the measurement toolkit for load, latency, sampling and comparison | docs/plans/4-build-the-measurement-toolkit-for-load-latency-sampling-and-comparison.md | EP-2 | None | In Progress |
 | 5 | Build the correctness toolkit for ledgers, invariants, faults and process control | docs/plans/5-build-the-correctness-toolkit-for-ledgers-invariants-faults-and-process-control.md | EP-2 | None | Not Started |
 | 6 | Build the diagnostics toolkit for memory leaks and concurrency stalls | docs/plans/6-build-the-diagnostics-toolkit-for-memory-leaks-and-concurrency-stalls.md | EP-2, EP-4 | EP-5 | Not Started |
 | 7 | Add telemetry arms and measure observability overhead | docs/plans/7-add-telemetry-arms-and-measure-observability-overhead.md | EP-2, EP-4 | EP-6 | Not Started |
