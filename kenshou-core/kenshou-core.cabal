@@ -66,6 +66,9 @@ library
     Kenshou.Core.Selftest
     Kenshou.Core.Version
     Kenshou.Plan.Catalog
+    Kenshou.Plan.Change
+    Kenshou.Plan.Change.Cohort
+    Kenshou.Plan.Change.Git
     Kenshou.Plan.Components
     Kenshou.Plan.Components.Check
     Kenshou.Plan.Selector
@@ -115,6 +118,8 @@ test-suite kenshou-core-test
     base >=4.21 && <4.22,
     bytestring,
     containers,
+    directory,
+    filepath,
     hedgehog >=1.4 && <1.8,
     hspec >=2.11 && <2.12,
     hspec-hedgehog >=0.0 && <0.4,

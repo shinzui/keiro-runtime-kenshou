@@ -38,10 +38,9 @@ import Data.ByteString (ByteString)
 import Data.ByteString qualified as ByteString
 import Data.FileEmbed (embedFile)
 import Data.Graph (SCC (..), stronglyConnComp)
-import Data.List (group, nub, sort, sortOn)
+import Data.List (group, nub, sort)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (fromMaybe, mapMaybe)
 import Data.Sequence (Seq (..), (|>))
 import Data.Sequence qualified as Seq
 import Data.Set (Set)
@@ -241,7 +240,11 @@ dependents graph origins = go initialQueue initialMap
     siblingUsers (ComponentRef componentId (Just subId)) = case componentById graph componentId of
       Nothing -> []
       Just componentValue -> [ComponentRef componentId (Just sibling.id) | sibling <- componentValue.subcomponents, subId `elem` sibling.uses]
-    siblingUsers _ = []
+    siblingUsers (ComponentRef componentId Nothing) = case componentById graph componentId of
+      Nothing -> []
+      Just componentValue
+        | null componentValue.selectors -> fmap (ComponentRef componentId . Just . (.id)) componentValue.subcomponents
+        | otherwise -> []
     edgeUsers target = concatMap (sourceFor target) graph.components
     sourceFor target source = concatMap (edgeSource target source) source.dependsOn
     edgeSource target source edge

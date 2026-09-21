@@ -60,11 +60,11 @@ Milestone 1 — The component graph of the runtime
 
 Milestone 2 — Change detection from cohort diffs, named components and repository paths
 
-- [ ] Add `Kenshou.Plan.Change` (change records, union, selection with reasons).
-- [ ] Add `Kenshou.Plan.Change.Cohort` (normalise two `kenshou.cohort/v1` descriptors to package maps and diff them).
-- [ ] Add `Kenshou.Plan.Change.Git` (`--since` path mapping including the automatic cohort-file diff, and `--upstream-diff`).
-- [ ] Wire `--changed`, `--cohort-from/--cohort-to`, `--since`, `--upstream-diff`, `--all`, `--select`, `--exclude`, `--catalog`, `--graph` and `--explain` into `kenshou plan`.
-- [ ] Unit tests with a temporary git repository and descriptor fixtures; the five acceptance selections pass.
+- [x] (2026-09-21T13:49:23Z) Add `Kenshou.Plan.Change` (change records, union, selection with reasons).
+- [x] (2026-09-21T13:49:23Z) Add `Kenshou.Plan.Change.Cohort` (normalise two `kenshou.cohort/v1` descriptors to package maps and diff them).
+- [x] (2026-09-21T13:49:23Z) Add `Kenshou.Plan.Change.Git` (`--since` path mapping including the automatic cohort-file diff, and `--upstream-diff`).
+- [x] (2026-09-21T13:49:23Z) Wire `--changed`, `--cohort-from/--cohort-to`, `--since`, `--upstream-diff`, `--all`, `--select`, `--exclude`, `--catalog`, `--graph` and `--explain` into `kenshou plan`.
+- [x] (2026-09-21T13:49:23Z) Unit tests with a temporary git repository and descriptor fixtures; the five acceptance selections pass.
 
 Milestone 3 — Matrix expansion, tier budgets and `kenshou plan`
 
@@ -92,6 +92,9 @@ Milestone 4 — Named suites and resumable `kenshou execute`
 
 - Observation: The reconciled graph has 26 whole components, 15 sub-components, and 65 edges (57 build and 8 runtime), one fewer edge than the plan's illustrative transcript; the actual Cabal-plan drift check reports no missing or extra build edges.
   Evidence: `nix develop -c cabal run kenshou -- plan --graph-show` and `nix develop -c cabal run kenshou -- plan --graph-check` on 2026-09-21. The check reports only `kenshou-runtime` as not yet in the build and the intentionally dormant `selftest/telemetry/**` selector as a warning.
+
+- Observation: Selecting every kernel self-test for a `kiroku-store` change while selecting only the PostgreSQL round-trip self-test for a `pgmq-hs` change requires a harness sub-component that is not visible in Cabal's package graph.
+  Evidence: the five Milestone 2 acceptance tests initially exposed the conflict. `kenshou-harness:kernel` now carries `selftest/kernel/**` and a runtime edge to `kiroku-store`; the whole harness retains the narrower PostgreSQL round-trip selector used by its build dependency on `pgmq-hs`.
 
 
 ## Decision Log

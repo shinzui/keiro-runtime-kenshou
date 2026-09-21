@@ -4,15 +4,21 @@ module Kenshou.Cli.Command.Plan (planCommand) where
 
 import Data.Aeson qualified as Aeson
 import Data.ByteString.Lazy.Char8 qualified as LazyByteString
-import Data.List (partition)
+import Data.List (nubBy, partition)
+import Data.List.NonEmpty qualified as NonEmpty
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.IO qualified as Text.IO
 import Kenshou.Core.Bundle (allScenarios)
 import Kenshou.Core.Cli
-import Kenshou.Plan.Catalog (ScenarioInfo, decodeCatalog, fromScenario)
+import Kenshou.Core.Id qualified as Id
+import Kenshou.Plan.Catalog (ScenarioInfo (..), decodeCatalog, fromScenario)
+import Kenshou.Plan.Change
+import Kenshou.Plan.Change.Cohort
+import Kenshou.Plan.Change.Git
 import Kenshou.Plan.Components
 import Kenshou.Plan.Components.Check
+import Kenshou.Plan.Selector (Selector, parseSelector, renderSelector)
 import Options.Applicative
 import System.Exit (ExitCode (..))
 import System.IO (stderr)
@@ -22,7 +28,16 @@ data PlanOptions = PlanOptions
     graphCheck :: Bool,
     json :: Bool,
     graphSource :: Maybe InputSource,
-    catalogSource :: Maybe InputSource
+    catalogSource :: Maybe InputSource,
+    changed :: [Text],
+    cohortFrom :: Maybe Text,
+    cohortTo :: Maybe Text,
+    since :: Maybe Text,
+    upstreamDiffs :: [Text],
+    allScenariosFlag :: Bool,
+    includes :: [Text],
+    excludes :: [Text],
+    explain :: Bool
   }
 
 planCommand :: CliCommand
@@ -43,11 +58,20 @@ planParser =
     <*> switch (long "json" <> help "Write machine-readable JSON")
     <*> optional (option (parseInputSource <$> str) (long "graph" <> metavar "FILE" <> help "Override the component graph; use - for stdin"))
     <*> optional (option (parseInputSource <$> str) (long "catalog" <> metavar "FILE" <> help "Plan against a scenario catalog; use - for stdin"))
+    <*> many (Text.pack <$> strOption (long "changed" <> metavar "COMPONENT[,COMPONENT]" <> help "Name changed components or sub-components"))
+    <*> optional (Text.pack <$> strOption (long "cohort-from" <> metavar "COHORT" <> help "Baseline cohort name, file, or git object"))
+    <*> optional (Text.pack <$> strOption (long "cohort-to" <> metavar "COHORT" <> help "Candidate cohort name, file, or git object"))
+    <*> optional (Text.pack <$> strOption (long "since" <> metavar "REV" <> help "Map repository changes since a revision"))
+    <*> many (Text.pack <$> strOption (long "upstream-diff" <> metavar "REPO=PATH@REVA..REVB" <> help "Map paths changed in an upstream checkout"))
+    <*> switch (long "all" <> help "Select every catalog scenario")
+    <*> many (Text.pack <$> strOption (long "select" <> metavar "SELECTOR" <> help "Keep matching scenarios"))
+    <*> many (Text.pack <$> strOption (long "exclude" <> metavar "SELECTOR" <> help "Remove matching scenarios"))
+    <*> switch (long "explain" <> help "Explain changes, dependency paths, and selections")
 
 runPlan :: PlanOptions -> CliEnv -> IO ExitCode
 runPlan options environment
   | stdinCount options > 1 = usage "at most one document input may use standard input"
-  | options.graphShow == options.graphCheck = usage "choose exactly one of --graph-show or --graph-check"
+  | options.graphShow && options.graphCheck = usage "choose only one of --graph-show or --graph-check"
   | otherwise = do
       graphResult <- loadGraph options.graphSource
       catalogResult <- loadCatalog environment options.catalogSource
@@ -56,13 +80,85 @@ runPlan options environment
         (_, Left err) -> usage err
         (Right graph, Right catalog)
           | options.graphShow -> showGraph options.json graph
-          | otherwise -> checkGraph graph catalog
+          | options.graphCheck -> checkGraph graph catalog
+          | otherwise -> planSelection options graph catalog
+
+planSelection :: PlanOptions -> ComponentGraph -> [ScenarioInfo] -> IO ExitCode
+planSelection options graph catalog = case (traverse (parseSelector) options.includes, traverse parseSelector options.excludes) of
+  (Left err, _) -> usage err
+  (_, Left err) -> usage err
+  (Right includes, Right excludes) -> do
+    gathered <- gatherChanges options graph
+    case gathered of
+      Left err -> usage err
+      Right (changes, directSelectors, warnings)
+        | null changes && null directSelectors && not options.allScenariosFlag -> usage "say what changed with --changed, --cohort-from/--cohort-to, --since, --upstream-diff, or --all"
+        | otherwise -> do
+            let componentSelected = if options.allScenariosFlag then selectAll catalog else selectScenarios graph catalog changes
+                pathSelected = selectBySelectors Since "repository path" directSelectors catalog
+                selected = applySelectors includes excludes (deduplicate (componentSelected <> pathSelected))
+            if options.json
+              then LazyByteString.putStrLn (Aeson.encode (selectionValue changes warnings selected))
+              else renderSelection options.explain changes warnings selected
+            pure ExitSuccess
+
+gatherChanges :: PlanOptions -> ComponentGraph -> IO (Either Text ([Change], [Selector], [Warning]))
+gatherChanges options graph = do
+  cohortResult <- gatherCohort
+  sinceResult <- maybe (pure (Right ([], [], []))) (changesSince graph ".") options.since
+  upstreamResults <- traverse gatherUpstream options.upstreamDiffs
+  pure do
+    named <- traverse (parseRef graph) namedInputs
+    (cohortChanges, cohortWarnings) <- cohortResult
+    (sinceChanges, sinceSelectors, sinceWarnings) <- sinceResult
+    upstream <- sequence upstreamResults
+    let upstreamChanges = concatMap fst upstream
+        upstreamWarnings = [Warning "ignored-upstream-paths" (Text.pack (show ignored) <> " upstream paths were outside component source roots") | (_, ignored) <- upstream, ignored > 0]
+        namedChanges = [Change reference Named ("--changed " <> renderRef reference) | reference <- named]
+    Right (namedChanges <> cohortChanges <> sinceChanges <> upstreamChanges, sinceSelectors, cohortWarnings <> sinceWarnings <> upstreamWarnings)
+  where
+    namedInputs = concatMap (filter (not . Text.null) . fmap Text.strip . Text.splitOn ",") options.changed
+    gatherCohort = case (options.cohortFrom, options.cohortTo) of
+      (Nothing, Nothing) -> pure (Right ([], []))
+      (Just from, Just to) -> do
+        old <- readCohortPackages "." (parseCohortInput from)
+        new <- readCohortPackages "." (parseCohortInput to)
+        pure ((uncurry (diffCohorts graph)) <$> ((,) <$> old <*> new))
+      _ -> pure (Left "--cohort-from and --cohort-to must be supplied together")
+    gatherUpstream raw = case parseUpstreamDiff raw of
+      Left err -> pure (Left err)
+      Right input -> changesFromUpstream graph input
+
+deduplicate :: [Selected] -> [Selected]
+deduplicate = nubBy (\left right -> left.scenario.id == right.scenario.id)
+
+renderSelection :: Bool -> [Change] -> [Warning] -> [Selected] -> IO ()
+renderSelection explain changes warnings selected = do
+  mapM_ (Text.IO.hPutStrLn stderr . ("warning: " <>) . (.message)) warnings
+  if explain
+    then do
+      mapM_ renderChange changes
+      mapM_ renderSelected selected
+      Text.IO.putStrLn ("selected " <> Text.pack (show (length selected)) <> " scenarios")
+    else mapM_ (Text.IO.putStrLn . Id.renderScenarioId . (.id) . (.scenario)) selected
+  where
+    renderChange changeValue = Text.IO.putStrLn ("changed    " <> renderRef changeValue.ref <> "  " <> changeValue.detail)
+    renderSelected selectedValue = do
+      let reason = NonEmpty.head selectedValue.reasons
+      Text.IO.putStrLn ("selected   " <> Id.renderScenarioId selectedValue.scenario.id <> "  via " <> Text.intercalate " <- " (fmap renderRef reason.via) <> "  selector " <> renderSelector reason.selector)
+
+selectionValue :: [Change] -> [Warning] -> [Selected] -> Aeson.Value
+selectionValue changes warnings selected =
+  Aeson.object
+    [ "schema" Aeson..= ("kenshou.selection/v1" :: Text),
+      "changes" Aeson..= fmap (\changeValue -> Aeson.object ["component" Aeson..= renderRef changeValue.ref, "source" Aeson..= show changeValue.source, "detail" Aeson..= changeValue.detail]) changes,
+      "warnings" Aeson..= fmap (.message) warnings,
+      "scenarios" Aeson..= fmap ((.id) . (.scenario)) selected
+    ]
 
 loadGraph :: Maybe InputSource -> IO (Either Text ComponentGraph)
 loadGraph Nothing = pure (firstGraph embeddedGraph)
 loadGraph (Just source) = firstGraph . decodeGraph <$> readInputSource source
-  where
-    firstGraph = either (Left . (.errorText)) Right
 
 firstGraph :: Either GraphError ComponentGraph -> Either Text ComponentGraph
 firstGraph = either (Left . (.errorText)) Right
