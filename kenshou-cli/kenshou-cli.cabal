@@ -63,6 +63,7 @@ library
     githash >=0.1.7 && <0.2,
     kenshou-check,
     kenshou-core,
+    kenshou-diagnose,
     kenshou-measure,
     optparse-applicative >=0.19 && <0.20,
     random >=1.2.1 && <1.4,

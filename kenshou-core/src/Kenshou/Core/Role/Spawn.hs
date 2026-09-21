@@ -33,7 +33,7 @@ withWorker context roleName instanceName arguments action = do
     start logPath = do
       executable <- getExecutablePath
       errorHandle <- openFile logPath AppendMode
-      (Just input, Just output, _, processHandle) <- createProcess (proc executable ["worker", "--role", Text.unpack (renderRoleName roleName)]) {std_in = CreatePipe, std_out = CreatePipe, std_err = UseHandle errorHandle}
+      (Just input, Just output, _, processHandle) <- createProcess (proc executable ["worker", "--role", Text.unpack (renderRoleName roleName), "--diagnosis-root", context.outDir]) {std_in = CreatePipe, std_out = CreatePipe, std_err = UseHandle errorHandle}
       hSetBuffering input LineBuffering
       processId <- getPid processHandle >>= maybe (ioError (userError "worker has no process id")) pure
       let sendMessage message = LazyByteString.hPutStrLn input (encode message) >> hFlush input

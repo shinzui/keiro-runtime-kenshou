@@ -61,12 +61,12 @@ Milestone 1 — The leak verdict over sampled series
 
 Milestone 2 — The stall watchdog with thread dumps and lock graphs
 
-- [ ] `Kenshou.Diagnose.Progress` (counters) and `Kenshou.Diagnose.Threads` (labels, dump, stack decoding with a timeout, `SIGUSR2` dump handler for worker processes).
-- [ ] `Kenshou.Diagnose.Postgres`: activity, lock, statement-rate and settings captures returning JSONB; advisory-lock key labelling.
-- [ ] `Kenshou.Diagnose.LockGraph`: wait-for graph, cycles, root blockers, DOT and text rendering.
-- [ ] `Kenshou.Diagnose.Pool`: occupancy statistics folded from hasql-pool observations.
-- [ ] `Kenshou.Diagnose.Stall` and `Kenshou.Diagnose.Stall.Classify`: `withWatchdog`, capture, the pure classifier, `suspendDeadline`, `StallDetected`.
-- [ ] Classifier unit tests over checked-in snapshot fixtures; an integration test of the PostgreSQL captures on PostgreSQL 17 and 18.
+- [x] (2026-09-21T19:08:54Z) `Kenshou.Diagnose.Progress` (counters) and `Kenshou.Diagnose.Threads` (labels, dump, stack decoding with a timeout, `SIGUSR2` dump handler for worker processes).
+- [x] (2026-09-21T19:08:54Z) `Kenshou.Diagnose.Postgres`: activity, lock, statement-rate and settings captures returning JSONB; advisory-lock key labelling.
+- [x] (2026-09-21T19:08:54Z) `Kenshou.Diagnose.LockGraph`: wait-for graph, cycles, root blockers, DOT and text rendering.
+- [x] (2026-09-21T19:08:54Z) `Kenshou.Diagnose.Pool`: occupancy statistics folded from hasql-pool observations.
+- [x] (2026-09-21T19:08:54Z) `Kenshou.Diagnose.Stall` and `Kenshou.Diagnose.Stall.Classify`: `withWatchdog`, capture, the pure classifier, `suspendDeadline`, `StallDetected`.
+- [x] (2026-09-21T19:08:54Z) Classifier unit tests over checked-in snapshot fixtures; an integration test of the PostgreSQL captures on PostgreSQL 17 and 18.
 
 Milestone 3 — Profiling build variants and bounded event logs
 
@@ -103,6 +103,9 @@ Milestone 5 — Seeded leak and deadlock self-tests that prove the detectors fir
 
 - Observation: Milestone 1's acceptance suite passes 14 examples, including the required 90-of-100 moving-block interval coverage check, sawtooth and plateau discrimination, insufficient-data cases, diagnosis/policy codecs, and benchmark refusal. Both new schemas and the ten-record ADR bundle pass their strict validators.
   Evidence: `nix develop -c cabal test kenshou-diagnose:tests`, `nix develop -c just schemas-check`, and strict `okf validate` all exited 0 on 2026-09-21.
+
+- Observation: The live PostgreSQL capture produces the same waiter-to-holder edge on PostgreSQL 17 and 18, and the watchdog writes `diagnosis/stall-1.json` and aborts a deliberately silent scenario within a 200-millisecond test deadline. The complete diagnostics suite now passes 26 examples.
+  Evidence: `nix develop -c cabal test kenshou-diagnose:tests --test-show-details=direct` exercised both ephemeral server majors and the watchdog integration test successfully on 2026-09-21.
 
 
 ## Decision Log
