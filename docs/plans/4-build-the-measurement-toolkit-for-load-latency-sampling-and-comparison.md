@@ -46,14 +46,14 @@ Milestone 1 — Clocks, the latency recorder and warm-up exclusion
 
 - [x] (2026-09-21 14:46Z) Confirm the state expected from `docs/plans/1-bootstrap-the-kenshou-repository-and-pin-the-runtime-cohort.md` and `docs/plans/2-build-the-harness-kernel-for-scenarios-dimensions-run-specs-and-results.md` with the checks in Concrete Steps; record the real kernel names next to the expected ones in Surprises & Discoveries.
 - [x] (2026-09-21 14:48Z) Create `kenshou-measure/kenshou-measure.cabal` (library plus `kenshou-measure-test`) and confirm `cabal build kenshou-measure` succeeds with an empty facade module.
-- [ ] `Kenshou.Measure.Clock`: monotonic nanosecond clock, paired wall/monotonic capture, `sleepUntilNs` that never returns early.
-- [ ] `Kenshou.Measure.Histogram`: log-linear layout, record, merge, quantile, exact min/max/sum, overflow counter; property tests for precision and merge laws.
-- [ ] `Kenshou.Measure.Histogram.Codec`: `KHST` version 1 encoder and decoder, round-trip property, golden byte fixture.
-- [ ] `Kenshou.Measure.Samples`: `KSMP` version 1 raw-sample writer (per-worker blocks, single writer thread, back-pressure counter) and streaming reader.
-- [ ] `Kenshou.Measure.Phase`: `PhasePlan`, `PhaseClock`, classification by intended start.
-- [ ] `Kenshou.Measure.Recorder`: operations, per-worker recorders, per-cause error counters, merge and file output at finish, interval histograms when raw samples are not retained in full.
-- [ ] `Kenshou.Measure.Session`, first part: `MeasureEnv` and `measureEnvFromRunContext`, the single point of contact with the kernel.
-- [ ] Timing tests: warm-up samples are excluded from the steady histogram; a histogram recomputed from the raw file equals the recorded one; recording ten million samples on one thread stays under the cost budget.
+- [x] (2026-09-21 14:58Z) `Kenshou.Measure.Clock`: monotonic nanosecond clock, paired wall/monotonic capture, `sleepUntilNs` that never returns early.
+- [x] (2026-09-21 14:58Z) `Kenshou.Measure.Histogram`: log-linear layout, record, merge, quantile, exact min/max/sum, overflow counter; property tests for precision and merge laws.
+- [x] (2026-09-21 14:58Z) `Kenshou.Measure.Histogram.Codec`: `KHST` version 1 encoder and decoder, round-trip property, golden byte fixture.
+- [x] (2026-09-21 14:58Z) `Kenshou.Measure.Samples`: `KSMP` version 1 raw-sample writer (per-worker blocks, single writer thread, back-pressure counter) and streaming reader.
+- [x] (2026-09-21 14:58Z) `Kenshou.Measure.Phase`: `PhasePlan`, `PhaseClock`, classification by intended start.
+- [x] (2026-09-21 14:58Z) `Kenshou.Measure.Recorder`: operations, per-worker recorders, per-cause error counters, merge and file output at finish, interval histograms when raw samples are not retained in full.
+- [x] (2026-09-21 14:58Z) `Kenshou.Measure.Session`, first part: `MeasureEnv` and `measureEnvFromRunContext`, the single point of contact with the kernel.
+- [x] (2026-09-21 14:58Z) Timing tests: warm-up samples are excluded from the steady histogram; a histogram recomputed from the raw file equals the recorded one; recording ten million samples on one thread stays under the cost budget.
 
 Milestone 2 — Closed-loop and open-loop load generators
 
@@ -101,6 +101,7 @@ Milestone 5 — Health gates that separate infrastructure trouble from regressio
 
 - The completed kernel registers seven self-test scenarios rather than the five anticipated by this draft; the additional `outcome` and `postgres-roundtrip` scenarios are intentional EP-2 acceptance coverage. The preflight still passed: `cabal build all` succeeded in `nix develop`, `always-pass` produced `run-spec.json`, `run-result.json`, `manifest.json`, and `logs/harness.jsonl`, and `kenshou-cli` already enables `-T`.
 - The real kernel adapter surface is `RunContext.knobs`, `.dimensions`, `.seed`, `.phases`, `.env`, `.outDir`, `.logger`, and `.state`. Measurement sections are registered with `putSummary context Measurements`, artifacts are allocated with `artifactPath`, media types with `declareMediaType`, and phase timings with `withPhase`; there is no separate structured phase-marker callback.
+- The default HDR layout is 33,792 counters as planned, and ten million in-memory records completed within a 0.133-second test-suite run on the development machine. The same acceptance test also rebuilds the steady histogram from the retained KSMP records and checks structural equality with the stored KHST histogram.
 
 
 ## Decision Log

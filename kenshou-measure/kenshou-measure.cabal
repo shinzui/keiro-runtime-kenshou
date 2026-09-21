@@ -9,6 +9,8 @@ maintainer: Nadeem Bitar
 category: Testing
 build-type: Simple
 tested-with: ghc >=9.12 && <9.13
+extra-source-files:
+  test/golden/histogram-v1.hex
 
 common warnings
   ghc-options:
@@ -35,17 +37,48 @@ library
   hs-source-dirs: src
   exposed-modules:
     Kenshou.Measure
+    Kenshou.Measure.Clock
+    Kenshou.Measure.Histogram
+    Kenshou.Measure.Histogram.Codec
+    Kenshou.Measure.Phase
+    Kenshou.Measure.Recorder
+    Kenshou.Measure.Samples
+    Kenshou.Measure.Session
 
   build-depends:
+    aeson >=2.2 && <2.3,
+    async,
     base >=4.21 && <4.22,
+    bytestring >=0.12 && <0.13,
+    containers >=0.7 && <0.8,
+    directory,
+    filepath >=1.5 && <1.6,
     kenshou-core,
+    primitive >=0.9 && <0.10,
+    stm,
+    text >=2.1 && <2.2,
+    time,
 
 test-suite kenshou-measure-test
   import: warnings
   type: exitcode-stdio-1.0
   hs-source-dirs: test
   main-is: Main.hs
+  other-modules:
+    Kenshou.Measure.ClockSpec
+    Kenshou.Measure.HistogramSpec
+    Kenshou.Measure.RecorderSpec
+    Kenshou.Measure.SamplesSpec
+
   build-depends:
     base >=4.21 && <4.22,
+    bytestring,
+    directory,
+    filepath,
+    hedgehog >=1.4 && <1.8,
     hspec >=2.11 && <2.12,
+    hspec-hedgehog >=0.0 && <0.4,
     kenshou-measure,
+    temporary,
+    text,
+    time,

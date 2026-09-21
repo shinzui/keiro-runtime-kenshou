@@ -1,6 +1,14 @@
 module Main (main) where
 
-import Test.Hspec (describe, hspec, it, shouldBe)
+import Kenshou.Measure.ClockSpec qualified
+import Kenshou.Measure.HistogramSpec qualified
+import Kenshou.Measure.RecorderSpec qualified
+import Kenshou.Measure.SamplesSpec qualified
+import Test.Hspec (hspec)
 
 main :: IO ()
-main = hspec $ describe "Kenshou.Measure" $ it "loads the package" $ True `shouldBe` True
+main = hspec do
+  Kenshou.Measure.ClockSpec.spec
+  Kenshou.Measure.HistogramSpec.spec
+  Kenshou.Measure.SamplesSpec.spec
+  Kenshou.Measure.RecorderSpec.spec
