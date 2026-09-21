@@ -79,10 +79,10 @@ Milestone 3 — Profiling build variants and bounded event logs
 
 Milestone 4 — `kenshou diagnose` recipes and the diagnosis guide
 
-- [ ] `kenshou-cli/src/Kenshou/Cli/Diagnose.hs` with `leak`, `stall` and `profile`, wired into the executable; exit codes per the command-line contract.
-- [ ] `Kenshou.Diagnose.Render`: human-readable and `--json` output.
-- [ ] A checked-in fixture run directory and golden tests for the three subcommands.
-- [ ] `docs/guides/diagnosing-leaks-and-stalls.md`.
+- [x] (2026-09-21T19:56:12Z) `kenshou-cli/src/Kenshou/Cli/Diagnose.hs` with `leak`, `stall` and `profile`, wired into the executable; exit codes per the command-line contract.
+- [x] (2026-09-21T19:56:12Z) `Kenshou.Diagnose.Render`: human-readable and `--json` output.
+- [x] (2026-09-21T19:56:12Z) Checked-in leaking and stalled run fixtures, golden render tests, all five exit-code cases, and sealed-manifest immutability coverage.
+- [x] (2026-09-21T19:56:12Z) `kenshou-cli/help/diagnostics.md` and `docs/guides/diagnosing-leaks-and-stalls.md`.
 
 Milestone 5 — Seeded leak and deadlock self-tests that prove the detectors fire
 
@@ -103,6 +103,9 @@ Milestone 5 — Seeded leak and deadlock self-tests that prove the detectors fir
 
 - Observation: Milestone 1's acceptance suite passes 14 examples, including the required 90-of-100 moving-block interval coverage check, sawtooth and plateau discrimination, insufficient-data cases, diagnosis/policy codecs, and benchmark refusal. Both new schemas and the ten-record ADR bundle pass their strict validators.
   Evidence: `nix develop -c cabal test kenshou-diagnose:tests`, `nix develop -c just schemas-check`, and strict `okf validate` all exited 0 on 2026-09-21.
+
+- Observation: The three diagnosis recipes are available through the CLI without weakening the sealed-run boundary. The combined package suites now pass 32 diagnostics examples and 10 CLI examples, including golden reports and exit codes 0 through 4; a real closure-type CLI session wrapped `selftest/kernel/correctness/always-pass`, emitted a 10,622-byte event log, and propagated exit 0.
+  Evidence: `nix develop -c cabal test kenshou-diagnose:kenshou-diagnose-test kenshou-cli:kenshou-cli-test` and `nix develop -c cabal run kenshou -- diagnose profile selftest/kernel/correctness/always-pass --mode closure-type --interval-s 0.1 --eventlog-max-bytes 10485760 --out .dev/cli-profiles` exited 0 on 2026-09-21.
 
 - Observation: The live PostgreSQL capture produces the same waiter-to-holder edge on PostgreSQL 17 and 18, and the watchdog writes `diagnosis/stall-1.json` and aborts a deliberately silent scenario within a 200-millisecond test deadline. The complete diagnostics suite now passes 26 examples.
   Evidence: `nix develop -c cabal test kenshou-diagnose:tests --test-show-details=direct` exercised both ephemeral server majors and the watchdog integration test successfully on 2026-09-21.

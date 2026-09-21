@@ -10,9 +10,12 @@ category: Testing
 build-type: Simple
 tested-with: ghc >=9.12 && <9.13
 extra-source-files:
+  test/fixtures/run-leaking/**/*
+  test/fixtures/run-stalled/**/*
   test/fixtures/series/*.csv
   test/fixtures/snapshots/*.json
   test/golden/*.json
+  test/golden/*.txt
 
 flag ghc-debug
   description: Enable the optional ghc-debug socket stub
@@ -55,6 +58,7 @@ library
     Kenshou.Diagnose.Profile.EventlogGuard
     Kenshou.Diagnose.Profile.GhcDebug
     Kenshou.Diagnose.Progress
+    Kenshou.Diagnose.Render
     Kenshou.Diagnose.Series
     Kenshou.Diagnose.Series.Catalog
     Kenshou.Diagnose.Stall
@@ -99,6 +103,7 @@ test-suite kenshou-diagnose-test
   other-modules:
     Kenshou.Diagnose.LeakSpec
     Kenshou.Diagnose.ProfileSpec
+    Kenshou.Diagnose.RenderSpec
     Kenshou.Diagnose.StallSpec
     Kenshou.Diagnose.StatsSpec
 

@@ -8,6 +8,7 @@ import Kenshou.Cli.Command.Plan (planCommand)
 import Kenshou.Cli.Command.Run (runCommand)
 import Kenshou.Cli.Command.Worker (workerCommand)
 import Kenshou.Cli.Completions (completionsCommand)
+import Kenshou.Cli.Diagnose qualified as Diagnose
 import Kenshou.Cli.Help qualified as Help
 import Kenshou.Core.Bundle (LayerBundle)
 import Kenshou.Core.Cli (CliCommand, HelpTopic)
@@ -21,7 +22,7 @@ bundles :: [LayerBundle]
 bundles = [Selftest.bundle, MeasureSelftest.bundle, CheckSelftest.bundle]
 
 commands :: [CliCommand]
-commands = [listCommand, planCommand, Help.helpCommand, runCommand, executeCommand, Measure.summarizeCommand, Measure.compareCommand, workerCommand, cohortCommand, completionsCommand]
+commands = [listCommand, planCommand, Help.helpCommand, runCommand, executeCommand, Measure.summarizeCommand, Measure.compareCommand, Diagnose.diagnoseCommand, workerCommand, cohortCommand, completionsCommand]
 
 topics :: [HelpTopic]
 topics = Help.topics

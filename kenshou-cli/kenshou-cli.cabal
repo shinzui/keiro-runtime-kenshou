@@ -45,6 +45,7 @@ library
     Kenshou.Cli.Command.Worker
     Kenshou.Cli.Completions
     Kenshou.Cli.Config
+    Kenshou.Cli.Diagnose
     Kenshou.Cli.Help
     Kenshou.Cli.Help.Width
     Kenshou.Cli.Main
@@ -58,14 +59,17 @@ library
     base >=4.21 && <4.22,
     bytestring >=0.12 && <0.13,
     containers >=0.7 && <0.8,
+    directory,
     file-embed >=0.0.16 && <0.1,
     filepath >=1.5 && <1.6,
     githash >=0.1.7 && <0.2,
+    hasql >=1.10 && <1.11,
     kenshou-check,
     kenshou-core,
     kenshou-diagnose,
     kenshou-measure,
     optparse-applicative >=0.19 && <0.20,
+    process >=1.6 && <1.7,
     random >=1.2.1 && <1.4,
     settei ^>=0.2.0.0,
     settei-env ^>=0.2.0.0,
@@ -73,6 +77,7 @@ library
     temporary,
     terminal-size >=0.3.4 && <0.4,
     text >=2.1 && <2.2,
+    time,
 
 executable kenshou
   import: warnings

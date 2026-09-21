@@ -1,0 +1,9 @@
+leak verdict: leak-suspected
+heap.live-bytes[main]  leak-suspected  slope=5901639.344262295 bytes/hour  reason=interval-above-floor
+process.native-bytes[main]  insufficient-data  slope=n/a  reason=CannotReadSeries "test/fixtures/run-leaking/series/proc.csv" "test/fixtures/run-leaking/series/proc.csv: withFile: does not exist (No such file or directory)"
+haskell.threads[main]  insufficient-data  slope=n/a  reason=MissingColumn "test/fixtures/run-leaking/series/rts.csv" "haskell_threads"
+os.threads[main]  insufficient-data  slope=n/a  reason=CannotReadSeries "test/fixtures/run-leaking/series/proc.csv" "test/fixtures/run-leaking/series/proc.csv: withFile: does not exist (No such file or directory)"
+os.fds[main]  insufficient-data  slope=n/a  reason=CannotReadSeries "test/fixtures/run-leaking/series/proc.csv" "test/fixtures/run-leaking/series/proc.csv: withFile: does not exist (No such file or directory)"
+pg.connections[main]  insufficient-data  slope=n/a  reason=CannotReadSeries "test/fixtures/run-leaking/series/pg-activity.csv" "test/fixtures/run-leaking/series/pg-activity.csv: withFile: does not exist (No such file or directory)"
+pg.relation-bytes[main]  insufficient-data  slope=n/a  reason=CannotReadSeries "test/fixtures/run-leaking/series/pg-relations.csv" "test/fixtures/run-leaking/series/pg-relations.csv: withFile: does not exist (No such file or directory)"
+pg.dead-tuples[main]  insufficient-data  slope=n/a  reason=CannotReadSeries "test/fixtures/run-leaking/series/pg-relations.csv" "test/fixtures/run-leaking/series/pg-relations.csv: withFile: does not exist (No such file or directory)"

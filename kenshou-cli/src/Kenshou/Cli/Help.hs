@@ -20,7 +20,8 @@ topics =
     HelpTopic "planning" "Change-aware plans, suites, and safe resume" (Text.pack $(embedStringFile "help/planning.md")),
     HelpTopic "outcomes" "Run outcomes and known defects" (Text.pack $(embedStringFile "help/outcomes.md")),
     HelpTopic "exit-codes" "Stable process exit codes" (Text.pack $(embedStringFile "help/exit-codes.md")),
-    HelpTopic "comparisons" "Paired benchmark comparisons" (Text.pack $(embedStringFile "help/comparisons.md"))
+    HelpTopic "comparisons" "Paired benchmark comparisons" (Text.pack $(embedStringFile "help/comparisons.md")),
+    HelpTopic "diagnostics" "Leak, stall, and profiling diagnosis" (Text.pack $(embedStringFile "help/diagnostics.md"))
   ]
 
 data HelpOptions = HelpOptions {topic :: Maybe Text, width :: Maybe Int}

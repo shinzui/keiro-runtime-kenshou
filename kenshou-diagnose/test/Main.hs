@@ -2,6 +2,7 @@ module Main (main) where
 
 import Kenshou.Diagnose.LeakSpec qualified
 import Kenshou.Diagnose.ProfileSpec qualified
+import Kenshou.Diagnose.RenderSpec qualified
 import Kenshou.Diagnose.StallSpec qualified
 import Kenshou.Diagnose.StatsSpec qualified
 import Test.Hspec (hspec)
@@ -12,3 +13,4 @@ main = hspec do
   Kenshou.Diagnose.LeakSpec.spec
   Kenshou.Diagnose.StallSpec.spec
   Kenshou.Diagnose.ProfileSpec.spec
+  Kenshou.Diagnose.RenderSpec.spec

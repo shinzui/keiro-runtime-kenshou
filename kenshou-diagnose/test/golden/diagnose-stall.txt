@@ -1,0 +1,7 @@
+stall 1: deadlock
+reason: wait-for graph contains a cycle
+wait graph:
+cycle: 101 -> 102 -> 101
+101 waits for 102 (transactionid)
+102 waits for 101 (transactionid)
+thread kenshou:selftest:worker-a: blocked BlockedOnMVar
