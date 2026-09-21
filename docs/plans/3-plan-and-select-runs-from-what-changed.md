@@ -68,10 +68,10 @@ Milestone 2 — Change detection from cohort diffs, named components and reposit
 
 Milestone 3 — Matrix expansion, tier budgets and `kenshou plan`
 
-- [ ] Add `Kenshou.Plan.Policy` and `Kenshou.Plan.Matrix` (four dimension policies, two knob policies, pinned values, benchmark durability rule, pairwise generator) with property tests.
-- [ ] Add `Kenshou.Plan.RunPlan` (document types, ordering, trials, seeds, estimates, budget, skipped list) and `schemas/run-plan.v1.schema.json` with a golden fixture.
-- [ ] Make `kenshou plan` emit `kenshou.run-plan/v1` to `--out` or standard output; validate every generated run specification with EP-2's validator.
-- [ ] Record the ADR for change-based selection.
+- [x] (2026-09-21T14:09:19Z) Add `Kenshou.Plan.Policy` and `Kenshou.Plan.Matrix` (four dimension policies, two knob policies, pinned values, benchmark durability rule, pairwise generator) with property tests.
+- [x] (2026-09-21T14:09:19Z) Add `Kenshou.Plan.RunPlan` (document types, ordering, trials, seeds, estimates, budget, skipped list) and `schemas/run-plan.v1.schema.json` with a golden fixture.
+- [x] (2026-09-21T14:09:19Z) Make `kenshou plan` emit `kenshou.run-plan/v1` to `--out` or standard output; validate every generated run specification with EP-2's validator.
+- [x] (2026-09-21T14:09:19Z) Record the ADR for change-based selection.
 
 Milestone 4 — Named suites and resumable `kenshou execute`
 

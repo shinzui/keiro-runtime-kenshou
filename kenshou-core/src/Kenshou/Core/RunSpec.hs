@@ -122,6 +122,27 @@ instance FromJSON RunSpec where
         Left err -> fail (Text.unpack err)
         Right parsed -> pure (parsed, RawJson raw)
 
+instance ToJSON RunSpec where
+  toJSON spec =
+    object $
+      [ "schema" .= ("kenshou.run-spec/v1" :: Text),
+        "scenario" .= spec.scenario,
+        "knobs" .= Map.fromList [(Kenshou.Core.Knob.renderKnobName name, rawValue raw) | (name, raw) <- spec.knobs],
+        "dimensions" .= Map.fromList spec.dimensions,
+        "environment" .= spec.environment,
+        "cohortExpectation" .= spec.cohortExpectation,
+        "comparison" .= spec.comparison,
+        "labels" .= spec.labels
+      ]
+        <> maybe [] (pure . ("runId" .=)) spec.runId
+        <> maybe [] (pure . ("scenarioRevision" .=)) spec.scenarioRevision
+        <> maybe [] (pure . ("seed" .=)) spec.seed
+        <> maybe [] (pure . ("phases" .=)) spec.phases
+        <> maybe [] (pure . ("timeoutSeconds" .=)) spec.timeoutSeconds
+    where
+      rawValue (RawText value) = String value
+      rawValue (RawJson value) = value
+
 instance ToJSON EffectiveRunSpec where
   toJSON spec =
     object

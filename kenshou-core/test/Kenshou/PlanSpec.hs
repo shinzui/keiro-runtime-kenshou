@@ -1,16 +1,25 @@
 module Kenshou.PlanSpec (spec) where
 
+import Data.Aeson qualified as Aeson
+import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Kenshou.Core.Id (parseScenarioId, renderScenarioId)
+import Kenshou.Core.Dimension
+import Kenshou.Core.Id (Kind (..), mkSeed, parseScenarioId, renderScenarioId)
+import Kenshou.Core.RunSpec (SpecPlacement (..))
+import Kenshou.Core.Scenario (Placement (..), Tier (..))
 import Kenshou.Plan.Catalog (ScenarioInfo (..), readCatalogFile)
 import Kenshou.Plan.Change
 import Kenshou.Plan.Change.Cohort
 import Kenshou.Plan.Change.Git qualified as Git
 import Kenshou.Plan.Components
 import Kenshou.Plan.Components.Check
+import Kenshou.Plan.Matrix
+import Kenshou.Plan.Policy
+import Kenshou.Plan.Policy qualified as Policy
+import Kenshou.Plan.RunPlan (PlanContext (..), PlanInputs (..), PlanSkeleton (..), SkipReason (..), Skipped (..), buildPlan)
 import Kenshou.Plan.Selector
 import System.Directory (createDirectoryIfMissing)
 import System.FilePath (takeDirectory, (</>))
@@ -144,6 +153,35 @@ spec = do
       fmap (.ref) changes `shouldContain` [ComponentRef (ComponentId "kiroku-store") Nothing]
       fmap (.source) changes `shouldContain` [Everything]
       fmap (.code) warnings `shouldContain` ["unmapped-package"]
+
+  describe "Kenshou.Plan.Matrix" do
+    it "covers every pair in at most twenty rows" do
+      let dimensions = [("a", ["0", "1", "2", "3"]), ("b", ["0", "1", "2", "3"]), ("c", ["0", "1"]), ("d", ["0", "1"])]
+          rows = pairwiseCover dimensions
+      length rows `shouldSatisfy` (<= 20)
+      pairSet rows `shouldBe` pairSet (fullRows dimensions)
+    it "raises an observability change to telemetry corners" do
+      selected <- matrixSelected Correctness (Just "telemetry-corners")
+      seed <- expectRight (mkSeed 42)
+      let (configs, skipped) = expandScenario (defaultPlanPolicy seed) selected
+      skipped `shouldBe` []
+      length configs `shouldBe` 4
+    it "never emits fsync-off for a benchmark" do
+      selected <- matrixSelected Benchmark Nothing
+      seed <- expectRight (mkSeed 42)
+      let policy = (defaultPlanPolicy seed :: PlanPolicy) {Policy.placement = RunOnCell}
+          (configs, skipped) = expandScenario policy selected
+      skipped `shouldBe` []
+      fmap (Map.lookup "pg.durability" . (.dimensions)) configs `shouldSatisfy` all (== Just "durable")
+
+  describe "Kenshou.Plan.RunPlan" do
+    it "keeps benchmark trial groups whole under a budget" do
+      selected <- matrixSelected Benchmark Nothing
+      seed <- expectRight (mkSeed 42)
+      let policy = (defaultPlanPolicy seed :: PlanPolicy) {Policy.placement = RunOnCell, Policy.budgetMinutes = Just 2}
+          skeleton = buildPlan testPlanContext policy [selected]
+      skeleton.runs `shouldBe` []
+      fmap (.reason) skeleton.skipped `shouldContain` [SkipOverBudget]
   where
     isMissing (MissingEdge (ComponentId "pgmq-hs") (ComponentId "kiroku-store") _) = True
     isMissing _ = False
@@ -186,6 +224,62 @@ commitAll :: FilePath -> String -> IO ()
 commitAll repository message = do
   callProcess "git" ["-C", repository, "add", "."]
   callProcess "git" ["-C", repository, "commit", "-q", "-m", message]
+
+matrixSelected :: Kind -> Maybe Text -> IO Selected
+matrixSelected kind minimumPolicy = do
+  scenarioId <- expectRight (parseScenarioId ("kiroku/append/" <> kindText kind <> "/matrix"))
+  selector <- expectRight (parseSelector "kiroku/**")
+  let scenario =
+        ScenarioInfo
+          { id = scenarioId,
+            revision = 1,
+            summary = "matrix fixture",
+            tier = TierSmoke,
+            placement = if kind == Benchmark then PlaceCell else PlaceEither,
+            knobs = [],
+            dimensions = allMatrixDimensions,
+            knownDefect = Nothing
+          }
+      change = Change (ComponentRef (ComponentId "kiroku-store") Nothing) Named "fixture"
+  pure (Selected scenario (Reason change [change.ref] selector 0 :| []) minimumPolicy)
+  where
+    kindText Correctness = "correctness"
+    kindText Concurrency = "concurrency"
+    kindText Benchmark = "benchmark"
+    kindText Soak = "soak"
+
+allMatrixDimensions :: DimensionSupport
+allMatrixDimensions =
+  DimensionSupport
+    (Supported (Support (TracingOff :| [TracingNoop, TracingSdkInMemory, TracingSdkOtlp]) TracingOff))
+    (Supported (Support (MetricsOff :| [MetricsCollect, MetricsServe, MetricsServeScraped]) MetricsOff))
+    (Supported (Support (PgFsyncOff :| [PgDurable]) PgFsyncOff))
+    (Supported (Support (Pg17 :| [Pg18]) Pg18))
+
+pairSet :: [Map.Map Text Text] -> Set.Set ((Text, Text), (Text, Text))
+pairSet rows =
+  Set.fromList
+    [ (left, right)
+    | row <- rows,
+      (leftIndex, left) <- zip [0 :: Int ..] (Map.toAscList row),
+      (rightIndex, right) <- zip [0 :: Int ..] (Map.toAscList row),
+      leftIndex < rightIndex
+    ]
+
+fullRows :: [(Text, [Text])] -> [Map.Map Text Text]
+fullRows = foldr (\(name, values) rows -> [Map.insert name value row | value <- values, row <- rows]) [Map.empty]
+
+testPlanContext :: PlanContext
+testPlanContext =
+  PlanContext
+    { suite = Nothing,
+      graphDigest = "sha256:test",
+      cohortName = "released",
+      cohortPlanHash = "sha256:test",
+      inputs = PlanInputs (Aeson.object []),
+      changes = [],
+      warnings = []
+    }
 
 expectRight :: (Show problem) => Either problem value -> IO value
 expectRight (Right value) = pure value

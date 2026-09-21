@@ -71,6 +71,9 @@ library
     Kenshou.Plan.Change.Git
     Kenshou.Plan.Components
     Kenshou.Plan.Components.Check
+    Kenshou.Plan.Matrix
+    Kenshou.Plan.Policy
+    Kenshou.Plan.RunPlan
     Kenshou.Plan.Selector
 
   other-modules: Paths_kenshou_core

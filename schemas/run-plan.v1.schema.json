@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/run-plan.v1.schema.json",
+  "title": "Kenshou run plan v1",
+  "type": "object",
+  "required": ["schema", "planId", "createdAt", "graphDigest", "cohort", "inputs", "policy", "changes", "runs", "skipped", "warnings", "estimateMinutes"],
+  "properties": {
+    "schema": {"const": "kenshou.run-plan/v1"},
+    "planId": {"type": "string", "format": "uuid"},
+    "createdAt": {"type": "string", "format": "date-time"},
+    "suite": {"type": ["string", "null"]},
+    "graphDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "cohort": {
+      "type": "object",
+      "required": ["name", "planHash"],
+      "properties": {"name": {"type": "string"}, "planHash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}},
+      "additionalProperties": false
+    },
+    "inputs": {"type": "object"},
+    "policy": {"type": "object", "required": ["maxTier", "kinds", "placement", "dimensionPolicy", "knobPolicy", "trials", "seed"]},
+    "changes": {"type": "array", "items": {"type": "object", "required": ["component", "source", "detail"]}},
+    "runs": {"type": "array", "items": {"$ref": "#/$defs/run"}},
+    "skipped": {"type": "array", "items": {"type": "object", "required": ["scenario", "reason", "detail"]}},
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "estimateMinutes": {"type": "integer", "minimum": 0}
+  },
+  "$defs": {
+    "run": {
+      "type": "object",
+      "required": ["ordinal", "runId", "estimateMinutes", "reasons", "trial", "spec"],
+      "properties": {
+        "ordinal": {"type": "integer", "minimum": 1},
+        "runId": {"type": "string", "format": "uuid"},
+        "estimateMinutes": {"type": "integer", "minimum": 0},
+        "reasons": {"type": "array", "minItems": 1, "items": {"type": "object", "required": ["component", "source", "via", "selector", "distance"]}},
+        "trial": {"type": ["object", "null"]},
+        "spec": {
+          "type": "object",
+          "required": ["schema", "scenario"],
+          "properties": {
+            "schema": {"const": "kenshou.run-spec/v1"},
+            "scenario": {"type": "string"}
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

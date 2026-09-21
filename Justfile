@@ -22,6 +22,8 @@ adr-validate:
 
 [group('verification')]
 schemas-check:
+    check-jsonschema --schemafile schemas/component-graph.v1.schema.json kenshou-core/data/components.json
+    check-jsonschema --schemafile schemas/run-plan.v1.schema.json kenshou-core/test/golden/run-plan.minimal.json
     check-jsonschema --schemafile schemas/run-spec-v1.schema.json kenshou-core/test/golden/run-spec.minimal.json kenshou-core/test/golden/run-spec.effective.json kenshou-core/test/golden/run-spec.external.json
     check-jsonschema --schemafile schemas/run-result-v1.schema.json kenshou-core/test/golden/run-result.passed.json kenshou-core/test/golden/run-result.known-defect.json
     check-jsonschema --schemafile schemas/artifact-manifest-v1.schema.json kenshou-core/test/golden/manifest.json

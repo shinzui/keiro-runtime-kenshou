@@ -13,6 +13,7 @@ module Kenshou.Plan.Change
   )
 where
 
+import Data.Aeson (ToJSON (..), object, (.=))
 import Data.List (sortOn)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
@@ -113,3 +114,16 @@ maximumPolicy policies = case mapMaybe (\value -> value) policies of
     rank "pairwise" = 2
     rank "full" = 3
     rank _ = 0
+
+instance ToJSON Change where
+  toJSON change = object ["component" .= renderRef change.ref, "source" .= renderChangeSource change.source, "detail" .= change.detail]
+
+instance ToJSON Reason where
+  toJSON reason = object ["component" .= renderRef reason.change.ref, "source" .= renderChangeSource reason.change.source, "via" .= fmap renderRef reason.via, "selector" .= renderSelector reason.selector, "distance" .= reason.distance]
+
+renderChangeSource :: ChangeSource -> Text
+renderChangeSource Named = "named"
+renderChangeSource CohortDiff = "cohort-diff"
+renderChangeSource Since = "since"
+renderChangeSource UpstreamDiff = "upstream-diff"
+renderChangeSource Everything = "all"

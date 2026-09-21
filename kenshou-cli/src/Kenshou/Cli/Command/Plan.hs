@@ -3,25 +3,35 @@
 module Kenshou.Cli.Command.Plan (planCommand) where
 
 import Data.Aeson qualified as Aeson
+import Data.Bifunctor (first)
 import Data.ByteString.Lazy.Char8 qualified as LazyByteString
 import Data.List (nubBy, partition)
 import Data.List.NonEmpty qualified as NonEmpty
+import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.IO qualified as Text.IO
 import Kenshou.Core.Bundle (allScenarios)
 import Kenshou.Core.Cli
+import Kenshou.Core.Cohort qualified as Cohort
 import Kenshou.Core.Id qualified as Id
+import Kenshou.Core.Knob (KnobSpec (..), renderKnobName)
+import Kenshou.Core.RunSpec (SpecPlacement (..))
+import Kenshou.Core.Scenario (Tier (..))
 import Kenshou.Plan.Catalog (ScenarioInfo (..), decodeCatalog, fromScenario)
 import Kenshou.Plan.Change
 import Kenshou.Plan.Change.Cohort
 import Kenshou.Plan.Change.Git
 import Kenshou.Plan.Components
+import Kenshou.Plan.Components qualified as Components
 import Kenshou.Plan.Components.Check
+import Kenshou.Plan.Policy
+import Kenshou.Plan.RunPlan
 import Kenshou.Plan.Selector (Selector, parseSelector, renderSelector)
-import Options.Applicative
+import Options.Applicative hiding (value)
 import System.Exit (ExitCode (..))
 import System.IO (stderr)
+import System.Random (randomIO)
 
 data PlanOptions = PlanOptions
   { graphShow :: Bool,
@@ -37,7 +47,18 @@ data PlanOptions = PlanOptions
     allScenariosFlag :: Bool,
     includes :: [Text],
     excludes :: [Text],
-    explain :: Bool
+    explain :: Bool,
+    outputPath :: Maybe FilePath,
+    maxTierText :: Maybe Text,
+    kindTexts :: [Text],
+    placementText :: Maybe Text,
+    dimensionPolicyText :: Maybe Text,
+    knobPolicyText :: Maybe Text,
+    trialCount :: Maybe Int,
+    budget :: Maybe Int,
+    seedValue :: Maybe Integer,
+    knobPins :: [Text],
+    dimensionPins :: [Text]
   }
 
 planCommand :: CliCommand
@@ -67,6 +88,17 @@ planParser =
     <*> many (Text.pack <$> strOption (long "select" <> metavar "SELECTOR" <> help "Keep matching scenarios"))
     <*> many (Text.pack <$> strOption (long "exclude" <> metavar "SELECTOR" <> help "Remove matching scenarios"))
     <*> switch (long "explain" <> help "Explain changes, dependency paths, and selections")
+    <*> optional (strOption (long "out" <> metavar "FILE" <> help "Write the run plan to a file"))
+    <*> optional (Text.pack <$> strOption (long "max-tier" <> metavar "TIER" <> help "Maximum cost tier"))
+    <*> many (Text.pack <$> strOption (long "kind" <> metavar "KIND" <> help "Include a scenario kind; repeatable"))
+    <*> optional (Text.pack <$> strOption (long "placement" <> metavar "local|cell" <> help "Target placement"))
+    <*> optional (Text.pack <$> strOption (long "dimension-policy" <> metavar "POLICY" <> help "default-only, telemetry-corners, pairwise, or full"))
+    <*> optional (Text.pack <$> strOption (long "knob-policy" <> metavar "POLICY" <> help "defaults or declared-variants"))
+    <*> optional (option auto (long "trials" <> metavar "N" <> help "Benchmark trials (minimum 3)"))
+    <*> optional (option auto (long "budget-minutes" <> metavar "N" <> help "Maximum estimated run time"))
+    <*> optional (option auto (long "seed" <> metavar "N" <> help "Deterministic plan seed"))
+    <*> many (Text.pack <$> strOption (long "set" <> metavar "NAME=VALUE" <> help "Pin a knob value"))
+    <*> many (Text.pack <$> strOption (long "dim" <> metavar "NAME=VALUE" <> help "Pin a dimension value"))
 
 runPlan :: PlanOptions -> CliEnv -> IO ExitCode
 runPlan options environment
@@ -97,10 +129,104 @@ planSelection options graph catalog = case (traverse (parseSelector) options.inc
             let componentSelected = if options.allScenariosFlag then selectAll catalog else selectScenarios graph catalog changes
                 pathSelected = selectBySelectors Since "repository path" directSelectors catalog
                 selected = applySelectors includes excludes (deduplicate (componentSelected <> pathSelected))
-            if options.json
-              then LazyByteString.putStrLn (Aeson.encode (selectionValue changes warnings selected))
-              else renderSelection options.explain changes warnings selected
-            pure ExitSuccess
+            if options.explain
+              then renderSelection True changes warnings selected >> pure ExitSuccess
+              else writeRunPlan options graph catalog changes warnings selected
+
+writeRunPlan :: PlanOptions -> ComponentGraph -> [ScenarioInfo] -> [Change] -> [Warning] -> [Selected] -> IO ExitCode
+writeRunPlan options graph catalog changes warnings selected = do
+  seedResult <- makeSeed options.seedValue
+  cohortResult <- first (("unable to resolve cohort identity: " <>) . Text.pack . show) <$> Cohort.resolveCohortIdentity (Cohort.FromProject "." Nothing Nothing)
+  case (seedResult, cohortResult, makePolicy options =<< seedResult) of
+    (Left err, _, _) -> usage err
+    (_, Left err, _) -> usage err
+    (_, _, Left err) -> usage err
+    (Right _, Right cohort, Right policy) -> do
+      let unknownPins = [name | raw <- options.knobPins, let (name, _) = splitAssignment raw, all (not . declares name) catalog]
+          context =
+            PlanContext
+              { suite = Nothing,
+                graphDigest = Components.graphDigest graph,
+                cohortName = Cohort.unCohortName cohort.identityCohort,
+                cohortPlanHash = Cohort.unPlanHash cohort.identityPlanHash,
+                inputs = PlanInputs (inputValue options),
+                changes,
+                warnings = fmap (.message) warnings <> fmap ("no selected scenario declares knob " <>) unknownPins
+              }
+      plan <- stampPlan (buildPlan context policy selected)
+      let bytes = Aeson.encode plan
+      case options.outputPath of
+        Nothing -> LazyByteString.putStrLn bytes
+        Just path -> LazyByteString.writeFile path bytes
+      pure ExitSuccess
+  where
+    declares name scenario = any ((== name) . renderKnobName . (.name)) scenario.knobs
+
+makeSeed :: Maybe Integer -> IO (Either Text Id.Seed)
+makeSeed (Just value)
+  | value < 0 = pure (Left "seed must be non-negative")
+  | otherwise = pure (Id.mkSeed (fromInteger value))
+makeSeed Nothing = do
+  value <- randomIO
+  pure (Id.mkSeed (value `mod` 9007199254740992))
+
+makePolicy :: PlanOptions -> Id.Seed -> Either Text PlanPolicy
+makePolicy options seed = do
+  maxTier <- maybe (Right TierStandard) parseTierValue options.maxTierText
+  kinds <- if null options.kindTexts then Right (Set.fromList [minBound .. maxBound]) else Set.fromList <$> traverse Id.parseKind options.kindTexts
+  placement <- maybe (Right RunLocal) parsePlacementValue options.placementText
+  dimensionPolicy <- maybe (Right DefaultOnly) (maybe (Left "unknown dimension policy") Right . parseDimensionPolicy) options.dimensionPolicyText
+  knobPolicy <- maybe (Right KnobDefaults) (maybe (Left "unknown knob policy") Right . parseKnobPolicy) options.knobPolicyText
+  let trials = maybe 3 (\value -> value) options.trialCount
+  if trials < 3 then Left "--trials must be at least 3" else pure ()
+  case options.budget of Just value | value < 0 -> Left "--budget-minutes must be non-negative"; _ -> pure ()
+  pinnedKnobs <- traverse parseAssignmentText options.knobPins
+  pinnedDimensions <- traverse parseAssignmentText options.dimensionPins
+  pure
+    (defaultPlanPolicy seed)
+      { maxTier,
+        kinds,
+        placement,
+        dimensionPolicy,
+        knobPolicy,
+        trials,
+        budgetMinutes = options.budget,
+        pinnedKnobs,
+        pinnedDimensions
+      }
+
+parseTierValue :: Text -> Either Text Tier
+parseTierValue "smoke" = Right TierSmoke
+parseTierValue "standard" = Right TierStandard
+parseTierValue "extended" = Right TierExtended
+parseTierValue "soak" = Right TierSoak
+parseTierValue value = Left ("unknown tier " <> value)
+
+parsePlacementValue :: Text -> Either Text SpecPlacement
+parsePlacementValue "local" = Right RunLocal
+parsePlacementValue "cell" = Right RunOnCell
+parsePlacementValue value = Left ("unknown placement " <> value)
+
+parseAssignmentText :: Text -> Either Text (Text, Text)
+parseAssignmentText raw = case splitAssignment raw of
+  (name, value) | Text.null name || Text.null value -> Left "expected NAME=VALUE"
+  pair -> Right pair
+
+splitAssignment :: Text -> (Text, Text)
+splitAssignment raw = let (name, rest) = Text.breakOn "=" raw in (name, Text.drop 1 rest)
+
+inputValue :: PlanOptions -> Aeson.Value
+inputValue options =
+  Aeson.object
+    [ "changed" Aeson..= options.changed,
+      "cohortFrom" Aeson..= options.cohortFrom,
+      "cohortTo" Aeson..= options.cohortTo,
+      "since" Aeson..= options.since,
+      "upstreamDiffs" Aeson..= options.upstreamDiffs,
+      "all" Aeson..= options.allScenariosFlag,
+      "select" Aeson..= options.includes,
+      "exclude" Aeson..= options.excludes
+    ]
 
 gatherChanges :: PlanOptions -> ComponentGraph -> IO (Either Text ([Change], [Selector], [Warning]))
 gatherChanges options graph = do
@@ -147,15 +273,6 @@ renderSelection explain changes warnings selected = do
       let reason = NonEmpty.head selectedValue.reasons
       Text.IO.putStrLn ("selected   " <> Id.renderScenarioId selectedValue.scenario.id <> "  via " <> Text.intercalate " <- " (fmap renderRef reason.via) <> "  selector " <> renderSelector reason.selector)
 
-selectionValue :: [Change] -> [Warning] -> [Selected] -> Aeson.Value
-selectionValue changes warnings selected =
-  Aeson.object
-    [ "schema" Aeson..= ("kenshou.selection/v1" :: Text),
-      "changes" Aeson..= fmap (\changeValue -> Aeson.object ["component" Aeson..= renderRef changeValue.ref, "source" Aeson..= show changeValue.source, "detail" Aeson..= changeValue.detail]) changes,
-      "warnings" Aeson..= fmap (.message) warnings,
-      "scenarios" Aeson..= fmap ((.id) . (.scenario)) selected
-    ]
-
 loadGraph :: Maybe InputSource -> IO (Either Text ComponentGraph)
 loadGraph Nothing = pure (firstGraph embeddedGraph)
 loadGraph (Just source) = firstGraph . decodeGraph <$> readInputSource source
@@ -179,7 +296,7 @@ showGraph asJson graph = do
       mapM_ renderComponent graph.components
   pure ExitSuccess
   where
-    renderComponent componentValue = Text.IO.putStrLn (unComponentId componentValue.id <> "  " <> Text.pack (show componentValue.kind) <> "  " <> Text.intercalate "," componentValue.packages)
+    renderComponent componentValue = Text.IO.putStrLn (Components.unComponentId componentValue.id <> "  " <> Text.pack (show componentValue.kind) <> "  " <> Text.intercalate "," componentValue.packages)
 
 checkGraph :: ComponentGraph -> [ScenarioInfo] -> IO ExitCode
 checkGraph graph catalog = do
@@ -190,7 +307,7 @@ checkGraph graph catalog = do
       let lint = lintAgainstCatalog graph catalog
           (driftErrors, driftInfo) = partition isDriftError drift
           (lintErrors, lintWarnings) = partition isLintError lint
-      Text.IO.putStrLn ("component graph: " <> Text.pack (show (length graph.components)) <> " components; digest " <> graphDigest graph)
+      Text.IO.putStrLn ("component graph: " <> Text.pack (show (length graph.components)) <> " components; digest " <> Components.graphDigest graph)
       mapM_ (Text.IO.putStrLn . ("error: " <>) . Text.pack . show) driftErrors
       mapM_ (Text.IO.putStrLn . ("error: " <>) . Text.pack . show) lintErrors
       mapM_ (Text.IO.putStrLn . ("info: " <>) . Text.pack . show) driftInfo

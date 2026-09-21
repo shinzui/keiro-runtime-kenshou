@@ -1,0 +1,44 @@
+{
+  "schema": "kenshou.run-plan/v1",
+  "planId": "0199a3f2-7c1e-7b8a-9d41-3e5f6a7b8c9d",
+  "createdAt": "2026-09-21T14:03:22Z",
+  "suite": null,
+  "graphDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "cohort": {"name": "released", "planHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+  "inputs": {"changed": ["kenshou-harness"]},
+  "policy": {
+    "maxTier": "standard",
+    "kinds": ["correctness"],
+    "placement": "local",
+    "dimensionPolicy": "default-only",
+    "knobPolicy": "defaults",
+    "trials": 3,
+    "seed": 42
+  },
+  "changes": [{"component": "kenshou-harness", "source": "named", "detail": "--changed kenshou-harness"}],
+  "runs": [
+    {
+      "ordinal": 1,
+      "runId": "0199a3f2-7c20-7f00-8a11-0c0d0e0f1011",
+      "estimateMinutes": 1,
+      "reasons": [{"component": "kenshou-harness", "source": "named", "via": ["kenshou-harness"], "selector": "selftest/kernel/correctness/postgres-roundtrip", "distance": 0}],
+      "trial": null,
+      "spec": {
+        "schema": "kenshou.run-spec/v1",
+        "runId": "0199a3f2-7c20-7f00-8a11-0c0d0e0f1011",
+        "scenario": "selftest/kernel/correctness/postgres-roundtrip",
+        "scenarioRevision": 1,
+        "knobs": {},
+        "dimensions": {},
+        "seed": 42,
+        "environment": {"placement": "local"},
+        "cohortExpectation": null,
+        "comparison": null,
+        "labels": {}
+      }
+    }
+  ],
+  "skipped": [],
+  "warnings": [],
+  "estimateMinutes": 1
+}
