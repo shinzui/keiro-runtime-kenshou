@@ -626,18 +626,24 @@ partitionRetention context = withPgmqRun context \runtime -> do
       _ <- effect runtime (Pgmq.createPartitionedQueue (Types.CreatePartitionedQueue queue "100" "200"))
       (`finally` cleanupQueues runtime [queue]) do
         firstIds <- effect runtime (Pgmq.batchSendMessage (Types.BatchSendMessage queue (fmap body firstChunk) Nothing))
+        beforeMaintenance <- effect runtime (Pgmq.queueMetrics queue)
         session runtime.pool (Session.statement queueText runPartmanMaintenance)
+        afterFirstMaintenance <- effect runtime (Pgmq.queueMetrics queue)
         leased <- effect runtime (Pgmq.readMessage (Types.ReadMessage queue 5 (Just 50) Nothing))
-        remainingIds <-
-          fmap concat $
-            traverse
-              ( \chunk -> do
-                  identifiers <- effect runtime (Pgmq.batchSendMessage (Types.BatchSendMessage queue (fmap body chunk) Nothing))
-                  session runtime.pool (Session.statement queueText runPartmanMaintenance)
-                  pure identifiers
-              )
-              remainingChunks
+        afterLease <- effect runtime (Pgmq.queueMetrics queue)
+        chunkResults <-
+          traverse
+            ( \chunk -> do
+                identifiers <- effect runtime (Pgmq.batchSendMessage (Types.BatchSendMessage queue (fmap body chunk) Nothing))
+                session runtime.pool (Session.statement queueText runPartmanMaintenance)
+                current <- effect runtime (Pgmq.queueMetrics queue)
+                partitions <- session runtime.pool (Session.statement queueText partitionNames)
+                pure (identifiers, current.queueLength, length partitions)
+            )
+            remainingChunks
+        let remainingIds = concat [identifiers | (identifiers, _, _) <- chunkResults]
         session runtime.pool (Session.statement queueText runPartmanMaintenance)
+        afterMaintenance <- effect runtime (Pgmq.queueMetrics queue)
         threadDelay 5100000
         handledVar <- newMVar []
         drain runtime queue handledVar
@@ -657,6 +663,11 @@ partitionRetention context = withPgmqRun context \runtime -> do
                 "lost" .= length lost,
                 "leasedBeforeMaintenance" .= length leasedIds,
                 "lostWhileLeased" .= length lostLeased,
+                "beforeMaintenanceLength" .= beforeMaintenance.queueLength,
+                "afterFirstMaintenanceLength" .= afterFirstMaintenance.queueLength,
+                "afterLeaseLength" .= afterLease.queueLength,
+                "maintenanceStages" .= [object ["sentSoFar" .= (100 + 100 * index), "queueLength" .= lengthNow, "partitionCount" .= partitionCount] | (index, (_, lengthNow, partitionCount)) <- zip [1 :: Int ..] chunkResults],
+                "afterMaintenanceLength" .= afterMaintenance.queueLength,
                 "queueLengthAfterDrain" .= metrics.queueLength,
                 "defaultPartitionLength" .= metrics.defaultPartitionLength
               ]
