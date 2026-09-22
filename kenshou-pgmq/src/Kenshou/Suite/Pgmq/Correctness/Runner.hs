@@ -8,11 +8,12 @@ import Data.Aeson (object, (.=))
 import Data.Functor.Contravariant ((>$<))
 import Data.Int (Int64)
 import Data.List (find, sort, sortOn)
+import Data.Map.Strict qualified as Map
 import Data.Maybe (isNothing)
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Data.Time (addUTCTime, diffUTCTime, getCurrentTime)
+import Data.Time (UTCTime, addUTCTime, diffUTCTime, getCurrentTime)
 import Data.Vector qualified as Vector
 import Effectful qualified
 import Effectful.Error.Static qualified
@@ -22,7 +23,8 @@ import Hasql.Encoders qualified as Encoders
 import Hasql.Pool qualified as Pool
 import Hasql.Session qualified as Session
 import Hasql.Statement qualified as Statement
-import Kenshou.Core.Context (RunContext (..), SummarySection (Verdicts), putSummary, requirePostgres)
+import Kenshou.Check.Verdict (InvariantClass (Contract), RunInfo (..), Verdict (..), VerdictStatus (..), writeVerdict)
+import Kenshou.Core.Context (ArtifactDir (VerdictsDir), RunContext (..), SummarySection (Verdicts), artifactPath, declareMediaType, putSummary, requirePostgres)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Knob (knobBool)
 import Kenshou.Core.Scenario (ScenarioReport, failedWith, passed)
@@ -441,7 +443,33 @@ verdict :: RunContext -> Text -> [(Text, Bool)] -> IO ScenarioReport
 verdict context name checks = do
   putSummary context Verdicts name (object ["checks" .= [object ["name" .= label, "passed" .= ok] | (label, ok) <- checks]])
   let failures = [label | (label, False) <- checks]
+  checkedAt <- getCurrentTime
+  directory <- artifactPath context VerdictsDir ""
+  _ <- writeVerdict directory (RunInfo context.runId context.scenario) (simpleVerdict name checks failures checkedAt)
+  declareMediaType context ("verdicts/" <> sanitiseChecker name <> ".json") "application/json"
   pure $ if null failures then passed else failedWith failures (name <> " failed: " <> Text.intercalate ", " failures)
+
+simpleVerdict :: Text -> [(Text, Bool)] -> [Text] -> UTCTime -> Verdict
+simpleVerdict name checks failures checkedAt =
+  Verdict
+    { checker = name,
+      invariant = name,
+      cls = Contract,
+      status = if null failures then Held else Violated,
+      reason = if null failures then Nothing else Just (name <> " failed: " <> Text.intercalate ", " failures),
+      summary = if null failures then name <> " held" else name <> " violated",
+      counts = Map.fromList [("examined", fromIntegral (length checks)), ("violations", fromIntegral (length failures))],
+      parameters = object ["checks" .= [object ["name" .= label, "passed" .= ok] | (label, ok) <- checks]],
+      counterExamples = [object ["check" .= label] | label <- failures],
+      counterExamplesTruncated = False,
+      inputs = [],
+      replay = Nothing,
+      checkedAt,
+      durationMillis = 0
+    }
+
+sanitiseChecker :: Text -> FilePath
+sanitiseChecker = fmap (\character -> if character == '/' then '-' else character) . Text.unpack
 
 bodyKey :: Text -> Pgmq.MessageBody
 bodyKey key = Pgmq.MessageBody (object ["k" .= key])
