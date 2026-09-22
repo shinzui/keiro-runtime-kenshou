@@ -6,12 +6,13 @@ import Control.Concurrent.MVar
 import Control.Concurrent.STM (atomically)
 import Control.Exception (SomeException, finally, throwIO, try)
 import Control.Monad (replicateM, void)
-import Data.Aeson (Value, object, withObject, (.:), (.=))
+import Data.Aeson (Value, decodeStrict', object, withObject, (.:), (.=))
 import Data.Aeson.Types (parseMaybe)
+import Data.ByteString.Char8 qualified as ByteString
 import Data.Int (Int64)
 import Data.List (sort, sortOn, zip4)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (isJust)
+import Data.Maybe (isJust, mapMaybe)
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -35,11 +36,13 @@ import Kenshou.Check.Verdict (InvariantClass (Contract), RunInfo (..), Verdict (
 import Kenshou.Core.Context (ArtifactDir (VerdictsDir), RunContext (..), SummarySection (Verdicts), artifactPath, declareMediaType, putSummary, requirePostgres)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Knob (knobInt, knobText)
-import Kenshou.Core.Role (ControlMessage (CtlStart))
+import Kenshou.Core.Role (ControlMessage (CtlStart), WorkerMessage (WrkCustom))
 import Kenshou.Core.Scenario (ScenarioReport, failedWith, passed)
+import Kenshou.Suite.Pgmq.Facts (PgmqFact (Leased))
 import Kenshou.Suite.Pgmq.Harness
 import Kenshou.Suite.Pgmq.Knobs (PgmqKnobs (..), knobName)
 import Kenshou.Suite.Pgmq.Listener (Notification (..), awaitNotifications, withListener, withListeners)
+import Kenshou.Suite.Pgmq.Oracle (checkLeaseIntervals)
 import Pgmq.Config qualified as Config
 import Pgmq.Effectful qualified as Pgmq
 import Pgmq.Effectful.Effect qualified as PgmqEff
@@ -123,16 +126,45 @@ noDoubleLeaseProcesses context = withPgmqRun context \runtime ->
     let count = 1000
         processCount = min 8 (fromIntegral (knobInt context.knobs (knobName "pgmq.processes")))
         arguments = object ["queue" .= Pgmq.queueNameToText queue, "batchSize" .= (25 :: Int), "visibilityTimeout" .= (5 :: Int), "acknowledge" .= True]
-    _ <- effect runtime (Pgmq.batchSendMessage (Types.BatchSendMessage queue (fmap body [1 .. count]) Nothing))
+    sent <- effect runtime (Pgmq.batchSendMessage (Types.BatchSendMessage queue (fmap body [1 .. count]) Nothing))
     withCheck context \checkEnvironment ->
       withSupervisor checkEnvironment \supervisor -> do
         specs <- traverse (\index -> roleProcess checkEnvironment "pgmq/pgmq-consumer" index arguments) [1 .. processCount]
         children <- traverse (spawn supervisor) specs
         mapM_ (`awaitReady` 10000) children
         mapM_ (`sendCommand` CtlStart) children
-        threadDelay 2000000
+        drained <- awaitQueueDrain runtime queue 100
+        marks <- concat <$> traverse (readWorkerLeaseMarks context) [1 .. processCount]
+        let leases = concatMap (mapMaybe leaseFact) marks
+            observedIds = [PgmqTypes.MessageId identifier | Leased _ identifier _ _ _ _ <- leases]
+            findings = checkLeaseIntervals leases
         metrics <- effect runtime (Pgmq.queueMetrics queue)
-        verdict context "no-double-lease-processes" [("worker-processes", length children == processCount), ("eventual-quiescence", metrics.queueLength == 0)]
+        putSummary context Verdicts "process-lease-observations" (object ["readMarks" .= length marks, "leases" .= length leases, "findings" .= fmap show findings])
+        verdict context "no-double-lease-processes" [("worker-processes", length children == processCount), ("all-sent-seen", Set.fromList observedIds == Set.fromList sent), ("lease-times-present", length leases == sum (fmap length marks)), ("no-overlapping-or-duplicate-leases", null findings), ("eventual-quiescence", drained && metrics.queueLength == 0)]
+
+leaseFact :: (Pgmq.MessageId, Int64, UTCTime, Maybe UTCTime) -> Maybe PgmqFact
+leaseFact (identifier, readCount, visibleAt, readAt) =
+  Leased "" (PgmqTypes.unMessageId identifier) readCount <$> readAt <*> pure visibleAt <*> pure Nothing
+
+readWorkerLeaseMarks :: RunContext -> Int -> IO [[(Pgmq.MessageId, Int64, UTCTime, Maybe UTCTime)]]
+readWorkerLeaseMarks context index = do
+  let path = context.outDir <> "/logs/pgmq-pgmq-consumer-" <> show index <> ".0.control.jsonl"
+  linesOfOutput <- ByteString.lines <$> ByteString.readFile path
+  messages <- maybe (ioError (userError ("invalid worker control log: " <> path))) pure (traverse decodeStrict' linesOfOutput)
+  filter (not . null)
+    <$> traverse
+      ( \case
+          WrkCustom "after-read" payload -> maybe (ioError (userError ("invalid lease mark: " <> path))) pure (parseLeaseMark payload)
+          _ -> pure []
+      )
+      messages
+
+awaitQueueDrain :: PgmqRun -> Pgmq.QueueName -> Int -> IO Bool
+awaitQueueDrain runtime queue attempts = do
+  metrics <- effect runtime (Pgmq.queueMetrics queue)
+  if metrics.queueLength == 0
+    then pure True
+    else if attempts <= 1 then pure False else threadDelay 100000 >> awaitQueueDrain runtime queue (attempts - 1)
 
 crashRedeliveryReadCount :: RunContext -> IO ScenarioReport
 crashRedeliveryReadCount context = withPgmqRun context \runtime ->

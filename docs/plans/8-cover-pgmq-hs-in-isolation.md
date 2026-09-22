@@ -63,7 +63,8 @@ Milestone 2 — pgmq-hs concurrency and crash scenarios.
 - [x] (2026-09-22 02:05Z) Implemented `Kenshou.Suite.Pgmq.Roles` (`pgmq-producer`, `pgmq-consumer`, `pgmq-reconciler`) with the `after-read` crash point, finite producer/consumer protocols, and real reconciliation; the roles remain registered in the bundle.
 - [x] (2026-09-22 02:05Z) Replaced the catalog-wide probe for all 20 concurrency identifiers with scenario-specific runners spanning thread and process contention, `SIGKILL`, pool exhaustion, backend termination, PostgreSQL immediate shutdown, TCP reset, FIFO hazards, notification state, reconciliation, and overlapping acknowledgements.
 - [x] (2026-09-22 20:15Z) Replaced the manufactured unlocked-read result with sixteen concurrent PostgreSQL reads of one row. The ordinary PGMQ path has one owner and passes; the unlocked SQL path has sixteen owners and fails with a persisted verdict.
-- [ ] Extend the process no-double-lease scenario to record lease intervals and prove non-vacuity across worker processes.
+- [x] (2026-09-22 20:25Z) Collected every worker-process read mark from its persisted control log and applied `checkLeaseIntervals` to database-clock leases; durable PostgreSQL 17 and 18 runs observed all 1,000 sends with no overlap or duplicate read count and an empty queue.
+- [ ] Add concurrent producer processes and a process-level sabotage arm to the no-double-lease scenario.
 - [x] (2026-09-22 20:20Z) Captured each killed consumer's database read time, visibility deadline, message IDs, and read counts; verified every kill round, no early redelivery, bounded expiry lag, final delivery, and acknowledgement on PostgreSQL 17 and 18.
 - [ ] Complete the remaining `SIGKILL` scenarios: random kills under load, producer batch atomicity, and stale acknowledgement after expiry with full evidence and oracles.
 - [x] (2026-09-22 02:05Z) Implemented pool exhaustion with long polling and verified transient acquisition timeout plus same-pool recovery.
@@ -149,6 +150,9 @@ Milestone 4 — pgmq-hs soak and telemetry arms.
 
 - Observation: the worker's `after-read` control mark can carry PGMQ's database-sourced `lastReadAt` and `visibilityTime` for every leased row. The supervisor can therefore judge each real `SIGKILL` round against the prior lease deadline without relying on its own clock or a synthesized delivery count.
   Evidence: PostgreSQL 18 run `01a0cac8-479b-7207-962e-aedbc397a545` and PostgreSQL 17 run `01a0cac6-857e-7732-a428-e881e417beff` both passed two kills across three messages, with persisted per-round IDs, read counts, and timestamps.
+
+- Observation: a queue-empty check alone can miss duplicate process ownership. The worker control log retains every `after-read` mark, so the process scenario can reconstruct all lease intervals rather than trusting only the final queue depth.
+  Evidence: PostgreSQL 18 run `01a0cacd-76b5-779f-8352-7f24bd6af032` recorded 1,000 distinct leases from four consumer processes, no lease-oracle findings, and an empty queue with strict control-log decoding; PostgreSQL 17 run `01a0cacb-d8d1-74a6-986c-4ce2489693e3` also passed.
 
 
 ## Decision Log
