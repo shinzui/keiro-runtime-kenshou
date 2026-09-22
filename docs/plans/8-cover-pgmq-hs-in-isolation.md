@@ -17,6 +17,11 @@ provenance:
       at: 2026-09-22T00:33:49Z
       mode: "implement"
       note: "Started EP-8 after verifying toolkit, database, cohort, and pgmq-hs dependency prerequisites."
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-22T20:16:02Z
+      mode: "implement"
+      note: "Replaced the manufactured thread lease sabotage with a live concurrent PostgreSQL race and recorded its paired outcomes."
 ---
 
 # Cover pgmq-hs in isolation
@@ -57,7 +62,8 @@ Milestone 2 — pgmq-hs concurrency and crash scenarios.
 
 - [x] (2026-09-22 02:05Z) Implemented `Kenshou.Suite.Pgmq.Roles` (`pgmq-producer`, `pgmq-consumer`, `pgmq-reconciler`) with the `after-read` crash point, finite producer/consumer protocols, and real reconciliation; the roles remain registered in the bundle.
 - [x] (2026-09-22 02:05Z) Replaced the catalog-wide probe for all 20 concurrency identifiers with scenario-specific runners spanning thread and process contention, `SIGKILL`, pool exhaustion, backend termination, PostgreSQL immediate shutdown, TCP reset, FIFO hazards, notification state, reconciliation, and overlapping acknowledgements.
-- [ ] Implement the no-double-lease scenarios (threads, then processes) and prove non-vacuity with `pgmq.sabotage=unlocked-read`.
+- [x] (2026-09-22 20:15Z) Replaced the manufactured unlocked-read result with sixteen concurrent PostgreSQL reads of one row. The ordinary PGMQ path has one owner and passes; the unlocked SQL path has sixteen owners and fails with a persisted verdict.
+- [ ] Extend the process no-double-lease scenario to record lease intervals and prove non-vacuity across worker processes.
 - [ ] Implement the `SIGKILL` scenarios: crash redelivery and read-count accounting, random kills under load, producer batch atomicity, stale acknowledgement after expiry.
 - [x] (2026-09-22 02:05Z) Implemented pool exhaustion with long polling and verified transient acquisition timeout plus same-pool recovery.
 - [x] (2026-09-22 02:54Z) Added pg_partman to both dev-shell PostgreSQL majors and replaced the partition probes with live notification-storm and retention workloads; both declared defects reproduce on PostgreSQL 17 and 18 as non-blocking known defects.
@@ -136,6 +142,9 @@ Milestone 4 — pgmq-hs soak and telemetry arms.
 
 - Observation: removing the sampler waiter leak made the thread verdict stable but did not remove the common live-heap slope. The final tracing-off and OTLP controls both completed 120,000 cycles with zero operation failures, zero final queue rows, a statistically flat queue-depth series, and stable native memory, OS threads, file descriptors, and database connections. The remaining failure is not attributable to tracing because it persists with tracing disabled and the tracing-off slope is higher; the two confidence intervals do not overlap.
   Evidence: tracing-off run `01a0c798-5508-7549-9b0e-2fc0754328e8` measured 96.8 MB/hour (95% interval 86.5–116.1 MB/hour); OTLP run `01a0c798-5508-77db-9004-674089ca9310` measured 78.3 MB/hour (74.5–81.2 MB/hour). The OTLP arm exported all 360,240 ended spans, dropped none, failed none, and reached a maximum queue depth of 518.
+
+- Observation: the common `pgmq.consumers` default is one, which made the former thread sabotage pass without any contention. A live gate now starts at least two readers together against one row. With sixteen readers, the PGMQ read has one owner and the deliberately unlocked SQL read has sixteen owners.
+  Evidence: normal run `01a0cac2-3c6a-736c-a134-d92fa348283c` passed; sabotage run `01a0cac1-f7fb-72c5-a1a9-d6319b97ddfe` failed and persisted the violated ownership verdict. Both were PostgreSQL 18 durable runs with `pgmq.consumers=16`.
 
 
 ## Decision Log

@@ -6,6 +6,7 @@ import Control.Concurrent.MVar
 import Control.Exception (SomeException, finally, throwIO, try)
 import Control.Monad (forM_, replicateM, void)
 import Data.Aeson (object, (.=))
+import Data.Int (Int64)
 import Data.List (sort)
 import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
@@ -78,20 +79,40 @@ noDoubleLeaseThreads :: RunContext -> IO ScenarioReport
 noDoubleLeaseThreads context = withPgmqRun context \runtime ->
   withScenarioQueue runtime.pool context runtime.knobs "lease_threads" \queue -> do
     let messageCount = min 5000 (fromIntegral (knobInt context.knobs (knobName "pgmq.message-count")))
-        consumers = min 32 (fromIntegral (knobInt context.knobs (knobName "pgmq.consumers"))) :: Int
+        consumers = max 2 (min 32 (fromIntegral (knobInt context.knobs (knobName "pgmq.consumers")))) :: Int
         sabotage = knobText context.knobs (knobName "pgmq.sabotage")
-    sent <- effect runtime (Pgmq.batchSendMessage (Types.BatchSendMessage queue (fmap body [1 .. messageCount]) Nothing))
-    observed <- newMVar []
+    probeId <- effect runtime (Pgmq.sendMessage (Types.SendMessage queue (body 0) Nothing))
+    gate <- newEmptyMVar
+    readers <- async (mapConcurrently (const (readProbe runtime queue sabotage gate)) [1 .. consumers])
+    threadDelay 50000
+    putMVar gate ()
+    probeReads <- concat <$> wait readers
+    let owners = length (filter (== probeId) probeReads)
+    putSummary context Verdicts "lease-race-observations" (object ["readers" .= consumers, "owners" .= owners, "sabotage" .= sabotage])
     if sabotage == "unlocked-read"
-      then do
-        let duplicated = take 1 sent <> take 1 sent
-            duplicateObserved = case duplicated of [first, second] -> first == second; _ -> False
-        verdict context "no-double-lease-threads" [("sabotage-detected", duplicateObserved), ("oracle-non-vacuous", False)]
+      then verdict context "no-double-lease-threads" [("probe-read-by-every-reader", owners == consumers), ("unique-ownership", owners <= 1)]
       else do
+        _ <- effect runtime (Pgmq.deleteMessage (Types.MessageQuery queue probeId))
+        sent <- effect runtime (Pgmq.batchSendMessage (Types.BatchSendMessage queue (fmap body [1 .. messageCount]) Nothing))
+        observed <- newMVar []
         _ <- mapConcurrently (const (drain runtime queue observed)) [1 .. consumers]
         deliveries <- readMVar observed
         metrics <- effect runtime (Pgmq.queueMetrics queue)
-        verdict context "no-double-lease-threads" [("all-handled", sort deliveries == sort sent), ("unique-ownership", Set.size (Set.fromList deliveries) == length deliveries), ("queue-empty", metrics.queueLength == 0)]
+        verdict context "no-double-lease-threads" [("single-probe-owner", owners == 1), ("all-handled", sort deliveries == sort sent), ("unique-ownership", Set.size (Set.fromList deliveries) == length deliveries), ("queue-empty", metrics.queueLength == 0)]
+
+readProbe :: PgmqRun -> Pgmq.QueueName -> Text -> MVar () -> IO [Pgmq.MessageId]
+readProbe runtime queue sabotage gate = do
+  readMVar gate
+  if sabotage == "unlocked-read"
+    then fmap Pgmq.MessageId <$> session runtime.pool (Session.statement () (unlockedRead queue))
+    else fmap (.messageId) . Vector.toList <$> effect runtime (Pgmq.readMessage (Types.ReadMessage queue 30 (Just 1) Nothing))
+
+unlockedRead :: Pgmq.QueueName -> Statement.Statement () [Int64]
+unlockedRead queue =
+  Statement.unpreparable
+    ("select msg_id from pgmq.\"q_" <> Pgmq.queueNameToText queue <> "\" order by msg_id limit 1")
+    Encoders.noParams
+    (Decoders.rowList (Decoders.column (Decoders.nonNullable Decoders.int8)))
 
 noDoubleLeaseProcesses :: RunContext -> IO ScenarioReport
 noDoubleLeaseProcesses context = withPgmqRun context \runtime ->
