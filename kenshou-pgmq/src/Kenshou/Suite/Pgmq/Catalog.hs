@@ -23,7 +23,7 @@ import Kenshou.Core.Id (Kind (Benchmark, Soak), parseScenarioId)
 import Kenshou.Core.Knob (KnobSpec)
 import Kenshou.Core.Phase (PhasePlan (..), zeroPhases)
 import Kenshou.Core.Scenario
-import Kenshou.Measure.Knobs (defaultLoadDefaults, loadKnobs, measureKnobs)
+import Kenshou.Measure.Knobs (LoadDefaults (..), defaultLoadDefaults, loadKnobs, measureKnobs)
 import Kenshou.Suite.Pgmq.Bench.Runner (runBenchmark)
 import Kenshou.Suite.Pgmq.Concurrency.Runner (runConcurrency)
 import Kenshou.Suite.Pgmq.Correctness.Runner (runCorrectness)
@@ -90,8 +90,10 @@ pgmqScenario definition =
 workloadKnobs :: Text -> [KnobSpec]
 workloadKnobs identifier
   | "/benchmark/" `Text.isInfixOf` identifier = loadKnobs defaultLoadDefaults <> measureKnobs Benchmark
-  | "/soak/" `Text.isInfixOf` identifier = loadKnobs defaultLoadDefaults <> measureKnobs Soak
+  | "/soak/" `Text.isInfixOf` identifier = loadKnobs soakLoadDefaults <> measureKnobs Soak
   | otherwise = []
+  where
+    soakLoadDefaults = defaultLoadDefaults {model = "open-constant", ratePerSecond = 500}
 
 postgresSettings :: Text -> [(Text, Text)]
 postgresSettings identifier
