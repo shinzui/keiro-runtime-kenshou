@@ -64,7 +64,8 @@ Milestone 2 — pgmq-hs concurrency and crash scenarios.
 - [x] (2026-09-22 02:05Z) Replaced the catalog-wide probe for all 20 concurrency identifiers with scenario-specific runners spanning thread and process contention, `SIGKILL`, pool exhaustion, backend termination, PostgreSQL immediate shutdown, TCP reset, FIFO hazards, notification state, reconciliation, and overlapping acknowledgements.
 - [x] (2026-09-22 20:15Z) Replaced the manufactured unlocked-read result with sixteen concurrent PostgreSQL reads of one row. The ordinary PGMQ path has one owner and passes; the unlocked SQL path has sixteen owners and fails with a persisted verdict.
 - [ ] Extend the process no-double-lease scenario to record lease intervals and prove non-vacuity across worker processes.
-- [ ] Implement the `SIGKILL` scenarios: crash redelivery and read-count accounting, random kills under load, producer batch atomicity, stale acknowledgement after expiry.
+- [x] (2026-09-22 20:20Z) Captured each killed consumer's database read time, visibility deadline, message IDs, and read counts; verified every kill round, no early redelivery, bounded expiry lag, final delivery, and acknowledgement on PostgreSQL 17 and 18.
+- [ ] Complete the remaining `SIGKILL` scenarios: random kills under load, producer batch atomicity, and stale acknowledgement after expiry with full evidence and oracles.
 - [x] (2026-09-22 02:05Z) Implemented pool exhaustion with long polling and verified transient acquisition timeout plus same-pool recovery.
 - [x] (2026-09-22 02:54Z) Added pg_partman to both dev-shell PostgreSQL majors and replaced the partition probes with live notification-storm and retention workloads; both declared defects reproduce on PostgreSQL 17 and 18 as non-blocking known defects.
 - [ ] Implement backend termination, PostgreSQL restart and crash, unlogged-queue loss, and the network proxy scenarios, with transient-error classification.
@@ -145,6 +146,9 @@ Milestone 4 — pgmq-hs soak and telemetry arms.
 
 - Observation: the common `pgmq.consumers` default is one, which made the former thread sabotage pass without any contention. A live gate now starts at least two readers together against one row. With sixteen readers, the PGMQ read has one owner and the deliberately unlocked SQL read has sixteen owners.
   Evidence: normal run `01a0cac2-3c6a-736c-a134-d92fa348283c` passed; sabotage run `01a0cac1-f7fb-72c5-a1a9-d6319b97ddfe` failed and persisted the violated ownership verdict. Both were PostgreSQL 18 durable runs with `pgmq.consumers=16`.
+
+- Observation: the worker's `after-read` control mark can carry PGMQ's database-sourced `lastReadAt` and `visibilityTime` for every leased row. The supervisor can therefore judge each real `SIGKILL` round against the prior lease deadline without relying on its own clock or a synthesized delivery count.
+  Evidence: PostgreSQL 18 run `01a0cac8-479b-7207-962e-aedbc397a545` and PostgreSQL 17 run `01a0cac6-857e-7732-a428-e881e417beff` both passed two kills across three messages, with persisted per-round IDs, read counts, and timestamps.
 
 
 ## Decision Log

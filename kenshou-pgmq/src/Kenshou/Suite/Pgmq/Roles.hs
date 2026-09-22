@@ -66,7 +66,7 @@ consumer context = do
         else do
           let values = Vector.toList messages
               identifiers = fmap (.messageId) values
-          context.send (WrkCustom "after-read" (object ["ids" .= identifiers, "readCounts" .= fmap (.readCount) values, "visibleAt" .= fmap (.visibilityTime) values]))
+          context.send (WrkCustom "after-read" (object ["ids" .= identifiers, "readCounts" .= fmap (.readCount) values, "visibleAt" .= fmap (.visibilityTime) values, "readAt" .= fmap (.lastReadAt) values]))
           if arguments.holdAfterRead
             then hold context
             else do

@@ -3,16 +3,19 @@ module Kenshou.Suite.Pgmq.Concurrency.Runner (runConcurrency) where
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (async, cancel, mapConcurrently, wait)
 import Control.Concurrent.MVar
+import Control.Concurrent.STM (atomically)
 import Control.Exception (SomeException, finally, throwIO, try)
-import Control.Monad (forM_, replicateM, void)
-import Data.Aeson (object, (.=))
+import Control.Monad (replicateM, void)
+import Data.Aeson (Value, object, withObject, (.:), (.=))
+import Data.Aeson.Types (parseMaybe)
 import Data.Int (Int64)
-import Data.List (sort)
+import Data.List (sort, sortOn, zip4)
 import Data.Map.Strict qualified as Map
+import Data.Maybe (isJust)
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Data.Time (UTCTime, getCurrentTime)
+import Data.Time (UTCTime, diffUTCTime, getCurrentTime)
 import Data.Vector qualified as Vector
 import Database.PostgreSQL.LibPQ qualified as LibPQ
 import Effectful qualified
@@ -134,24 +137,50 @@ noDoubleLeaseProcesses context = withPgmqRun context \runtime ->
 crashRedeliveryReadCount :: RunContext -> IO ScenarioReport
 crashRedeliveryReadCount context = withPgmqRun context \runtime ->
   withScenarioQueue runtime.pool context runtime.knobs "crash_redelivery" \queue -> do
-    let kills = min 10 (fromIntegral (knobInt context.knobs (knobName "pgmq.kills")))
+    let kills = max 1 (min 10 (fromIntegral (knobInt context.knobs (knobName "pgmq.kills"))))
         messageCount = min 100 (fromIntegral (knobInt context.knobs (knobName "pgmq.message-count")))
         arguments = object ["queue" .= Pgmq.queueNameToText queue, "batchSize" .= messageCount, "visibilityTimeout" .= (1 :: Int), "acknowledge" .= False, "holdAfterRead" .= True]
     sent <- effect runtime (Pgmq.batchSendMessage (Types.BatchSendMessage queue (fmap body [1 .. messageCount]) Nothing))
     withCheck context \checkEnvironment ->
       withSupervisor checkEnvironment \supervisor -> do
-        forM_ [1 .. kills] \index -> do
-          spec <- roleProcess checkEnvironment "pgmq/pgmq-consumer" index arguments
-          child <- spawn supervisor spec
-          awaitReady child 10000
-          sendCommand child CtlStart
-          awaitMark child "after-read" 10000
-          killChild supervisor child
-          threadDelay 1050000
+        observations <-
+          traverse
+            ( \index -> do
+                spec <- roleProcess checkEnvironment "pgmq/pgmq-consumer" index arguments
+                child <- spawn supervisor spec
+                awaitReady child 10000
+                sendCommand child CtlStart
+                awaitMark child "after-read" 10000
+                snapshot <- atomically (progress child)
+                observation <- maybe (ioError (userError "worker omitted after-read lease evidence")) pure (Map.lookup "after-read" snapshot.marks >>= parseLeaseMark)
+                killChild supervisor child
+                threadDelay 1050000
+                pure observation
+            )
+            [1 .. kills]
         final <- effect runtime (Pgmq.readMessage (Types.ReadMessage queue 30 (Just (fromIntegral messageCount)) Nothing))
         let values = Vector.toList final
+            expectedIds = sort sent
+            sameKeys = all ((== expectedIds) . sort . fmap (\(identifier, _, _, _) -> identifier)) observations
+            expectedCounts = and [all (\(_, count, _, _) -> count == fromIntegral index) lease | (index, lease) <- zip [1 :: Int ..] observations]
+            orderedObservations = fmap (sortOn (\(identifier, _, _, _) -> identifier)) observations
+            orderedFinal = sortOn (.messageId) values
+            completeReadTimes = all (all (isJust . (\(_, _, _, readAt) -> readAt))) observations && all (isJust . (.lastReadAt)) values
+            noEarlyRedelivery = and [and [identifier == nextId && maybe False (>= visibleAt) readAt | ((identifier, _, visibleAt, _), (nextId, _, _, readAt)) <- zip previous next] | (previous, next) <- zip orderedObservations (drop 1 orderedObservations)]
+            finalOnTime = and [identifier == message.messageId && maybe False (>= visibleAt) message.lastReadAt | ((identifier, _, visibleAt, _), message) <- zip (last orderedObservations) orderedFinal]
+            boundedRedelivery = and [and [maybe False (\observedAt -> diffUTCTime observedAt visibleAt <= 1) readAt | ((_, _, visibleAt, _), (_, _, _, readAt)) <- zip previous next] | (previous, next) <- zip orderedObservations (drop 1 orderedObservations)]
+            finalWithinBound = and [maybe False (\observedAt -> diffUTCTime observedAt visibleAt <= 1) message.lastReadAt | ((_, _, visibleAt, _), message) <- zip (last orderedObservations) orderedFinal]
         deleted <- effect runtime (Pgmq.batchDeleteMessages (Types.BatchMessageQuery queue (fmap (.messageId) values)))
-        verdict context "crash-redelivery" [("all-redelivered", sort (fmap (.messageId) values) == sort sent), ("read-count-accounting", all ((== fromIntegral (kills + 1)) . (.readCount)) values), ("final-ack", sort deleted == sort sent)]
+        putSummary context Verdicts "crash-redelivery-observations" (object ["kills" .= kills, "leases" .= observations, "finalDeliveries" .= [object ["id" .= message.messageId, "readCount" .= message.readCount, "readAt" .= message.lastReadAt] | message <- values]])
+        verdict context "crash-redelivery" [("all-kill-rounds-leased", sameKeys), ("read-count-sequence", expectedCounts), ("database-read-times-present", completeReadTimes), ("no-early-redelivery", noEarlyRedelivery && finalOnTime), ("redelivery-within-one-second", boundedRedelivery && finalWithinBound), ("all-redelivered", sort (fmap (.messageId) values) == expectedIds), ("read-count-accounting", all ((== fromIntegral (kills + 1)) . (.readCount)) values), ("final-ack", sort deleted == expectedIds)]
+
+parseLeaseMark :: Value -> Maybe [(Pgmq.MessageId, Int64, UTCTime, Maybe UTCTime)]
+parseLeaseMark value = do
+  (identifiers, counts, visibleTimes, readTimes) <-
+    parseMaybe (withObject "after-read" \entry -> (,,,) <$> entry .: "ids" <*> entry .: "readCounts" <*> entry .: "visibleAt" <*> entry .: "readAt") value
+  if length identifiers == length counts && length counts == length visibleTimes && length visibleTimes == length readTimes
+    then Just (zip4 identifiers counts visibleTimes readTimes)
+    else Nothing
 
 randomSigkill :: RunContext -> IO ScenarioReport
 randomSigkill context = crashRedeliveryReadCount context
