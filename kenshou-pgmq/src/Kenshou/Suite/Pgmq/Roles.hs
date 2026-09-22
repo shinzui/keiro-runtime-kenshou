@@ -4,19 +4,23 @@ import Control.Exception (bracket)
 import Control.Monad (void)
 import Data.Aeson (Value, object, withObject, (.!=), (.:), (.:?), (.=))
 import Data.Aeson.Types (Parser, parseEither)
+import Data.Int (Int32, Int64)
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Data.Time (getCurrentTime)
+import Data.Time (UTCTime, getCurrentTime)
 import Data.Vector qualified as Vector
 import Hasql.Connection.Settings qualified as Connection
+import Hasql.Decoders qualified as Decoders
+import Hasql.Encoders qualified as Encoders
 import Hasql.Pool qualified as Pool
 import Hasql.Pool.Config qualified as PoolConfig
 import Hasql.Session qualified as Session
+import Hasql.Statement qualified as Statement
 import Kenshou.Core.Role
 import Pgmq.Config qualified as Config
 import Pgmq.Hasql.Sessions qualified as Sessions
 import Pgmq.Hasql.Statements.Types qualified as Types
-import Pgmq.Types (Message (..), MessageBody (..), QueueName, parseQueueName)
+import Pgmq.Types (Message (..), MessageBody (..), MessageId (..), QueueName, parseQueueName, queueNameToText)
 
 data CrashPoint = AfterRead | AfterHandled | MidBatchAck deriving stock (Eq, Ord, Show)
 
@@ -26,7 +30,8 @@ data RoleArgs = RoleArgs
     batchSize :: Int,
     visibilityTimeout :: Int,
     acknowledge :: Bool,
-    holdAfterRead :: Bool
+    holdAfterRead :: Bool,
+    unlockedRead :: Bool
   }
 
 roles :: [WorkerRole]
@@ -52,8 +57,12 @@ consumer :: RoleContext -> IO ()
 consumer context = do
   arguments <- parseArgs context.init.args
   context.send WrkReady
-  awaitStart context (withRolePool context (drain arguments 0))
+  awaitStart context (withRolePool context (if arguments.unlockedRead then unlockedProbe arguments else drain arguments 0))
   where
+    unlockedProbe arguments pool = do
+      (identifier, visibleAt, readCount, readAt) <- use pool (Session.statement () (unlockedReadStatement arguments.queue))
+      context.send (WrkCustom "after-read" (object ["ids" .= [MessageId identifier], "readCounts" .= [fromIntegral readCount :: Int64], "visibleAt" .= [visibleAt], "readAt" .= [Just readAt]]))
+      context.send (WrkProgress 1 readAt)
     drain arguments handled pool = do
       messages <-
         use
@@ -114,6 +123,21 @@ parseArgs value = either (ioError . userError) pure (parseEither parser value)
         <*> objectValue .:? "visibilityTimeout" .!= 3
         <*> objectValue .:? "acknowledge" .!= True
         <*> objectValue .:? "holdAfterRead" .!= False
+        <*> objectValue .:? "unlockedRead" .!= False
+
+unlockedReadStatement :: QueueName -> Statement.Statement () (Int64, UTCTime, Int32, UTCTime)
+unlockedReadStatement queue =
+  Statement.unpreparable
+    ("select msg_id, vt, read_ct, now() from pgmq.\"q_" <> queueNameToText queue <> "\" order by msg_id limit 1")
+    Encoders.noParams
+    ( Decoders.singleRow
+        ( (,,,)
+            <$> Decoders.column (Decoders.nonNullable Decoders.int8)
+            <*> Decoders.column (Decoders.nonNullable Decoders.timestamptz)
+            <*> Decoders.column (Decoders.nonNullable Decoders.int4)
+            <*> Decoders.column (Decoders.nonNullable Decoders.timestamptz)
+        )
+    )
 
 withRolePool :: RoleContext -> (Pool.Pool -> IO value) -> IO value
 withRolePool context action = case context.init.postgres of

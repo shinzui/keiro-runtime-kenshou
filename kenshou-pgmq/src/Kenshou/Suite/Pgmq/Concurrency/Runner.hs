@@ -4,7 +4,7 @@ import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (async, cancel, mapConcurrently, wait)
 import Control.Concurrent.MVar
 import Control.Concurrent.STM (atomically)
-import Control.Exception (SomeException, finally, throwIO, try)
+import Control.Exception (IOException, SomeException, finally, throwIO, try)
 import Control.Monad (replicateM, void)
 import Data.Aeson (Value, decodeStrict', object, withObject, (.:), (.=))
 import Data.Aeson.Types (parseMaybe)
@@ -36,7 +36,7 @@ import Kenshou.Check.Verdict (InvariantClass (Contract), RunInfo (..), Verdict (
 import Kenshou.Core.Context (ArtifactDir (VerdictsDir), RunContext (..), SummarySection (Verdicts), artifactPath, declareMediaType, putSummary, requirePostgres)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Knob (knobInt, knobText)
-import Kenshou.Core.Role (ControlMessage (CtlStart), WorkerMessage (WrkCustom))
+import Kenshou.Core.Role (ControlMessage (CtlStart), WorkerMessage (WrkCustom, WrkFacts))
 import Kenshou.Core.Scenario (ScenarioReport, failedWith, passed)
 import Kenshou.Suite.Pgmq.Facts (PgmqFact (Leased))
 import Kenshou.Suite.Pgmq.Harness
@@ -121,26 +121,74 @@ unlockedRead queue =
     (Decoders.rowList (Decoders.column (Decoders.nonNullable Decoders.int8)))
 
 noDoubleLeaseProcesses :: RunContext -> IO ScenarioReport
-noDoubleLeaseProcesses context = withPgmqRun context \runtime ->
-  withScenarioQueue runtime.pool context runtime.knobs "lease_processes" \queue -> do
-    let count = 1000
-        processCount = min 8 (fromIntegral (knobInt context.knobs (knobName "pgmq.processes")))
-        arguments = object ["queue" .= Pgmq.queueNameToText queue, "batchSize" .= (25 :: Int), "visibilityTimeout" .= (5 :: Int), "acknowledge" .= True]
-    sent <- effect runtime (Pgmq.batchSendMessage (Types.BatchSendMessage queue (fmap body [1 .. count]) Nothing))
+noDoubleLeaseProcesses context
+  | knobText context.knobs (knobName "pgmq.sabotage") == "unlocked-read" = noDoubleLeaseProcessSabotage context
+  | otherwise = withPgmqRun context \runtime ->
+      withScenarioQueue runtime.pool context runtime.knobs "lease_processes" \queue -> do
+        let count = 1000
+            processCount = min 8 (fromIntegral (knobInt context.knobs (knobName "pgmq.processes")))
+            producerCount = max 2 (min 4 (fromIntegral (knobInt context.knobs (knobName "pgmq.producers"))))
+            messagesPerProducer = 100
+            arguments = object ["queue" .= Pgmq.queueNameToText queue, "batchSize" .= (25 :: Int), "visibilityTimeout" .= (5 :: Int), "acknowledge" .= True]
+            producerArguments = object ["queue" .= Pgmq.queueNameToText queue, "count" .= messagesPerProducer, "batchSize" .= messagesPerProducer]
+        sent <- effect runtime (Pgmq.batchSendMessage (Types.BatchSendMessage queue (fmap body [1 .. count]) Nothing))
+        withCheck context \checkEnvironment ->
+          withSupervisor checkEnvironment \supervisor -> do
+            specs <- traverse (\index -> roleProcess checkEnvironment "pgmq/pgmq-consumer" index arguments) [1 .. processCount]
+            children <- traverse (spawn supervisor) specs
+            producerSpecs <- traverse (\index -> roleProcess checkEnvironment "pgmq/pgmq-producer" index producerArguments) [1 .. producerCount]
+            producers <- traverse (spawn supervisor) producerSpecs
+            mapM_ (`awaitReady` 10000) children
+            mapM_ (`awaitReady` 10000) producers
+            mapM_ (`sendCommand` CtlStart) children
+            mapM_ (`sendCommand` CtlStart) producers
+            produced <- traverse (\(index, child) -> awaitWorkerCount child messagesPerProducer 100 >> readProducerSentIds context index) (zip [1 ..] producers)
+            drained <- awaitQueueDrain runtime queue 100
+            marks <- concat <$> traverse (readWorkerLeaseMarks context) [1 .. processCount]
+            let leases = concatMap (mapMaybe leaseFact) marks
+                observedIds = [PgmqTypes.MessageId identifier | Leased _ identifier _ _ _ _ <- leases]
+                findings = checkLeaseIntervals leases
+            metrics <- effect runtime (Pgmq.queueMetrics queue)
+            putSummary context Verdicts "process-lease-observations" (object ["readMarks" .= length marks, "leases" .= length leases, "producers" .= producerCount, "produced" .= fmap length produced, "findings" .= fmap show findings])
+            verdict context "no-double-lease-processes" [("worker-processes", length children == processCount), ("producer-processes", length producers == producerCount && all ((== messagesPerProducer) . length) produced), ("all-sent-seen", Set.fromList observedIds == Set.fromList (sent <> concat produced)), ("lease-times-present", length leases == sum (fmap length marks)), ("no-overlapping-or-duplicate-leases", null findings), ("eventual-quiescence", drained && metrics.queueLength == 0)]
+
+noDoubleLeaseProcessSabotage :: RunContext -> IO ScenarioReport
+noDoubleLeaseProcessSabotage context = withPgmqRun context \runtime ->
+  withScenarioQueue runtime.pool context runtime.knobs "lease_process_sabotage" \queue -> do
+    let processCount = max 2 (min 8 (fromIntegral (knobInt context.knobs (knobName "pgmq.processes"))))
+        arguments = object ["queue" .= Pgmq.queueNameToText queue, "unlockedRead" .= True]
+    target <- effect runtime (Pgmq.sendMessage (Types.SendMessage queue (body 0) Nothing))
     withCheck context \checkEnvironment ->
       withSupervisor checkEnvironment \supervisor -> do
         specs <- traverse (\index -> roleProcess checkEnvironment "pgmq/pgmq-consumer" index arguments) [1 .. processCount]
         children <- traverse (spawn supervisor) specs
         mapM_ (`awaitReady` 10000) children
         mapM_ (`sendCommand` CtlStart) children
-        drained <- awaitQueueDrain runtime queue 100
+        mapM_ (\child -> awaitMark child "after-read" 10000) children
+        mapM_ (\child -> awaitWorkerCount child 1 100) children
         marks <- concat <$> traverse (readWorkerLeaseMarks context) [1 .. processCount]
         let leases = concatMap (mapMaybe leaseFact) marks
-            observedIds = [PgmqTypes.MessageId identifier | Leased _ identifier _ _ _ _ <- leases]
             findings = checkLeaseIntervals leases
-        metrics <- effect runtime (Pgmq.queueMetrics queue)
-        putSummary context Verdicts "process-lease-observations" (object ["readMarks" .= length marks, "leases" .= length leases, "findings" .= fmap show findings])
-        verdict context "no-double-lease-processes" [("worker-processes", length children == processCount), ("all-sent-seen", Set.fromList observedIds == Set.fromList sent), ("lease-times-present", length leases == sum (fmap length marks)), ("no-overlapping-or-duplicate-leases", null findings), ("eventual-quiescence", drained && metrics.queueLength == 0)]
+            allReadTarget = length leases == processCount && all (\case Leased _ identifier _ _ _ _ -> identifier == PgmqTypes.unMessageId target; _ -> False) leases
+        putSummary context Verdicts "process-sabotage-observations" (object ["processes" .= processCount, "leases" .= length leases, "findings" .= fmap show findings])
+        verdict context "no-double-lease-processes" [("all-probes-read-target", allReadTarget), ("unique-ownership", null findings)]
+
+awaitWorkerCount :: Child -> Int -> Int -> IO ()
+awaitWorkerCount child expected attempts = do
+  snapshot <- atomically (progress child)
+  if snapshot.count >= fromIntegral expected
+    then pure ()
+    else if attempts <= 1 then ioError (userError "producer did not report its committed batch") else threadDelay 100000 >> awaitWorkerCount child expected (attempts - 1)
+
+readProducerSentIds :: RunContext -> Int -> IO [Pgmq.MessageId]
+readProducerSentIds context index = do
+  let path = context.outDir <> "/logs/pgmq-pgmq-producer-" <> show index <> ".0.control.jsonl"
+  linesOfOutput <- readControlLines path 20
+  messages <- maybe (ioError (userError ("invalid producer control log: " <> path))) pure (traverse decodeStrict' linesOfOutput)
+  let sent = [identifiers | WrkFacts facts <- messages, fact <- facts, Just identifiers <- [parseMaybe (withObject "sent" (.: "ids")) fact]]
+  case sent of
+    [identifiers] -> pure identifiers
+    _ -> ioError (userError ("producer omitted its committed batch: " <> path))
 
 leaseFact :: (Pgmq.MessageId, Int64, UTCTime, Maybe UTCTime) -> Maybe PgmqFact
 leaseFact (identifier, readCount, visibleAt, readAt) =
@@ -149,7 +197,7 @@ leaseFact (identifier, readCount, visibleAt, readAt) =
 readWorkerLeaseMarks :: RunContext -> Int -> IO [[(Pgmq.MessageId, Int64, UTCTime, Maybe UTCTime)]]
 readWorkerLeaseMarks context index = do
   let path = context.outDir <> "/logs/pgmq-pgmq-consumer-" <> show index <> ".0.control.jsonl"
-  linesOfOutput <- ByteString.lines <$> ByteString.readFile path
+  linesOfOutput <- readControlLines path 20
   messages <- maybe (ioError (userError ("invalid worker control log: " <> path))) pure (traverse decodeStrict' linesOfOutput)
   filter (not . null)
     <$> traverse
@@ -158,6 +206,14 @@ readWorkerLeaseMarks context index = do
           _ -> pure []
       )
       messages
+
+readControlLines :: FilePath -> Int -> IO [ByteString.ByteString]
+readControlLines path attempts =
+  try @IOException (ByteString.readFile path) >>= \case
+    Right contents -> pure (ByteString.lines contents)
+    Left exception
+      | attempts <= 1 -> throwIO exception
+      | otherwise -> threadDelay 100000 >> readControlLines path (attempts - 1)
 
 awaitQueueDrain :: PgmqRun -> Pgmq.QueueName -> Int -> IO Bool
 awaitQueueDrain runtime queue attempts = do
