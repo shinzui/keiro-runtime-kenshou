@@ -73,7 +73,8 @@ Milestone 2 — pgmq-hs concurrency and crash scenarios.
 - [x] (2026-09-22 20:20Z) Captured each killed consumer's database read time, visibility deadline, message IDs, and read counts; verified every kill round, no early redelivery, bounded expiry lag, final delivery, and acknowledgement on PostgreSQL 17 and 18.
 - [x] (2026-09-22 20:55Z) Replaced the one-batch queue-length probe with five producer processes killed at seeded delays after their persisted intents. PostgreSQL 18 observed three whole committed batches and two absent batches, including two committed batches whose `Sent` mark was interrupted; the per-batch durable-key verdict passed on PostgreSQL 17 and 18.
 - [x] (2026-09-22 20:56Z) Ran the stale acknowledgement boundary through separate owner pools and recorded both database-clock leases, both delete results, the failed visibility extension, and the final empty queue in an implementation-class verdict on PostgreSQL 17 and 18.
-- [ ] Implement random `SIGKILL` under sustained load with bounded duplicate and drain oracles.
+- [x] (2026-09-22 21:10Z) Replaced the alias to deterministic redelivery with seeded consumer-process kills and restarts under continuous batch production. Short durable runs on PostgreSQL 17 and 18 passed the no-loss, interrupted-lease, bounded-duplicate, lease-interval, and drain oracles; PostgreSQL 18 processed 4,000 sends with four kills and 40 unacknowledged killed leases.
+- [ ] Run the random-kill scenario for the planned ten-minute duration and 500/s arrival rate on both PostgreSQL versions; retain the short proof as the fast regression check.
 - [x] (2026-09-22 02:05Z) Implemented pool exhaustion with long polling and verified transient acquisition timeout plus same-pool recovery.
 - [x] (2026-09-22 02:54Z) Added pg_partman to both dev-shell PostgreSQL majors and replaced the partition probes with live notification-storm and retention workloads; both declared defects reproduce on PostgreSQL 17 and 18 as non-blocking known defects.
 - [ ] Implement backend termination, PostgreSQL restart and crash, unlogged-queue loss, and the network proxy scenarios, with transient-error classification.
@@ -167,6 +168,9 @@ Milestone 4 — pgmq-hs soak and telemetry arms.
 - Observation: a producer killed after beginning a batch can leave the complete batch durable without reporting `Sent`, or leave no rows at all. A missing worker reply therefore cannot decide whether the transaction committed; durable keys must decide atomicity for each recorded intent.
   Evidence: PostgreSQL 18 run `01a0cae6-1e7a-7164-a87b-ffe092405b8a` recorded five intents of fifty keys each. Two killed producers left all fifty keys without a `Sent` mark, and two left zero keys; the committed control had all fifty keys and its `Sent` mark. After adding an explicit kill assertion, run `01a0cae9-8658-7459-98a0-3f0a14e3b074` passed with four recorded `SIGKILL`s, three absent batches, and one complete batch whose `Sent` mark was interrupted.
 
+- Observation: the consumer worker originally returned when an empty read found no messages. The sustained-kill scenario exposed that finite behavior immediately: all four workers exited before the first fault, so the attempted process-group signal failed. Keeping the consumer in a bounded-sleep polling loop lets it survive an initially empty queue and later production.
+  Evidence: first short run `01a0caef-8398-7656-9186-ff7d211d47ea` failed with `signalProcessGroup: permission denied` after each worker reported `done`; corrected PostgreSQL 18 run `01a0caf8-b882-735c-a4fa-b7e737eb08de` recorded four real kills, 40 unacknowledged killed leases, and complete handling of 4,000 sends. PostgreSQL 17 run `01a0caf9-1278-7574-a042-86f826f60952` also passed.
+
 
 ## Decision Log
 
@@ -216,6 +220,10 @@ Milestone 4 — pgmq-hs soak and telemetry arms.
 
 - Decision: the batch-kill oracle compares each persisted producer intent against PostgreSQL's durable queue keys after the kill, with one completed control round. It treats `Sent` as proof of a complete batch but does not infer rollback from an absent `Sent` mark.
   Rationale: `SIGKILL` can interrupt the reply after PostgreSQL commits. Per-batch key conservation detects partial commits while allowing either valid outcome at that boundary.
+  Date: 2026-09-22
+
+- Decision: the random-kill duplicate allowance counts only leases held by a killed worker that worker did not acknowledge. A completed lease in the same worker does not grant a duplicate allowance.
+  Rationale: this makes the bound depend on the actual crash window rather than every message a process handled before it died.
   Date: 2026-09-22
 
 

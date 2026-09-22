@@ -1,7 +1,7 @@
 module Kenshou.Suite.Pgmq.Roles (CrashPoint (..), roles) where
 
+import Control.Concurrent (threadDelay)
 import Control.Exception (bracket)
-import Control.Monad (void)
 import Data.Aeson (Value, object, withObject, (.!=), (.:), (.:?), (.=))
 import Data.Aeson.Types (Parser, parseEither)
 import Data.Int (Int32, Int64)
@@ -29,6 +29,7 @@ data RoleArgs = RoleArgs
     count :: Int,
     batchSize :: Int,
     visibilityTimeout :: Int,
+    handlerMs :: Int,
     acknowledge :: Bool,
     holdAfterRead :: Bool,
     unlockedRead :: Bool
@@ -73,7 +74,9 @@ consumer context = do
               (Types.ReadMessage arguments.queue (fromIntegral arguments.visibilityTimeout) (Just (fromIntegral arguments.batchSize)) Nothing)
           )
       if Vector.null messages
-        then getCurrentTime >>= context.send . WrkProgress (fromIntegral handled)
+        then do
+          threadDelay 10000
+          drain arguments handled pool
         else do
           let values = Vector.toList messages
               identifiers = fmap (.messageId) values
@@ -81,8 +84,12 @@ consumer context = do
           if arguments.holdAfterRead
             then hold context
             else do
+              threadDelay (arguments.handlerMs * 1000)
+              context.send (WrkFacts [object ["kind" .= ("handled" :: Text), "ids" .= identifiers]])
               if arguments.acknowledge
-                then void (use pool (Sessions.batchDeleteMessages (Types.BatchMessageQuery arguments.queue identifiers)))
+                then do
+                  deleted <- use pool (Sessions.batchDeleteMessages (Types.BatchMessageQuery arguments.queue identifiers))
+                  context.send (WrkFacts [object ["kind" .= ("acked" :: Text), "ids" .= deleted]])
                 else pure ()
               now <- getCurrentTime
               context.send (WrkProgress (fromIntegral (handled + length values)) now)
@@ -123,6 +130,7 @@ parseArgs value = either (ioError . userError) pure (parseEither parser value)
         <$> objectValue .:? "count" .!= 100
         <*> objectValue .:? "batchSize" .!= 10
         <*> objectValue .:? "visibilityTimeout" .!= 3
+        <*> objectValue .:? "handlerMs" .!= 0
         <*> objectValue .:? "acknowledge" .!= True
         <*> objectValue .:? "holdAfterRead" .!= False
         <*> objectValue .:? "unlockedRead" .!= False

@@ -5,7 +5,7 @@ import Control.Concurrent.Async (async, cancel, mapConcurrently, wait)
 import Control.Concurrent.MVar
 import Control.Concurrent.STM (atomically)
 import Control.Exception (IOException, SomeException, finally, throwIO, try)
-import Control.Monad (replicateM, void)
+import Control.Monad (forM, replicateM, void)
 import Data.Aeson (Value, decodeStrict', object, withObject, (.:), (.=))
 import Data.Aeson.Types (parseMaybe)
 import Data.ByteString.Char8 qualified as ByteString
@@ -27,6 +27,7 @@ import Hasql.Encoders qualified as Encoders
 import Hasql.Pool qualified as Pool
 import Hasql.Session qualified as Session
 import Hasql.Statement qualified as Statement
+import Kenshou.Check.Fact (ProcId (..))
 import Kenshou.Check.Fault (Fault (..), FaultHandle (..))
 import Kenshou.Check.Fault.Network (ProxyMode (..), proxiedConnectionString, resetConnections, setProxyMode, withTcpProxy)
 import Kenshou.Check.Fault.Postgres (BackendSelector (..), CrashMode (..), crashPostmaster, terminateBackends)
@@ -272,7 +273,77 @@ parseLeaseMark value = do
     else Nothing
 
 randomSigkill :: RunContext -> IO ScenarioReport
-randomSigkill context = crashRedeliveryReadCount context
+randomSigkill context = withPgmqRun context \runtime ->
+  withScenarioQueue runtime.pool context runtime.knobs "random_sigkill" \queue -> do
+    let processCount = max 2 (min 8 (fromIntegral (knobInt context.knobs (knobName "pgmq.processes"))))
+        duration = fromIntegral (knobInt context.knobs (knobName "pgmq.duration-seconds")) :: Int
+        killInterval = fromIntegral (knobInt context.knobs (knobName "pgmq.kill-interval-seconds")) :: Int
+        killRounds = max 1 (duration `div` killInterval)
+        killSpacingMicros = min (killInterval * 1000000) (duration * 1000000 `div` (killRounds + 1))
+        rate = max 1 (min 5000 (fromIntegral (knobInt context.knobs (knobName "pgmq.rate-per-second"))))
+        batchCount = max 1 (min 500 (rate `div` 10))
+        visibility = max 2 (fromIntegral runtime.knobs.visibilityTimeoutSeconds)
+        handlerMs = max 50 (min 100 (fromIntegral (knobInt context.knobs (knobName "pgmq.handler-ms")))) :: Int
+        arguments = object ["queue" .= Pgmq.queueNameToText queue, "batchSize" .= (10 :: Int), "visibilityTimeout" .= visibility, "handlerMs" .= handlerMs, "acknowledge" .= True]
+    withCheck context \checkEnvironment ->
+      withSupervisor checkEnvironment \supervisor -> do
+        specs <- traverse (\index -> roleProcess checkEnvironment "pgmq/pgmq-consumer" index arguments) [1 .. processCount]
+        initial <- traverse (spawn supervisor) specs
+        mapM_ (`awaitReady` 10000) initial
+        mapM_ (`sendCommand` CtlStart) initial
+        active <- newMVar initial
+        producer <- async (produceFor runtime queue duration batchCount)
+        killed <- forM [1 .. killRounds] \roundIndex -> do
+          let jitter = fromIntegral ((unSeed context.seed + fromIntegral roundIndex * 2654435761) `mod` 100000)
+          threadDelay (killSpacingMicros - jitter)
+          modifyMVar active \children -> do
+            let slot = fromIntegral ((unSeed context.seed + fromIntegral roundIndex * 17) `mod` fromIntegral processCount)
+                victim = children !! slot
+            killChild supervisor victim
+            replacement <- restartChild supervisor victim
+            sendCommand replacement CtlStart
+            let updated = take slot children <> [replacement] <> drop (slot + 1) children
+            pure (updated, ((childProc victim).index, (childProc victim).incarnation))
+        sent <- wait producer
+        drained <- awaitQueueDrain runtime queue ((visibility * 2 + 10) * 10)
+        threadDelay 100000
+        finalChildren <- readMVar active
+        evidence <- concat <$> traverse (\child -> traverse (readConsumerEvidence context (childProc child).index) [0 .. (childProc child).incarnation]) finalChildren
+        let leases = concatMap (\(_, _, readMarks, _, _) -> concatMap (mapMaybe leaseFact) readMarks) evidence
+            handled = concatMap (\(_, _, _, ids, _) -> ids) evidence
+            acked = concatMap (\(_, _, _, _, ids) -> ids) evidence
+            sentSet = Set.fromList sent
+            handledCounts = Map.fromListWith (+) [(identifier, 1 :: Int) | identifier <- handled]
+            killedLeases = Map.fromListWith (+) [(identifier, 1 :: Int) | (workerIndex, incarnation) <- killed, (index, generation, readMarks, _, acknowledged) <- evidence, workerIndex == index && incarnation == generation, let acknowledgedSet = Set.fromList acknowledged, mark <- readMarks, (identifier, _, _, _) <- mark, identifier `Set.notMember` acknowledgedSet]
+            boundedDuplicates = all (\(identifier, count) -> count <= 1 + Map.findWithDefault 0 identifier killedLeases) (Map.toList handledCounts)
+            leaseFindings = checkLeaseIntervals leases
+        metrics <- effect runtime (Pgmq.queueMetrics queue)
+        putSummary context Verdicts "random-sigkill-observations" (object ["sent" .= length sent, "handled" .= length handled, "acked" .= length acked, "kills" .= [object ["worker" .= index, "incarnation" .= incarnation] | (index, incarnation) <- killed], "unacknowledgedKilledLeases" .= sum (Map.elems killedLeases), "leaseFindings" .= fmap show leaseFindings, "queueLength" .= metrics.queueLength])
+        verdict context "random-sigkill" [("produced-under-load", length sent >= batchCount && length killed == killRounds), ("kill-interrupted-a-lease", not (Map.null killedLeases)), ("no-sent-message-lost", Set.fromList handled == sentSet && Set.fromList acked `Set.isSubsetOf` sentSet), ("duplicates-bounded-by-killed-leases", boundedDuplicates), ("lease-intervals", null leaseFindings), ("drained-after-load", drained && metrics.queueLength == 0)]
+  where
+    produceFor runtime queue duration batchCount = do
+      started <- getMonotonicTimeNSec
+      let end = started + fromIntegral duration * 1000000000
+          loop next index batches = do
+            now <- getMonotonicTimeNSec
+            if now >= end && not (null batches)
+              then pure (concat (reverse batches))
+              else do
+                let values = fmap body [index .. index + batchCount - 1]
+                ids <- effect runtime (Pgmq.batchSendMessage (Types.BatchSendMessage queue values Nothing))
+                after <- getMonotonicTimeNSec
+                let due = next + 100000000
+                if after < due then threadDelay (fromIntegral ((due - after) `div` 1000)) else pure ()
+                loop due (index + batchCount) (ids : batches)
+      loop started 1 []
+
+    readConsumerEvidence runContext index incarnation = do
+      let path = runContext.outDir <> "/logs/pgmq-pgmq-consumer-" <> show index <> "." <> show incarnation <> ".control.jsonl"
+      linesOfOutput <- readControlLines path 20
+      messages <- maybe (ioError (userError ("invalid consumer control log: " <> path))) pure (traverse decodeStrict' linesOfOutput)
+      marks <- traverse (\case WrkCustom "after-read" payload -> maybe (ioError (userError ("invalid lease mark: " <> path))) pure (parseLeaseMark payload); _ -> pure []) messages
+      let facts kind = [ids | WrkFacts entries <- messages, entry <- entries, Just (factKind, ids) <- [parseMaybe (withObject "fact" \value -> (,) <$> value .: "kind" <*> value .: "ids") entry], factKind == kind]
+      pure (index, incarnation, filter (not . null) marks, concat (facts ("handled" :: Text)), concat (facts ("acked" :: Text)))
 
 producerBatchAtomicity :: RunContext -> IO ScenarioReport
 producerBatchAtomicity context = withPgmqRun context \runtime ->

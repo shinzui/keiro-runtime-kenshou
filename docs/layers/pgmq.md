@@ -30,7 +30,7 @@ The shared knobs directly name their pgmq-hs or workload setting. Important defa
 - `pgmq/read/concurrency/no-double-lease-threads` — thread ownership is disjoint; the unlocked-read sabotage proves the oracle fires.
 - `pgmq/read/concurrency/no-double-lease-processes` — process ownership is disjoint while producers and consumers overlap.
 - `pgmq/vt/concurrency/crash-redelivery-read-count` — deterministic post-read kills preserve expiry and delivery counts.
-- `pgmq/ack/concurrency/random-sigkill-at-least-once` — repeated worker kills preserve redelivery and read-count accounting.
+- `pgmq/ack/concurrency/random-sigkill-at-least-once` — seeded worker kills during continuous production preserve every send, bound duplicate handling by unacknowledged killed leases, and drain the queue.
 - `pgmq/send/concurrency/producer-sigkill-batch-atomicity` — interrupted batch sends remain all-or-nothing.
 - `pgmq/ack/concurrency/stale-ack-after-expiry` — demonstrates the documented lack of acknowledgement fencing.
 - `pgmq/read/concurrency/pool-exhaustion-long-poll` — long polls pin connections and acquisition timeouts recover.
