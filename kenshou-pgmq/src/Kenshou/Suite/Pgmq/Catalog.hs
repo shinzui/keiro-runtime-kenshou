@@ -9,6 +9,7 @@ module Kenshou.Suite.Pgmq.Catalog
   )
 where
 
+import Control.Applicative ((<|>))
 import Data.Aeson (Value (String), object, (.=))
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text (Text)
@@ -21,6 +22,7 @@ import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaC
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Phase (PhasePlan (..), zeroPhases)
 import Kenshou.Core.Scenario
+import Kenshou.Suite.Pgmq.Concurrency.Runner (runConcurrency)
 import Kenshou.Suite.Pgmq.Correctness.Runner (runCorrectness)
 import Kenshou.Suite.Pgmq.Harness
 import Kenshou.Suite.Pgmq.Knobs (PgmqKnobs (..), commonKnobs)
@@ -78,7 +80,7 @@ pgmqScenario definition =
       phases = phasePlan definition.identifier definition.tier,
       requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaPgmq] [] (needsControl definition.identifier))},
       knownDefect = definition.defect,
-      run = \context -> maybe (runProbe definition context) id (runCorrectness definition.identifier context)
+      run = \context -> maybe (runProbe definition context) id (runCorrectness definition.identifier context <|> runConcurrency definition.identifier context)
     }
 
 supportFor :: Text -> DimensionSupport

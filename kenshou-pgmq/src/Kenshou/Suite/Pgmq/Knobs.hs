@@ -38,6 +38,8 @@ data PgmqKnobs = PgmqKnobs
 commonKnobs :: [KnobSpec]
 commonKnobs =
   [ enum "pgmq.queue-kind" "Queue storage kind" "standard" ["standard", "unlogged", "partitioned"],
+    text "pgmq.partition.interval" "Partition interval passed to pgmq" "10000",
+    text "pgmq.partition.retention" "Partition retention passed to pgmq" "100000",
     integer "pgmq.visibility-timeout-seconds" "Message lease duration" 30 0 86400 [1, 2, 10, 30],
     integer "pgmq.batch-size" "Messages per database call" 10 1 1000 [1, 10, 50, 100],
     integer "pgmq.pool-size" "Database pool size" 10 1 256 [3, 10, 20],
@@ -45,6 +47,7 @@ commonKnobs =
     integer "pgmq.poll.max-seconds" "Long-poll duration; zero uses immediate reads" 0 0 300 [0, 2, 5],
     integer "pgmq.poll.interval-ms" "Long-poll interval" 100 1 60000 [50, 100, 1000],
     integer "pgmq.payload-bytes" "Approximate JSON payload bytes" 256 1 16777216 [256, 4096, 65536, 1048576],
+    text "pgmq.payload-bytes-list" "Comma-separated correctness payload sizes" "1024,65536,1048576,16777216",
     enum "pgmq.read-strategy" "PGMQ read function family" "plain" ["plain", "pop", "grouped", "grouped-round-robin", "grouped-head"],
     enum "pgmq.ack-mode" "Acknowledgement function" "delete" ["delete", "archive", "batch-delete", "batch-archive"],
     integer "pgmq.message-count" "Messages in the workload" 100 1 10000000 [20, 1000, 100000],
@@ -56,6 +59,26 @@ commonKnobs =
     integer "pgmq.rate-per-second" "Open-loop arrival rate" 1000 1 1000000 [100, 1000, 5000],
     integer "pgmq.duration-seconds" "Workload duration" 60 1 86400 [60, 1200, 14400],
     integer "pgmq.notify.throttle-ms" "Insert-notification throttle" 250 0 60000 [0, 250, 1000],
+    integer "pgmq.delay-window-seconds" "Scheduled-message delay window" 60 1 3600 [1, 10, 60],
+    integer "pgmq.kills" "Worker SIGKILL count" 5 0 100 [1, 3, 5],
+    integer "pgmq.kill-interval-seconds" "Seconds between worker kills" 5 1 600 [1, 5],
+    integer "pgmq.pollers" "Concurrent long pollers" 4 1 256 [3, 4, 8],
+    enum "pgmq.sabotage" "Deliberate oracle sabotage" "none" ["none", "unlocked-read"],
+    integer "pgmq.fault.interval-seconds" "Seconds between injected faults" 10 1 3600 [1, 10],
+    integer "pgmq.fault.latency-ms" "Injected network latency" 200 0 60000 [0, 200, 1000],
+    integer "pgmq.fault.max-block-seconds" "Maximum permitted network block" 30 1 600 [5, 30],
+    integer "pgmq.conn.tcp-user-timeout-ms" "libpq tcp_user_timeout value" 0 0 600000 [0, 5000, 30000],
+    enum "pgmq.fault.kind" "Fault mode" "reset" ["reset", "latency", "blackhole", "stop-start", "immediate-crash"],
+    integer "pgmq.poll.fallback-seconds" "Notification listener poll fallback" 2 1 600 [1, 2, 5],
+    integer "pgmq.queue-depth" "Standing queue depth" 100000 1 10000000 [100000, 1000000],
+    integer "pgmq.invisible-backlog" "Invisible rows ahead of a visible tail" 0 0 10000000 [0, 10000, 100000, 1000000],
+    enum "pgmq.layer" "Client layer" "effectful" ["raw-sql", "hasql", "effectful"],
+    enum "pgmq.op" "Benchmark operation" "full-cycle" ["send", "send-batch", "read", "delete", "pop", "full-cycle"],
+    enum "pgmq.arrival" "Open-loop arrival process" "constant" ["constant", "poisson"],
+    enum "pgmq.wake" "Consumer wake-up strategy" "poll" ["poll", "long-poll", "notify"],
+    enum "pgmq.notify.mode" "Insert notification mode" "off" ["off", "throttled", "unthrottled"],
+    double "pgmq.soak.nack-fraction" "Fraction of deliveries deliberately not acknowledged" 0.01 0 1,
+    boolean "pgmq.soak.archive-purge" "Purge archive rows older than five minutes" False,
     boolean "pgmq.fifo-index" "Create the optional FIFO index" False,
     boolean "pgmq.trace.propagate" "Propagate W3C trace context in message headers" False,
     enum "otel.semconv-stability-opt-in" "Semantic-convention stability opt-in" "unset" ["unset", "database", "messaging", "database/dup"]
@@ -99,6 +122,12 @@ enum name summary def values =
 
 boolean :: Text -> Text -> Bool -> KnobSpec
 boolean name summary def = KnobSpec (knobName name) summary KnobBool (VBool def) (OneOf (VBool False :| [VBool True])) []
+
+text :: Text -> Text -> Text -> KnobSpec
+text name summary def = KnobSpec (knobName name) summary KnobText (VText def) AnyValue []
+
+double :: Text -> Text -> Double -> Double -> Double -> KnobSpec
+double name summary def low high = KnobSpec (knobName name) summary KnobDouble (VDouble def) (DoubleRange low high) []
 
 parseQueueKind :: Text -> Either Text QueueKind
 parseQueueKind = \case

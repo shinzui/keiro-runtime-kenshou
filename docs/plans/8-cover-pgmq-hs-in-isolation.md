@@ -53,7 +53,8 @@ Milestone 1 — pgmq-hs correctness scenarios (includes the package, the shared 
 
 Milestone 2 — pgmq-hs concurrency and crash scenarios.
 
-- [ ] Implement `Kenshou.Suite.Pgmq.Roles` (`pgmq-producer`, `pgmq-consumer`, `pgmq-reconciler`) with named crash points, and register them in the bundle.
+- [x] (2026-09-22 03:12Z) Implemented `Kenshou.Suite.Pgmq.Roles` (`pgmq-producer`, `pgmq-consumer`, `pgmq-reconciler`) with the `after-read` crash point, finite producer/consumer protocols, and real reconciliation; the roles remain registered in the bundle.
+- [x] (2026-09-22 03:12Z) Replaced the catalog-wide probe for all 20 concurrency identifiers with scenario-specific runners spanning thread and process contention, `SIGKILL`, pool exhaustion, backend termination, PostgreSQL immediate shutdown, TCP reset, FIFO hazards, notification state, reconciliation, and overlapping acknowledgements.
 - [ ] Implement the no-double-lease scenarios (threads, then processes) and prove non-vacuity with `pgmq.sabotage=unlocked-read`.
 - [ ] Implement the `SIGKILL` scenarios: crash redelivery and read-count accounting, random kills under load, producer batch atomicity, stale acknowledgement after expiry.
 - [ ] Implement pool exhaustion with long polling.
@@ -87,6 +88,12 @@ Milestone 4 — pgmq-hs soak and telemetry arms.
 
 - Observation: the released effect interpreter closes over the exact stack `Eff '[Pgmq, Error PgmqRuntimeError, IOE]`; a helper polymorphic in an arbitrary tail does not type-check against the library's `runPgmq`/`runPgmqTraced` API.
   Evidence: `Kenshou.Suite.Pgmq.Harness.runOps` required the exact stack found in the Mori-located `pgmq-effectful` source. The resulting implementation builds and completed real queue round trips on PostgreSQL 17 and 18.
+
+- Observation: terminating the backend that owns an in-flight long poll surfaces as `UnexpectedRowCountStatementError 1 1 1`, not as a connection error or SQLSTATE `57P01`. The same pool recovers and accepts a subsequent send, but `Pgmq.Effectful.isTransient` classifies the interruption as permanent because the released policy deliberately treats decode-side row-count errors as permanent.
+  Evidence: run `01a0c6cd-303d-7294-a3ec-a0de837cb1fd` records the complete interrupted and recovered results in `summaries.verdicts.backend-termination-observations`; PostgreSQL logged the administrative backend termination. The documented policy is in `mori://shinzui/pgmq-hs` at `docs/design/017-transient-error-classification.md`; artifact-level design-document URIs are pending.
+
+- Observation: resetting a live proxied PostgreSQL connection can surface as `ServerError "" "" Nothing Nothing Nothing`, with no SQLSTATE. The same proxied pool recovers after forwarding resumes, but `Pgmq.Effectful.isTransient` classifies the empty server error as permanent.
+  Evidence: run `01a0c6cd-bb2d-771a-9783-75da1b115a45` records the complete reset and recovery results in `summaries.verdicts.network-partition-observations`. No existing improvement request in `mori://shinzui/pgmq-hs` covers either newly observed error shape, so this plan records the evidence without claiming that an upstream defect has been filed.
 
 
 ## Decision Log

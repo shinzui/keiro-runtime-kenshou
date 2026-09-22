@@ -57,6 +57,7 @@ library
     Kenshou.Suite.Pgmq.Concurrency.Outage
     Kenshou.Suite.Pgmq.Concurrency.Pool
     Kenshou.Suite.Pgmq.Concurrency.Retention
+    Kenshou.Suite.Pgmq.Concurrency.Runner
     Kenshou.Suite.Pgmq.Correctness.Ack
     Kenshou.Suite.Pgmq.Correctness.Config
     Kenshou.Suite.Pgmq.Correctness.Effectful
