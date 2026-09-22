@@ -27,6 +27,7 @@ import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (renderRunId)
 import Kenshou.Core.Scenario (ScenarioReport, failedWith)
 import Kenshou.Suite.Pgmq.Knobs
+import Kenshou.Suite.Pgmq.Telemetry (withMetricsPoller)
 import Kenshou.Telemetry (TelemetryHandles (..), telemetrySpecFromContext, withTelemetry)
 import OpenTelemetry.Trace.Core (Tracer)
 import Pgmq.Effectful
@@ -111,8 +112,9 @@ withPgmqRun context action = case (resolveKnobs context, telemetrySpecFromContex
   (_, Left message) -> pure (failedWith ["invalid-telemetry"] message)
   (Right knobs, Right telemetrySpec) ->
     withTelemetry telemetrySpec \handles ->
-      withPgmqPool (requirePostgres context) "scenario" knobs \pool ->
-        action (PgmqRun context knobs pool handles.tracer handles)
+      withMetricsPoller handles (requirePostgres context) context $
+        withPgmqPool (requirePostgres context) "scenario" knobs \pool ->
+          action (PgmqRun context knobs pool handles.tracer handles)
 
 partmanAvailable :: Session.Session Bool
 partmanAvailable =

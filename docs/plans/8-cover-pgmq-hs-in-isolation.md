@@ -44,10 +44,11 @@ Milestone 1 — pgmq-hs correctness scenarios (includes the package, the shared 
 - [x] (2026-09-22 00:52Z) Implemented the pool, per-run queue names, setup/teardown, plain/traced effect interpreter, telemetry bracket, and pg_partman probe; live round trips pass on PostgreSQL 17 and 18.
 - [ ] Complete the layer metrics poller and add focused unit tests for pool configuration; queue-name derivation is covered.
 - [x] (2026-09-22 00:52Z) Implemented the fact vocabulary, database-clock lease and due-time oracles, topic model, and raw LISTEN wrapper; doctored overlap, duplicate-read-count, early-delivery, and explicit-release tests pass.
+- [x] (2026-09-22 01:42Z) Replaced the catalog-wide probe for all 18 correctness identifiers with contract-specific runners and added durable queue/archive conservation queries.
 - [ ] Implement the `queue`, `send`, `read` and `ack` correctness scenarios.
 - [ ] Implement the `vt` correctness scenarios, including real wall-clock expiry.
 - [ ] Implement the `fifo`, `topics`, `notify`, `config` and `effectful` correctness scenarios, including the two known-defect scenarios.
-- [ ] Run every correctness scenario on `pg.version=17` and `pg.version=18`; record outcomes in this plan.
+- [x] (2026-09-22 01:42Z) Ran all 18 correctness scenarios on PostgreSQL 17 and 18. Sixteen pass on both versions; `mixed-case-alias-collision` reproduces its declared non-blocking defect on both; `grouped-result-order` returned ordered vectors in these runs and reports that the declared defect did not reproduce.
 - [x] (2026-09-22 00:52Z) Wrote the first `docs/layers/pgmq.md`, with every registered identifier, classification, known-defect link, shared knobs, and operating rules; the unit suite enforces coverage.
 
 Milestone 2 — pgmq-hs concurrency and crash scenarios.

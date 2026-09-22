@@ -21,6 +21,7 @@ import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaC
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Phase (PhasePlan (..), zeroPhases)
 import Kenshou.Core.Scenario
+import Kenshou.Suite.Pgmq.Correctness.Runner (runCorrectness)
 import Kenshou.Suite.Pgmq.Harness
 import Kenshou.Suite.Pgmq.Knobs (PgmqKnobs (..), commonKnobs)
 import Kenshou.Telemetry (telemetryKnobs)
@@ -77,18 +78,22 @@ pgmqScenario definition =
       phases = phasePlan definition.identifier definition.tier,
       requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaPgmq] [] (needsControl definition.identifier))},
       knownDefect = definition.defect,
-      run = runProbe definition
+      run = \context -> maybe (runProbe definition context) id (runCorrectness definition.identifier context)
     }
 
 supportFor :: Text -> DimensionSupport
 supportFor identifier =
   DimensionSupport
-    { tracing = Supported (Support (TracingOff :| [TracingNoop, TracingSdkInMemory, TracingSdkOtlp]) TracingOff),
+    { tracing = Supported tracingSupport,
       metrics = Supported (Support (MetricsOff :| [MetricsCollect]) MetricsOff),
       pgDurability = Supported (Support durabilities (headDurability durabilities)),
       pgVersion = Supported (Support (Pg18 :| [Pg17]) Pg18)
     }
   where
+    tracingSupport
+      | "traced-span-contract" `Text.isInfixOf` identifier = Support (TracingSdkInMemory :| []) TracingSdkInMemory
+      | any (`Text.isInfixOf` identifier) ["transactional-send-rollback", "layer-ladder"] = Support (TracingOff :| []) TracingOff
+      | otherwise = Support (TracingOff :| [TracingNoop, TracingSdkInMemory, TracingSdkOtlp]) TracingOff
     durabilities
       | any (`Text.isInfixOf` identifier) ["/benchmark/", "/concurrency/", "/soak/"] = PgDurable :| []
       | otherwise = PgFsyncOff :| [PgDurable]

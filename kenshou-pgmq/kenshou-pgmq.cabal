@@ -64,6 +64,7 @@ library
     Kenshou.Suite.Pgmq.Correctness.Notify
     Kenshou.Suite.Pgmq.Correctness.Queue
     Kenshou.Suite.Pgmq.Correctness.Read
+    Kenshou.Suite.Pgmq.Correctness.Runner
     Kenshou.Suite.Pgmq.Correctness.Send
     Kenshou.Suite.Pgmq.Correctness.Topics
     Kenshou.Suite.Pgmq.Correctness.Vt
