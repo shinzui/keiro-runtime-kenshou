@@ -68,6 +68,7 @@ library
     kenshou-check,
     kenshou-core,
     kenshou-diagnose,
+    kenshou-kiroku,
     kenshou-measure,
     kenshou-pgmq,
     kenshou-telemetry,
