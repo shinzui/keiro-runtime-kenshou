@@ -45,7 +45,7 @@ The shared knobs directly name their pgmq-hs or workload setting. Important defa
 - `pgmq/notify/concurrency/throttle-lost-after-crash` — fail-open delivery and reconcile recovery after throttle loss.
 - `pgmq/notify/concurrency/listener-loss-poll-fallback` — the authoritative polling fallback drains delivery independently of notifications.
 - `pgmq/queue/concurrency/partition-retention-drops-unread` — retention preserves unread rows ([known defect](mori://shinzui/pgmq-hs/plans/21-state-the-fifo-ordering-and-partitioned-retention-contracts-truthfully)).
-- `pgmq/config/concurrency/concurrent-reconcile` — simultaneous reconcilers converge without catalog races.
+- `pgmq/config/concurrency/concurrent-reconcile` — simultaneous reconcilers converge, but FIFO index creation can raise SQLSTATE `23505` and action reports can claim duplicate creation ([known defect](mori://shinzui/pgmq-hs/okf/improvement-requests/concepts/IR-5)).
 - `pgmq/ack/concurrency/overlapping-batch-ack-deadlock` — overlapping acknowledgements retry only transient deadlocks.
 
 ## Benchmarks, telemetry, and soak

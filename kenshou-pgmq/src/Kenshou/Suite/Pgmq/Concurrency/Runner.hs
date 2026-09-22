@@ -571,9 +571,26 @@ throttleLostAfterCrash context = withPgmqRun context \runtime ->
     handle <- fault.inject
     handle.heal
     after <- retryValue 50 (runOps runtime.tracer runtime.pool Pgmq.listNotifyInsertThrottles)
-    report <- session runtime.pool (Config.ensureQueuesReport [Config.withNotifyInsert (Just 1000) (Config.standardQueue queue)])
+    let channel = PgmqTypes.notifyChannelName queue
+        sendAtFiftyPerSecond start =
+          forM [start .. start + 249] \index -> do
+            identifier <- sendOne runtime queue index
+            threadDelay 20000
+            pure identifier
+    (postCrashIds, postCrashNotices, report, restored, postReconcileIds, postReconcileNotices) <-
+      withListener (requirePostgres context).connectionString channel \connection -> do
+        postCrashIds <- sendAtFiftyPerSecond 1
+        postCrashNotices <- collectNotifications connection
+        report <- session runtime.pool (Config.ensureQueuesReport [Config.withNotifyInsert (Just 1000) (Config.standardQueue queue)])
+        restored <- effect runtime Pgmq.listNotifyInsertThrottles
+        postReconcileIds <- sendAtFiftyPerSecond 251
+        postReconcileNotices <- collectNotifications connection
+        pure (postCrashIds, postCrashNotices, report, restored, postReconcileIds, postReconcileNotices)
     let reenabled = any (\case Config.EnabledNotify {} -> True; _ -> False) report
-    verdict context "throttle-crash" [("configured-before", not (null before)), ("unlogged-state-lost", null after), ("reconcile-restores", reenabled)]
+        correctChannel = all ((== channel) . (.channel)) (postCrashNotices <> postReconcileNotices)
+        throttleBound = 5000 `div` 1000 + 1
+    putSummary context Verdicts "throttle-crash-observations" (object ["before" .= length before, "afterCrash" .= length after, "afterReconcile" .= length restored, "postCrashNotifications" .= length postCrashNotices, "postReconcileNotifications" .= length postReconcileNotices, "postCrashSends" .= length postCrashIds, "postReconcileSends" .= length postReconcileIds, "throttleBound" .= throttleBound, "actions" .= fmap show report])
+    verdictClass Implementation context "throttle-crash" [("configured-before", not (null before)), ("unlogged-state-lost", null after), ("post-crash-fail-open", length postCrashNotices == length postCrashIds && not (null postCrashIds)), ("reconcile-restores", reenabled && not (null restored)), ("throttle-restored", not (null postReconcileNotices) && length postReconcileNotices <= throttleBound), ("canonical-channel", correctChannel)]
 
 listenerLossFallback :: RunContext -> IO ScenarioReport
 listenerLossFallback context = withPgmqRun context \runtime ->
@@ -650,23 +667,55 @@ partitionRetention context = withPgmqRun context \runtime -> do
 
 concurrentReconcile :: RunContext -> IO ScenarioReport
 concurrentReconcile context = withPgmqRun context \runtime -> do
-  let queue = scenarioQueueName context "concurrent_reconcile"
-      declaration = Config.withNotifyInsert (Just 250) . Config.withFifoIndex $ Config.standardQueue queue
-  results <- mapConcurrently (const (Pool.use runtime.pool (Config.ensureQueuesReport [declaration]))) [1 :: Int .. 8]
-  queues <- effect runtime PgmqEff.listQueues
-  _ <- effect runtime (Pgmq.dropQueue queue)
-  verdict context "concurrent-reconcile" [("no-errors", all isRight results), ("one-final-queue", length (filter ((== queue) . (.name)) queues) == 1)]
+  let names = [scenarioQueueName context ("reconcile_" <> Text.pack (show index)) | index <- [1 :: Int .. 10]]
+      declarations = fmap (Config.withNotifyInsert (Just 250) . Config.withFifoIndex . Config.standardQueue) names
+      workers = max 8 (min 16 (fromIntegral (knobInt context.knobs (knobName "pgmq.processes")))) :: Int
+      rounds = 50 :: Int
+  (`finally` cleanupQueues runtime names) do
+    results <- forM [1 .. rounds] \roundIndex -> do
+      reports <- mapConcurrently (const (Pool.use runtime.pool (Config.ensureQueuesReport declarations))) [1 .. workers]
+      queues <- effect runtime PgmqEff.listQueues
+      let actions = concat [values | Right values <- reports]
+          created = [name | Config.CreatedQueue name _ <- actions]
+          notified = [name | Config.EnabledNotify name _ <- actions]
+          indexed = [name | Config.CreatedFifoIndex name <- actions]
+          actual = [queue.name | queue <- queues, queue.name `elem` names]
+          oneEach values = sort values == sort names
+          outcome = object ["round" .= roundIndex, "errors" .= [show err | Left err <- reports], "created" .= length created, "notified" .= length notified, "indexed" .= length indexed, "catalogCount" .= length actual]
+          noErrors = all isRight reports
+          catalogCorrect = sort actual == sort names
+          uniqueActions = oneEach created && oneEach notified && oneEach indexed
+      cleanupQueues runtime names
+      pure (outcome, noErrors, catalogCorrect, uniqueActions)
+    putSummary context Verdicts "concurrent-reconcile-observations" (object ["rounds" .= rounds, "workers" .= workers, "results" .= fmap (\(outcome, _, _, _) -> outcome) results])
+    verdict context "concurrent-reconcile" [("no-worker-errors", all (\(_, ok, _, _) -> ok) results), ("final-catalog-converges", all (\(_, _, ok, _) -> ok) results), ("one-creator-report-per-resource", all (\(_, _, _, ok) -> ok) results), ("all-rounds-executed", length results == rounds)]
 
 overlappingBatchAck :: RunContext -> IO ScenarioReport
 overlappingBatchAck context = withPgmqRun context \runtime ->
   withScenarioQueue runtime.pool context runtime.knobs "overlap_ack" \queue -> do
     identifiers <- effect runtime (Pgmq.batchSendMessage (Types.BatchSendMessage queue (fmap body [1 .. 200]) Nothing))
-    let slices = [take 100 (drop offset (cycle identifiers)) | offset <- [0, 13 .. 195]]
-    results <- mapConcurrently (runOps runtime.tracer runtime.pool . Pgmq.batchDeleteMessages . Types.BatchMessageQuery queue) slices
-    metrics <- effect runtime (Pgmq.queueMetrics queue)
-    let affected = concat [values | Right values <- results]
-        allTransient = all (either Pgmq.isTransient (const True)) results
-    verdict context "overlapping-batch-ack" [("errors-transient", allTransient), ("affected-once", Set.size (Set.fromList affected) == length affected), ("queue-drained", metrics.queueLength == 0)]
+    let slices = [if even index then values else reverse values | (index, offset) <- zip [0 :: Int ..] [0, 13 .. 195], let values = take 100 (drop offset (cycle identifiers))]
+        constrained = runtime.knobs {poolSize = 16}
+    withPgmqPool (requirePostgres context) "overlap-ack" constrained \pool -> do
+      gate <- newEmptyMVar
+      workers <- traverse (\slice -> async (readMVar gate >> retryAck pool queue slice 0 [])) slices
+      putMVar gate ()
+      results <- traverse wait workers
+      metrics <- effect runtime (Pgmq.queueMetrics queue)
+      let affected = concat [values | (Just values, _) <- results]
+          errors = concatMap snd results
+          allDeadlocks = all (\err -> Pgmq.isTransient err && "40P01" `Text.isInfixOf` Text.pack (show err)) errors
+          deadlockRate = fromIntegral (length errors) / fromIntegral (length slices) :: Double
+      putSummary context Verdicts "overlapping-batch-ack-observations" (object ["workers" .= length slices, "deadlocks" .= length errors, "deadlockRate" .= deadlockRate, "affected" .= length affected, "unfinishedWorkers" .= length [() | (Nothing, _) <- results], "queueLength" .= metrics.queueLength, "errors" .= fmap show errors])
+      verdict context "overlapping-batch-ack" [("only-transient-deadlocks", allDeadlocks), ("all-workers-completed", all (isJust . fst) results), ("each-id-deleted-once", sort affected == sort identifiers), ("queue-drained", metrics.queueLength == 0)]
+  where
+    retryAck pool queue identifiers attempts errors = do
+      result <- runOps Nothing pool (Pgmq.batchDeleteMessages (Types.BatchMessageQuery queue identifiers))
+      case result of
+        Right affected -> pure (Just affected, reverse errors)
+        Left err
+          | Pgmq.isTransient err && attempts < 8 -> threadDelay ((attempts + 1) * 10000) >> retryAck pool queue identifiers (attempts + 1) (err : errors)
+          | otherwise -> pure (Nothing, reverse (err : errors))
 
 drain :: PgmqRun -> Pgmq.QueueName -> MVar [Pgmq.MessageId] -> IO ()
 drain runtime queue observed = do

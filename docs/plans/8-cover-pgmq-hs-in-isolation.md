@@ -74,14 +74,18 @@ Milestone 2 — pgmq-hs concurrency and crash scenarios.
 - [x] (2026-09-22 20:55Z) Replaced the one-batch queue-length probe with five producer processes killed at seeded delays after their persisted intents. PostgreSQL 18 observed three whole committed batches and two absent batches, including two committed batches whose `Sent` mark was interrupted; the per-batch durable-key verdict passed on PostgreSQL 17 and 18.
 - [x] (2026-09-22 20:56Z) Ran the stale acknowledgement boundary through separate owner pools and recorded both database-clock leases, both delete results, the failed visibility extension, and the final empty queue in an implementation-class verdict on PostgreSQL 17 and 18.
 - [x] (2026-09-22 21:10Z) Replaced the alias to deterministic redelivery with seeded consumer-process kills and restarts under continuous batch production. Short durable runs on PostgreSQL 17 and 18 passed the no-loss, interrupted-lease, bounded-duplicate, lease-interval, and drain oracles; PostgreSQL 18 processed 4,000 sends with four kills and 40 unacknowledged killed leases.
-- [ ] Run the random-kill scenario for the planned ten-minute duration and 500/s arrival rate on both PostgreSQL versions; retain the short proof as the fast regression check.
+- [x] (2026-09-22 21:43Z) Ran the full ten-minute, 500/s random-kill acceptance on durable PostgreSQL 18: 300,000 sends, 120 `SIGKILL` and restart rounds, 857 unacknowledged killed leases, 300,000 handled keys, zero lease findings, and an empty final queue. Ten committed acknowledgements had no worker-side reply mark, so the oracle used durable handling and drain evidence.
+- [ ] Complete the same ten-minute random-kill acceptance on durable PostgreSQL 17; its run is in progress.
 - [x] (2026-09-22 02:05Z) Implemented pool exhaustion with long polling and verified transient acquisition timeout plus same-pool recovery.
 - [x] (2026-09-22 02:54Z) Added pg_partman to both dev-shell PostgreSQL majors and replaced the partition probes with live notification-storm and retention workloads; both declared defects reproduce on PostgreSQL 17 and 18 as non-blocking known defects.
 - [x] (2026-09-22 21:26Z) Expanded the immediate PostgreSQL crash probe to persist the outage error, same-pool recovery time, durability setting, and committed message IDs. PostgreSQL 17 and 18 both recovered in under 0.4 seconds with all committed rows and `fsync=on`; both rejected the empty-SQLSTATE disconnect as permanent. Filed the common classifier gap as `mori://shinzui/pgmq-hs/okf/improvement-requests/concepts/IR-4` and verified backend termination, restart, and TCP reset report only their exact classifier failures as non-blocking known defects.
 - [ ] Complete the backend-termination, PostgreSQL restart/crash, unlogged-queue, and network-proxy workloads and their full transient-error and conservation oracles beyond the focused probes already present.
 - [x] (2026-09-22 02:05Z) Implemented and ran the FIFO concurrency scenarios (head-per-group barrier, grouped batch successor hazard, producer commit-order inversion).
 - [x] (2026-09-22 03:38Z) Replaced the listener-fallback probe with a real LISTEN backend termination; PostgreSQL 17 and 18 both prove disconnected notifications do not replay and the polling fallback drains all 20 sends inside the configured bound.
-- [ ] Implement the notification scenarios (partitioned storm as known defect, throttle lost after crash, listener loss with poll fallback), partition retention as known defect, concurrent reconcile, overlapping batch acknowledgement deadlock.
+- [x] (2026-09-22 21:39Z) Expanded throttle-loss-after-crash on PostgreSQL 17 and 18: after immediate shutdown the unlogged throttle state vanished and all 250 sends over five seconds notified; reconciliation reported `EnabledNotify`, restored the throttle row, and bounded the next 250 sends to six notifications. The listener saw only the canonical channel.
+- [x] (2026-09-22 21:48Z) Expanded concurrent reconciliation to fifty rounds of ten declarations with eight callers. Every round's catalog converged, but reports claimed multiple creators, and both PostgreSQL majors produced SQLSTATE `23505` from FIFO index creation. Filed both defects as `mori://shinzui/pgmq-hs/okf/improvement-requests/concepts/IR-5` and verified precise non-blocking labels on PostgreSQL 17 and 18 while catalog correctness remains a separate blocking check.
+- [x] (2026-09-22 21:52Z) Expanded overlapping batch acknowledgements to sixteen simultaneous callers through sixteen pool connections, with opposite identifier orders, bounded transient retries, durable deletion conservation, and a recorded deadlock rate. PostgreSQL 17 and 18 each deleted all 200 IDs exactly once and drained; both observed zero deadlocks, so the live SQLSTATE branch still needs a reproducer.
+- [ ] Complete the remaining notification, partition-retention, reconciler-process, and deadlock-classification evidence and run every concurrency scenario on both durable PostgreSQL versions.
 - [ ] Run every concurrency scenario with `pg.durability=durable` on both PostgreSQL versions; record outcomes and any new defect filed upstream.
 
 Milestone 3 — pgmq-hs benchmarks.
@@ -178,8 +182,17 @@ Milestone 4 — pgmq-hs soak and telemetry arms.
 - Observation: the kernel's known-defect disposition matches exact failure labels. A declared defect with expected label `known-defect` remains blocking if the real scenario fails on `outage-error-transient`; registering the classifier's precise label preserves a non-blocking `reproduced` status while leaving durability or recovery failures blocking.
   Evidence: first declared run `01a0cb04-15ba-713e-a077-1f0367008229` reported `different-failure`; corrected restart run `01a0cb05-2162-7090-b7fc-8632c34bfc50`, backend run `01a0cb06-cfb7-742a-992b-23996a0eac86`, and proxy run `01a0cb07-2dbc-7410-98c0-640dfd87daf1` each report `reproduced`, `blocking=false`, and exit code 0 with only the classifier check red.
 
-- Observation: the upstream IR bundle passes profile enforcement, but its strict bundle gate was already red because IR-1, IR-2, and IR-3 omit the profile-recommended `reviews` field. The new IR-4 includes the field and contributes no new strict diagnostic.
-  Evidence: `okf validate docs/improvement-requests --profile docs/improvement-requests/profile.dhall --profile-enforce --log-enforce` passed with four concepts; the `--strict` variant reported only the three older files' missing review metadata.
+- Observation: the upstream IR bundle passes profile enforcement, but its strict bundle gate was already red because IR-1, IR-2, and IR-3 omit the profile-recommended `reviews` field. The new IR-4 and IR-5 include the field and contribute no new strict diagnostic.
+  Evidence: `okf validate docs/improvement-requests --profile docs/improvement-requests/profile.dhall --profile-enforce --log-enforce` passed with five concepts; the `--strict` variant reported only the three older files' missing review metadata.
+
+- Observation: the full random-kill run can lose an acknowledgement's worker-side reply mark while the database has already deleted the message. The distinct handled-key set and empty durable queue remain complete, while an `Acked`-mark equality would falsely report loss.
+  Evidence: PostgreSQL 18 run `01a0cb08-b297-7541-bdd6-314abcfcfd3d` handled all 300,000 sends after 120 kills, but recorded 299,990 `Acked` marks. It recorded 857 unacknowledged killed leases and no lease-interval findings.
+
+- Observation: concurrent `ensureQueuesReport` callers can converge in the catalog while reporting duplicate creators, and `pgmq.create_fifo_index` can additionally raise SQLSTATE `23505` on `pg_class_relname_nsp_index` despite using `CREATE INDEX IF NOT EXISTS`.
+  Evidence: PostgreSQL 18 run `01a0cb0f-51a6-75cb-a822-e07dc52ecc71` had no worker errors but eighty creation claims for ten resources in each of fifty rounds; repeat run `01a0cb13-f5ae-77cd-9b7f-e6e4e7c0f1b9` also recorded the FIFO index catalog error. Final known-defect runs `01a0cb16-e1dd-74e7-a7e2-c22c639a88d4` on PostgreSQL 18 and `01a0cb17-ec19-755c-a785-c43a43c35760` on PostgreSQL 17 each converged while recording eight and nine worker errors, respectively. The owner request is `mori://shinzui/pgmq-hs/okf/improvement-requests/concepts/IR-5`.
+
+- Observation: sixteen simultaneous `batchDeleteMessages` calls over differently ordered overlapping ID sets completed without a deadlock on both PostgreSQL majors. This proves conservation under contention but leaves the live `40P01` retry classification unexercised by this scenario.
+  Evidence: PostgreSQL 18 run `01a0cb19-8e41-7745-97f5-93ae7be5ce9a` and PostgreSQL 17 run `01a0cb1a-3f68-71cb-bbdc-693222dac862` each returned all 200 deleted IDs exactly once, recorded zero deadlocks, and ended with an empty queue.
 
 
 ## Decision Log
@@ -238,6 +251,10 @@ Milestone 4 — pgmq-hs soak and telemetry arms.
 
 - Decision: backend termination, postmaster restart, and TCP reset keep their true failing transient-classification checks while carrying one upstream known-defect reference.
   Rationale: the observed error shapes differ, but all expose the same retry-predicate boundary. A non-blocking known defect keeps the regression visible on the released cohort without masking the durability and recovery checks in each scenario.
+  Date: 2026-09-22
+
+- Decision: concurrent reconciliation judges worker errors, final catalog convergence, and creator-report uniqueness independently, and the known-defect declaration names only the two confirmed upstream failure labels.
+  Rationale: a final catalog mismatch remains a new blocking failure even when the released library reproduces its existing report or FIFO index race.
   Date: 2026-09-22
 
 

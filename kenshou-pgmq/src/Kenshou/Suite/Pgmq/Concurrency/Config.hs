@@ -7,6 +7,6 @@ scenarios :: [Scenario]
 scenarios =
   fmap
     pgmqScenario
-    [ concurrency "pgmq/config/concurrency/concurrent-reconcile" "Checks simultaneous reconcilers converge without catalog races." TierStandard,
+    [ knownDefectWithFailures "pgmq/config/concurrency/concurrent-reconcile" "Concurrent reconcilers can race on FIFO index creation and can each report themselves as a resource creator." TierStandard "mori://shinzui/pgmq-hs/okf/improvement-requests/concepts/IR-5" ["no-worker-errors", "one-creator-report-per-resource"],
       concurrency "pgmq/ack/concurrency/overlapping-batch-ack-deadlock" "Checks overlapping batch acknowledgements retry classified deadlocks exactly." TierStandard
     ]
