@@ -22,6 +22,11 @@ provenance:
       at: 2026-09-22T20:16:02Z
       mode: "implement"
       note: "Replaced the manufactured thread lease sabotage with a live concurrent PostgreSQL race and recorded its paired outcomes."
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-22T20:55:50Z
+      mode: "implement"
+      note: "Added durable per-batch SIGKILL accounting and separate-owner stale-ack evidence."
 ---
 
 # Cover pgmq-hs in isolation
@@ -66,7 +71,9 @@ Milestone 2 — pgmq-hs concurrency and crash scenarios.
 - [x] (2026-09-22 20:25Z) Collected every worker-process read mark from its persisted control log and applied `checkLeaseIntervals` to database-clock leases; durable PostgreSQL 17 and 18 runs observed all 1,000 sends with no overlap or duplicate read count and an empty queue.
 - [x] (2026-09-22 20:48Z) Ran concurrent producer and consumer processes, reconstructed all lease intervals and sent IDs from strict worker logs, and proved process-level non-vacuity with four unlocked SQL readers. PostgreSQL 18 handled 1,200 messages without overlap; the unlocked arm failed with `DuplicateReadCount`.
 - [x] (2026-09-22 20:20Z) Captured each killed consumer's database read time, visibility deadline, message IDs, and read counts; verified every kill round, no early redelivery, bounded expiry lag, final delivery, and acknowledgement on PostgreSQL 17 and 18.
-- [ ] Complete the remaining `SIGKILL` scenarios: random kills under load, producer batch atomicity, and stale acknowledgement after expiry with full evidence and oracles.
+- [x] (2026-09-22 20:55Z) Replaced the one-batch queue-length probe with five producer processes killed at seeded delays after their persisted intents. PostgreSQL 18 observed three whole committed batches and two absent batches, including two committed batches whose `Sent` mark was interrupted; the per-batch durable-key verdict passed on PostgreSQL 17 and 18.
+- [x] (2026-09-22 20:56Z) Ran the stale acknowledgement boundary through separate owner pools and recorded both database-clock leases, both delete results, the failed visibility extension, and the final empty queue in an implementation-class verdict on PostgreSQL 17 and 18.
+- [ ] Implement random `SIGKILL` under sustained load with bounded duplicate and drain oracles.
 - [x] (2026-09-22 02:05Z) Implemented pool exhaustion with long polling and verified transient acquisition timeout plus same-pool recovery.
 - [x] (2026-09-22 02:54Z) Added pg_partman to both dev-shell PostgreSQL majors and replaced the partition probes with live notification-storm and retention workloads; both declared defects reproduce on PostgreSQL 17 and 18 as non-blocking known defects.
 - [ ] Implement backend termination, PostgreSQL restart and crash, unlogged-queue loss, and the network proxy scenarios, with transient-error classification.
@@ -157,6 +164,9 @@ Milestone 4 — pgmq-hs soak and telemetry arms.
 - Observation: the process-level sabotage exposed a real PGMQ table type mismatch with the first decoder draft (`read_ct` is PostgreSQL `int4`) and a short interval when the worker control log remains locked after its final mark. Reading the correct type and retrying the log read allowed the lease oracle to judge the evidence.
   Evidence: PostgreSQL 18 normal run `01a0cada-8a1d-7575-b8fe-229030e26e45` recorded 1,200 leases from four consumers and two producers; PostgreSQL 17 run `01a0cadb-220c-779e-b3f3-181c9f1265c9` passed with four producers. Sabotage run `01a0cadf-b034-77ac-a5db-cacaf46d7d23` failed specifically on `unique-ownership`, with four observed leases of one row and a `DuplicateReadCount` finding.
 
+- Observation: a producer killed after beginning a batch can leave the complete batch durable without reporting `Sent`, or leave no rows at all. A missing worker reply therefore cannot decide whether the transaction committed; durable keys must decide atomicity for each recorded intent.
+  Evidence: PostgreSQL 18 run `01a0cae6-1e7a-7164-a87b-ffe092405b8a` recorded five intents of fifty keys each. Two killed producers left all fifty keys without a `Sent` mark, and two left zero keys; the committed control had all fifty keys and its `Sent` mark. After adding an explicit kill assertion, run `01a0cae9-8658-7459-98a0-3f0a14e3b074` passed with four recorded `SIGKILL`s, three absent batches, and one complete batch whose `Sent` mark was interrupted.
+
 
 ## Decision Log
 
@@ -202,6 +212,10 @@ Milestone 4 — pgmq-hs soak and telemetry arms.
 
 - Decision: sampler deadlines and phase-boundary events share one STM wait using `registerDelay`; sampler loops do not create and cancel `Async` waiters on every tick.
   Rationale: a leak detector must not add live thread objects in proportion to the number of samples. The single STM wait preserves immediate phase-boundary wakeups and scheduled deadlines without a per-sample child-thread lifecycle.
+  Date: 2026-09-22
+
+- Decision: the batch-kill oracle compares each persisted producer intent against PostgreSQL's durable queue keys after the kill, with one completed control round. It treats `Sent` as proof of a complete batch but does not infer rollback from an absent `Sent` mark.
+  Rationale: `SIGKILL` can interrupt the reply after PostgreSQL commits. Per-batch key conservation detects partial commits while allowing either valid outcome at that boundary.
   Date: 2026-09-22
 
 

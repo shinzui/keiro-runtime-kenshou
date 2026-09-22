@@ -48,6 +48,8 @@ producer context = do
   awaitStart context do
     withRolePool context \pool -> do
       let bodies = [MessageBody (object ["k" .= (context.init.instanceName <> "-" <> Text.pack (show index))]) | index <- [1 .. arguments.count]]
+      context.send (WrkFacts [object ["kind" .= ("intent" :: Text), "keys" .= [context.init.instanceName <> "-" <> Text.pack (show index) | index <- [1 .. arguments.count]]]])
+      context.send (WrkCustom "before-send" (object ["count" .= arguments.count]))
       identifiers <- use pool (Sessions.batchSendMessage (Types.BatchSendMessage arguments.queue bodies Nothing))
       now <- getCurrentTime
       context.send (WrkFacts [object ["kind" .= ("sent" :: Text), "ids" .= identifiers]])

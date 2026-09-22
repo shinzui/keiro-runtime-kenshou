@@ -32,9 +32,10 @@ import Kenshou.Check.Fault.Network (ProxyMode (..), proxiedConnectionString, res
 import Kenshou.Check.Fault.Postgres (BackendSelector (..), CrashMode (..), crashPostmaster, terminateBackends)
 import Kenshou.Check.Process
 import Kenshou.Check.Scenario (withCheck)
-import Kenshou.Check.Verdict (InvariantClass (Contract), RunInfo (..), Verdict (..), VerdictStatus (..), writeVerdict)
+import Kenshou.Check.Verdict (InvariantClass (Contract, Implementation), RunInfo (..), Verdict (..), VerdictStatus (..), writeVerdict)
 import Kenshou.Core.Context (ArtifactDir (VerdictsDir), RunContext (..), SummarySection (Verdicts), artifactPath, declareMediaType, putSummary, requirePostgres)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
+import Kenshou.Core.Id (unSeed)
 import Kenshou.Core.Knob (knobInt, knobText)
 import Kenshou.Core.Role (ControlMessage (CtlStart), WorkerMessage (WrkCustom, WrkFacts))
 import Kenshou.Core.Scenario (ScenarioReport, failedWith, passed)
@@ -42,7 +43,7 @@ import Kenshou.Suite.Pgmq.Facts (PgmqFact (Leased))
 import Kenshou.Suite.Pgmq.Harness
 import Kenshou.Suite.Pgmq.Knobs (PgmqKnobs (..), knobName)
 import Kenshou.Suite.Pgmq.Listener (Notification (..), awaitNotifications, withListener, withListeners)
-import Kenshou.Suite.Pgmq.Oracle (checkLeaseIntervals)
+import Kenshou.Suite.Pgmq.Oracle (checkLeaseIntervals, queueKeys)
 import Pgmq.Config qualified as Config
 import Pgmq.Effectful qualified as Pgmq
 import Pgmq.Effectful.Effect qualified as PgmqEff
@@ -277,29 +278,65 @@ producerBatchAtomicity :: RunContext -> IO ScenarioReport
 producerBatchAtomicity context = withPgmqRun context \runtime ->
   withScenarioQueue runtime.pool context runtime.knobs "producer_kill" \queue -> do
     let batchSize = fromIntegral runtime.knobs.batchSize :: Int
+        rounds = max 3 (min 20 (fromIntegral (knobInt context.knobs (knobName "pgmq.kills"))))
         arguments = object ["queue" .= Pgmq.queueNameToText queue, "count" .= batchSize, "batchSize" .= batchSize]
     withCheck context \checkEnvironment ->
       withSupervisor checkEnvironment \supervisor -> do
-        spec <- roleProcess checkEnvironment "pgmq/pgmq-producer" 1 arguments
-        child <- spawn supervisor spec
-        awaitReady child 10000
-        sendCommand child CtlStart
-        threadDelay 1000
-        _ <- try @SomeException (killChild supervisor child)
-        metrics <- effect runtime (Pgmq.queueMetrics queue)
-        verdict context "producer-batch-atomicity" [("all-or-nothing", metrics.queueLength == 0 || metrics.queueLength == fromIntegral batchSize)]
+        observations <- traverse (runRound checkEnvironment supervisor arguments batchSize) [1 .. rounds]
+        durable <- queueKeys runtime.pool queue
+        let perBatch =
+              [ let actual = Set.size (Set.intersection durable (Set.fromList intended))
+                 in object ["round" .= index, "intentKeys" .= length intended, "durableKeys" .= actual, "sentIds" .= length sent, "killDelayMicros" .= delay, "killed" .= killed]
+              | (index, intended, sent, delay, killed) <- observations
+              ]
+            fullOrEmpty = all (\(_, intended, _, _, _) -> let actual = Set.size (Set.intersection durable (Set.fromList intended)) in actual == 0 || actual == batchSize) observations
+            sentComplete = all (\(_, intended, sent, _, _) -> null sent || length sent == batchSize && Set.fromList intended `Set.isSubsetOf` durable) observations
+            noUnknownKeys = durable `Set.isSubsetOf` Set.fromList (concatMap (\(_, intended, _, _, _) -> intended) observations)
+        putSummary context Verdicts "producer-batch-observations" (object ["batches" .= perBatch, "durableKeys" .= Set.size durable])
+        verdict context "producer-batch-atomicity" [("all-rounds-have-intent", all (\(_, intended, _, _, _) -> length intended == batchSize) observations), ("at-least-one-sigkill", any (\(_, _, _, _, killed) -> killed) observations), ("all-or-nothing-per-batch", fullOrEmpty), ("every-reported-send-complete", sentComplete), ("no-unexpected-keys", noUnknownKeys), ("non-vacuous-committed-control", not (Set.null durable))]
+  where
+    runRound checkEnvironment supervisor arguments batchSize index = do
+      spec <- roleProcess checkEnvironment "pgmq/pgmq-producer" index arguments
+      child <- spawn supervisor spec
+      awaitReady child 10000
+      sendCommand child CtlStart
+      awaitMark child "before-send" 10000
+      let delay = if index == 1 then 50000 else fromIntegral ((unSeed context.seed + fromIntegral index * 7919) `mod` 3000)
+      if index == 1 then awaitWorkerCount child batchSize 100 else threadDelay delay
+      killed <- if index == 1 then pure False else either (const False) (const True) <$> try @SomeException (killChild supervisor child)
+      (intended, sent) <- readBatchFacts context index
+      pure (index, intended, sent, delay, killed)
+
+readBatchFacts :: RunContext -> Int -> IO ([Text], [Pgmq.MessageId])
+readBatchFacts context index = do
+  let path = context.outDir <> "/logs/pgmq-pgmq-producer-" <> show index <> ".0.control.jsonl"
+  linesOfOutput <- readControlLines path 20
+  messages <- maybe (ioError (userError ("invalid producer control log: " <> path))) pure (traverse decodeStrict' linesOfOutput)
+  let intents = [keys | WrkFacts facts <- messages, fact <- facts, Just keys <- [parseMaybe (withObject "intent" (.: "keys")) fact]]
+      sends = [ids | WrkFacts facts <- messages, fact <- facts, Just ids <- [parseMaybe (withObject "sent" (.: "ids")) fact]]
+  case (intents, sends) of
+    ([keys], []) -> pure (keys, [])
+    ([keys], [ids]) -> pure (keys, ids)
+    _ -> ioError (userError ("producer omitted or duplicated batch evidence: " <> path))
 
 staleAckAfterExpiry :: RunContext -> IO ScenarioReport
 staleAckAfterExpiry context = withPgmqRun context \runtime ->
   withScenarioQueue runtime.pool context runtime.knobs "stale_ack" \queue -> do
     messageId <- effect runtime (Pgmq.sendMessage (Types.SendMessage queue (body 1) Nothing))
-    first <- only =<< effect runtime (Pgmq.readMessage (Types.ReadMessage queue 1 (Just 1) Nothing))
-    threadDelay 1050000
-    second <- only =<< effect runtime (Pgmq.readMessage (Types.ReadMessage queue 30 (Just 1) Nothing))
-    staleDeleted <- effect runtime (Pgmq.deleteMessage (Types.MessageQuery queue messageId))
-    currentDeleted <- effect runtime (Pgmq.deleteMessage (Types.MessageQuery queue messageId))
-    extension <- effect runtime (Pgmq.changeVisibilityTimeout (Types.VisibilityTimeoutQuery queue messageId 30))
-    verdict context "stale-ack" [("redelivered", first.messageId == second.messageId && second.readCount == 2), ("stale-delete-wins", staleDeleted && not currentDeleted), ("no-fencing", maybe True (const False) extension)]
+    withPgmqPool (requirePostgres context) "stale-owner-a" runtime.knobs \ownerA ->
+      withPgmqPool (requirePostgres context) "stale-owner-b" runtime.knobs \ownerB -> do
+        first <- only =<< lease ownerA queue 1
+        threadDelay 1050000
+        second <- only =<< lease ownerB queue 30
+        staleDeleted <- delete ownerA queue messageId
+        currentDeleted <- delete ownerB queue messageId
+        extension <- either (throwIO . userError . show) pure =<< runOps Nothing ownerB (Pgmq.changeVisibilityTimeout (Types.VisibilityTimeoutQuery queue messageId 30))
+        metrics <- effect runtime (Pgmq.queueMetrics queue)
+        putSummary context Verdicts "stale-ack-observations" (object ["first" .= object ["id" .= first.messageId, "readCount" .= first.readCount, "readAt" .= first.lastReadAt, "visibleAt" .= first.visibilityTime], "second" .= object ["id" .= second.messageId, "readCount" .= second.readCount, "readAt" .= second.lastReadAt, "visibleAt" .= second.visibilityTime], "staleDeleted" .= staleDeleted, "currentDeleted" .= currentDeleted, "extensionSucceeded" .= isJust extension, "queueLength" .= metrics.queueLength])
+        verdictClass Implementation context "stale-ack" [("same-message-redelivered-after-expiry", first.messageId == second.messageId && first.messageId == messageId && second.readCount == first.readCount + 1 && maybe False (>= first.visibilityTime) second.lastReadAt), ("stale-delete-wins", staleDeleted && not currentDeleted), ("no-fencing", maybe True (const False) extension), ("queue-empty", metrics.queueLength == 0)]
+  where
+    lease pool queue seconds = either (throwIO . userError . show) pure =<< runOps Nothing pool (Pgmq.readMessage (Types.ReadMessage queue seconds (Just 1) Nothing))
+    delete pool queue identifier = either (throwIO . userError . show) pure =<< runOps Nothing pool (Pgmq.deleteMessage (Types.MessageQuery queue identifier))
 
 poolExhaustion :: RunContext -> IO ScenarioReport
 poolExhaustion context = withPgmqRun context \runtime ->
@@ -568,21 +605,24 @@ session :: Pool.Pool -> Session.Session value -> IO value
 session pool action = either (throwIO . userError . show) pure =<< Pool.use pool action
 
 verdict :: RunContext -> Text -> [(Text, Bool)] -> IO ScenarioReport
-verdict context name checks = do
+verdict = verdictClass Contract
+
+verdictClass :: InvariantClass -> RunContext -> Text -> [(Text, Bool)] -> IO ScenarioReport
+verdictClass cls context name checks = do
   putSummary context Verdicts name (object ["checks" .= [object ["name" .= label, "passed" .= ok] | (label, ok) <- checks]])
   let failures = [label | (label, False) <- checks]
   checkedAt <- getCurrentTime
   directory <- artifactPath context VerdictsDir ""
-  _ <- writeVerdict directory (RunInfo context.runId context.scenario) (simpleVerdict name checks failures checkedAt)
+  _ <- writeVerdict directory (RunInfo context.runId context.scenario) (simpleVerdict cls name checks failures checkedAt)
   declareMediaType context ("verdicts/" <> sanitiseChecker name <> ".json") "application/json"
   pure $ if null failures then passed else failedWith failures (name <> " failed: " <> Text.intercalate ", " failures)
 
-simpleVerdict :: Text -> [(Text, Bool)] -> [Text] -> UTCTime -> Verdict
-simpleVerdict name checks failures checkedAt =
+simpleVerdict :: InvariantClass -> Text -> [(Text, Bool)] -> [Text] -> UTCTime -> Verdict
+simpleVerdict cls name checks failures checkedAt =
   Verdict
     { checker = name,
       invariant = name,
-      cls = Contract,
+      cls,
       status = if null failures then Held else Violated,
       reason = if null failures then Nothing else Just (name <> " failed: " <> Text.intercalate ", " failures),
       summary = if null failures then name <> " held" else name <> " violated",
