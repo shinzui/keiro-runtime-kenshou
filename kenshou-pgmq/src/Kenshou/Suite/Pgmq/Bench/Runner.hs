@@ -1,5 +1,6 @@
 module Kenshou.Suite.Pgmq.Bench.Runner (runBenchmark) where
 
+import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, try)
 import Control.Monad (forM_)
 import Data.Aeson (object, (.=))
@@ -114,12 +115,19 @@ sendOperation client queue sequenceNumber batchSize operation
 fullCycle :: PgmqClient -> Pgmq.QueueName -> Word64 -> IO OpResult
 fullCycle client queue sequenceNumber = do
   _ <- client.send queue (payload (fromIntegral sequenceNumber))
-  messages <- client.readBatch queue 30 1
+  messages <- readAvailable 10 (client.readBatch queue 30 1)
   case Vector.toList messages of
     [] -> pure (OpFailed (ErrorCause "empty-read-after-send"))
     message : _ -> do
       acknowledged <- client.delete queue message.messageId
       pure (if acknowledged then OpOk 3 else OpFailed (ErrorCause "delete-returned-false"))
+
+readAvailable :: Int -> IO (Vector.Vector value) -> IO (Vector.Vector value)
+readAvailable attempts action = do
+  values <- action
+  if Vector.null values && attempts > 1
+    then threadDelay 1000 >> readAvailable (attempts - 1) action
+    else pure values
 
 groupedCycle :: PgmqRun -> Pgmq.QueueName -> Word64 -> IO OpResult
 groupedCycle runtime queue sequenceNumber = do
