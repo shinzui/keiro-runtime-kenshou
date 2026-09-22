@@ -163,5 +163,12 @@ postgresLoop config events sampler tickNumber = do
 
 waitForEvent :: TChan Event -> Word64 -> IO Event
 waitForEvent events deadline = do
-  result <- race (sleepUntilNs deadline >> pure Scheduled) (atomically (readTChan events))
-  pure (either id id result)
+  current <- nowNs
+  let remainingNs = deadline - min deadline current
+      remainingMicros = fromIntegral (min (fromIntegral (maxBound :: Int)) ((remainingNs + 999) `div` 1_000))
+  elapsed <- registerDelay remainingMicros
+  atomically $
+    readTChan events
+      `orElse` do
+        readTVar elapsed >>= check
+        pure Scheduled
