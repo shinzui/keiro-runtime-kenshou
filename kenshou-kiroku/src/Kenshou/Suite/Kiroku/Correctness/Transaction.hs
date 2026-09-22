@@ -1,8 +1,11 @@
 module Kenshou.Suite.Kiroku.Correctness.Transaction (scenarios) where
 
-import Data.Aeson (object)
+import Data.Aeson (object, (.=))
 import Data.Int (Int64)
 import Data.List.NonEmpty (NonEmpty (..))
+import Data.Vector qualified as Vector
+import Effectful (runEff)
+import Effectful.Error.Static (runErrorNoCallStack)
 import Hasql.Decoders qualified as Decoders
 import Hasql.Encoders qualified as Encoders
 import Hasql.Statement qualified as Statement
@@ -14,7 +17,7 @@ import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario
 import Kenshou.Suite.Kiroku.Correctness.Append (recordCells)
-import Kenshou.Suite.Kiroku.Fixture.Store (withKirokuStore)
+import Kenshou.Suite.Kiroku.Fixture.Store (withKirokuStore, withKirokuStoreWithEnricher)
 import Kenshou.Suite.Kiroku.Knobs (storeKnobs)
 import Kiroku.Store hiding (id, withKirokuStore)
 
@@ -60,6 +63,16 @@ runTransactionChecks context = withKirokuStore context \store -> do
   conflict <- runStoreIO store (runTransactionAppending committed (ExactVersion (StreamVersion 0)) [event] (\_ -> Tx.sql "insert into kenshou_kiroku.tx_probe (tag) values ('conflict')"))
   afterConflict <- countRows
   finalInfo <- runStoreIO store (getStream committed)
+  (bareAppend, resourceAppend, bareRows, resourceRows) <-
+    withKirokuStoreWithEnricher context (Just (\(EventData eventId eventType payload _ causationId correlationId) -> pure (EventData eventId eventType payload (Just (object ["enriched" .= True])) causationId correlationId))) \hookStore -> do
+      let bareName = StreamName "tx-hook-bare"
+          resourceName = StreamName "tx-hook-resource"
+          append name = runTransactionAppending name NoStream [event] (\_ -> pure ())
+      bare <- runStoreIO hookStore (append bareName)
+      resource <- runEff $ runErrorNoCallStack @StoreError $ runKirokuStoreWith hookStore $ runStorePool hookStore (runTransactionAppendingResource resourceName NoStream [event] (\_ -> pure ()))
+      bareRead <- runStoreIO hookStore (readStreamForward bareName (StreamVersion 0) 10)
+      resourceRead <- runStoreIO hookStore (readStreamForward resourceName (StreamVersion 0) 10)
+      pure (bare, resource, bareRead, resourceRead)
   let cells =
         [ ("probe-table-created", created == Right ()),
           ("probe-starts-empty", before == Right (0 :: Int64)),
@@ -68,7 +81,9 @@ runTransactionChecks context = withKirokuStore context \store -> do
           ("condemned-transaction-return", rollback == Right (Right ())),
           ("condemned-transaction-rolls-back", rolledBackInfo == Right Nothing && afterRollback == Right 1),
           ("conflict-reported", case conflict of Right (Left (WrongExpectedVersion name _ _)) -> name == committed; _ -> False),
-          ("conflict-skips-continuation", afterConflict == Right 1 && case finalInfo of Right (Just info) -> info.version == StreamVersion 1; _ -> False)
+          ("conflict-skips-continuation", afterConflict == Right 1 && case finalInfo of Right (Just info) -> info.version == StreamVersion 1; _ -> False),
+          ("bare-append-commits-without-enrichment", bareAppend == Right (Right ()) && case bareRows of Right rows -> fmap (.metadata) (Vector.toList rows) == [Nothing]; _ -> False),
+          ("resource-append-applies-enrichment", resourceAppend == Right (Right ()) && case resourceRows of Right rows -> fmap (.metadata) (Vector.toList rows) == [Just (object ["enriched" .= True])]; _ -> False)
         ]
   recordCells context "append-with-continuation" [] cells
 

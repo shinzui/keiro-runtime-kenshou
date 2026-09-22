@@ -17,7 +17,7 @@ The implemented scenarios are listed below. The global-order and cursor scenario
 | `kiroku/append/correctness/all-order-and-gaps` | A 5,000-event, 50-stream workload mixing single and multi-stream appends preserves append and read order; native counts agree before hard deletes, and five deletes create exactly the reported gaps. The inventory head bounds the visible head. |
 | `kiroku/read/correctness/cursor-semantics` | Paged global, stream, category and Streamly reads preserve order and exact membership; source stream names resolve from surrogate IDs. |
 | `kiroku/lifecycle/correctness/delete-and-truncate` | Soft delete, restoration, truncation, reserved stream protection, hard delete, its event handler signal and a live `$all` subscriber that stays ordered throughout. |
-| `kiroku/transaction/correctness/append-with-continuation` | Caller SQL and an event append commit together; a condemned transaction rolls both back; a rejected version skips the continuation. The planned enrich-hook comparison remains to be added. |
+| `kiroku/transaction/correctness/append-with-continuation` | Caller SQL and an event append commit together; a condemned transaction rolls both back; a rejected version skips the continuation. The basic wrapper bypasses an enrichment hook while the resource-aware wrapper applies it. |
 | `kiroku/subscription/correctness/checkpoint-policies` | Missing checkpoints refuse startup or initialize at zero or the current head; existing rows win; explicit reset reports missing names and causes redelivery. |
 | `kiroku/subscription/correctness/filters-advance-checkpoint` | The event type filter and selector compose; 2,000 skipped events still advance the durable checkpoint to the global head. |
 

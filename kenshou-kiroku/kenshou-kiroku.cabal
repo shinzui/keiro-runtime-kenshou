@@ -49,6 +49,7 @@ library
     aeson >=2.2 && <2.3,
     base >=4.21 && <4.22,
     containers >=0.7 && <0.8,
+    effectful >=2.6 && <2.7,
     filepath,
     hasql >=1.10 && <1.11,
     hasql-transaction >=1.0 && <2,
