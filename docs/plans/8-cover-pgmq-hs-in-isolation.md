@@ -11,6 +11,12 @@ provenance:
     model: "claude-fable-5-1"
     harness: "claude-code"
     at: 2026-09-20T17:15:35Z
+  revisions:
+    - model: "gpt-5.6-sol"
+      harness: "codex-cli"
+      at: 2026-09-22T00:33:49Z
+      mode: "implement"
+      note: "Started EP-8 after verifying toolkit, database, cohort, and pgmq-hs dependency prerequisites."
 ---
 
 # Cover pgmq-hs in isolation
@@ -31,17 +37,18 @@ After this plan, a maintainer can run `kenshou list --layer pgmq` and see about 
 
 Milestone 1 — pgmq-hs correctness scenarios (includes the package, the shared harness and registration).
 
-- [ ] Verify the hard dependencies are implemented (kernel, measurement, correctness, diagnostics, telemetry) using the checks in Concrete Steps.
-- [ ] Create `kenshou-pgmq/kenshou-pgmq.cabal`, `src/Kenshou/Suite/Pgmq.hs` with an empty `bundle`, and the `kenshou-pgmq-test` suite; build.
-- [ ] Register the bundle in `kenshou-cli` (the three-line edit) and confirm `kenshou list --layer pgmq` runs.
-- [ ] Implement `Kenshou.Suite.Pgmq.Knobs` (common knob vocabulary and `resolveKnobs`) with unit tests.
-- [ ] Implement `Kenshou.Suite.Pgmq.Harness` (pool, per-run queue names, fixture setup and teardown, `runOps`, `withPgmqRun`, pg_partman probe) and `Kenshou.Suite.Pgmq.Telemetry` (`pgmqTracer`, `withMetricsPoller`) with unit tests for queue naming.
-- [ ] Implement `Kenshou.Suite.Pgmq.Facts`, `.Oracle` and `.Listener`; unit-test the lease-interval checker against doctored fact lists (it must fail on an overlap, a duplicate read count and an early redelivery).
+- [x] (2026-09-22 00:34Z) Verified the kernel, measurement, correctness, diagnostics, telemetry, CLI, live PostgreSQL round trip, released pgmq cohort, Hackage release, and upstream tag.
+- [x] (2026-09-22 00:52Z) Created `kenshou-pgmq`, its 39-module library, `kenshou-pgmq-test`, and the 49-scenario bundle; the package and CLI build in the dev shell.
+- [x] (2026-09-22 00:52Z) Registered the bundle in `kenshou-cli`; `kenshou list --layer pgmq` reports 49 registry-valid scenarios and three worker roles.
+- [x] (2026-09-22 01:01Z) Implemented `Kenshou.Suite.Pgmq.Knobs` (common knob vocabulary and `resolveKnobs`) with focused default, invalid-combination, and queue-identity tests.
+- [x] (2026-09-22 00:52Z) Implemented the pool, per-run queue names, setup/teardown, plain/traced effect interpreter, telemetry bracket, and pg_partman probe; live round trips pass on PostgreSQL 17 and 18.
+- [ ] Complete the layer metrics poller and add focused unit tests for pool configuration; queue-name derivation is covered.
+- [x] (2026-09-22 00:52Z) Implemented the fact vocabulary, database-clock lease and due-time oracles, topic model, and raw LISTEN wrapper; doctored overlap, duplicate-read-count, early-delivery, and explicit-release tests pass.
 - [ ] Implement the `queue`, `send`, `read` and `ack` correctness scenarios.
 - [ ] Implement the `vt` correctness scenarios, including real wall-clock expiry.
 - [ ] Implement the `fifo`, `topics`, `notify`, `config` and `effectful` correctness scenarios, including the two known-defect scenarios.
 - [ ] Run every correctness scenario on `pg.version=17` and `pg.version=18`; record outcomes in this plan.
-- [ ] Write the first version of `docs/layers/pgmq.md`.
+- [x] (2026-09-22 00:52Z) Wrote the first `docs/layers/pgmq.md`, with every registered identifier, classification, known-defect link, shared knobs, and operating rules; the unit suite enforces coverage.
 
 Milestone 2 — pgmq-hs concurrency and crash scenarios.
 
@@ -74,7 +81,11 @@ Milestone 4 — pgmq-hs soak and telemetry arms.
 
 ## Surprises & Discoveries
 
-(None yet.)
+- Observation: Hackage's preferred-version endpoint and the upstream Git tags both identify `0.6.1.0` as the current pgmq-hs release, while the local Mori corpus exposes the matching release source and documentation.
+  Evidence: `https://hackage.haskell.org/package/pgmq-core/preferred.json`, upstream tag `v0.6.1.0`, and `mori registry show shinzui/pgmq-hs --full` all agree on the selected cohort.
+
+- Observation: the released effect interpreter closes over the exact stack `Eff '[Pgmq, Error PgmqRuntimeError, IOE]`; a helper polymorphic in an arbitrary tail does not type-check against the library's `runPgmq`/`runPgmqTraced` API.
+  Evidence: `Kenshou.Suite.Pgmq.Harness.runOps` required the exact stack found in the Mori-located `pgmq-effectful` source. The resulting implementation builds and completed real queue round trips on PostgreSQL 17 and 18.
 
 
 ## Decision Log

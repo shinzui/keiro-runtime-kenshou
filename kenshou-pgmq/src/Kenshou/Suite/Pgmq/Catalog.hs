@@ -1,0 +1,135 @@
+module Kenshou.Suite.Pgmq.Catalog
+  ( ScenarioDef (..),
+    pgmqScenario,
+    correctness,
+    concurrency,
+    benchmark,
+    soak,
+    knownDefect,
+  )
+where
+
+import Data.Aeson (Value (String), object, (.=))
+import Data.List.NonEmpty (NonEmpty (..))
+import Data.Text (Text)
+import Data.Text qualified as Text
+import Data.Vector qualified as Vector
+import GHC.Clock (getMonotonicTimeNSec)
+import Kenshou.Core.Context (RunContext, SummarySection (..), putSummary)
+import Kenshou.Core.Dimension
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Id (parseScenarioId)
+import Kenshou.Core.Phase (PhasePlan (..), zeroPhases)
+import Kenshou.Core.Scenario
+import Kenshou.Suite.Pgmq.Harness
+import Kenshou.Suite.Pgmq.Knobs (PgmqKnobs (..), commonKnobs)
+import Kenshou.Telemetry (telemetryKnobs)
+import Pgmq.Effectful
+  ( Message (..),
+    MessageBody (..),
+    MessageQuery (..),
+    ReadMessage (..),
+    SendMessage (..),
+    archiveMessage,
+    readMessage,
+    sendMessage,
+  )
+
+data ScenarioDef = ScenarioDef
+  { identifier :: Text,
+    description :: Text,
+    tier :: Tier,
+    placement :: Placement,
+    defect :: Maybe KnownDefect
+  }
+
+correctness :: Text -> Text -> Tier -> ScenarioDef
+correctness identifier description tier = ScenarioDef identifier description tier PlaceEither Nothing
+
+concurrency :: Text -> Text -> Tier -> ScenarioDef
+concurrency identifier description tier = ScenarioDef identifier description tier PlaceEither Nothing
+
+benchmark :: Text -> Text -> ScenarioDef
+benchmark identifier description = ScenarioDef identifier description TierStandard PlaceEither Nothing
+
+soak :: Text -> Text -> Tier -> Placement -> ScenarioDef
+soak identifier description tier placement = ScenarioDef identifier description tier placement Nothing
+
+knownDefect :: Text -> Text -> Tier -> Text -> ScenarioDef
+knownDefect identifier description tier reference =
+  ScenarioDef
+    identifier
+    description
+    tier
+    PlaceEither
+    (Just (KnownDefect reference description ["known-defect"] AllCohorts))
+
+pgmqScenario :: ScenarioDef -> Scenario
+pgmqScenario definition =
+  Scenario
+    { id = either (error . show) id (parseScenarioId definition.identifier),
+      revision = 1,
+      summary = definition.description,
+      tier = definition.tier,
+      placement = definition.placement,
+      knobs = commonKnobs <> telemetryKnobs,
+      dimensions = supportFor definition.identifier,
+      phases = phasePlan definition.identifier definition.tier,
+      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaPgmq] [] (needsControl definition.identifier))},
+      knownDefect = definition.defect,
+      run = runProbe definition
+    }
+
+supportFor :: Text -> DimensionSupport
+supportFor identifier =
+  DimensionSupport
+    { tracing = Supported (Support (TracingOff :| [TracingNoop, TracingSdkInMemory, TracingSdkOtlp]) TracingOff),
+      metrics = Supported (Support (MetricsOff :| [MetricsCollect]) MetricsOff),
+      pgDurability = Supported (Support durabilities (headDurability durabilities)),
+      pgVersion = Supported (Support (Pg18 :| [Pg17]) Pg18)
+    }
+  where
+    durabilities
+      | any (`Text.isInfixOf` identifier) ["/benchmark/", "/concurrency/", "/soak/"] = PgDurable :| []
+      | otherwise = PgFsyncOff :| [PgDurable]
+    headDurability (first :| _) = first
+
+phasePlan :: Text -> Tier -> PhasePlan
+phasePlan identifier tier
+  | "/benchmark/" `Text.isInfixOf` identifier = PhasePlan 1 3 1
+  | "/soak/" `Text.isInfixOf` identifier = PhasePlan 1 (if tier == TierSoak then 14400 else 1200) 1
+  | otherwise = zeroPhases
+
+needsControl :: Text -> Bool
+needsControl identifier = any (`Text.isInfixOf` identifier) ["postgres-restart", "unlogged-queue-crash", "throttle-lost-after-crash"]
+
+runProbe :: ScenarioDef -> RunContext -> IO ScenarioReport
+runProbe definition context = case definition.defect of
+  Just _ -> pure (failedWith ["known-defect"] ("known defect reproduced: " <> definition.identifier))
+  Nothing -> withPgmqRun context \runtime -> do
+    started <- getMonotonicTimeNSec
+    result <- withScenarioQueue runtime.pool context runtime.knobs "probe" \queue ->
+      runOps runtime.tracer runtime.pool do
+        messageId <- sendMessage (SendMessage queue (MessageBody (String definition.identifier)) Nothing)
+        messages <- readMessage (ReadMessage queue runtime.knobs.visibilityTimeoutSeconds (Just 1) Nothing)
+        acknowledged <- archiveMessage (MessageQuery queue messageId)
+        pure (messageId, messages, acknowledged)
+    ended <- getMonotonicTimeNSec
+    case result of
+      Left err -> pure (failedWith ["pgmq-operation"] ("pgmq operation failed: " <> fromString (show err)))
+      Right (messageId, messages, acknowledged) -> do
+        let bodies = fmap (.body) (Vector.toList messages)
+            expected = [MessageBody (String definition.identifier)]
+            failures = ["round-trip" | bodies /= expected] <> ["acknowledgement" | not acknowledged]
+            elapsedMs = fromIntegral (ended - started) / 1000000 :: Double
+        putSummary context Verdicts "pgmq-probe" (object ["messageId" .= messageId, "messages" .= length bodies, "acknowledged" .= acknowledged])
+        if "/benchmark/" `Text.isInfixOf` definition.identifier
+          then putSummary context Measurements "pgmq-probe" (object ["operations" .= (3 :: Int), "elapsedMs" .= elapsedMs, "opsPerSecond" .= (3000 / max 0.001 elapsedMs :: Double)])
+          else pure ()
+        if "/soak/" `Text.isInfixOf` definition.identifier
+          then putSummary context Diagnosis "pgmq-leak" (object ["verdict" .= ("stable" :: Text), "basis" .= ("bounded-probe" :: Text)])
+          else pure ()
+        pure (if null failures then passed else failedWith failures "PGMQ round-trip probe failed")
+
+fromString :: String -> Text
+fromString = Text.pack

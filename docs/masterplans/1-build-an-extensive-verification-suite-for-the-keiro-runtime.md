@@ -56,6 +56,11 @@ provenance:
       at: 2026-09-21T23:50:00Z
       mode: "implement"
       note: "Completed EP-7 telemetry arms, paired overhead analysis, and telemetry-induced problem detection."
+    - model: "gpt-5.6-sol"
+      harness: "codex-cli"
+      at: 2026-09-22T00:33:49Z
+      mode: "implement"
+      note: "Started EP-8 and moved its registry entry to In Progress."
 ---
 
 # Build an extensive verification suite for the keiro runtime
@@ -102,7 +107,7 @@ There is no local ADR corpus yet: `docs/adr/` does not exist in this repository,
 | 5 | Build the correctness toolkit for ledgers, invariants, faults and process control | docs/plans/5-build-the-correctness-toolkit-for-ledgers-invariants-faults-and-process-control.md | EP-2 | None | Complete |
 | 6 | Build the diagnostics toolkit for memory leaks and concurrency stalls | docs/plans/6-build-the-diagnostics-toolkit-for-memory-leaks-and-concurrency-stalls.md | EP-2, EP-4 | EP-5 | Complete |
 | 7 | Add telemetry arms and measure observability overhead | docs/plans/7-add-telemetry-arms-and-measure-observability-overhead.md | EP-2, EP-4 | EP-6 | Complete |
-| 8 | Cover pgmq-hs in isolation | docs/plans/8-cover-pgmq-hs-in-isolation.md | EP-2, EP-4, EP-5, EP-6, EP-7 | EP-3 | Not Started |
+| 8 | Cover pgmq-hs in isolation | docs/plans/8-cover-pgmq-hs-in-isolation.md | EP-2, EP-4, EP-5, EP-6, EP-7 | EP-3 | In Progress |
 | 9 | Cover kiroku in isolation | docs/plans/9-cover-kiroku-in-isolation.md | EP-2, EP-4, EP-5, EP-6, EP-7 | EP-3 | Not Started |
 | 10 | Cover shibuya core and its PGMQ and kiroku adapters | docs/plans/10-cover-shibuya-core-and-its-pgmq-and-kiroku-adapters.md | EP-2, EP-4, EP-5, EP-6, EP-7 | EP-3, EP-8, EP-9 | Not Started |
 | 11 | Cover the Kafka transport edge with a disposable broker | docs/plans/11-cover-the-kafka-transport-edge-with-a-disposable-broker.md | EP-2, EP-4, EP-5, EP-6, EP-7 | EP-3, EP-10 | Not Started |

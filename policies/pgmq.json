@@ -1,0 +1,19 @@
+{
+  "schema": "kenshou.comparison-policy/v1",
+  "name": "pgmq",
+  "minimumPairs": 3,
+  "confidenceLevel": 0.95,
+  "bootstrapIterations": 10000,
+  "resamplingSeed": 20260921,
+  "requireInterleaving": true,
+  "requireGrade": "benchmark",
+  "maxCiRelativeWidth": 0.5,
+  "maxCheckpointAsymmetry": 0.34,
+  "metrics": [
+    {"match": "op.*.throughput", "direction": "higher-is-better", "relativeLimit": 0.05, "absoluteFloor": 1.0},
+    {"match": "op.*.latency.p50", "direction": "lower-is-better", "relativeLimit": 0.10, "absoluteFloor": 50000},
+    {"match": "op.*.latency.p99", "direction": "lower-is-better", "relativeLimit": 0.15, "absoluteFloor": 200000},
+    {"match": "pgmq.wal-bytes-per-message", "direction": "lower-is-better", "relativeLimit": 0.10, "absoluteFloor": 64},
+    {"match": "rts.alloc-bytes-per-op", "direction": "lower-is-better", "relativeLimit": 0.05, "absoluteFloor": 64}
+  ]
+}
