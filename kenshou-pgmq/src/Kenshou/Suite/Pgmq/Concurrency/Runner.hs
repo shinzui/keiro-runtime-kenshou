@@ -5,7 +5,7 @@ import Control.Concurrent.Async (async, cancel, mapConcurrently, wait)
 import Control.Concurrent.MVar
 import Control.Concurrent.STM (atomically)
 import Control.Exception (IOException, SomeException, finally, throwIO, try)
-import Control.Monad (forM, replicateM, void)
+import Control.Monad (forM, forM_, replicateM, void, when)
 import Data.Aeson (Value, decodeStrict', object, withObject, (.:), (.=))
 import Data.Aeson.Types (parseMaybe)
 import Data.ByteString.Char8 qualified as ByteString
@@ -536,13 +536,14 @@ partitionedNotifyStorm context = withPgmqRun context \runtime -> do
             channels = canonical : fmap (\partition -> "pgmq." <> partition <> ".INSERT") partitions
             messageCount = 1000
             threshold = 5000 `div` 250 + 1
-        (enabledSeconds, notifications) <-
+        (enabledSeconds, notifications, disabledSeconds, disabledNotifications) <-
           withListeners (requirePostgres context).connectionString channels \connection -> do
-            elapsed <- timedSeconds $ void $ mapConcurrently (sendOne runtime queue) [1 .. messageCount]
+            elapsed <- timedSeconds $ pacedSends runtime queue [1 .. messageCount]
             observed <- collectNotifications connection
-            pure (elapsed, observed)
-        _ <- effect runtime (Pgmq.disableNotifyInsert queue)
-        disabledSeconds <- timedSeconds $ void $ mapConcurrently (sendOne runtime queue) [messageCount + 1 .. messageCount * 2]
+            _ <- effect runtime (Pgmq.disableNotifyInsert queue)
+            disabledElapsed <- timedSeconds $ pacedSends runtime queue [messageCount + 1 .. messageCount * 2]
+            disabledObserved <- collectNotifications connection
+            pure (elapsed, observed, disabledElapsed, disabledObserved)
         let observedCount = length notifications
             partitionCount = length [() | notification <- notifications, notification.channel /= canonical]
         putSummary
@@ -555,12 +556,22 @@ partitionedNotifyStorm context = withPgmqRun context \runtime -> do
                 "allowedByThrottle" .= threshold,
                 "channels" .= channels,
                 "sendSecondsWithNotify" .= enabledSeconds,
-                "sendSecondsWithoutNotify" .= disabledSeconds
+                "sendSecondsWithoutNotify" .= disabledSeconds,
+                "notificationsAfterDisable" .= length disabledNotifications
               ]
           )
-        if observedCount > threshold && partitionCount == observedCount
+        if observedCount > threshold && partitionCount == observedCount && null disabledNotifications
           then pure (failedWith ["known-defect"] ("observed " <> Text.pack (show observedCount) <> " unthrottled notifications on partition channels; allowed " <> Text.pack (show threshold)))
-          else verdict context "partitioned-notify-storm" [("notifications-observed", observedCount > 0), ("throttle-bounded", observedCount <= threshold), ("canonical-channel", partitionCount == 0)]
+          else verdict context "partitioned-notify-storm" [("notifications-observed", observedCount > 0), ("throttle-bounded", observedCount <= threshold), ("canonical-channel", partitionCount == 0), ("disabled-silence", null disabledNotifications)]
+
+pacedSends :: PgmqRun -> Pgmq.QueueName -> [Int] -> IO ()
+pacedSends runtime queue indexes = do
+  started <- getMonotonicTimeNSec
+  forM_ (zip [0 :: Int ..] indexes) \(offset, index) -> do
+    now <- getMonotonicTimeNSec
+    let target = started + fromIntegral offset * 5000000
+    when (now < target) (threadDelay (fromIntegral ((target - now) `div` 1000)))
+    void (sendOne runtime queue index)
 
 throttleLostAfterCrash :: RunContext -> IO ScenarioReport
 throttleLostAfterCrash context = withPgmqRun context \runtime ->
