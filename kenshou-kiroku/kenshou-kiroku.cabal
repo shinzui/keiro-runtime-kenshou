@@ -38,6 +38,9 @@ library
   exposed-modules:
     Kenshou.Suite.Kiroku
     Kenshou.Suite.Kiroku.Correctness.Append
+    Kenshou.Suite.Kiroku.Correctness.Lifecycle
+    Kenshou.Suite.Kiroku.Correctness.Read
+    Kenshou.Suite.Kiroku.Correctness.Transaction
     Kenshou.Suite.Kiroku.Fixture.Store
     Kenshou.Suite.Kiroku.Knobs
 
@@ -46,9 +49,12 @@ library
     base >=4.21 && <4.22,
     containers >=0.7 && <0.8,
     filepath,
+    hasql >=1.10 && <1.11,
+    hasql-transaction >=1.0 && <2,
     kenshou-check,
     kenshou-core,
     kiroku-store ==0.8.0.1,
+    streamly-core >=0.3 && <0.4,
     text >=2.1 && <2.2,
     time >=1.12 && <1.15,
     uuid >=1.3 && <1.4,

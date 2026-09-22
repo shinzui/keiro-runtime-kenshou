@@ -1,4 +1,4 @@
-module Kenshou.Suite.Kiroku.Correctness.Append (scenarios) where
+module Kenshou.Suite.Kiroku.Correctness.Append (scenarios, recordCells) where
 
 import Data.Aeson (object, (.=))
 import Data.List.NonEmpty (NonEmpty (..))
@@ -77,17 +77,26 @@ runMatrix context = withKirokuStore context \store -> do
   missingAny <- append missing AnyVersion
   liveNo <- append missing NoStream
   liveWrong <- append missing (ExactVersion (StreamVersion 0))
+  liveAfterWrong <- runStoreIO store (getStream (StreamName missing))
   liveExact <- append missing (ExactVersion (StreamVersion 1))
   liveExists <- append missing StreamExists
+  let seven = StreamName "matrix-version-seven"
+  sevenCreated <- runStoreIO store (appendToStream seven NoStream (replicate 7 event))
+  sevenWrong <- append "matrix-version-seven" (ExactVersion (StreamVersion 1))
+  sevenAfter <- runStoreIO store (getStream seven)
   created <- append live NoStream
   _ <- runStoreIO store (softDeleteStream (StreamName live))
+  deletedBefore <- runStoreIO store (readAllForward (GlobalPosition 0) 100)
   deletedNo <- append live NoStream
   deletedAny <- append live AnyVersion
   deletedExists <- append live StreamExists
   deletedExact <- append live (ExactVersion (StreamVersion 1))
+  deletedAfter <- runStoreIO store (readAllForward (GlobalPosition 0) 100)
+  invalidBefore <- runStoreIO store (readAllForward (GlobalPosition 0) 100)
   empty <- runStoreIO store (appendToStream (StreamName deleted) AnyVersion [])
   reserved <- append "$all" AnyVersion
   tooLong <- append (Text.replicate 513 "a") AnyVersion
+  invalidAfter <- runStoreIO store (readAllForward (GlobalPosition 0) 100)
   maxLength <- append (Text.replicate 512 "b") NoStream
   let cells =
         [ check "missing-exact-zero" (wrong missing 0) missingExact,
@@ -96,19 +105,25 @@ runMatrix context = withKirokuStore context \store -> do
           check "missing-any-version" success missingAny,
           check "live-no-stream" (== Left (StreamAlreadyExists (StreamName missing))) liveNo,
           check "live-wrong-version" (wrong missing 0) liveWrong,
+          check "live-rejection-preserves-version" (\case Right (Just info) -> info.version == StreamVersion 1; _ -> False) liveAfterWrong,
           check "live-exact-version" success liveExact,
           check "live-stream-exists" success liveExists,
+          check "version-seven-created" (\case Right result -> result.streamVersion == StreamVersion 7; _ -> False) sevenCreated,
+          check "version-seven-error-reports-zero" (\case Left (WrongExpectedVersion name (ExactVersion (StreamVersion 1)) (StreamVersion 0)) -> name == seven; _ -> False) sevenWrong,
+          check "version-seven-rejection-preserves-version" (\case Right (Just info) -> info.version == StreamVersion 7; _ -> False) sevenAfter,
           check "created-for-delete" success created,
           check "deleted-no-stream" (== Left (StreamAlreadyExists (StreamName live))) deletedNo,
           check "deleted-any-version" (== Left (StreamNotFound (StreamName live))) deletedAny,
           check "deleted-stream-exists" (== Left (StreamNotFound (StreamName live))) deletedExists,
           check "deleted-exact-version" (wrong live 1) deletedExact,
+          check "deleted-rejections-preserve-all" (\case (Right before, Right after) -> Vector.length before == Vector.length after; _ -> False) (deletedBefore, deletedAfter),
           check "empty-batch" (== Left (EmptyAppendBatch (StreamName deleted))) empty,
           check "reserved-all" (== Left (ReservedStreamName (StreamName "$all"))) reserved,
           check "overlong-name" (\case Left (StreamNameTooLong _ 513) -> True; _ -> False) tooLong,
+          check "invalid-rejections-preserve-all" (\case (Right before, Right after) -> Vector.length before == Vector.length after; _ -> False) (invalidBefore, invalidAfter),
           check "max-length-name" success maxLength
         ]
-  recordCells context "expected-version-matrix" cells
+  recordCells context "expected-version-matrix" [] cells
 
 runIdempotence :: RunContext -> IO ScenarioReport
 runIdempotence context = withKirokuStore context \store -> do
@@ -138,7 +153,7 @@ runIdempotence context = withKirokuStore context \store -> do
           ("original-version-unchanged", case originalInfo of Right (Just info) -> info.version == StreamVersion 2; _ -> False),
           ("other-stream-not-created", otherInfo == Right Nothing)
         ]
-  recordCells context "idempotent-event-ids" cells
+  recordCells context "idempotent-event-ids" ["all-position-unchanged"] cells
 
 runMultiStream :: RunContext -> IO ScenarioReport
 runMultiStream context = withKirokuStore context \store -> do
@@ -168,17 +183,18 @@ runMultiStream context = withKirokuStore context \store -> do
           ("reserved-name-rejects-whole-call", case reserved of Left (ReservedStreamName _) -> True; _ -> False),
           ("empty-per-stream-batch-rejected", perStreamEmpty == Left (EmptyAppendBatch c))
         ]
-  recordCells context "multi-stream-atomicity" cells
+  recordCells context "multi-stream-atomicity" [] cells
 
 uuid :: String -> UUID.UUID
 uuid value = maybe (error "invalid fixture UUID") id (UUID.fromString value)
 
-recordCells :: RunContext -> Text -> [(Text, Bool)] -> IO ScenarioReport
-recordCells context name cells = do
+recordCells :: RunContext -> Text -> [Text] -> [(Text, Bool)] -> IO ScenarioReport
+recordCells context name implementationLabels cells = do
   checkedAt <- getCurrentTime
   mapM_ (writeCell checkedAt) cells
-  let labels = [label | (label, False) <- cells]
-  putSummary context Verdicts name (object ["cells" .= length cells, "failures" .= labels])
+  let labels = [label | (label, False) <- cells, label `notElem` implementationLabels]
+      implementationFindings = [label | (label, False) <- cells, label `elem` implementationLabels]
+  putSummary context Verdicts name (object ["cells" .= length cells, "failures" .= labels, "implementationFindings" .= implementationFindings])
   pure $ if null labels then passed else failedWith labels (name <> " contract check failed")
   where
     writeCell checkedAt (label, held) = do
@@ -186,7 +202,7 @@ recordCells context name cells = do
             Verdict
               { checker = name <> "-" <> label,
                 invariant = label,
-                cls = Contract,
+                cls = if label `elem` implementationLabels then Implementation else Contract,
                 status = if held then Held else Violated,
                 reason = Nothing,
                 summary = if held then "Expected result observed" else "Expected result did not match",

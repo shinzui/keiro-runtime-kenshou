@@ -1,4 +1,4 @@
-module Kenshou.Suite.Kiroku.Fixture.Store (withKirokuStore) where
+module Kenshou.Suite.Kiroku.Fixture.Store (withKirokuStore, withKirokuStoreWithTap) where
 
 import Data.Text qualified as Text
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
@@ -6,17 +6,21 @@ import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (renderRunId)
 import Kenshou.Core.Knob (knobBool, knobInt, mkKnobName)
 import Kenshou.Suite.Kiroku.Knobs qualified as Knobs
-import Kiroku.Store (ConnectionSettingsM (..), KirokuStore, defaultConnectionSettings, withStore)
+import Kiroku.Store (ConnectionSettingsM (..), KirokuEvent, KirokuStore, defaultConnectionSettings, withStore)
 
 withKirokuStore :: RunContext -> (KirokuStore -> IO result) -> IO result
-withKirokuStore context action =
+withKirokuStore context = withKirokuStoreWithTap context Nothing
+
+withKirokuStoreWithTap :: RunContext -> Maybe (KirokuEvent -> IO ()) -> (KirokuStore -> IO result) -> IO result
+withKirokuStoreWithTap context tap action =
   withStore settings action
   where
     settings =
       (defaultConnectionSettings connectionString)
         { poolSize = Knobs.poolSize context.knobs,
           statementTimeout = timeout,
-          idleInTransactionTimeout = fromIntegral (knobInt context.knobs (name "kiroku.idle-in-transaction-timeout-seconds"))
+          idleInTransactionTimeout = fromIntegral (knobInt context.knobs (name "kiroku.idle-in-transaction-timeout-seconds")),
+          eventHandler = tap
         }
     seconds = knobInt context.knobs (name "kiroku.statement-timeout-seconds")
     timeout = if seconds == 0 then Nothing else Just (fromIntegral seconds)

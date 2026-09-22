@@ -43,10 +43,10 @@ Milestone 1 — kiroku correctness scenarios.
 - [x] 2026-09-22 22:59 UTC — Created `kenshou-kiroku/kenshou-kiroku.cabal` with library and test suite; `cabal build kenshou-kiroku kenshou-cli` passes in `nix develop`.
 - [ ] Implement `Kenshou.Suite.Kiroku.Knobs`, `.Fixture.Store`, `.Fixture.Telemetry`, `.Fixture.Workload`, `.Fixture.Facts`, `.Fixture.Oracle`, with unit tests.
 - [x] 2026-09-22 22:59 UTC — Exported `bundle :: LayerBundle` and registered it in `kenshou-cli`; the first scenario ran and passed through the CLI.
-- [ ] Append, read, lifecycle and transaction correctness scenarios (three of seven implemented: `expected-version-matrix`, `idempotent-event-ids`, and `multi-stream-atomicity`; four remain).
+- [ ] Append, read, lifecycle and transaction correctness scenarios (four complete: `expected-version-matrix`, `idempotent-event-ids`, `multi-stream-atomicity`, and `cursor-semantics`; `delete-and-truncate` verifies synchronous lifecycle contracts but still needs the live `$all` subscription check; `append-with-continuation` verifies commit, rollback and conflict but still needs the enrich-hook comparison; `all-order-and-gaps` remains).
 - [ ] Subscription, consumer-group, dead-letter and notifier correctness scenarios (eight scenarios).
 - [ ] Retention, metrics and otel correctness scenarios (three scenarios).
-- [ ] All Milestone 1 scenarios pass with `pg.version=17` and `pg.version=18`; first draft of `docs/layers/kiroku.md` exists and covers the three registered scenarios. The full eighteen-scenario validation remains.
+- [ ] All Milestone 1 scenarios pass with `pg.version=17` and `pg.version=18`; first draft of `docs/layers/kiroku.md` exists and covers the six registered scenarios. The full eighteen-scenario validation remains. `cursor-semantics` passed on PostgreSQL 18 at page size 256 and PostgreSQL 17 at page size 7; `delete-and-truncate` and `append-with-continuation` passed on PostgreSQL 18.
 
 Milestone 2 — kiroku concurrency, crash and known-defect scenarios.
 
@@ -82,6 +82,7 @@ Milestone 4 — kiroku soak and telemetry arms.
 - The resolved cohort remains kiroku-store 0.8.0.1, but the authoritative Hackage `preferred.json` and upstream `kiroku-store-v0.8.0.2` tag show 0.8.0.2 available as of 2026-09-22. The suite is being implemented against the resolved pin; source-level contract claims must be checked again if the cohort advances.
 - A direct `cabal build all` from the host shell failed because `ghc-9.12.4` is not on that PATH. `nix develop -c cabal build all` passed. The plan's commands need the stated development shell.
 - The 0.8.0.1 cohort returned `DuplicateEvent Nothing` for same-stream, cross-stream and larger-batch duplicate writes in a PostgreSQL 18 run (`runs/01a0cb5c-cc42-7416-8e56-1ccda22ad05c/run-result.json`). `Kiroku.Store.Error` documents `Maybe EventId` and permits `Nothing` when PostgreSQL detail parsing fails. The core idempotence guarantee, rejection without partial state change, held after accepting this representation.
+- The first `cursor-semantics` run compared whole `RecordedEvent` values between `$all` and source-stream reads and failed every source-stream cell. The event identifiers matched; `RecordedEvent.streamVersion` denotes the stream being read, so `$all` has global versions while a source-stream read has local versions. The oracle now compares event IDs and separately checks local versions 1 through N. It passed on PostgreSQL 18 and 17.
 
 
 ## Decision Log
