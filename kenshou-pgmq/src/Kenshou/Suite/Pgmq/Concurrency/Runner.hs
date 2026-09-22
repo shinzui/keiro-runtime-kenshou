@@ -739,7 +739,20 @@ overlappingBatchAck context = withPgmqRun context \runtime ->
           allDeadlocks = all (\err -> Pgmq.isTransient err && "40P01" `Text.isInfixOf` Text.pack (show err)) errors
           deadlockRate = fromIntegral (length errors) / fromIntegral (length slices) :: Double
       putSummary context Verdicts "overlapping-batch-ack-observations" (object ["workers" .= length slices, "deadlocks" .= length errors, "deadlockRate" .= deadlockRate, "affected" .= length affected, "unfinishedWorkers" .= length [() | (Nothing, _) <- results], "queueLength" .= metrics.queueLength, "errors" .= fmap show errors])
-      verdict context "overlapping-batch-ack" [("only-transient-deadlocks", allDeadlocks), ("all-workers-completed", all (isJust . fst) results), ("each-id-deleted-once", sort affected == sort identifiers), ("queue-drained", metrics.queueLength == 0)]
+      pair <- effect runtime (Pgmq.batchSendMessage (Types.BatchSendMessage queue (fmap body [201, 202]) Nothing))
+      (firstId, secondId) <- case pair of
+        [first, second] -> pure (first, second)
+        _ -> ioError (userError "controlled deadlock needs exactly two sent IDs")
+      firstAttempt <- async (lockedAck pool queue firstId pair)
+      secondAttempt <- async (lockedAck pool queue secondId (reverse pair))
+      controlled <- traverse wait [firstAttempt, secondAttempt]
+      let controlledErrors = [Pgmq.fromUsageError err | Left err <- controlled]
+          controlledAffected = concat [ids | Right ids <- controlled]
+          classifiedDeadlocks = [err | err <- controlledErrors, "40P01" `Text.isInfixOf` Text.pack (show err) && Pgmq.isTransient err]
+      remaining <- effect runtime (Pgmq.batchDeleteMessages (Types.BatchMessageQuery queue pair))
+      finalMetrics <- effect runtime (Pgmq.queueMetrics queue)
+      putSummary context Verdicts "overlapping-batch-ack-deadlock-observations" (object ["errors" .= fmap show controlledErrors, "classifiedDeadlocks" .= length classifiedDeadlocks, "affected" .= fmap show controlledAffected, "remaining" .= fmap show remaining, "queueLength" .= finalMetrics.queueLength])
+      verdict context "overlapping-batch-ack" [("only-transient-deadlocks", allDeadlocks), ("all-workers-completed", all (isJust . fst) results), ("each-id-deleted-once", sort affected == sort identifiers), ("queue-drained", metrics.queueLength == 0), ("live-deadlock-classified-transient", length classifiedDeadlocks == 1 && length controlledErrors == 1), ("controlled-pair-conserved", sort (controlledAffected <> remaining) == sort pair && finalMetrics.queueLength == 0)]
   where
     retryAck pool queue identifiers attempts errors = do
       result <- runOps Nothing pool (Pgmq.batchDeleteMessages (Types.BatchMessageQuery queue identifiers))
@@ -748,6 +761,23 @@ overlappingBatchAck context = withPgmqRun context \runtime ->
         Left err
           | Pgmq.isTransient err && attempts < 8 -> threadDelay ((attempts + 1) * 10000) >> retryAck pool queue identifiers (attempts + 1) (err : errors)
           | otherwise -> pure (Nothing, reverse (err : errors))
+
+lockedAck :: Pool.Pool -> Pgmq.QueueName -> Pgmq.MessageId -> [Pgmq.MessageId] -> IO (Either Pool.UsageError [Pgmq.MessageId])
+lockedAck pool queue firstId identifiers =
+  Pool.use pool do
+    Session.statement () begin
+    _ <- Session.statement (PgmqTypes.unMessageId firstId) (lockMessage queue)
+    Session.statement () sleepOne
+    affected <- Sessions.batchDeleteMessages (Types.BatchMessageQuery queue identifiers)
+    Session.statement () commit
+    pure affected
+
+lockMessage :: Pgmq.QueueName -> Statement.Statement Int64 Int64
+lockMessage queue =
+  Statement.unpreparable
+    ("select msg_id from pgmq.q_" <> Pgmq.queueNameToText queue <> " where msg_id=$1 for update")
+    (Encoders.param (Encoders.nonNullable Encoders.int8))
+    (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
 
 drain :: PgmqRun -> Pgmq.QueueName -> MVar [Pgmq.MessageId] -> IO ()
 drain runtime queue observed = do
