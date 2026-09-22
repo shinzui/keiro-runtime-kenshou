@@ -90,8 +90,8 @@ Milestone 2 — pgmq-hs concurrency and crash scenarios.
 - [x] (2026-09-22 22:01Z) Recorded queue depth and partition count after each partition maintenance step on durable PostgreSQL 17 and 18. Both first lost rows when the 300th send advanced retention: queue depth fell to 201, then remained 201 through 2,000 sends. Each lost all 50 leased rows and 1,799 rows overall, reproducing the declared non-blocking retention defect.
 - [x] (2026-09-22 22:04Z) Paced the partitioned notification storm at 200 sends/s for five seconds and listened through the disabled phase. Durable PostgreSQL 17 and 18 each emitted 1,000 partition-channel notices, versus the throttle bound of 21, and zero notices after disabling. The known defect remains non-blocking with the throughput of both phases recorded.
 - [x] (2026-09-22 22:07Z) Added a controlled two-transaction batch-delete tail to the sixteen-worker overlapping acknowledgment scenario. Opposite row locks forced a live SQLSTATE `40P01` on both durable PostgreSQL majors; `pgmq-effectful` classified it transient, the winning transaction deleted both IDs, and the queue drained.
-- [ ] Run every concurrency scenario on both durable PostgreSQL versions and complete the wider outage workloads.
-- [ ] Run every concurrency scenario with `pg.durability=durable` on both PostgreSQL versions; record outcomes and any new defect filed upstream.
+- [x] (2026-09-22 22:12Z) Ran all other nineteen concurrency identifiers on each durable PostgreSQL major. Each version had thirteen passing scenarios and six precise, non-blocking known-defect reproductions, with no new blocking failures. Together with the full random-kill runs, all twenty identifiers have run on both versions.
+- [ ] Complete the wider outage workloads beyond the focused recovery probes.
 
 Milestone 3 — pgmq-hs benchmarks.
 
@@ -210,6 +210,9 @@ Milestone 4 — pgmq-hs soak and telemetry arms.
 
 - Observation: a pair of transactions each locked one distinct queue row before calling `batchDeleteMessages` on both rows. PostgreSQL detected the resulting wait cycle and aborted one call with `40P01`; the released `pgmq-effectful` classifier marked the actual server error transient. The surviving transaction deleted both rows once.
   Evidence: durable PostgreSQL 18 run `01a0cb28-d14d-727a-8a5f-260ad024a6b5` and PostgreSQL 17 run `01a0cb29-16a1-73b8-8b5a-daf20fe07381` each recorded one classified deadlock, two affected IDs, no remaining IDs, and an empty queue after the original sixteen-worker conservation check.
+
+- Observation: the durable PostgreSQL 17/18 concurrency matrix has no unregistered failure. On each major, thirteen of the nineteen shorter scenarios passed; concurrent reconciliation, three connection-fault classifiers, partitioned notifications, and partition retention reproduced their declared non-blocking defects. The already completed ten-minute random-kill scenario passed on each major, making twenty of twenty concurrency identifiers exercised on both versions.
+  Evidence: the PostgreSQL 17 matrix starts at run `01a0cb2a-4883-7156-9da1-d5f7a8c19a11` and ends at `01a0cb2b-bb71-7793-ae58-0aabd73688d5`; PostgreSQL 18 starts at `01a0cb2b-dd07-70ad-947a-1f76a8d47b4d` and ends at `01a0cb2d-5475-7740-9907-7ce4696885d0`. Each of the 38 `run-result.json` artifacts has `blocking=false`; the twelve failed outcomes have `knownDefect.status=reproduced`. Full random-kill runs are `01a0cb14-dfac-71f3-b041-157ac22270c4` and `01a0cb08-b297-7541-bdd6-314abcfcfd3d`.
 
 
 ## Decision Log
