@@ -7,8 +7,8 @@ scenarios :: [Scenario]
 scenarios =
   fmap
     pgmqScenario
-    [ concurrency "pgmq/effectful/concurrency/backend-termination-recovery" "Checks transient classification and pool recovery after backend termination." TierStandard,
-      concurrency "pgmq/effectful/concurrency/postgres-restart-recovery" "Checks durable messages and pool recovery across PostgreSQL restart." TierStandard,
+    [ knownDefectWithFailures "pgmq/effectful/concurrency/backend-termination-recovery" "Backend termination can surface a disconnect as a permanent row-count error." TierStandard "mori://shinzui/pgmq-hs/okf/improvement-requests/concepts/IR-4" ["transient-error"],
+      knownDefectWithFailures "pgmq/effectful/concurrency/postgres-restart-recovery" "Immediate PostgreSQL shutdown can surface a transient disconnect with no SQLSTATE." TierStandard "mori://shinzui/pgmq-hs/okf/improvement-requests/concepts/IR-4" ["outage-error-transient"],
       concurrency "pgmq/queue/concurrency/unlogged-queue-crash-loss" "Demonstrates unlogged queue loss while standard queues remain durable." TierSmoke,
-      concurrency "pgmq/effectful/concurrency/network-partition" "Checks reset, latency, blackhole bounds, and healed-proxy recovery." TierStandard
+      knownDefectWithFailures "pgmq/effectful/concurrency/network-partition" "A TCP reset can surface a transient disconnect with no SQLSTATE." TierStandard "mori://shinzui/pgmq-hs/okf/improvement-requests/concepts/IR-4" ["reset-transient"]
     ]

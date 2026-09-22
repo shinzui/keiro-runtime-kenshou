@@ -34,10 +34,10 @@ The shared knobs directly name their pgmq-hs or workload setting. Important defa
 - `pgmq/send/concurrency/producer-sigkill-batch-atomicity` — interrupted batch sends remain all-or-nothing.
 - `pgmq/ack/concurrency/stale-ack-after-expiry` — demonstrates the documented lack of acknowledgement fencing.
 - `pgmq/read/concurrency/pool-exhaustion-long-poll` — long polls pin connections and acquisition timeouts recover.
-- `pgmq/effectful/concurrency/backend-termination-recovery` — the pool recovers after backend termination and checks the surfaced error's transient classification.
-- `pgmq/effectful/concurrency/postgres-restart-recovery` — durable data and the pool survive a server restart.
+- `pgmq/effectful/concurrency/backend-termination-recovery` — the pool recovers after backend termination; a disconnect can be misclassified ([known defect](mori://shinzui/pgmq-hs/okf/improvement-requests/concepts/IR-4)).
+- `pgmq/effectful/concurrency/postgres-restart-recovery` — durable data and the pool survive a server restart; the outage error can be misclassified ([known defect](mori://shinzui/pgmq-hs/okf/improvement-requests/concepts/IR-4)).
 - `pgmq/queue/concurrency/unlogged-queue-crash-loss` — demonstrates unlogged loss against a durable control queue.
-- `pgmq/effectful/concurrency/network-partition` — a live TCP reset and recovery through the fault proxy, including transient classification.
+- `pgmq/effectful/concurrency/network-partition` — a live TCP reset and recovery through the fault proxy; the reset error can be misclassified ([known defect](mori://shinzui/pgmq-hs/okf/improvement-requests/concepts/IR-4)).
 - `pgmq/fifo/concurrency/head-per-group-barrier` — grouped-head keeps one live lease and ordered handling per group.
 - `pgmq/fifo/concurrency/grouped-batch-successor-hazard` — demonstrates grouped-batch successor inversion.
 - `pgmq/fifo/concurrency/producer-commit-order-inversion` — demonstrates identifier order differs from commit order.

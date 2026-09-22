@@ -61,6 +61,11 @@ provenance:
       at: 2026-09-22T00:33:49Z
       mode: "implement"
       note: "Started EP-8 and moved its registry entry to In Progress."
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-22T21:24:36Z
+      mode: "implement"
+      note: "Recorded EP-8 disconnect-classification finding for PGMQ adapter and job-queue coverage."
 ---
 
 # Build an extensive verification suite for the keiro runtime
@@ -344,6 +349,7 @@ Drafting the child plans against real source corrected the research in ways that
 - EP-3's checked graph contains 26 whole components, 15 sub-components and 65 edges after reconciliation with Cabal's real solver plan. The important cross-plan consequence is that later coverage plans can add scenarios without changing planner code: they register a bundle and keep their owned component selectors current. The executor also proved that an interrupted attempt can remain immutable while a resumed attempt receives a fresh UUIDv7, which is the identity behavior EP-17 and EP-18 consume.
 - EP-4 completed the shared measurement boundary consumed by the diagnostics, telemetry, layer-coverage, cell and evidence plans. Health gates are reproduced from sealed run artifacts; external cell notices enter through `KENSHOU_HEALTH_NOTICES` and are captured as manifested `health-notices.jsonl`. Hard evidence conditions override regressions as infrastructure failures, while soft conditions and checkpoint asymmetry make comparisons inconclusive.
 - EP-7 completed both telemetry dimensions and the paired overhead protocol. Its headline synthetic report passed off-to-noop, off-to-OTLP, and off-to-serve-scraped transitions with exact sink accounting; a high-rate OTLP arm dropped 5,925,547 spans and was correctly made inconclusive. Later layer plans can use the generic handles, continuity checks, bounded handler composition, isolated scraper and sink, per-arm leak hook, and the resumable `kenshou overhead` command.
+- EP-8 found that pgmq-hs 0.6.1.0 can misclassify disconnects during immediate PostgreSQL crashes, backend termination, and TCP resets as permanent statement errors. PostgreSQL 17 and 18 both preserved committed rows and recovered the same pool after a crash, while their transient-classification checks failed. The owner request is `mori://shinzui/pgmq-hs/okf/improvement-requests/concepts/IR-4`. EP-10's PGMQ adapter and EP-13's job queue should retain explicit retry and recovery evidence at this boundary; EP-8 declares only the precise classifier failure labels as non-blocking known defects, so durability and recovery failures still block.
 
 
 ## Decision Log

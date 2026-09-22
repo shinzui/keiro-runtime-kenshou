@@ -77,7 +77,8 @@ Milestone 2 — pgmq-hs concurrency and crash scenarios.
 - [ ] Run the random-kill scenario for the planned ten-minute duration and 500/s arrival rate on both PostgreSQL versions; retain the short proof as the fast regression check.
 - [x] (2026-09-22 02:05Z) Implemented pool exhaustion with long polling and verified transient acquisition timeout plus same-pool recovery.
 - [x] (2026-09-22 02:54Z) Added pg_partman to both dev-shell PostgreSQL majors and replaced the partition probes with live notification-storm and retention workloads; both declared defects reproduce on PostgreSQL 17 and 18 as non-blocking known defects.
-- [ ] Implement backend termination, PostgreSQL restart and crash, unlogged-queue loss, and the network proxy scenarios, with transient-error classification.
+- [x] (2026-09-22 21:26Z) Expanded the immediate PostgreSQL crash probe to persist the outage error, same-pool recovery time, durability setting, and committed message IDs. PostgreSQL 17 and 18 both recovered in under 0.4 seconds with all committed rows and `fsync=on`; both rejected the empty-SQLSTATE disconnect as permanent. Filed the common classifier gap as `mori://shinzui/pgmq-hs/okf/improvement-requests/concepts/IR-4` and verified backend termination, restart, and TCP reset report only their exact classifier failures as non-blocking known defects.
+- [ ] Complete the backend-termination, PostgreSQL restart/crash, unlogged-queue, and network-proxy workloads and their full transient-error and conservation oracles beyond the focused probes already present.
 - [x] (2026-09-22 02:05Z) Implemented and ran the FIFO concurrency scenarios (head-per-group barrier, grouped batch successor hazard, producer commit-order inversion).
 - [x] (2026-09-22 03:38Z) Replaced the listener-fallback probe with a real LISTEN backend termination; PostgreSQL 17 and 18 both prove disconnected notifications do not replay and the polling fallback drains all 20 sends inside the configured bound.
 - [ ] Implement the notification scenarios (partitioned storm as known defect, throttle lost after crash, listener loss with poll fallback), partition retention as known defect, concurrent reconcile, overlapping batch acknowledgement deadlock.
@@ -171,6 +172,15 @@ Milestone 4 — pgmq-hs soak and telemetry arms.
 - Observation: the consumer worker originally returned when an empty read found no messages. The sustained-kill scenario exposed that finite behavior immediately: all four workers exited before the first fault, so the attempted process-group signal failed. Keeping the consumer in a bounded-sleep polling loop lets it survive an initially empty queue and later production.
   Evidence: first short run `01a0caef-8398-7656-9186-ff7d211d47ea` failed with `signalProcessGroup: permission denied` after each worker reported `done`; corrected PostgreSQL 18 run `01a0caf8-b882-735c-a4fa-b7e737eb08de` recorded four real kills, 40 unacknowledged killed leases, and complete handling of 4,000 sends. PostgreSQL 17 run `01a0caf9-1278-7574-a042-86f826f60952` also passed.
 
+- Observation: an immediate postmaster crash can surface a failed PGMQ send as a statement error with an empty SQLSTATE, which pgmq-hs 0.6.1.0 classifies as permanent. The same pool recovered quickly, all committed messages survived, and `fsync` remained enabled. This extends the earlier TCP-reset observation to a real durable-server crash on both supported PostgreSQL majors.
+  Evidence: PostgreSQL 17 run `01a0cafc-cef2-7716-aa94-78d41afa7951` recovered in 362 ms and PostgreSQL 18 run `01a0cafc-7cda-7428-b7c5-efe34a8ceb48` in 358 ms. Both failed only `outage-error-transient`. The upstream request is `mori://shinzui/pgmq-hs/okf/improvement-requests/concepts/IR-4`.
+
+- Observation: the kernel's known-defect disposition matches exact failure labels. A declared defect with expected label `known-defect` remains blocking if the real scenario fails on `outage-error-transient`; registering the classifier's precise label preserves a non-blocking `reproduced` status while leaving durability or recovery failures blocking.
+  Evidence: first declared run `01a0cb04-15ba-713e-a077-1f0367008229` reported `different-failure`; corrected restart run `01a0cb05-2162-7090-b7fc-8632c34bfc50`, backend run `01a0cb06-cfb7-742a-992b-23996a0eac86`, and proxy run `01a0cb07-2dbc-7410-98c0-640dfd87daf1` each report `reproduced`, `blocking=false`, and exit code 0 with only the classifier check red.
+
+- Observation: the upstream IR bundle passes profile enforcement, but its strict bundle gate was already red because IR-1, IR-2, and IR-3 omit the profile-recommended `reviews` field. The new IR-4 includes the field and contributes no new strict diagnostic.
+  Evidence: `okf validate docs/improvement-requests --profile docs/improvement-requests/profile.dhall --profile-enforce --log-enforce` passed with four concepts; the `--strict` variant reported only the three older files' missing review metadata.
+
 
 ## Decision Log
 
@@ -224,6 +234,10 @@ Milestone 4 — pgmq-hs soak and telemetry arms.
 
 - Decision: the random-kill duplicate allowance counts only leases held by a killed worker that worker did not acknowledge. A completed lease in the same worker does not grant a duplicate allowance.
   Rationale: this makes the bound depend on the actual crash window rather than every message a process handled before it died.
+  Date: 2026-09-22
+
+- Decision: backend termination, postmaster restart, and TCP reset keep their true failing transient-classification checks while carrying one upstream known-defect reference.
+  Rationale: the observed error shapes differ, but all expose the same retry-predicate boundary. A non-blocking known defect keeps the regression visible on the released cohort without masking the durability and recovery checks in each scenario.
   Date: 2026-09-22
 
 

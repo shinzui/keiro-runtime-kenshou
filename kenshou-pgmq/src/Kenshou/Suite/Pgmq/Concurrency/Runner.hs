@@ -440,9 +440,19 @@ postgresRestart context = withPgmqRun context \runtime ->
     sent <- effect runtime (Pgmq.batchSendMessage (Types.BatchSendMessage queue (fmap body [1 .. 20]) Nothing))
     let fault = crashPostmaster (requirePostgres context) ImmediateShutdown
     handle <- fault.inject
+    outage <- runOps runtime.tracer runtime.pool (Pgmq.sendMessage (Types.SendMessage queue (body 21) Nothing))
+    recoveryStarted <- getMonotonicTimeNSec
     handle.heal
     messages <- retryValue 50 (runOps runtime.tracer runtime.pool (Pgmq.readMessage (Types.ReadMessage queue 30 (Just 20) Nothing)))
-    verdict context "postgres-restart" [("committed-survives", sort (fmap (.messageId) (Vector.toList messages)) == sort sent)]
+    recoveredAt <- getMonotonicTimeNSec
+    fsyncSetting <- session runtime.pool (Session.statement () showFsync)
+    let observed = sort (fmap (.messageId) (Vector.toList messages))
+        recoveryMillis = (recoveredAt - recoveryStarted) `div` 1000000
+    putSummary context Verdicts "postgres-restart-observations" (object ["outageError" .= show outage, "recoveryMillis" .= recoveryMillis, "fsync" .= fsyncSetting, "sent" .= sent, "recovered" .= observed])
+    verdict context "postgres-restart" [("outage-error-transient", either Pgmq.isTransient (const False) outage), ("committed-survives", observed == sort sent), ("same-pool-recovers-within-five-seconds", recoveryMillis <= 5000), ("durability-still-on", fsyncSetting == "on")]
+
+showFsync :: Statement.Statement () Text
+showFsync = Statement.preparable "show fsync" Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.text)))
 
 unloggedCrashLoss :: RunContext -> IO ScenarioReport
 unloggedCrashLoss context = withPgmqRun context \runtime -> do

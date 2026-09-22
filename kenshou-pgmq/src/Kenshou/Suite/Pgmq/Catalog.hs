@@ -6,6 +6,7 @@ module Kenshou.Suite.Pgmq.Catalog
     benchmark,
     soak,
     knownDefect,
+    knownDefectWithFailures,
   )
 where
 
@@ -63,13 +64,16 @@ soak :: Text -> Text -> Tier -> Placement -> ScenarioDef
 soak identifier description tier placement = ScenarioDef identifier description tier placement Nothing
 
 knownDefect :: Text -> Text -> Tier -> Text -> ScenarioDef
-knownDefect identifier description tier reference =
+knownDefect identifier description tier reference = knownDefectWithFailures identifier description tier reference ["known-defect"]
+
+knownDefectWithFailures :: Text -> Text -> Tier -> Text -> [Text] -> ScenarioDef
+knownDefectWithFailures identifier description tier reference expectedFailures =
   ScenarioDef
     identifier
     description
     tier
     PlaceEither
-    (Just (KnownDefect reference description ["known-defect"] AllCohorts))
+    (Just (KnownDefect reference description expectedFailures AllCohorts))
 
 pgmqScenario :: ScenarioDef -> Scenario
 pgmqScenario definition =
