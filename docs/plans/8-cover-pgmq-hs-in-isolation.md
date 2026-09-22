@@ -40,6 +40,7 @@ Milestone 1 — pgmq-hs correctness scenarios (includes the package, the shared 
 - [x] (2026-09-22 00:34Z) Verified the kernel, measurement, correctness, diagnostics, telemetry, CLI, live PostgreSQL round trip, released pgmq cohort, Hackage release, and upstream tag.
 - [x] (2026-09-22 00:52Z) Created `kenshou-pgmq`, its 39-module library, `kenshou-pgmq-test`, and the 49-scenario bundle; the package and CLI build in the dev shell.
 - [x] (2026-09-22 00:52Z) Registered the bundle in `kenshou-cli`; `kenshou list --layer pgmq` reports 49 registry-valid scenarios and three worker roles.
+- [x] (2026-09-22 05:54Z) Wired every internal library required by `kenshou-cli` through the Nix `callCabal2nix` graph; `nix flake check` now evaluates the CLI package and passes both repository checks.
 - [x] (2026-09-22 01:01Z) Implemented `Kenshou.Suite.Pgmq.Knobs` (common knob vocabulary and `resolveKnobs`) with focused default, invalid-combination, and queue-identity tests.
 - [x] (2026-09-22 00:52Z) Implemented the pool, per-run queue names, setup/teardown, plain/traced effect interpreter, telemetry bracket, and pg_partman probe; live round trips pass on PostgreSQL 17 and 18.
 - [x] (2026-09-22 02:28Z) Completed the dedicated-connection SQL metrics poller; live collection recorded queue-depth transitions and poll latency, while queue-name derivation remains unit tested.
@@ -49,6 +50,7 @@ Milestone 1 — pgmq-hs correctness scenarios (includes the package, the shared 
 - [x] (2026-09-22 01:42Z) Implemented the `vt` correctness scenarios, including real wall-clock expiry.
 - [x] (2026-09-22 02:28Z) Implemented the `fifo`, `topics`, `notify`, `config` and `effectful` correctness scenarios, including W3C trace propagation and the two known-defect scenarios.
 - [x] (2026-09-22 01:42Z) Ran all 18 correctness scenarios on PostgreSQL 17 and 18. Sixteen pass on both versions; `mixed-case-alias-collision` reproduces its declared non-blocking defect on both; `grouped-result-order` returned ordered vectors in these runs and reports that the declared defect did not reproduce.
+- [x] (2026-09-22 04:09Z) Persisted machine-readable `kenshou.verdict/v1` artifacts for the contract checks instead of leaving their results only in summary JSON; live lifecycle evidence is in run `01a0c751-7882-7279-8f18-e79bb08a5221`.
 - [x] (2026-09-22 00:52Z) Wrote the first `docs/layers/pgmq.md`, with every registered identifier, classification, known-defect link, shared knobs, and operating rules; the unit suite enforces coverage.
 
 Milestone 2 — pgmq-hs concurrency and crash scenarios.
@@ -72,16 +74,17 @@ Milestone 3 — pgmq-hs benchmarks.
 - [x] (2026-09-22 03:11Z) Implemented distinct poll, server long-poll, and LISTEN/NOTIFY-with-poll-fallback paths in `produce-consume-latency`; benchmark-grade PostgreSQL 18 runs passed for all three modes.
 - [x] (2026-09-22 02:28Z) Implemented `invisible-backlog-read-cost`, `grouped-read-cost`, and `notify-insert-overhead`; short live runs of the grouped, send, metrics, and all three ladder paths pass.
 - [x] (2026-09-22 03:42Z) Added `policies/pgmq.json`, ran fixed-rate paired A/A controls for all nine benchmarks, and proved the deliberately slowed read/ack arm is detected as a regression. Send throughput and produce-consume A/A pass; the other seven remain honestly inconclusive on tail-latency interval width despite passing individual runs and stable throughput.
-- [ ] Add `policies/pgmq.json` comparison policy; run each benchmark as a paired A/A comparison and confirm verdict `pass`; record first figures as illustrative.
+- [ ] Re-run the seven locally noisy A/A controls on a quiet cell and confirm verdict `pass` without weakening the checked-in tail-latency policy.
 
 Milestone 4 — pgmq-hs soak and telemetry arms.
 
 - [x] (2026-09-22 02:28Z) Added functional `pgmq.trace.propagate` and `otel.semconv-stability-opt-in` knobs; live correctness runs pass under all four tracing arms, SQL metrics collection, all semantic-convention modes, and W3C context propagation.
-- [ ] Implement `pgmq/queue/soak/steady-state` and `pgmq/queue/soak/steady-state-reduced` from one constructor; run the reduced one locally to a verdict.
+- [x] (2026-09-22 05:03Z) Implemented `pgmq/queue/soak/steady-state` and `pgmq/queue/soak/steady-state-reduced` from one constructor, made their arrival model explicitly open-constant, and added an independently judged `series/pgmq-queue-depth.csv` sampler. Short proof run `01a0c77e-4338-7331-b80c-5110827f77b8` wrote the series, kept depth at zero after first-delivery nack churn, and drained without workload failures; its leak verdict is intentionally inconclusive because the overridden steady window was five seconds.
+- [ ] Obtain a `stable` leak verdict from the full twenty-minute reduced profile. Final tracing-off run `01a0c798-5508-7549-9b0e-2fc0754328e8` kept every non-heap probe stable but still measured 96.8 MB/hour of bounded-probe live-heap growth.
 - [x] (2026-09-22 02:28Z) Implemented and ran `interpreter-tracing-overhead` and `metrics-poll-overhead`. Metrics collection passed policy; tracing found `sdk-inmemory` above policy while `noop` and `sdk-otlp` passed.
-- [ ] Run the reduced soak with `telemetry.tracing=sdk-otlp` and confirm the leak verdict is still `stable`.
+- [ ] Run the reduced soak with `telemetry.tracing=sdk-otlp` and confirm the leak verdict is still `stable`. Final run `01a0c798-5508-77db-9004-674089ca9310` exported every span without loss and kept the exporter queue bounded, but the common live-heap probe still grew at 78.3 MB/hour.
 - [x] (2026-09-22 02:28Z) Wrote ADR-12 through ADR-14 for database-clock leases, native SQL metrics collection, and limitation/known-defect classification; the 14-record bundle passes strict OKF validation.
-- [ ] Update the MasterPlan's Progress and Exec-Plan Registry rows for EP-8 and fill Outcomes & Retrospective.
+- [x] (2026-09-22 05:52Z) Updated the MasterPlan progress and this retrospective; the EP-8 registry row remains `In Progress` because concurrency, benchmark A/A, and stable-heap acceptance are unresolved.
 
 
 ## Surprises & Discoveries
@@ -118,6 +121,21 @@ Milestone 4 — pgmq-hs soak and telemetry arms.
 
 - Observation: a LISTEN connection terminated by `pg_terminate_backend` loses notifications published while it is disconnected, as PostgreSQL documents, while an independent PGMQ polling fallback still drains the complete batch immediately after the fault.
   Evidence: PostgreSQL 17 run `01a0c72d-a9df-70ed-8adc-425bde540eb9` and PostgreSQL 18 run `01a0c72d-b413-701e-90db-f030e7082f48` both handled 20 of 20 messages in under 2 ms with a one-second fallback bound; a newly connected listener received none of the notifications emitted during the outage.
+
+- Observation: the soak initially inherited the measurement toolkit's closed-loop load default, so setting only `load.rate-per-second` did not bound arrivals. The resulting invalid control drove roughly 4,800 cycles per second and accumulated almost six million spans before it was stopped.
+  Evidence: aborted run `01a0c74d-8d67-7627-9f23-b663c27eced3`; the catalog now resolves both soak profiles to `load.model=open-constant` and `load.rate-per-second=500`, and `kenshou-pgmq-test` locks those defaults.
+
+- Observation: the first correctly rate-limited twenty-minute controls still reported approximately 0.9 GB/hour of heap growth in both tracing-off and OTLP arms. The measurement recorder retained one roughly fixed-size mutable histogram per executor per ten-second interval until shutdown, so the suite's own evidence buffer grew linearly and contaminated its leak verdict. Both workloads completed 120,000 cycles at 100/s with zero failures and drained to zero; the OTLP arm exported all 359,033 ended spans with a bounded queue and no drops.
+  Evidence: tracing-off run `01a0c75d-a713-7640-9a98-6188edfd810e` and OTLP run `01a0c75a-f97d-7366-9594-42105861430e` both failed only `leak-suspected`. Soak scenarios now default `measure.interval-histogram-seconds` to 86,400, bounding retained interval arrays to one or two frames while preserving their aggregate histogram.
+
+- Observation: once queue depth was sampled independently of `telemetry.metrics`, the initial soak cycle showed a deterministic one-row-per-second backlog slope: it sent one row and could read only one, so every deliberate nack permanently consumed that cycle's service capacity. Draining after measurement made the old final-row oracle look bounded despite the positive steady-state trend.
+  Evidence: stopped controls `01a0c774-14f5-7212-b48f-b0f2c303349b` and `01a0c774-14f5-76e3-a5a2-f5cdb2891a44` reached depth 300 after 270 seconds. The cycle now reads a batch and deliberately nacks selected rows only on their first delivery; short run `01a0c77e-4338-7331-b80c-5110827f77b8` returned to depth zero and the leak policy now judges the queue-depth series as a bounded probe.
+
+- Observation: after bounding interval histograms and queue depth, both full controls still found a common harness leak: each sampler tick used `race` between its deadline and a broadcast-channel read, creating and canceling two `Async` waiters per sampler per second. Haskell thread objects and live heap rose together even though OS threads, file descriptors, connections, queue depth, and the OTLP exporter were stable.
+  Evidence: OTLP run `01a0c780-1edd-74b4-8cf5-23bd06d28a70` measured 76.1 MB/hour of live-heap growth and 48.2 Haskell threads/hour; tracing-off run `01a0c780-1edd-75a0-ab90-a28f0145da20` measured 96.5 MB/hour and 418 threads/hour. Replacing the per-tick race with one `registerDelay` observed from the existing STM transaction kept focused run `01a0c794-d792-73f0-804b-21a48544a1a7` at 15 Haskell threads for 120 seconds and live heap between approximately 11.5 and 13.1 MB.
+
+- Observation: removing the sampler waiter leak made the thread verdict stable but did not remove the common live-heap slope. The final tracing-off and OTLP controls both completed 120,000 cycles with zero operation failures, zero final queue rows, a statistically flat queue-depth series, and stable native memory, OS threads, file descriptors, and database connections. The remaining failure is not attributable to tracing because it persists with tracing disabled and the tracing-off slope is higher; the two confidence intervals do not overlap.
+  Evidence: tracing-off run `01a0c798-5508-7549-9b0e-2fc0754328e8` measured 96.8 MB/hour (95% interval 86.5–116.1 MB/hour); OTLP run `01a0c798-5508-77db-9004-674089ca9310` measured 78.3 MB/hour (74.5–81.2 MB/hour). The OTLP arm exported all 360,240 ended spans, dropped none, failed none, and reached a maximum queue depth of 518.
 
 
 ## Decision Log
@@ -158,10 +176,20 @@ Milestone 4 — pgmq-hs soak and telemetry arms.
   Rationale: Partitioning is part of the released PGMQ contract exercised by this plan. Keeping the extension in both runtime majors makes the matrix symmetric and lets `requirePartman` distinguish installation errors from unavailable binaries.
   Date: 2026-09-22
 
+- Decision: Soak scenarios use the measurement toolkit's one-day interval-histogram default, while benchmarks retain ten-second frames and every scenario may still override the knob explicitly.
+  Rationale: mutable interval histograms are intentionally retained until the recorder can merge and serialize them. Ten-second frames are valuable for short benchmark analysis but create a harness-owned linear heap slope during multi-hour leak checks; a day-long frame keeps the soak observer bounded without removing aggregate latency evidence.
+  Date: 2026-09-22
+
+- Decision: sampler deadlines and phase-boundary events share one STM wait using `registerDelay`; sampler loops do not create and cancel `Async` waiters on every tick.
+  Rationale: a leak detector must not add live thread objects in proportion to the number of samples. The single STM wait preserves immediate phase-boundary wakeups and scheduled deadlines without a per-sample child-thread lifecycle.
+  Date: 2026-09-22
+
 
 ## Outcomes & Retrospective
 
-(To be filled during and after implementation.)
+EP-8 now contributes a registry-valid 49-scenario PGMQ layer, three worker roles, PostgreSQL 17/18 fixtures with pg_partman, contract verdict artifacts, paired benchmark policy, overhead reports, and reduced/full soak constructors. The layer has already localized two released partition defects, two transient-error classifier gaps, listener-loss semantics, and a deliberately injected handler regression without making declared known defects blocking.
+
+The layer is not yet complete. Seven of nine A/A controls need the quieter execution environment owned by EP-17, the backend-termination and TCP-reset contracts expose error shapes that pgmq-hs 0.6.1.0 classifies as permanent, and the corrected reduced-soak controls expose a remaining common-path live-heap slope despite stable workload, queue, OS-resource, and telemetry probes. Until those acceptance items are resolved, this plan and its MasterPlan registry row remain `In Progress`.
 
 
 ## Context and Orientation

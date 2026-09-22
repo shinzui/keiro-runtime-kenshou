@@ -255,7 +255,7 @@ Track milestone-level progress across all child plans. Each entry names the chil
 - [x] EP-7: Metrics arms and the harness scraper
 - [x] EP-7: The paired overhead protocol and `kenshou overhead`
 - [x] EP-7: Detectors for telemetry-induced problems
-- [ ] EP-8: pgmq-hs correctness scenarios
+- [x] (2026-09-22 04:09Z) EP-8: pgmq-hs correctness scenarios
 - [ ] EP-8: pgmq-hs concurrency and crash scenarios
 - [ ] EP-8: pgmq-hs benchmarks
 - [ ] EP-8: pgmq-hs soak and telemetry arms
