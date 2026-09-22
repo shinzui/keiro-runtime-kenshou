@@ -5,6 +5,7 @@ import Control.Exception (fromException)
 import Data.Aeson (object)
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.List.NonEmpty (NonEmpty (..))
+import Data.Set qualified as Set
 import Data.Vector qualified as Vector
 import Kenshou.Core.Context (RunContext)
 import Kenshou.Core.Dimension
@@ -19,7 +20,61 @@ import Kiroku.Store hiding (id, withKirokuStore)
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [checkpointPolicies]
+scenarios = [checkpointPolicies, filtersAdvanceCheckpoint]
+
+filtersAdvanceCheckpoint :: Scenario
+filtersAdvanceCheckpoint =
+  checkpointPolicies
+    { id = either (error . show) id (parseScenarioId "kiroku/subscription/correctness/filters-advance-checkpoint"),
+      summary = "Checks type and selector filters while skipped rows still advance the durable checkpoint.",
+      run = runFilters
+    }
+
+runFilters :: RunContext -> IO ScenarioReport
+runFilters context = withKirokuStore context \store -> do
+  let stream = StreamName "filter-events"
+      name = SubscriptionName "filter-subscription"
+      key = SubscriptionCheckpointKey name 0
+      keepType = EventType "Keep"
+      event eventType = EventData Nothing eventType (object []) Nothing Nothing Nothing
+      config ref =
+        (defaultSubscriptionConfig name AllStreams (\row -> modifyIORef' ref (row.globalPosition :) >> pure Continue))
+          { eventTypeFilter = OnlyEventTypes (Set.singleton keepType),
+            selector = Just (\row -> row.globalPosition == GlobalPosition 2)
+          }
+      awaitHead = timeout 10000000 loop
+      loop = do
+        inventory <- runStoreIO store subscriptionCheckpointInventory
+        case inventory of
+          Right snapshot
+            | [row.checkpointPosition | row <- Vector.toList snapshot.checkpoints, row.subscriptionName == name] == [GlobalPosition 2003] -> pure True
+          _ -> threadDelay 10000 >> loop
+  initial <- runStoreIO store (appendToStream stream NoStream [event keepType, event keepType, event (EventType "Drop")])
+  skipped <- runStoreIO store (appendToStream stream (ExactVersion (StreamVersion 3)) (replicate 2000 (event (EventType "Drop"))))
+  seen <- newIORef []
+  caughtUp <- withSubscription store (config seen) \_ -> awaitHead
+  delivered <- reverse <$> readIORef seen
+  inventory <- runStoreIO store subscriptionCheckpointInventory
+  let cells =
+        [ ("seed-appended", case initial of Right result -> result.globalPosition == GlobalPosition 3; _ -> False),
+          ("nonmatching-run-appended", case skipped of Right result -> result.globalPosition == GlobalPosition 2003; _ -> False),
+          ("checkpoint-reaches-head", caughtUp == Just True),
+          ("filters-compose", delivered == [GlobalPosition 2]),
+          ( "checkpoint-durable",
+            case inventory of
+              Right snapshot ->
+                snapshot.storePosition == GlobalPosition 2003
+                  && [row.checkpointPosition | row <- Vector.toList snapshot.checkpoints, row.subscriptionName == name] == [GlobalPosition 2003]
+              _ -> False
+          ),
+          ( "checkpoint-key",
+            case inventory of
+              Right snapshot ->
+                [SubscriptionCheckpointKey row.subscriptionName row.consumerGroupMember | row <- Vector.toList snapshot.checkpoints] == [key]
+              _ -> False
+          )
+        ]
+  recordCells context "filters-advance-checkpoint" [] cells
 
 checkpointPolicies :: Scenario
 checkpointPolicies =
