@@ -94,6 +94,7 @@ Milestone 2 — pgmq-hs concurrency and crash scenarios.
 - [x] (2026-09-22 22:15Z) Expanded the TCP reset probe to 100 confirmed sends before the reset, one ambiguous interrupted send, and 100 confirmed sends after same-pool recovery. Durable key and queue-count oracles passed on PostgreSQL 17 and 18; only the known reset classifier check failed.
 - [x] (2026-09-22 22:20Z) Added 100 pre-fault and 100 post-fault confirmed sends to backend termination and immediate PostgreSQL crash, with durable-key conservation checks on both supported majors. The same pools recovered, all 200 keys remained, and only the already registered transient classifier checks failed. Expanded the unlogged-crash probe to exact keys: 100 logged rows survived and 100 unlogged rows vanished on both majors.
 - [x] (2026-09-22 22:23Z) Wired `pgmq.fault.kind=latency` to the TCP proxy. A warm send under 1 ms rose to about 402 ms with 200 ms configured in each direction, without errors or lost keys, on both durable PostgreSQL majors.
+- [x] (2026-09-22 22:27Z) Routed `pgmq.conn.tcp-user-timeout-ms` through Hasql's `Connection.other "tcp_user_timeout"` when nonzero. PostgreSQL 17 and 18 both accepted a 5,000 ms setting in the latency scenario; its blackhole timing semantics remain unverified.
 - [ ] Complete the wider outage workloads beyond the focused recovery probes.
 
 Milestone 3 — pgmq-hs benchmarks.
@@ -225,6 +226,9 @@ Milestone 4 — pgmq-hs soak and telemetry arms.
 
 - Observation: the TCP proxy's latency mode adds a delay in each forwarding direction, and a warmed pool sent through that path without an error. A 200 ms setting added about 402 ms to one send, close to the expected request and response traversal cost.
   Evidence: durable PostgreSQL 18 run `01a0cb36-ef53-7596-b705-d21e53044e91` measured 0.000376 seconds baseline and 0.403073 seconds delayed; PostgreSQL 17 run `01a0cb37-2ca1-7233-849a-ba85acf0b478` measured 0.000453 and 0.402041 seconds. Both passed all checks and retained the three sent keys.
+
+- Observation: a nonzero `pgmq.conn.tcp-user-timeout-ms` now becomes a libpq connection option through Hasql's `Connection.other`; the zero default omits the option. The 5,000 ms option was accepted by both PostgreSQL majors with the latency proxy, which establishes the configuration path without claiming that it bounds a response blackhole.
+  Evidence: durable PostgreSQL 18 run `01a0cb3a-c040-72c1-a32f-873fd93551a1` and PostgreSQL 17 run `01a0cb3a-f558-732b-8973-8b3f16059497` passed the latency and durable-key checks with `pgmq.conn.tcp-user-timeout-ms=5000`.
 
 
 ## Decision Log

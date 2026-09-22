@@ -61,7 +61,7 @@ withPgmqPool environment role knobs action =
         PoolConfig.settings
           [ PoolConfig.size knobs.poolSize,
             PoolConfig.acquisitionTimeout (fromIntegral knobs.acquisitionTimeoutSeconds),
-            PoolConfig.staticConnectionSettings (Connection.connectionString environment.connectionString <> Connection.applicationName ("kenshou-pgmq-" <> role))
+            PoolConfig.staticConnectionSettings (Connection.connectionString environment.connectionString <> Connection.applicationName ("kenshou-pgmq-" <> role) <> if knobs.tcpUserTimeoutMs > 0 then Connection.other "tcp_user_timeout" (Text.pack (show knobs.tcpUserTimeoutMs)) else mempty)
           ]
     )
     Pool.release
