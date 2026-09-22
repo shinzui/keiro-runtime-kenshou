@@ -92,6 +92,7 @@ Milestone 2 — pgmq-hs concurrency and crash scenarios.
 - [x] (2026-09-22 22:07Z) Added a controlled two-transaction batch-delete tail to the sixteen-worker overlapping acknowledgment scenario. Opposite row locks forced a live SQLSTATE `40P01` on both durable PostgreSQL majors; `pgmq-effectful` classified it transient, the winning transaction deleted both IDs, and the queue drained.
 - [x] (2026-09-22 22:12Z) Ran all other nineteen concurrency identifiers on each durable PostgreSQL major. Each version had thirteen passing scenarios and six precise, non-blocking known-defect reproductions, with no new blocking failures. Together with the full random-kill runs, all twenty identifiers have run on both versions.
 - [x] (2026-09-22 22:15Z) Expanded the TCP reset probe to 100 confirmed sends before the reset, one ambiguous interrupted send, and 100 confirmed sends after same-pool recovery. Durable key and queue-count oracles passed on PostgreSQL 17 and 18; only the known reset classifier check failed.
+- [x] (2026-09-22 22:20Z) Added 100 pre-fault and 100 post-fault confirmed sends to backend termination and immediate PostgreSQL crash, with durable-key conservation checks on both supported majors. The same pools recovered, all 200 keys remained, and only the already registered transient classifier checks failed. Expanded the unlogged-crash probe to exact keys: 100 logged rows survived and 100 unlogged rows vanished on both majors.
 - [ ] Complete the wider outage workloads beyond the focused recovery probes.
 
 Milestone 3 — pgmq-hs benchmarks.
@@ -217,6 +218,9 @@ Milestone 4 — pgmq-hs soak and telemetry arms.
 
 - Observation: after a TCP reset, the same proxied pool sent a second hundred-message batch. The harness compared durable payload keys with both confirmed batches and allowed only the interrupted send to be ambiguous. No confirmed send was lost and no extra key appeared.
   Evidence: durable PostgreSQL 18 run `01a0cb2f-8308-7322-8167-000609017d59` and PostgreSQL 17 run `01a0cb30-300c-74eb-aaee-f3c9c999aab3` each recorded 100 baseline IDs, 100 recovered IDs, 200 durable keys, and queue depth 200. The ambiguous send did not commit in these runs. Only `reset-transient` failed under `mori://shinzui/pgmq-hs/okf/improvement-requests/concepts/IR-4`.
+
+- Observation: backend termination interrupted a long poll on an empty queue while a separate queue retained the confirmed data workload. After the fault, the same pool sent another hundred rows; all 200 keys and the queue depth matched on both versions. An immediate postmaster crash gave the same conservation result, with `fsync=on` and same-pool recovery in under 0.4 seconds. The logged versus unlogged crash check confirmed loss was limited to the unlogged queue.
+  Evidence: backend termination runs `01a0cb32-0116-755a-9a99-c79c78f659e0` (PostgreSQL 18) and `01a0cb32-4557-70bc-a30e-248b33b3d22f` (17) each retained 200 keys; only `transient-error` failed under `mori://shinzui/pgmq-hs/okf/improvement-requests/concepts/IR-4`. Restart runs `01a0cb33-1925-70ef-a759-a4c2e1cf2a68` (18) and `01a0cb33-5308-75d4-acbd-810f15cc3a06` (17) each retained 200 keys; only `outage-error-transient` failed under the same request. Unlogged crash runs `01a0cb33-fff6-72e8-8f1a-6840ff78c410` (18) and `01a0cb34-3631-7118-b4ef-659ad3f913e4` (17) each retained exactly 100 logged keys and zero unlogged keys.
 
 
 ## Decision Log

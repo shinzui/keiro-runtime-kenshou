@@ -424,32 +424,43 @@ poolExhaustion context = withPgmqRun context \runtime ->
 backendTermination :: RunContext -> IO ScenarioReport
 backendTermination context = withPgmqRun context \runtime ->
   withScenarioQueue runtime.pool context runtime.knobs "backend_termination" \queue -> do
-    waiting <- async (runOps runtime.tracer runtime.pool (Pgmq.readWithPoll (Types.ReadWithPollMessage queue 30 Nothing 5 100 Nothing)))
-    threadDelay 200000
-    let fault = terminateBackends (requirePostgres context) (ByApplicationName "kenshou-pgmq-%")
-    handle <- fault.inject
-    interrupted <- wait waiting
-    handle.heal
-    recovered <- retry 20 (runOps runtime.tracer runtime.pool (Pgmq.sendMessage (Types.SendMessage queue (body 1) Nothing)))
-    putSummary context Verdicts "backend-termination-observations" (object ["interrupted" .= show interrupted, "recovered" .= show recovered])
-    verdict context "backend-termination" [("transient-error", either Pgmq.isTransient (const False) interrupted), ("same-pool-recovers", either (const False) (const True) recovered)]
+    withScenarioQueue runtime.pool context runtime.knobs "backend_termination_data" \dataQueue -> do
+      baseline <- effect runtime (Pgmq.batchSendMessage (Types.BatchSendMessage dataQueue (fmap body [1 .. 100]) Nothing))
+      waiting <- async (runOps runtime.tracer runtime.pool (Pgmq.readWithPoll (Types.ReadWithPollMessage queue 30 Nothing 5 100 Nothing)))
+      threadDelay 200000
+      let fault = terminateBackends (requirePostgres context) (ByApplicationName "kenshou-pgmq-%")
+      handle <- fault.inject
+      interrupted <- wait waiting
+      handle.heal
+      recovered <- retry 20 (runOps runtime.tracer runtime.pool (Pgmq.batchSendMessage (Types.BatchSendMessage dataQueue (fmap body [101 .. 200]) Nothing)))
+      durable <- queueKeys runtime.pool dataQueue
+      metrics <- effect runtime (Pgmq.queueMetrics dataQueue)
+      let expected = Set.fromList ["message-" <> Text.pack (show index) | index <- [1 :: Int .. 200]]
+      putSummary context Verdicts "backend-termination-observations" (object ["interrupted" .= show interrupted, "baselineCount" .= length baseline, "recoveredCount" .= either (const (0 :: Int)) length recovered, "durableCount" .= Set.size durable, "queueLength" .= metrics.queueLength])
+      verdict context "backend-termination" [("transient-error", either Pgmq.isTransient (const False) interrupted), ("same-pool-recovers", either (const False) ((== 100) . length) recovered), ("confirmed-keys-durable", durable == expected), ("queue-length-conserved", metrics.queueLength == 200)]
 
 postgresRestart :: RunContext -> IO ScenarioReport
 postgresRestart context = withPgmqRun context \runtime ->
   withScenarioQueue runtime.pool context runtime.knobs "restart" \queue -> do
-    sent <- effect runtime (Pgmq.batchSendMessage (Types.BatchSendMessage queue (fmap body [1 .. 20]) Nothing))
+    sent <- effect runtime (Pgmq.batchSendMessage (Types.BatchSendMessage queue (fmap body [1 .. 100]) Nothing))
     let fault = crashPostmaster (requirePostgres context) ImmediateShutdown
     handle <- fault.inject
-    outage <- runOps runtime.tracer runtime.pool (Pgmq.sendMessage (Types.SendMessage queue (body 21) Nothing))
+    outage <- runOps runtime.tracer runtime.pool (Pgmq.sendMessage (Types.SendMessage queue (body 201) Nothing))
     recoveryStarted <- getMonotonicTimeNSec
     handle.heal
-    messages <- retryValue 50 (runOps runtime.tracer runtime.pool (Pgmq.readMessage (Types.ReadMessage queue 30 (Just 20) Nothing)))
+    messages <- retryValue 50 (runOps runtime.tracer runtime.pool (Pgmq.readMessage (Types.ReadMessage queue 30 (Just 100) Nothing)))
     recoveredAt <- getMonotonicTimeNSec
+    postRestart <- retryValue 50 (runOps runtime.tracer runtime.pool (Pgmq.batchSendMessage (Types.BatchSendMessage queue (fmap body [101 .. 200]) Nothing)))
+    durable <- queueKeys runtime.pool queue
+    metrics <- effect runtime (Pgmq.queueMetrics queue)
     fsyncSetting <- session runtime.pool (Session.statement () showFsync)
     let observed = sort (fmap (.messageId) (Vector.toList messages))
         recoveryMillis = (recoveredAt - recoveryStarted) `div` 1000000
-    putSummary context Verdicts "postgres-restart-observations" (object ["outageError" .= show outage, "recoveryMillis" .= recoveryMillis, "fsync" .= fsyncSetting, "sent" .= sent, "recovered" .= observed])
-    verdict context "postgres-restart" [("outage-error-transient", either Pgmq.isTransient (const False) outage), ("committed-survives", observed == sort sent), ("same-pool-recovers-within-five-seconds", recoveryMillis <= 5000), ("durability-still-on", fsyncSetting == "on")]
+        confirmed = Set.fromList ["message-" <> Text.pack (show index) | index <- [1 :: Int .. 200]]
+        possible = Set.insert "message-201" confirmed
+        expectedCount = 200 + if "message-201" `Set.member` durable then 1 else 0 :: Int
+    putSummary context Verdicts "postgres-restart-observations" (object ["outageError" .= show outage, "recoveryMillis" .= recoveryMillis, "fsync" .= fsyncSetting, "sent" .= sent, "recovered" .= observed, "postRestartCount" .= length postRestart, "durableCount" .= Set.size durable, "outageSendDurable" .= ("message-201" `Set.member` durable), "queueLength" .= metrics.queueLength])
+    verdict context "postgres-restart" [("outage-error-transient", either Pgmq.isTransient (const False) outage), ("committed-survives", observed == sort sent), ("same-pool-recovers-within-five-seconds", recoveryMillis <= 5000), ("durability-still-on", fsyncSetting == "on"), ("post-restart-writes", length postRestart == 100), ("confirmed-keys-durable", confirmed `Set.isSubsetOf` durable), ("no-unknown-keys", durable `Set.isSubsetOf` possible), ("queue-length-conserved", metrics.queueLength == fromIntegral expectedCount)]
 
 showFsync :: Statement.Statement () Text
 showFsync = Statement.preparable "show fsync" Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.text)))
@@ -461,14 +472,18 @@ unloggedCrashLoss context = withPgmqRun context \runtime -> do
   _ <- effect runtime (Pgmq.createQueue standard)
   _ <- effect runtime (Pgmq.createUnloggedQueue unlogged)
   (`finally` cleanupQueues runtime [standard, unlogged]) do
-    _ <- effect runtime (Pgmq.batchSendMessage (Types.BatchSendMessage standard (fmap body [1 .. 20]) Nothing))
-    _ <- effect runtime (Pgmq.batchSendMessage (Types.BatchSendMessage unlogged (fmap body [1 .. 20]) Nothing))
+    loggedIds <- effect runtime (Pgmq.batchSendMessage (Types.BatchSendMessage standard (fmap body [1 .. 100]) Nothing))
+    unloggedIds <- effect runtime (Pgmq.batchSendMessage (Types.BatchSendMessage unlogged (fmap body [1 .. 100]) Nothing))
     let fault = crashPostmaster (requirePostgres context) ImmediateShutdown
     handle <- fault.inject
     handle.heal
     loggedMetrics <- retryValue 50 (runOps runtime.tracer runtime.pool (Pgmq.queueMetrics standard))
     unloggedMetrics <- effect runtime (Pgmq.queueMetrics unlogged)
-    verdict context "unlogged-crash" [("logged-survives", loggedMetrics.queueLength == 20), ("unlogged-lost", unloggedMetrics.queueLength == 0)]
+    loggedKeys <- queueKeys runtime.pool standard
+    unloggedKeys <- queueKeys runtime.pool unlogged
+    let expected = Set.fromList ["message-" <> Text.pack (show index) | index <- [1 :: Int .. 100]]
+    putSummary context Verdicts "unlogged-crash-observations" (object ["loggedSent" .= length loggedIds, "unloggedSent" .= length unloggedIds, "loggedDurable" .= Set.size loggedKeys, "unloggedDurable" .= Set.size unloggedKeys, "loggedQueueLength" .= loggedMetrics.queueLength, "unloggedQueueLength" .= unloggedMetrics.queueLength])
+    verdict context "unlogged-crash" [("logged-survives", length loggedIds == 100 && loggedKeys == expected && loggedMetrics.queueLength == 100), ("unlogged-lost", length unloggedIds == 100 && Set.null unloggedKeys && unloggedMetrics.queueLength == 0)]
 
 networkPartition :: RunContext -> IO ScenarioReport
 networkPartition context = case (requirePostgres context).tcpEndpoint of
