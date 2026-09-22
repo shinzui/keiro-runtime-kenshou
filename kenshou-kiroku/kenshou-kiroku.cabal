@@ -42,6 +42,7 @@ library
     Kenshou.Suite.Kiroku.Correctness.Lifecycle
     Kenshou.Suite.Kiroku.Correctness.Notifier
     Kenshou.Suite.Kiroku.Correctness.Read
+    Kenshou.Suite.Kiroku.Correctness.Retention
     Kenshou.Suite.Kiroku.Correctness.Subscription
     Kenshou.Suite.Kiroku.Correctness.Transaction
     Kenshou.Suite.Kiroku.Fixture.Store
@@ -54,6 +55,7 @@ library
     effectful >=2.6 && <2.7,
     filepath,
     hasql >=1.10 && <1.11,
+    hasql-pool >=1.4 && <1.5,
     hasql-transaction >=1.0 && <2,
     kenshou-check,
     kenshou-core,
