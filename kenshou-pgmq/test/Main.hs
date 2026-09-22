@@ -1,6 +1,6 @@
 module Main (main) where
 
-import Data.List (isInfixOf)
+import Data.List (find, isInfixOf)
 import Data.Map.Strict qualified as Map
 import Data.Text qualified as Text
 import Data.Time (UTCTime (..), addUTCTime, fromGregorian, secondsToDiffTime)
@@ -37,6 +37,12 @@ main = hspec do
       root <- findRepositoryRoot =<< getCurrentDirectory
       guide <- readFile (root </> "docs/layers/pgmq.md")
       mapM_ (\scenario -> guide `shouldSatisfy` isInfixOf (Text.unpack (renderScenarioId scenario.id))) bundle.scenarios
+
+    it "drives soaks with an explicit open-loop arrival rate" do
+      let soak = maybe (error "reduced soak is not registered") id (find ((== "pgmq/queue/soak/steady-state-reduced") . renderScenarioId . (.id)) bundle.scenarios)
+          resolved = resolvedOrFail (CoreKnob.resolveKnobs soak.knobs [])
+      CoreKnob.knobText resolved (knob "load.model") `shouldBe` "open-constant"
+      CoreKnob.knobDouble resolved (knob "load.rate-per-second") `shouldBe` 500
 
   describe "lease oracle" do
     it "accepts consecutive leases after visibility expiry" do
@@ -98,6 +104,9 @@ parsed parser value = either (const (error "test parser rejected fixture")) id (
 
 resolvedOrFail :: (Show error) => Either error value -> value
 resolvedOrFail = either (error . show) id
+
+knob :: Text.Text -> CoreKnob.KnobName
+knob = either (error . Text.unpack) id . CoreKnob.mkKnobName
 
 isCorrectness :: Scenario -> Bool
 isCorrectness scenario = case scenario.id of ScenarioId _ _ kind _ -> kind == Correctness
