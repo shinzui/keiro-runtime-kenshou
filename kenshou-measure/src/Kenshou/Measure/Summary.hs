@@ -3,6 +3,7 @@ module Kenshou.Measure.Summary
     SummaryWindow (..),
     MeasurementSummary (..),
     summarizeRunDir,
+    summarizeRunDirWithHealth,
   )
 where
 
@@ -87,16 +88,19 @@ instance FromJSON SampleMeta where
     SampleMeta <$> value .: "operation" <*> value .:? "latencyBasis" .!= "intended-start" <*> pure (raw == String "full") <*> pure steady <*> value .:? "errorCauses" .!= Map.empty
 
 summarizeRunDir :: FilePath -> IO (Either SummaryError MeasurementSummary)
-summarizeRunDir runDir = do
+summarizeRunDir = summarizeRunDirWithHealth defaultHealthConfig
+
+summarizeRunDirWithHealth :: HealthConfig -> FilePath -> IO (Either SummaryError MeasurementSummary)
+summarizeRunDirWithHealth healthConfig runDir = do
   exists <- doesDirectoryExist runDir
   if not exists
     then pure (Left (SummaryError "run directory does not exist"))
     else do
-      result <- try (summarize runDir)
+      result <- try (summarize healthConfig runDir)
       pure (either (Left . SummaryError . Text.pack . show) id (result :: Either SomeException (Either SummaryError MeasurementSummary)))
 
-summarize :: FilePath -> IO (Either SummaryError MeasurementSummary)
-summarize runDir = do
+summarize :: HealthConfig -> FilePath -> IO (Either SummaryError MeasurementSummary)
+summarize healthConfig runDir = do
   windowResult <- readWindow (runDir </> "series" </> "load.csv")
   case windowResult of
     Left err -> pure (Left err)
@@ -111,7 +115,7 @@ summarize runDir = do
               totalOps = sum [metric.value | (name, metric) <- Map.toList operationMetrics, ".throughput" `Text.isSuffixOf` name] * window.steadySeconds
           runtimeMetrics <- summarizeSeries runDir window totalOps
           reasons <- gradeReasonsFromRun runDir (all (\(_, _, _, full) -> full) operations)
-          health <- evaluateHealth defaultHealthConfig runDir
+          health <- evaluateHealth healthConfig runDir
           let healthReasons = ["health:" <> item.gate | item <- health, item.severity /= Info]
               allReasons = reasons <> healthReasons
           pure (Right (MeasurementSummary (if null allReasons then "benchmark" else "exploratory") allReasons window operationMap (operationMetrics <> runtimeMetrics) health))

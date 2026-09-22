@@ -16,14 +16,16 @@ import Data.List.NonEmpty qualified as NonEmpty
 import Data.Text (Text)
 import Data.Text qualified as Text
 
-data VaryingAxis = VaryCohort | VaryDimension Text | VaryKnob Text deriving stock (Eq, Ord, Show)
+data VaryingAxis = VaryControl | VaryCohort | VaryDimension Text | VaryKnob Text deriving stock (Eq, Ord, Show)
 
 instance ToJSON VaryingAxis where
+  toJSON VaryControl = String "control"
   toJSON VaryCohort = String "cohort"
   toJSON (VaryDimension name) = String ("dim:" <> name)
   toJSON (VaryKnob name) = String ("knob:" <> name)
 
 parseVaryingAxis :: Text -> Either Text VaryingAxis
+parseVaryingAxis "control" = Right VaryControl
 parseVaryingAxis "cohort" = Right VaryCohort
 parseVaryingAxis value | Just name <- Text.stripPrefix "dim:" value, not (Text.null name) = Right (VaryDimension name)
 parseVaryingAxis value | Just name <- Text.stripPrefix "knob:" value, not (Text.null name) = Right (VaryKnob name)
@@ -50,6 +52,7 @@ compatibleExcept axes left right =
   where
     removeAxis axis value = case value of
       Object objectValue -> Object case axis of
+        VaryControl -> objectValue
         VaryCohort -> KeyMap.delete "cohortPlanHash" objectValue
         VaryDimension name -> updateNested "dimensions" name objectValue
         VaryKnob name -> updateNested "knobs" name objectValue
@@ -62,6 +65,7 @@ compatibleExcept axes left right =
 
 varyingValue :: VaryingAxis -> Value -> Maybe Value
 varyingValue axis (Object inputs) = case axis of
+  VaryControl -> Just (Object inputs)
   VaryCohort -> KeyMap.lookup "cohortPlanHash" inputs
   VaryDimension name -> nested "dimensions" name
   VaryKnob name -> nested "knobs" name

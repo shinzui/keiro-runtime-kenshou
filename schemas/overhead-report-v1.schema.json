@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/overhead-report-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "id", "scenario", "mode", "baseline", "fixed", "trials", "seed", "validBlocks", "order", "arms", "comparisons", "findings", "policy", "cohort", "verdict", "algorithm"],
+  "properties": {
+    "schema": {"const": "kenshou.overhead-report/v1"},
+    "id": {"type": "string"},
+    "scenario": {"type": "string"},
+    "mode": {"enum": ["one-factor", "full"]},
+    "baseline": {"type": "object", "additionalProperties": {"type": "string"}},
+    "fixed": {
+      "type": "object",
+      "required": ["knobs", "dimensions"],
+      "properties": {"knobs": {"type": "object"}, "dimensions": {"type": "object"}}
+    },
+    "trials": {"type": "integer", "minimum": 3},
+    "seed": {"type": "integer", "minimum": 0},
+    "validBlocks": {"type": "integer", "minimum": 0},
+    "order": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}},
+    "arms": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["arm", "dimensions", "runs", "telemetry", "leak", "findings"],
+        "properties": {
+          "arm": {"type": "string"},
+          "dimensions": {"type": "object", "additionalProperties": {"type": "string"}},
+          "runs": {"type": "array", "items": {"type": "string"}},
+          "telemetry": {},
+          "leak": {},
+          "findings": {"type": "array"}
+        }
+      }
+    },
+    "comparisons": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["candidate", "baseline", "factor", "from", "to", "comparison", "verdict", "degraded", "deltas", "reasons"],
+        "properties": {
+          "candidate": {"type": "string"},
+          "baseline": {"type": "string"},
+          "factor": {"type": "string"},
+          "from": {"type": "string"},
+          "to": {"type": "string"},
+          "comparison": {"type": ["string", "null"]},
+          "verdict": {"enum": ["pass", "regression", "inconclusive", "infrastructure-failure"]},
+          "degraded": {"type": "boolean"},
+          "deltas": {"type": "object"},
+          "reasons": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "findings": {"type": "array"},
+    "policy": {
+      "type": "object",
+      "required": ["name", "sha256"],
+      "properties": {"name": {"type": "string"}, "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}}
+    },
+    "cohort": {"type": "object"},
+    "verdict": {"enum": ["pass", "regression", "inconclusive", "infrastructure-failure"]},
+    "algorithm": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {"name": {"const": "kenshou-overhead"}, "version": {"const": 1}}
+    }
+  }
+}

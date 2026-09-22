@@ -34,6 +34,8 @@ schemas-check:
     check-jsonschema --schemafile schemas/run-result-v1.schema.json kenshou-core/test/golden/run-result.passed.json kenshou-core/test/golden/run-result.known-defect.json
     check-jsonschema --schemafile schemas/artifact-manifest-v1.schema.json kenshou-core/test/golden/manifest.json
     check-jsonschema --schemafile schemas/comparison-policy-v1.schema.json policies/default.json policies/selftest.json
+    check-jsonschema --schemafile schemas/overhead-policy-v1.schema.json policies/telemetry-overhead.json
+    check-jsonschema --schemafile schemas/overhead-report-v1.schema.json kenshou-telemetry/test/golden/overhead-report.minimal.json
     check-jsonschema --schemafile schemas/health-notice-v1.schema.json kenshou-measure/test/fixtures/health-notice.json
     check-jsonschema --schemafile schemas/diagnosis.v1.schema.json kenshou-diagnose/test/golden/leak-diagnosis.json
     check-jsonschema --schemafile schemas/leak-policy.v1.schema.json policies/leak-default.json

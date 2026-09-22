@@ -14,12 +14,16 @@ import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Aeson.Types (parseMaybe, withObject, (.:))
 import Data.IORef
+import Data.Maybe (catMaybes)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import GHC.Clock (getMonotonicTimeNSec)
 import Kenshou.Core.Dimension (renderMetrics, renderTracing)
 import Kenshou.Core.Role (ControlMessage (..), WorkerMessage (..), mkRoleName)
 import Kenshou.Core.Role.Spawn (WorkerHandle (..), withWorker)
+import Kenshou.Telemetry.Compose (HandlerStatsSnapshot)
+import Kenshou.Telemetry.Continuity (ContinuityResult, IsolationResult)
+import Kenshou.Telemetry.Detect
 import Kenshou.Telemetry.Endpoint
 import Kenshou.Telemetry.Metrics
 import Kenshou.Telemetry.Scrape
@@ -62,6 +66,8 @@ data TelemetryHandles = TelemetryHandles
     servesEndpoints :: Bool,
     registerEndpoint :: Endpoint -> IO (),
     setSinkFault :: SinkFault -> IO (),
+    recordContinuity :: ContinuityResult -> IsolationResult -> IO (),
+    recordHandlerStats :: HandlerStatsSnapshot -> IO (),
     flushTelemetry :: IO FlushReport
   }
 
@@ -73,7 +79,10 @@ withTelemetry spec action = withConfiguredScraper spec \scraper -> case spec.end
     runWith scraper effectiveSpec sink = mask \restore -> do
       runtime <- startTracing effectiveSpec
       metricsRuntime <- startMetrics effectiveSpec
+      stopPipelineSampler <- maybe (pure (pure [])) (startPipelineSampler spec.outDir) runtime.pipeline
       endpointsRef <- newIORef (maybe [] pure metricsRuntime.endpoint)
+      recordedFindingsRef <- newIORef []
+      handlerStatsRef <- newIORef []
       traverse_ (\endpoint -> traverse_ (\active -> active.register endpoint) scraper) metricsRuntime.endpoint
       let register endpoint
             | spec.metrics `notElem` [MetricsServe, MetricsServeScraped] = ioError (userError "metrics endpoint registered while telemetry.metrics does not serve endpoints")
@@ -96,6 +105,8 @@ withTelemetry spec action = withConfiguredScraper spec \scraper -> case spec.end
                 servesEndpoints = spec.metrics `elem` [MetricsServe, MetricsServeScraped],
                 registerEndpoint = register,
                 setSinkFault = maybe (const (pure ())) (.setFault) sink,
+                recordContinuity = \continuity isolation -> modifyIORef' recordedFindingsRef (<> continuityFindings continuity isolation),
+                recordHandlerStats = \snapshot -> modifyIORef' handlerStatsRef (<> [snapshot]),
                 flushTelemetry = FlushReport <$> timedCall (flushTracing spec.shutdownMs runtime) <*> timedCall (flushMetrics spec.shutdownMs metricsRuntime)
               }
       bodyResult <- tryAny (restore (action handles))
@@ -104,12 +115,18 @@ withTelemetry spec action = withConfiguredScraper spec \scraper -> case spec.end
       endpointSummaries <- maybe (pure Nothing) (fmap Just . (.finish)) scraper
       (metricsSnapshot, metricsShutdownResult) <- timedStopMetrics spec.shutdownMs metricsRuntime
       shutdownResult <- timedCall (stopTracing spec.shutdownMs runtime)
-      pipelineSnapshot <- traverse snapshotPipeline runtime.pipeline
+      queueSamples <- stopPipelineSampler
+      rawPipelineSnapshot <- traverse snapshotPipeline runtime.pipeline
+      let pipelineSnapshot = fmap (normalizeQueueDepth spec) rawPipelineSnapshot
       sinkSnapshot <- traverse (.snapshot) sink
       ambient <- ambientOtelEnvironment
       endpoints <- readIORef endpointsRef
+      recordedFindings <- readIORef recordedFindingsRef
+      handlerStats <- readIORef handlerStatsRef
       let endpointValues = maybe (fmap toJSON endpoints) (fmap toJSON) endpointSummaries
-          summary = telemetrySummary spec ambient pipelineSnapshot sinkSnapshot metricsSnapshot endpointValues flushResult metricsFlushResult shutdownResult metricsShutdownResult
+          calls = catMaybes [providerCall "trace-flush" spec.shutdownMs flushResult, providerCall "metrics-flush" spec.shutdownMs metricsFlushResult, providerCall "trace-shutdown" spec.shutdownMs shutdownResult, providerCall "metrics-shutdown" spec.shutdownMs metricsShutdownResult]
+          findings = pipelineFindings 0.01 pipelineSnapshot calls <> [queueGrowthFinding (pipelineQueueLimit spec runtime.pipeline) queueSamples, endpointFinding (maybe [] id endpointSummaries)] <> fmap handlerFinding handlerStats <> recordedFindings
+          summary = telemetrySummary spec ambient pipelineSnapshot sinkSnapshot metricsSnapshot endpointValues (fmap toJSON handlerStats) findings flushResult metricsFlushResult shutdownResult metricsShutdownResult
       _ <- tryAny (spec.report summary)
       either throwIO pure bodyResult
 
@@ -160,8 +177,8 @@ withConfiguredScraper spec action
         scraper <- startScraperInProcess spec.outDir spec.scrapeMs spec.wsSubscribers
         action (Just scraper)
 
-telemetrySummary :: TelemetrySpec -> [(Text, Text)] -> Maybe PipelineSnapshot -> Maybe SinkStats -> Maybe MetricsSnapshot -> [Value] -> Maybe ProviderCallReport -> Maybe ProviderCallReport -> Maybe ProviderCallReport -> Maybe ProviderCallReport -> Value
-telemetrySummary spec ambient pipelineSnapshot sinkSnapshot metricsSnapshot endpoints flushResult metricsFlushResult shutdownResult metricsShutdownResult =
+telemetrySummary :: TelemetrySpec -> [(Text, Text)] -> Maybe PipelineSnapshot -> Maybe SinkStats -> Maybe MetricsSnapshot -> [Value] -> [Value] -> [Finding] -> Maybe ProviderCallReport -> Maybe ProviderCallReport -> Maybe ProviderCallReport -> Maybe ProviderCallReport -> Value
+telemetrySummary spec ambient pipelineSnapshot sinkSnapshot metricsSnapshot endpoints handlers findings flushResult metricsFlushResult shutdownResult metricsShutdownResult =
   object
     [ "schema" .= ("kenshou.telemetry-summary/v1" :: Text),
       "arms" .= object ["tracing" .= renderTracing spec.tracing, "metrics" .= renderMetrics spec.metrics],
@@ -171,9 +188,27 @@ telemetrySummary spec ambient pipelineSnapshot sinkSnapshot metricsSnapshot endp
       "sink" .= sinkSnapshot,
       "metrics" .= object ["snapshot" .= metricsSnapshot, "flush" .= metricsFlushResult, "shutdown" .= metricsShutdownResult],
       "endpoints" .= endpoints,
-      "handlers" .= ([] :: [Value]),
-      "findings" .= ([] :: [Value])
+      "handlers" .= handlers,
+      "findings" .= findings
     ]
+
+providerCall :: Text -> Int -> Maybe ProviderCallReport -> Maybe (Text, Text, Double, Double)
+providerCall _ _ Nothing = Nothing
+providerCall name limit (Just report) = Just (name, report.result, report.durationMs, fromIntegral limit)
+
+normalizeQueueDepth :: TelemetrySpec -> PipelineSnapshot -> PipelineSnapshot
+normalizeQueueDepth spec snapshot = case spec.processor of
+  BatchProcessor queue _ batch _ ->
+    -- The public SDK does not expose its private queue count. The accounting
+    -- backlog includes SDK-dropped spans, so cap its high-water mark at the
+    -- configured queue plus the one batch that may already be exporting.
+    PipelineSnapshot snapshot.spansStarted snapshot.spansEnded snapshot.spansExportedOk snapshot.spansExportFailed snapshot.spansDropped (min snapshot.maxQueueDepth (queue + batch)) snapshot.exportCalls snapshot.exportLatencyNs snapshot.lastExportError
+  SimpleProcessor _ -> snapshot
+
+pipelineQueueLimit :: TelemetrySpec -> Maybe PipelineStats -> Maybe Int
+pipelineQueueLimit spec pipeline = case (pipeline, spec.processor) of
+  (Just _, BatchProcessor queue _ _ _) -> Just queue
+  _ -> Nothing
 
 pipelineValue :: Maybe PipelineSnapshot -> Maybe ProviderCallReport -> Maybe ProviderCallReport -> Value
 pipelineValue Nothing _ _ = Null

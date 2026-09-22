@@ -144,8 +144,8 @@ showText :: (Show value) => value -> Text
 showText = Text.pack . show
 
 watchInserts :: MeasureConfig -> MeasureConfig
-watchInserts (MeasureConfig phases histogram rawSamples sampleInterval intervalSeconds postgres extraSamplers) =
-  MeasureConfig phases histogram rawSamples sampleInterval intervalSeconds (fmap addRelation postgres) extraSamplers
+watchInserts (MeasureConfig phases histogram rawSamples sampleInterval intervalSeconds postgres extraSamplers healthConfig) =
+  MeasureConfig phases histogram rawSamples sampleInterval intervalSeconds (fmap addRelation postgres) extraSamplers healthConfig
   where
     addRelation :: PgSamplerConfig -> PgSamplerConfig
     addRelation pg = pg {relations = ["kenshou_selftest.inserts"]}

@@ -51,6 +51,11 @@ provenance:
       at: 2026-09-21T20:51:28Z
       mode: "implement"
       note: "Started EP-7 implementation and moved its registry entry to In Progress."
+    - model: "gpt-6"
+      harness: "codex"
+      at: 2026-09-21T23:50:00Z
+      mode: "implement"
+      note: "Completed EP-7 telemetry arms, paired overhead analysis, and telemetry-induced problem detection."
 ---
 
 # Build an extensive verification suite for the keiro runtime
@@ -96,7 +101,7 @@ There is no local ADR corpus yet: `docs/adr/` does not exist in this repository,
 | 4 | Build the measurement toolkit for load, latency, sampling and comparison | docs/plans/4-build-the-measurement-toolkit-for-load-latency-sampling-and-comparison.md | EP-2 | None | Complete |
 | 5 | Build the correctness toolkit for ledgers, invariants, faults and process control | docs/plans/5-build-the-correctness-toolkit-for-ledgers-invariants-faults-and-process-control.md | EP-2 | None | Complete |
 | 6 | Build the diagnostics toolkit for memory leaks and concurrency stalls | docs/plans/6-build-the-diagnostics-toolkit-for-memory-leaks-and-concurrency-stalls.md | EP-2, EP-4 | EP-5 | Complete |
-| 7 | Add telemetry arms and measure observability overhead | docs/plans/7-add-telemetry-arms-and-measure-observability-overhead.md | EP-2, EP-4 | EP-6 | In Progress |
+| 7 | Add telemetry arms and measure observability overhead | docs/plans/7-add-telemetry-arms-and-measure-observability-overhead.md | EP-2, EP-4 | EP-6 | Complete |
 | 8 | Cover pgmq-hs in isolation | docs/plans/8-cover-pgmq-hs-in-isolation.md | EP-2, EP-4, EP-5, EP-6, EP-7 | EP-3 | Not Started |
 | 9 | Cover kiroku in isolation | docs/plans/9-cover-kiroku-in-isolation.md | EP-2, EP-4, EP-5, EP-6, EP-7 | EP-3 | Not Started |
 | 10 | Cover shibuya core and its PGMQ and kiroku adapters | docs/plans/10-cover-shibuya-core-and-its-pgmq-and-kiroku-adapters.md | EP-2, EP-4, EP-5, EP-6, EP-7 | EP-3, EP-8, EP-9 | Not Started |
@@ -241,10 +246,10 @@ Track milestone-level progress across all child plans. Each entry names the chil
 - [x] EP-6: Profiling build variants and bounded event logs
 - [x] EP-6: `kenshou diagnose` recipes and the diagnosis guide
 - [x] EP-6: Seeded leak and deadlock self-tests that prove the detectors fire
-- [ ] EP-7: Tracing arms
-- [ ] EP-7: Metrics arms and the harness scraper
-- [ ] EP-7: The paired overhead protocol and `kenshou overhead`
-- [ ] EP-7: Detectors for telemetry-induced problems
+- [x] EP-7: Tracing arms
+- [x] EP-7: Metrics arms and the harness scraper
+- [x] EP-7: The paired overhead protocol and `kenshou overhead`
+- [x] EP-7: Detectors for telemetry-induced problems
 - [ ] EP-8: pgmq-hs correctness scenarios
 - [ ] EP-8: pgmq-hs concurrency and crash scenarios
 - [ ] EP-8: pgmq-hs benchmarks
@@ -333,6 +338,7 @@ Drafting the child plans against real source corrected the research in ways that
 - Mori exposes `shinzui/settei` as the house typed, layered, provenance-aware configuration family. Hackage on 2026-09-20 lists 0.2.0.0 as the latest release of `settei`, `settei-env`, `settei-optparse-applicative`, and `settei-yaml`, and upstream has the matching annotated `v0.2.0.0` tag. Its reference CLI uses built-ins below ordered files below explicit environment bindings below named CLI sources, preserves shadowed origins, redacts secret settings, and reserves stdout for requested JSON. That model fits operator defaults but not run-defining evidence, which must be frozen into kenshou documents.
 - EP-3's checked graph contains 26 whole components, 15 sub-components and 65 edges after reconciliation with Cabal's real solver plan. The important cross-plan consequence is that later coverage plans can add scenarios without changing planner code: they register a bundle and keep their owned component selectors current. The executor also proved that an interrupted attempt can remain immutable while a resumed attempt receives a fresh UUIDv7, which is the identity behavior EP-17 and EP-18 consume.
 - EP-4 completed the shared measurement boundary consumed by the diagnostics, telemetry, layer-coverage, cell and evidence plans. Health gates are reproduced from sealed run artifacts; external cell notices enter through `KENSHOU_HEALTH_NOTICES` and are captured as manifested `health-notices.jsonl`. Hard evidence conditions override regressions as infrastructure failures, while soft conditions and checkpoint asymmetry make comparisons inconclusive.
+- EP-7 completed both telemetry dimensions and the paired overhead protocol. Its headline synthetic report passed off-to-noop, off-to-OTLP, and off-to-serve-scraped transitions with exact sink accounting; a high-rate OTLP arm dropped 5,925,547 spans and was correctly made inconclusive. Later layer plans can use the generic handles, continuity checks, bounded handler composition, isolated scraper and sink, per-arm leak hook, and the resumable `kenshou overhead` command.
 
 
 ## Decision Log

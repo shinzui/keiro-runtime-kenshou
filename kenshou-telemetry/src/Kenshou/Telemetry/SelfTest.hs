@@ -5,10 +5,11 @@ import Kenshou.Core.Id (Layer (Selftest))
 import Kenshou.Core.Role (WorkerRole (..), mkRoleName)
 import Kenshou.Telemetry.Scrape (runScraperRole)
 import Kenshou.Telemetry.SelfTest.Arms (armsScenario)
+import Kenshou.Telemetry.SelfTest.Problems (slowExporterScenario, traceContinuityScenario)
 import Kenshou.Telemetry.Sink (runSinkRole)
 
 selfTestBundle :: LayerBundle
-selfTestBundle = LayerBundle Selftest [armsScenario] [sinkRole, scraperRole]
+selfTestBundle = LayerBundle Selftest [armsScenario, traceContinuityScenario, slowExporterScenario] [sinkRole, scraperRole]
 
 sinkRole :: WorkerRole
 sinkRole =

@@ -40,6 +40,7 @@ library
     Kenshou.Cli.Command.Cohort
     Kenshou.Cli.Command.Execute
     Kenshou.Cli.Command.List
+    Kenshou.Cli.Command.Overhead
     Kenshou.Cli.Command.Plan
     Kenshou.Cli.Command.Run
     Kenshou.Cli.Command.Worker

@@ -41,12 +41,18 @@ library
   hs-source-dirs: src
   exposed-modules:
     Kenshou.Telemetry
+    Kenshou.Telemetry.Compose
+    Kenshou.Telemetry.Continuity
+    Kenshou.Telemetry.Detect
     Kenshou.Telemetry.Endpoint
     Kenshou.Telemetry.Metrics
+    Kenshou.Telemetry.Overhead
+    Kenshou.Telemetry.Overhead.Policy
     Kenshou.Telemetry.Scrape
     Kenshou.Telemetry.SelfTest
     Kenshou.Telemetry.SelfTest.Arms
     Kenshou.Telemetry.SelfTest.Endpoints
+    Kenshou.Telemetry.SelfTest.Problems
     Kenshou.Telemetry.SelfTest.Service
     Kenshou.Telemetry.Sink
     Kenshou.Telemetry.Spec
@@ -76,6 +82,8 @@ library
     network,
     proto-lens,
     proto-lens-runtime,
+    splitmix >=0.1 && <0.2,
+    stm,
     text >=2.1 && <2.2,
     time,
     unordered-containers,
@@ -101,6 +109,7 @@ test-suite kenshou-telemetry-test
   build-depends:
     async,
     base >=4.21 && <4.22,
+    containers,
     directory,
     hs-opentelemetry-api,
     hs-opentelemetry-sdk,

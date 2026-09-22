@@ -66,7 +66,8 @@ data MeasureConfig = MeasureConfig
     sampleIntervalMs :: Int,
     intervalHistogramSeconds :: Word64,
     postgres :: Maybe PgSamplerConfig,
-    extraSamplers :: [Sampler]
+    extraSamplers :: [Sampler],
+    healthConfig :: HealthConfig
   }
 
 data Measurement = Measurement MeasureEnv PhaseClock Recorder MeasureConfig (IORef [LoadReport])
@@ -127,7 +128,8 @@ measureConfigFromKnobs context defaultPhases = do
         sampleIntervalMs = fromIntegral (Knob.knobInt context.knobs (knobName "measure.sample-interval-ms")),
         intervalHistogramSeconds = fromIntegral (Knob.knobInt context.knobs (knobName "measure.interval-histogram-seconds")),
         postgres = postgresConfig,
-        extraSamplers = []
+        extraSamplers = [],
+        healthConfig = defaultHealthConfig
       }
   where
     postgresConfig =
@@ -186,7 +188,7 @@ withMeasurement context config action = mask \restore -> do
     Right value -> do
       capturedNotices <- captureHealthNotices env.runDir
       forM_ capturedNotices (\path -> env.declareArtifact path "application/x-ndjson")
-      summarized <- summarizeRunDir env.runDir
+      summarized <- summarizeRunDirWithHealth config.healthConfig env.runDir
       summary <- either (ioError . userError . show) pure summarized
       env.registerSection "measurements" (toJSON summary)
       pure (value, MeasurementReport recorderReport loads samplerReport summary summary.health)

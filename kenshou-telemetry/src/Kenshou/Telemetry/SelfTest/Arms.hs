@@ -11,6 +11,7 @@ import Kenshou.Core.Knob
 import Kenshou.Core.Phase qualified as Core
 import Kenshou.Core.Scenario
 import Kenshou.Measure.Clock (Nanos (..))
+import Kenshou.Measure.Health (HealthConfig (..))
 import Kenshou.Measure.Knobs
 import Kenshou.Measure.Load
 import Kenshou.Measure.Phase qualified as Measure
@@ -51,7 +52,11 @@ runArms context = case (telemetrySpecFromContext context, loadModelFromKnobs con
             attributeCount = integer "work.attributes-per-span"
             cpuMicros = integer "work.cpu-micros"
             operation = Operation (OpName "synthetic") (\_ _ -> runSyntheticOperation telemetry.tracer syntheticMetrics spanCount attributeCount cpuMicros)
-        (_, measurement) <- withMeasurement context measureConfig (\session -> runLoad session loadModel operation)
+        -- This closed-loop benchmark intentionally saturates the measured
+        -- process when work.cpu-micros is zero. That CPU is the subject under
+        -- test, rather than an overloaded open-loop driver.
+        let closedLoopConfig = measureConfig {healthConfig = measureConfig.healthConfig {cpuSoft = 1.1, cpuHard = 1.2}}
+        (_, measurement) <- withMeasurement context closedLoopConfig (\session -> runLoad session loadModel operation)
         pure (passed {outcome = measuredOutcome measurement passed.outcome})
   where
     duration = fromIntegral (knobInt context.knobs (name "load.duration-seconds")) * 1_000_000_000

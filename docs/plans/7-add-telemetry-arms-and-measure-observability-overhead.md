@@ -22,6 +22,11 @@ provenance:
       at: 2026-09-21T20:51:29Z
       mode: "implement"
       note: "Started implementation against the completed kernel, measurement, and diagnostics APIs."
+    - model: "gpt-6"
+      harness: "codex"
+      at: 2026-09-21T23:50:00Z
+      mode: "implement"
+      note: "Completed the overhead protocol, telemetry-induced problem detectors, acceptance runs, and durable documentation."
 ---
 
 # Add telemetry arms and measure observability overhead
@@ -72,21 +77,21 @@ Milestone 2 — Metrics arms and the harness scraper
 
 Milestone 3 — The paired overhead protocol and `kenshou overhead`
 
-- [ ] Implement `Kenshou.Telemetry.Overhead` (`planOverhead`, `executeOverhead`, `analyseOverhead`) and `.Overhead.Policy`.
-- [ ] Add `policies/telemetry-overhead.json` and `schemas/kenshou.overhead-report.v1.schema.json` with golden fixtures.
-- [ ] Add the `overhead` subcommand to `kenshou-cli`, with exit codes and `--resume`.
-- [ ] Reconcile the comparison's compatibility-key check with varied telemetry factors.
-- [ ] Run the headline command end to end and keep the transcript in this plan.
+- [x] (2026-09-21 23:50Z) Implemented `Kenshou.Telemetry.Overhead` (`planOverhead`, `executeOverhead`, `analyseOverhead`) and `.Overhead.Policy` with fresh child processes, atomic state, retries, replacement blocks, and leak-hook aggregation.
+- [x] (2026-09-21 23:50Z) Added the overhead policy and report schemas plus a minimal golden report; policy and real reports validate.
+- [x] (2026-09-21 23:50Z) Added the Execution-group `overhead` subcommand, JSON and human output, exit codes, `--resume`, and `--analyse-only`.
+- [x] (2026-09-21 23:50Z) Added the explicit comparison control axis and permitted only declared telemetry dimensions to vary.
+- [x] (2026-09-21 23:50Z) Completed the 12-run headline, A/A control, forced-regression, invalid-input, interruption/resume, and schema acceptance cases.
 
 Milestone 4 — Detectors for telemetry-induced problems
 
-- [ ] Implement `Kenshou.Telemetry.Compose` (`composeHandlers`, `timedHandler`, `slowHandler`, `asyncHandler`).
-- [ ] Implement `Kenshou.Telemetry.Continuity` (trace continuity and context isolation).
-- [ ] Implement `Kenshou.Telemetry.Detect` and `series/otel-pipeline.csv`; fold findings into the `telemetry` section and into overhead verdicts.
-- [ ] Implement `selftest/telemetry/correctness/trace-continuity` and `selftest/telemetry/concurrency/slow-exporter-backpressure`.
-- [ ] Wire the per-arm leak check hook to `kenshou-diagnose` if `docs/plans/6-build-the-diagnostics-toolkit-for-memory-leaks-and-concurrency-stalls.md` is complete; otherwise leave this item open with a note.
-- [ ] Write the ADR "Results are recorded through a channel independent of the feature under test" and run strict validation.
-- [ ] Distil the Decision Log into `docs/adr/`, update the MasterPlan's Progress and registry status.
+- [x] (2026-09-21 23:50Z) Implemented `Kenshou.Telemetry.Compose` (`composeHandlers`, `timedHandler`, `slowHandler`, `asyncHandler`).
+- [x] (2026-09-21 23:50Z) Implemented `Kenshou.Telemetry.Continuity` with trace continuity and context-isolation checks.
+- [x] (2026-09-21 23:50Z) Implemented all planned findings and `series/otel-pipeline.csv`; telemetry-degraded arms now make overhead results inconclusive.
+- [x] (2026-09-21 23:50Z) Implemented and passed the trace-continuity and slow-exporter/back-pressure self-tests with injected-defect non-vacuity.
+- [x] (2026-09-21 23:50Z) Wired the completed diagnostics toolkit's leak analyser once per arm on the longest run.
+- [x] (2026-09-21 23:50Z) Amended ADR-7 with the old GCP constraint, isolated-helper rule, verdict independence, and the canonical Kiroku controlled-evidence reference; added the OKF log entry.
+- [x] (2026-09-21 23:50Z) Distilled implementation decisions and marked EP-7 complete in the MasterPlan.
 
 
 ## Surprises & Discoveries
@@ -101,6 +106,14 @@ implementation. Provide concise evidence.
 - The scraper initially caught `SomeException` around `httpLbs`, which also caught the asynchronous exception used to cancel its worker. The test teardown exposed the resulting immortal loop. The scraper now rethrows `SomeAsyncException` and records only synchronous request failures.
 
 - The plan's draft adapter recipe used `/ws/metrics` for both runtime servers. The released Kiroku Metrics 0.1.0.8 and Shibuya Metrics 0.9.0.3 sources expose `/ws`; Shibuya's subscription message is `subscribe_all`, while Kiroku's is `subscribe_metrics`. The compiled guide records those released interfaces.
+
+- The literal draft ordering formula did not reduce to ABBA for two arms. Pairwise reversal followed by a deterministic rotation does, while still containing each arm exactly once in every block; the planner test freezes that property.
+
+- `KnobName` requires a qualified name, so the draft self-test knobs `messages` and `phase-seconds` became `continuity.messages` and `backpressure.phase-seconds`.
+
+- The OpenTelemetry SDK keeps its batch queue depth private. The outside accounting backlog includes SDK-dropped spans until shutdown, so the reported high-water mark is capped by the SDK contract: configured queue plus the one exporting batch. Drop counts remain the independently derived ended-minus-exported balance.
+
+- The exact zero-work regression case saturated the measured process. A per-session health configuration was needed because whole-process CPU is the workload for this closed-loop test, while it is an overloaded driver for open-loop work. Comparisons now consume the sealed measurement summary so offline analysis preserves that recorded health policy.
 
 
 ## Decision Log
@@ -154,6 +167,14 @@ implementation. Provide concise evidence.
   Rationale: Although the command produces a comparison, it primarily schedules and executes fresh workload arms. Reusing the CLI contract keeps its completion, help and JSON channel behavior aligned without introducing a second telemetry-specific interaction framework.
   Date: 2026-09-20
 
+- Decision: Give A/A controls an explicit policy inside `kenshou.overhead-policy/v1`.
+  Rationale: A control tests whether ordinary run noise is acceptable; applying a product regression budget made an identical arm inconclusive when its interval crossed five percent. Keeping the control tolerance in the policy makes that calibration visible and reviewable.
+  Date: 2026-09-21
+
+- Decision: Use the measurement summary sealed in `run-result.json` when comparing completed runs, falling back to reconstruction only for legacy inputs without a summary.
+  Rationale: Scenario-specific health configuration is part of the run's verdict. Recomputing with current defaults changed accepted evidence during offline analysis and contradicted sealed-run immutability.
+  Date: 2026-09-21
+
 
 ## Outcomes & Retrospective
 
@@ -165,6 +186,10 @@ this section into docs/adr/. Keep task-local execution details here.
 Milestone 1 is complete. The four tracing arms are registered and exercised through the CLI. A short controlled run produced measurements under every arm; the SDK in-memory arm ended and retained/accounted for 2,968 spans with zero drops, and the SDK OTLP arm exported 2,920 spans in eight requests with the worker sink independently receiving all 2,920. The off and noop arms produced measurements without a pipeline. The worker's stderr artifact was empty, and the telemetry summary records ambient `OTEL_*` variables without allowing them to configure the explicit provider.
 
 Milestone 2 is complete. In the ten-second acceptance run, each HTTP endpoint produced ten successful non-empty scrapes, the WebSocket series recorded two connects and 202 frames, and all three endpoints appeared in the telemetry summary. The serve arm recorded the same endpoints without scrape files; collect recorded two live instruments and opened no endpoints; off constructed no metric provider. A periodic-OTLP collect run sent three metric requests to the isolated sink. Unit tests cover slow-endpoint tick skipping and distinguish an exhausted WebSocket-slot server from a correct server. The Kiroku adapter recipe compiled against Kiroku Store 0.8.0.1, Kiroku Metrics 0.1.0.8, and Kiroku OTel 0.2.0.8.
+
+Milestone 3 is complete. The headline invocation at `runs/ep7/m3-headline-final/overhead-01a0c663-66ce-739d-b17f-8dbdf4e3f7ff` completed twelve fresh runs in three valid blocks and passed all three transitions; each serve-scraped run recorded twenty one-second HTTP scrape rows, and the OTLP arm ended and independently delivered all 122,382 spans. The A/A control report passed. The exact 16-span, 64-attribute stress invocation was interrupted, resumed without reusing a run identity, and then exited 1 with a clear throughput regression. Both unknown and repeated arm values exited 2.
+
+Milestone 4 is complete. Trace continuity reported 1,000 intact messages with no violations and exactly 100 violations in each injected case. The slow-exporter scenario completed its emitter while recording 9,872 dropped spans, 128 export failures, bounded depth 384, timed-out flush and shutdown, a fired synchronous-handler stall, and a quiet asynchronous submit handler. A high-rate OTLP overhead run aggregated 5,925,547 dropped spans, marked the candidate degraded, and returned inconclusive rather than a false pass or regression. ADR-7 and the Kiroku wiring guide now carry the durable rules consumed by later layer plans. The final `nix develop -c just verify` gate passed, including formatting, compilation, all package tests, link proof, graph and cohort checks, strict ADR and schema validation, and runtime self-tests.
 
 
 ## Context and Orientation

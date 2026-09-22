@@ -4,6 +4,7 @@ import Data.Aeson (Value (Null))
 import Data.ByteString.Char8 qualified as ByteString
 import Kenshou.Core.Outcome (Outcome (..))
 import Kenshou.Measure.Compare
+import Kenshou.Measure.Compare.Compatibility
 import Kenshou.Measure.Compare.Ordering
 import Kenshou.Measure.Compare.Policy
 import Kenshou.Measure.Health
@@ -28,6 +29,9 @@ spec = do
       bootstrapInterval 41 1_000 0.95 arithmeticMean [1, 2, 3, 4] `shouldBe` interval
 
   describe "comparison policy" do
+    it "parses the explicit A/A control axis" do
+      parseVaryingAxis "control" `shouldBe` Right VaryControl
+
     it "rejects fewer than three pairs" do
       decodePolicy (policyJson 2 1_000) `shouldSatisfy` isLeft
 
@@ -38,6 +42,9 @@ spec = do
       decodePolicy (policyJson 3 1_000) `shouldSatisfy` isRight
 
   describe "paired metric classification" do
+    it "keeps a clear regression when another metric is inconclusive" do
+      decideVerdict False [] [MetricRegression, MetricInconclusive] `shouldBe` VerdictRegression
+
     it "reports a clear regression only after both gates are exceeded" do
       let result = compareMetricPairs testPolicy "latency" "ns" latencyRule [(100, 130), (100, 130), (100, 130)]
       result.status `shouldBe` MetricRegression

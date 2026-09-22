@@ -4,6 +4,7 @@ import Kenshou.Check.Selftest qualified as CheckSelftest
 import Kenshou.Cli.Command.Cohort (cohortCommand)
 import Kenshou.Cli.Command.Execute (executeCommand)
 import Kenshou.Cli.Command.List (listCommand)
+import Kenshou.Cli.Command.Overhead (overheadCommand)
 import Kenshou.Cli.Command.Plan (planCommand)
 import Kenshou.Cli.Command.Run (runCommand)
 import Kenshou.Cli.Command.Worker (workerCommand)
@@ -24,7 +25,7 @@ bundles :: [LayerBundle]
 bundles = [Selftest.bundle, MeasureSelftest.bundle, CheckSelftest.bundle, DiagnoseSelftest.bundle, TelemetrySelftest.selfTestBundle]
 
 commands :: [CliCommand]
-commands = [listCommand, planCommand, Help.helpCommand, runCommand, executeCommand, Measure.summarizeCommand, Measure.compareCommand, Diagnose.diagnoseCommand, workerCommand, cohortCommand, completionsCommand]
+commands = [listCommand, planCommand, Help.helpCommand, runCommand, executeCommand, overheadCommand, Measure.summarizeCommand, Measure.compareCommand, Diagnose.diagnoseCommand, workerCommand, cohortCommand, completionsCommand]
 
 topics :: [HelpTopic]
 topics = Help.topics

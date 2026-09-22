@@ -218,3 +218,22 @@ value, with `off` and `collect` equivalent for its built-in counters. pgmq-hs
 and kafka-effectful declare every tracing value and metrics `off` only. A layer
 must not advertise an arm it cannot construct faithfully; the planner can then
 reject unsupported matrix cells before starting a run.
+
+## Kiroku handler back-pressure coverage
+
+Kiroku invokes its event handler synchronously on the publisher or subscription
+thread. Build the one `ConnectionSettings.eventHandler` value with
+`composeHandlers`; wrap handlers whose cost must be reported with
+`timedHandler`, then submit optional slow work through a bounded `asyncHandler`.
+Pass each final `HandlerStatsSnapshot` to `telemetry.recordHandlerStats` so the
+run records `handler-stall` findings.
+
+A Kiroku concurrency scenario should repeat the toolkit's synthetic
+back-pressure proof against a real store. Append at a fixed rate with a delayed
+handler directly in the chain and verify publisher throughput falls and
+`handler-stall` fires. Repeat with the same handler behind `asyncHandler 1024`;
+verify append throughput recovers, the timed submit stays below five
+milliseconds at p99, and the bounded queue reports drops. Keep the scenario's
+correctness assertion independent of telemetry by reading committed events from
+the store. Use `checkContinuity` and `checkIsolation` over the in-memory probe,
+then pass both results to `telemetry.recordContinuity`.

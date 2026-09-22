@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/overhead-policy-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "maxDegradedSpanFraction", "default", "control", "transitions"],
+  "properties": {
+    "schema": {"const": "kenshou.overhead-policy/v1"},
+    "maxDegradedSpanFraction": {"type": "number", "minimum": 0, "maximum": 1},
+    "default": {"$ref": "#/$defs/policy"},
+    "control": {"$ref": "#/$defs/policy"},
+    "transitions": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/policy"}
+    }
+  },
+  "$defs": {
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "name", "minimumPairs", "confidenceLevel", "bootstrapIterations", "resamplingSeed", "requireInterleaving", "requireGrade", "maxCiRelativeWidth", "maxCheckpointAsymmetry", "metrics"],
+      "properties": {
+        "schema": {"const": "kenshou.comparison-policy/v1"},
+        "name": {"type": "string"},
+        "minimumPairs": {"type": "integer", "minimum": 3},
+        "confidenceLevel": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1},
+        "bootstrapIterations": {"type": "integer", "minimum": 1000},
+        "resamplingSeed": {"type": "integer", "minimum": 0},
+        "requireInterleaving": {"type": "boolean"},
+        "requireGrade": {"enum": ["benchmark", "exploratory"]},
+        "maxCiRelativeWidth": {"type": "number", "minimum": 0},
+        "maxCheckpointAsymmetry": {"type": "number", "minimum": 0},
+        "metrics": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["match", "direction", "relativeLimit", "absoluteFloor"],
+            "properties": {
+              "match": {"type": "string"},
+              "direction": {"enum": ["higher-is-better", "lower-is-better"]},
+              "relativeLimit": {"type": "number", "minimum": 0},
+              "absoluteFloor": {"type": "number", "minimum": 0}
+            }
+          }
+        }
+      }
+    }
+  }
+}

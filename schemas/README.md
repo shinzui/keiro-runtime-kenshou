@@ -17,6 +17,8 @@ the meaning of a published `v1` document.
 | Run plan | `kenshou.run-plan/v1` | `Kenshou.Plan.RunPlan` |
 | Named suite | `kenshou.suite/v1` | `Kenshou.Plan.Suite` |
 | Plan summary | `kenshou.plan-summary/v1` | `Kenshou.Plan.Summary` |
+| Telemetry overhead policy | `kenshou.overhead-policy/v1` | `Kenshou.Telemetry.Overhead.Policy` |
+| Telemetry overhead report | `kenshou.overhead-report/v1` | `Kenshou.Telemetry.Overhead` |
 
 Run `just schemas-check` to validate the checked-in goldens and fresh CLI
 documents.

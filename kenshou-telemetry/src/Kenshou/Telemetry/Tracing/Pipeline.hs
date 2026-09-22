@@ -7,10 +7,13 @@ module Kenshou.Telemetry.Tracing.Pipeline
     instrumentProcessorSuccess,
     instrumentExporter,
     snapshotPipeline,
+    startPipelineSampler,
   )
 where
 
-import Control.Exception (displayException, onException)
+import Control.Concurrent (threadDelay)
+import Control.Concurrent.Async (async, cancel, waitCatch)
+import Control.Exception (displayException, finally, onException)
 import Control.Monad (void)
 import Data.Aeson (ToJSON (..), object, (.=))
 import Data.HashMap.Strict qualified as HashMap
@@ -23,6 +26,9 @@ import GHC.Clock (getMonotonicTimeNSec)
 import OpenTelemetry.Exporter.Span (ExportResult (..), SpanExporter (..))
 import OpenTelemetry.Internal.Common.Types (FlushResult (FlushSuccess), ShutdownResult (ShutdownSuccess))
 import OpenTelemetry.Processor.Span (SpanProcessor (..))
+import System.Directory (createDirectoryIfMissing)
+import System.FilePath ((</>))
+import System.IO (BufferMode (LineBuffering), IOMode (WriteMode), hClose, hPutStrLn, hSetBuffering, openFile)
 
 data PipelineStats = PipelineStats
   { started :: IORef Int,
@@ -131,6 +137,34 @@ snapshotPipeline stats = do
         exportLatencyNs = summarize latencies,
         lastExportError
       }
+
+startPipelineSampler :: FilePath -> PipelineStats -> IO (IO [Int])
+startPipelineSampler outputDir stats = do
+  createDirectoryIfMissing True (outputDir </> "series")
+  samples <- newIORef []
+  worker <- async do
+    handle <- openFile (outputDir </> "series" </> "otel-pipeline.csv") WriteMode
+    hSetBuffering handle LineBuffering
+    hPutStrLn handle "t_mono_ns,spans_started,spans_ended,exported_ok,export_failed,queue_depth,export_calls"
+    let loop = do
+          threadDelay 1_000_000
+          timestamp <- getMonotonicTimeNSec
+          started <- readIORef stats.started
+          ended <- readIORef stats.ended
+          exportedOk <- readIORef stats.exportedOk
+          exportFailed <- readIORef stats.exportFailed
+          exportCalls <- readIORef stats.exportCalls
+          let queueDepth = max 0 (ended - exportedOk - exportFailed)
+          modifyIORef' samples (queueDepth :)
+          hPutStrLn handle (comma [timestamp, fromIntegral started, fromIntegral ended, fromIntegral exportedOk, fromIntegral exportFailed, fromIntegral queueDepth, fromIntegral exportCalls])
+          loop
+    loop `finally` hClose handle
+  pure do
+    cancel worker
+    void (waitCatch worker)
+    reverse <$> readIORef samples
+  where
+    comma = foldr1 (\left right -> left <> "," <> right) . fmap show
 
 increment :: IORef Int -> Int -> IO ()
 increment ref amount = void (atomicModifyIORef' ref (\value -> let updated = value + amount in (updated, updated)))

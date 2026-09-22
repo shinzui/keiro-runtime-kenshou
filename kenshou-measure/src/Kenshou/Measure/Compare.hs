@@ -148,15 +148,19 @@ compareRuns policy axes baselineDirs candidateDirs
 loadRun :: FilePath -> IO (Either CompareError RunData)
 loadRun directory = do
   decoded <- eitherDecodeFileStrict' (directory <> "/run-result.json") :: IO (Either String Value)
-  summarized <- summarizeRunDir directory
-  pure do
-    result <- either (Left . CompareError . Text.pack) Right decoded
-    summary <- either (Left . CompareError . (\(SummaryError message) -> message)) Right summarized
-    inputs <- maybe (Left (CompareError "run result has no compatibility inputs")) Right (compatibilityInputs result)
-    fingerprint <- maybe (Left (CompareError "run result has no environment fingerprint")) Right (environmentFingerprint result)
-    let outcome = fromMaybe "unknown" (textAt ["outcome"] result)
-        started = textAt ["timings", "startedAt"] result >>= parseUtc
-    Right RunData {result, inputs, fingerprint, summary, outcome, startedAt = started}
+  case decoded of
+    Left message -> pure (Left (CompareError (Text.pack message)))
+    Right result -> do
+      summarized <- case jsonAt ["summaries", "measurements", "measurements"] result of
+        Just value -> pure case fromJSON value of Error message -> Left (SummaryError (Text.pack message)); Success summary -> Right summary
+        Nothing -> summarizeRunDir directory
+      pure do
+        summary <- either (Left . CompareError . (\(SummaryError message) -> message)) Right summarized
+        inputs <- maybe (Left (CompareError "run result has no compatibility inputs")) Right (compatibilityInputs result)
+        fingerprint <- maybe (Left (CompareError "run result has no environment fingerprint")) Right (environmentFingerprint result)
+        let outcome = fromMaybe "unknown" (textAt ["outcome"] result)
+            started = textAt ["timings", "startedAt"] result >>= parseUtc
+        Right RunData {result, inputs, fingerprint, summary, outcome, startedAt = started}
 
 compatibilityProblem :: NonEmpty VaryingAxis -> [RunData] -> Maybe Text
 compatibilityProblem _ [] = Just "no runs"
@@ -168,6 +172,12 @@ varyingProblem :: NonEmpty VaryingAxis -> [RunData] -> [RunData] -> Maybe Text
 varyingProblem axes baselines candidates = findProblem (toList axes)
   where
     findProblem [] = Nothing
+    findProblem (VaryControl : rest) =
+      let baselineValues = nub (fmap (.inputs) baselines)
+          candidateValues = nub (fmap (.inputs) candidates)
+       in if length baselineValues /= 1 || baselineValues /= candidateValues
+            then Just "control arms must have identical compatibility inputs"
+            else findProblem rest
     findProblem (axis : rest) =
       let baselineValues = nub (fmap (varyingValue axis . (.inputs)) baselines)
           candidateValues = nub (fmap (varyingValue axis . (.inputs)) candidates)
@@ -232,8 +242,9 @@ checkpointOverlap summary = fromMaybe 0 do
 decideVerdict :: Bool -> [Text] -> [MetricStatus] -> Verdict
 decideVerdict infrastructureIssue reasons statuses
   | infrastructureIssue = VerdictInfrastructureFailure
-  | not (null reasons) || null statuses || MetricInconclusive `elem` statuses = VerdictInconclusive
+  | not (null reasons) || null statuses = VerdictInconclusive
   | MetricRegression `elem` statuses = VerdictRegression
+  | MetricInconclusive `elem` statuses = VerdictInconclusive
   | otherwise = VerdictPass
 
 trialRows :: Int -> (RunData, RunData) -> [Maybe (Arm, Int, UTCTime)]
@@ -246,6 +257,11 @@ textAt :: [Text] -> Value -> Maybe Text
 textAt [] (String value) = Just value
 textAt (key : rest) (Object objectValue) = KeyMap.lookup (fromText key) objectValue >>= textAt rest
 textAt _ _ = Nothing
+
+jsonAt :: [Text] -> Value -> Maybe Value
+jsonAt [] value = Just value
+jsonAt (key : rest) (Object objectValue) = KeyMap.lookup (fromText key) objectValue >>= jsonAt rest
+jsonAt _ _ = Nothing
 
 headMay :: [value] -> Maybe value
 headMay [] = Nothing

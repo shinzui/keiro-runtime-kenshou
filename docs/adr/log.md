@@ -1,6 +1,7 @@
 # Bundle Update Log
 
 ## 2026-09-21
+* **Changed**: Document the telemetry-off control, isolated helpers, and controlled-evidence basis.
 * **Decision**: Accepted sealed-run immutability for offline diagnosis.
 * **Decision**: Accepted post-major live bytes as the heap leak basis and separated native-memory evidence.
 * **Decision**: Accepted real process and PostgreSQL termination as the definition of a crash.

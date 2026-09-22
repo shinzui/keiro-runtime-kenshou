@@ -1,0 +1,21 @@
+{
+  "schema": "kenshou.overhead-report/v1",
+  "id": "01a0c631-ff36-77c3-8772-216b4ab24eed",
+  "scenario": "selftest/telemetry/benchmark/arms-on-synthetic-service",
+  "mode": "one-factor",
+  "baseline": {"telemetry.tracing": "off", "telemetry.metrics": "off"},
+  "fixed": {"knobs": {}, "dimensions": {}},
+  "trials": 3,
+  "seed": 7,
+  "validBlocks": 3,
+  "order": [["a0", "a1"], ["a1", "a0"], ["a0", "a1"]],
+  "arms": [
+    {"arm": "a0", "dimensions": {"telemetry.tracing": "off"}, "runs": [], "telemetry": null, "leak": null, "findings": []}
+  ],
+  "comparisons": [],
+  "findings": [],
+  "policy": {"name": "telemetry-overhead-default", "sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+  "cohort": {},
+  "verdict": "pass",
+  "algorithm": {"name": "kenshou-overhead", "version": 1}
+}
