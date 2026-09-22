@@ -1,8 +1,12 @@
 module Kenshou.Suite.Kiroku.Correctness.Append (scenarios, recordCells) where
 
+import Control.Monad (forM)
 import Data.Aeson (object, (.=))
+import Data.Int (Int64)
+import Data.List (nub, sort)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
+import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
@@ -13,6 +17,7 @@ import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
+import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobInt, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario
 import Kenshou.Suite.Kiroku.Fixture.Store (withKirokuStore)
@@ -21,7 +26,20 @@ import Kiroku.Store hiding (id, withKirokuStore)
 import System.FilePath ((</>))
 
 scenarios :: [Scenario]
-scenarios = [expectedVersionMatrix, idempotentEventIds, multiStreamAtomicity]
+scenarios = [expectedVersionMatrix, idempotentEventIds, allOrderAndGaps, multiStreamAtomicity]
+
+allOrderAndGaps :: Scenario
+allOrderAndGaps =
+  expectedVersionMatrix
+    { id = either (error . show) id (parseScenarioId "kiroku/append/correctness/all-order-and-gaps"),
+      summary = "Checks global append order, paged reads, and gaps created by hard deletes.",
+      tier = TierStandard,
+      knobs = storeKnobs <> [KnobSpec (knobName "workload.events") "Event count" KnobInt (VInt 5000) (IntRange 100 100000) [], KnobSpec (knobName "kiroku.append.streams") "Stream count" KnobInt (VInt 50) (IntRange 5 1000) []],
+      run = runOrderAndGaps
+    }
+
+knobName :: Text -> KnobName
+knobName = either (error . show) id . mkKnobName
 
 idempotentEventIds :: Scenario
 idempotentEventIds =
@@ -124,6 +142,85 @@ runMatrix context = withKirokuStore context \store -> do
           check "max-length-name" success maxLength
         ]
   recordCells context "expected-version-matrix" [] cells
+
+runOrderAndGaps :: RunContext -> IO ScenarioReport
+runOrderAndGaps context = withKirokuStore context \store -> do
+  let eventCount = fromIntegral (knobInt context.knobs (knobName "workload.events")) :: Int
+      streamCount = fromIntegral (knobInt context.knobs (knobName "kiroku.append.streams")) :: Int
+      streamName :: Int -> StreamName
+      streamName i = StreamName ("order-" <> Text.pack (show i))
+      event = EventData Nothing (EventType "Ordered") (object []) Nothing Nothing Nothing
+      populate remaining step versions results
+        | remaining == 0 = pure (versions, reverse results)
+        | otherwise = do
+            let i = step `mod` streamCount
+                count = min remaining (1 + step `mod` 20)
+                current = Map.findWithDefault 0 i versions
+                expected = if current == 0 then NoStream else ExactVersion (StreamVersion (fromIntegral current))
+            appended <- runStoreIO store (appendToStream (streamName i) expected (replicate count event))
+            case appended of
+              Left err -> fail ("order workload append failed: " <> show err)
+              Right result -> populate (remaining - count) (step + 1) (Map.insert i (current + count) versions) ((i, current + count, result) : results)
+  (versions, results) <- populate eventCount 0 Map.empty []
+  before <- readAllPaged store True
+  beforeBackward <- readAllPaged store False
+  headBefore <- runStoreIO store visibleGlobalHeadPosition
+  let streamIds = Map.fromList [(i, result.streamId) | (i, _, result) <- results]
+      deletedIds = [streamIds Map.! i | i <- [0 .. 4]]
+      deletedPositions = sort [positionValue row.globalPosition | row <- before, row.originalStreamId `elem` deletedIds]
+      expectedAfter = filter (\row -> row.originalStreamId `notElem` deletedIds) before
+      maxPosition = maximum (0 : fmap (positionValue . (.globalPosition)) before)
+      beforeGaps = missingPositions maxPosition before
+  streamAudits <- forM (Map.toList versions) \(i, version) -> do
+    value <- runStoreIO store (readStreamForward (streamName i) (StreamVersion 0) (fromIntegral eventCount))
+    pure $ case value of
+      Right rows -> fmap (.streamVersion) (Vector.toList rows) == fmap (StreamVersion . fromIntegral) [1 .. version]
+      Left _ -> False
+  deletionResults <- forM [0 .. 4] \i -> runStoreIO store (hardDeleteStream (streamName i))
+  after <- readAllPaged store True
+  afterBackward <- readAllPaged store False
+  headAfter <- runStoreIO store visibleGlobalHeadPosition
+  let positions = fmap (.globalPosition) before
+      appendPositions = [result.globalPosition | (_, _, result) <- results]
+      afterGaps = missingPositions maxPosition after
+      cells =
+        [ ("append-result-versions", and [result.streamVersion == StreamVersion (fromIntegral expectedVersion) | (_, expectedVersion, result) <- results]),
+          ("append-results-strict-order", appendPositions == sort (nub appendPositions)),
+          ("global-forward-complete", length before == eventCount),
+          ("global-forward-strict-order", positions == sort (nub positions)),
+          ("global-backward-reverse", reverse beforeBackward == before),
+          ("per-stream-versions", and streamAudits),
+          ("hard-deletes-succeed", all (\case Right (Just _) -> True; _ -> False) deletionResults),
+          ("hard-delete-removes-only-target-events", fmap (.eventId) after == fmap (.eventId) expectedAfter),
+          ("post-delete-forward-strict-order", fmap (.globalPosition) after == sort (nub (fmap (.globalPosition) after))),
+          ("post-delete-backward-reverse", reverse afterBackward == after),
+          ("visible-head-before", headBefore == Right (GlobalPosition maxPosition)),
+          ("visible-head-after", case headAfter of Right value -> value <= GlobalPosition maxPosition; _ -> False),
+          ("before-gapless", null beforeGaps),
+          ("after-gaps-match-deletes", afterGaps == deletedPositions)
+        ]
+  putSummary context Verdicts "gap-report" (object ["beforeMissingPositions" .= beforeGaps, "afterMissingPositions" .= afterGaps, "deletedPositions" .= deletedPositions])
+  recordCells context "all-order-and-gaps" ["before-gapless", "after-gaps-match-deletes"] cells
+
+readAllPaged :: KirokuStore -> Bool -> IO [RecordedEvent]
+readAllPaged store forward = go (GlobalPosition 0) []
+  where
+    go cursor chunks = do
+      result <- runStoreIO store (if forward then readAllForward cursor 256 else readAllBackward cursor 256)
+      case result of
+        Left err -> fail ("global read failed: " <> show err)
+        Right page
+          | Vector.null page -> pure (concat (reverse chunks))
+          | otherwise -> go ((Vector.last page).globalPosition) (Vector.toList page : chunks)
+
+positionValue :: GlobalPosition -> Int64
+positionValue (GlobalPosition value) = value
+
+missingPositions :: Int64 -> [RecordedEvent] -> [Int64]
+missingPositions frontier rows =
+  [value | value <- [1 .. frontier], value `Set.notMember` present]
+  where
+    present = Set.fromList (fmap (positionValue . (.globalPosition)) rows)
 
 runIdempotence :: RunContext -> IO ScenarioReport
 runIdempotence context = withKirokuStore context \store -> do
