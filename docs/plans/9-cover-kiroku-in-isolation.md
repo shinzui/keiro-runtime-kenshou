@@ -41,7 +41,7 @@ Milestone 1 — kiroku correctness scenarios.
 
 - [x] 2026-09-22 22:59 UTC — Confirmed all hard dependency packages exist, `cabal build all` passes in `nix develop`, selftests list, and the cohort resolves kiroku-store 0.8.0.1.
 - [x] 2026-09-22 22:59 UTC — Created `kenshou-kiroku/kenshou-kiroku.cabal` with library and test suite; `cabal build kenshou-kiroku kenshou-cli` passes in `nix develop`.
-- [ ] Implement `Kenshou.Suite.Kiroku.Knobs`, `.Fixture.Store`, `.Fixture.Telemetry`, `.Fixture.Workload`, `.Fixture.Facts`, `.Fixture.Oracle`, with unit tests.
+- [ ] Implement `Kenshou.Suite.Kiroku.Knobs`, `.Fixture.Store`, `.Fixture.Telemetry`, `.Fixture.Workload`, `.Fixture.Facts`, `.Fixture.Oracle`, with unit tests. Knobs and store fixture exist; the unit suite checks knob count, unique Kiroku correctness IDs and registry validation. The remaining fixtures and workload, mapping, fact and SQL oracle tests remain.
 - [x] 2026-09-22 22:59 UTC — Exported `bundle :: LayerBundle` and registered it in `kenshou-cli`; the first scenario ran and passed through the CLI.
 - [x] 2026-09-22 — Append, read, lifecycle and transaction correctness scenarios complete: the seven registered scenarios include the 5,000-event mixed append workload, hard-delete gap oracle, live lifecycle subscriber and transaction enrichment comparison.
 - [ ] Subscription, consumer-group, dead-letter and notifier correctness scenarios (`checkpoint-policies`, `filters-advance-checkpoint`, `retry-and-dead-letter`, and `wake-latency` complete; four remain). The dead-letter default of three attempts passed on PostgreSQL 18 and the one-attempt variant passed on PostgreSQL 17. The notifier scenario passed on both versions.
