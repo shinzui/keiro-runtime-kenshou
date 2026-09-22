@@ -12,6 +12,10 @@ import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
 import Data.UUID qualified as UUID
 import Data.Vector qualified as Vector
+import Hasql.Decoders qualified as Decoders
+import Hasql.Encoders qualified as Encoders
+import Hasql.Statement qualified as Statement
+import Hasql.Transaction qualified as Tx
 import Kenshou.Check.Verdict (InvariantClass (..), RunInfo (..), Verdict (..), VerdictStatus (..), writeVerdict)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension
@@ -157,14 +161,34 @@ runOrderAndGaps context = withKirokuStore context \store -> do
                 count = min remaining (1 + step `mod` 20)
                 current = Map.findWithDefault 0 i versions
                 expected = if current == 0 then NoStream else ExactVersion (StreamVersion (fromIntegral current))
-            appended <- runStoreIO store (appendToStream (streamName i) expected (replicate count event))
-            case appended of
-              Left err -> fail ("order workload append failed: " <> show err)
-              Right result -> populate (remaining - count) (step + 1) (Map.insert i (current + count) versions) ((i, current + count, result) : results)
+            if step `mod` 5 == 0 && count > 1
+              then do
+                let j = (i + 1) `mod` streamCount
+                    other = Map.findWithDefault 0 j versions
+                    otherExpected = if other == 0 then NoStream else ExactVersion (StreamVersion (fromIntegral other))
+                    firstCount = count `div` 2
+                    secondCount = count - firstCount
+                appended <- runStoreIO store (appendMultiStream [(streamName i, expected, replicate firstCount event), (streamName j, otherExpected, replicate secondCount event)])
+                case appended of
+                  Left err -> fail ("order workload multi-stream append failed: " <> show err)
+                  Right [first, second] ->
+                    populate
+                      (remaining - count)
+                      (step + 1)
+                      (Map.insert j (other + secondCount) (Map.insert i (current + firstCount) versions))
+                      ((j, other + secondCount, second) : (i, current + firstCount, first) : results)
+                  Right _ -> fail "order workload multi-stream append returned wrong result count"
+              else do
+                appended <- runStoreIO store (appendToStream (streamName i) expected (replicate count event))
+                case appended of
+                  Left err -> fail ("order workload append failed: " <> show err)
+                  Right result -> populate (remaining - count) (step + 1) (Map.insert i (current + count) versions) ((i, current + count, result) : results)
   (versions, results) <- populate eventCount 0 Map.empty []
   before <- readAllPaged store True
   beforeBackward <- readAllPaged store False
   headBefore <- runStoreIO store visibleGlobalHeadPosition
+  countsBefore <- runStoreIO store (runTransaction (Tx.statement () threeCountsStatement))
+  inventoryBefore <- runStoreIO store subscriptionCheckpointInventory
   let streamIds = Map.fromList [(i, result.streamId) | (i, _, result) <- results]
       deletedIds = [streamIds Map.! i | i <- [0 .. 4]]
       deletedPositions = sort [positionValue row.globalPosition | row <- before, row.originalStreamId `elem` deletedIds]
@@ -180,6 +204,8 @@ runOrderAndGaps context = withKirokuStore context \store -> do
   after <- readAllPaged store True
   afterBackward <- readAllPaged store False
   headAfter <- runStoreIO store visibleGlobalHeadPosition
+  countsAfter <- runStoreIO store (runTransaction (Tx.statement () threeCountsStatement))
+  inventoryAfter <- runStoreIO store subscriptionCheckpointInventory
   let positions = fmap (.globalPosition) before
       appendPositions = [result.globalPosition | (_, _, result) <- results]
       afterGaps = missingPositions maxPosition after
@@ -187,6 +213,7 @@ runOrderAndGaps context = withKirokuStore context \store -> do
         [ ("append-result-versions", and [result.streamVersion == StreamVersion (fromIntegral expectedVersion) | (_, expectedVersion, result) <- results]),
           ("append-results-strict-order", appendPositions == sort (nub appendPositions)),
           ("global-forward-complete", length before == eventCount),
+          ("mixed-multi-stream-writes", length results > length (Map.toList versions) && any (\(first, second) -> first.streamId /= second.streamId && first.globalPosition < second.globalPosition) (zip (fmap (\(_, _, result) -> result) results) (fmap (\(_, _, result) -> result) (drop 1 results)))),
           ("global-forward-strict-order", positions == sort (nub positions)),
           ("global-backward-reverse", reverse beforeBackward == before),
           ("per-stream-versions", and streamAudits),
@@ -196,11 +223,24 @@ runOrderAndGaps context = withKirokuStore context \store -> do
           ("post-delete-backward-reverse", reverse afterBackward == after),
           ("visible-head-before", headBefore == Right (GlobalPosition maxPosition)),
           ("visible-head-after", case headAfter of Right value -> value <= GlobalPosition maxPosition; _ -> False),
+          ("inventory-head-bounds-visible-before", case (headBefore, inventoryBefore) of (Right visible, Right inventory) -> visible <= inventory.storePosition; _ -> False),
+          ("inventory-head-bounds-visible-after", case (headAfter, inventoryAfter) of (Right visible, Right inventory) -> visible <= inventory.storePosition; _ -> False),
+          ("three-counts-before", countsBefore == Right (fromIntegral eventCount, fromIntegral (2 * eventCount), fromIntegral eventCount)),
+          ("three-counts-after", countsAfter == Right (fromIntegral (length after), fromIntegral (2 * length after), fromIntegral eventCount)),
           ("before-gapless", null beforeGaps),
           ("after-gaps-match-deletes", afterGaps == deletedPositions)
         ]
-  putSummary context Verdicts "gap-report" (object ["beforeMissingPositions" .= beforeGaps, "afterMissingPositions" .= afterGaps, "deletedPositions" .= deletedPositions])
-  recordCells context "all-order-and-gaps" ["before-gapless", "after-gaps-match-deletes"] cells
+  putSummary context Verdicts "gap-report" (object ["beforeMissingPositions" .= beforeGaps, "afterMissingPositions" .= afterGaps, "deletedPositions" .= deletedPositions, "countsBefore" .= show countsBefore, "countsAfter" .= show countsAfter])
+  recordCells context "all-order-and-gaps" ["before-gapless", "after-gaps-match-deletes", "three-counts-before", "three-counts-after"] cells
+
+threeCountsStatement :: Statement.Statement () (Int64, Int64, Int64)
+threeCountsStatement =
+  Statement.preparable
+    "select (select count(*) from kiroku.events), (select count(*) from kiroku.stream_events where stream_id = 0), (select stream_version from kiroku.streams where stream_id = 0)"
+    Encoders.noParams
+    (Decoders.singleRow ((,,) <$> column <*> column <*> column))
+  where
+    column = Decoders.column (Decoders.nonNullable Decoders.int8)
 
 readAllPaged :: KirokuStore -> Bool -> IO [RecordedEvent]
 readAllPaged store forward = go (GlobalPosition 0) []
