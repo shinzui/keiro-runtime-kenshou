@@ -23,7 +23,7 @@ defaultCatalog =
       ("os.fds", wide "proc.csv" "open_fds"),
       ("pg.connections", long "pg-activity.csv" "connections"),
       ("pg.relation-bytes", long "pg-relations.csv" "total_bytes"),
-      ("pg.dead-tuples", long "pg-relations.csv" "dead_tuples")
+      ("pg.dead-tuples", long "pg-relations.csv" "n_dead_tup")
     ]
   where
     wide file value = SeriesBinding file "t_mono_ns" value (Map.singleton "phase" "steady")

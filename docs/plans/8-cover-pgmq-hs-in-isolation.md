@@ -42,42 +42,42 @@ Milestone 1 — pgmq-hs correctness scenarios (includes the package, the shared 
 - [x] (2026-09-22 00:52Z) Registered the bundle in `kenshou-cli`; `kenshou list --layer pgmq` reports 49 registry-valid scenarios and three worker roles.
 - [x] (2026-09-22 01:01Z) Implemented `Kenshou.Suite.Pgmq.Knobs` (common knob vocabulary and `resolveKnobs`) with focused default, invalid-combination, and queue-identity tests.
 - [x] (2026-09-22 00:52Z) Implemented the pool, per-run queue names, setup/teardown, plain/traced effect interpreter, telemetry bracket, and pg_partman probe; live round trips pass on PostgreSQL 17 and 18.
-- [ ] Complete the layer metrics poller and add focused unit tests for pool configuration; queue-name derivation is covered.
+- [x] (2026-09-22 02:28Z) Completed the dedicated-connection SQL metrics poller; live collection recorded queue-depth transitions and poll latency, while queue-name derivation remains unit tested.
 - [x] (2026-09-22 00:52Z) Implemented the fact vocabulary, database-clock lease and due-time oracles, topic model, and raw LISTEN wrapper; doctored overlap, duplicate-read-count, early-delivery, and explicit-release tests pass.
 - [x] (2026-09-22 01:42Z) Replaced the catalog-wide probe for all 18 correctness identifiers with contract-specific runners and added durable queue/archive conservation queries.
-- [ ] Implement the `queue`, `send`, `read` and `ack` correctness scenarios.
-- [ ] Implement the `vt` correctness scenarios, including real wall-clock expiry.
-- [ ] Implement the `fifo`, `topics`, `notify`, `config` and `effectful` correctness scenarios, including the two known-defect scenarios.
+- [x] (2026-09-22 01:42Z) Implemented the `queue`, `send`, `read` and `ack` correctness scenarios.
+- [x] (2026-09-22 01:42Z) Implemented the `vt` correctness scenarios, including real wall-clock expiry.
+- [x] (2026-09-22 02:28Z) Implemented the `fifo`, `topics`, `notify`, `config` and `effectful` correctness scenarios, including W3C trace propagation and the two known-defect scenarios.
 - [x] (2026-09-22 01:42Z) Ran all 18 correctness scenarios on PostgreSQL 17 and 18. Sixteen pass on both versions; `mixed-case-alias-collision` reproduces its declared non-blocking defect on both; `grouped-result-order` returned ordered vectors in these runs and reports that the declared defect did not reproduce.
 - [x] (2026-09-22 00:52Z) Wrote the first `docs/layers/pgmq.md`, with every registered identifier, classification, known-defect link, shared knobs, and operating rules; the unit suite enforces coverage.
 
 Milestone 2 — pgmq-hs concurrency and crash scenarios.
 
-- [x] (2026-09-22 03:12Z) Implemented `Kenshou.Suite.Pgmq.Roles` (`pgmq-producer`, `pgmq-consumer`, `pgmq-reconciler`) with the `after-read` crash point, finite producer/consumer protocols, and real reconciliation; the roles remain registered in the bundle.
-- [x] (2026-09-22 03:12Z) Replaced the catalog-wide probe for all 20 concurrency identifiers with scenario-specific runners spanning thread and process contention, `SIGKILL`, pool exhaustion, backend termination, PostgreSQL immediate shutdown, TCP reset, FIFO hazards, notification state, reconciliation, and overlapping acknowledgements.
+- [x] (2026-09-22 02:05Z) Implemented `Kenshou.Suite.Pgmq.Roles` (`pgmq-producer`, `pgmq-consumer`, `pgmq-reconciler`) with the `after-read` crash point, finite producer/consumer protocols, and real reconciliation; the roles remain registered in the bundle.
+- [x] (2026-09-22 02:05Z) Replaced the catalog-wide probe for all 20 concurrency identifiers with scenario-specific runners spanning thread and process contention, `SIGKILL`, pool exhaustion, backend termination, PostgreSQL immediate shutdown, TCP reset, FIFO hazards, notification state, reconciliation, and overlapping acknowledgements.
 - [ ] Implement the no-double-lease scenarios (threads, then processes) and prove non-vacuity with `pgmq.sabotage=unlocked-read`.
 - [ ] Implement the `SIGKILL` scenarios: crash redelivery and read-count accounting, random kills under load, producer batch atomicity, stale acknowledgement after expiry.
-- [ ] Implement pool exhaustion with long polling.
+- [x] (2026-09-22 02:05Z) Implemented pool exhaustion with long polling and verified transient acquisition timeout plus same-pool recovery.
 - [ ] Implement backend termination, PostgreSQL restart and crash, unlogged-queue loss, and the network proxy scenarios, with transient-error classification.
-- [ ] Implement the FIFO concurrency scenarios (head-per-group barrier, grouped batch successor hazard, producer commit-order inversion).
+- [x] (2026-09-22 02:05Z) Implemented and ran the FIFO concurrency scenarios (head-per-group barrier, grouped batch successor hazard, producer commit-order inversion).
 - [ ] Implement the notification scenarios (partitioned storm as known defect, throttle lost after crash, listener loss with poll fallback), partition retention as known defect, concurrent reconcile, overlapping batch acknowledgement deadlock.
 - [ ] Run every concurrency scenario with `pg.durability=durable` on both PostgreSQL versions; record outcomes and any new defect filed upstream.
 
 Milestone 3 — pgmq-hs benchmarks.
 
-- [ ] Implement `Kenshou.Suite.Pgmq.RawSql` and `Kenshou.Suite.Pgmq.Client` (the three-rung client record).
-- [ ] Implement `layer-ladder`, `send-throughput`, `read-ack-throughput`.
+- [x] (2026-09-22 02:28Z) Implemented `Kenshou.Suite.Pgmq.RawSql` and `Kenshou.Suite.Pgmq.Client`; live layer-ladder runs exercised distinct hand-written SQL, pgmq-hasql, and pgmq-effectful paths.
+- [x] (2026-09-22 02:28Z) Implemented measured `layer-ladder`, `send-throughput`, and `read-ack-throughput` workloads using the shared load generator and recorder.
 - [ ] Implement `produce-consume-latency` with the poll, long-poll and notify wake-up modes.
-- [ ] Implement `invisible-backlog-read-cost`, `grouped-read-cost`, `notify-insert-overhead`.
+- [x] (2026-09-22 02:28Z) Implemented `invisible-backlog-read-cost`, `grouped-read-cost`, and `notify-insert-overhead`; short live runs of the grouped, send, metrics, and all three ladder paths pass.
 - [ ] Add `policies/pgmq.json` comparison policy; run each benchmark as a paired A/A comparison and confirm verdict `pass`; record first figures as illustrative.
 
 Milestone 4 — pgmq-hs soak and telemetry arms.
 
-- [ ] Add the knobs `pgmq.trace.propagate` and `otel.semconv-stability-opt-in` and confirm one correctness scenario passes under each `telemetry.tracing` value and under `telemetry.metrics=collect`.
+- [x] (2026-09-22 02:28Z) Added functional `pgmq.trace.propagate` and `otel.semconv-stability-opt-in` knobs; live correctness runs pass under all four tracing arms, SQL metrics collection, all semantic-convention modes, and W3C context propagation.
 - [ ] Implement `pgmq/queue/soak/steady-state` and `pgmq/queue/soak/steady-state-reduced` from one constructor; run the reduced one locally to a verdict.
-- [ ] Implement `interpreter-tracing-overhead` and `metrics-poll-overhead`; run `kenshou overhead` for each.
+- [x] (2026-09-22 02:28Z) Implemented and ran `interpreter-tracing-overhead` and `metrics-poll-overhead`. Metrics collection passed policy; tracing found `sdk-inmemory` above policy while `noop` and `sdk-otlp` passed.
 - [ ] Run the reduced soak with `telemetry.tracing=sdk-otlp` and confirm the leak verdict is still `stable`.
-- [ ] Finish `docs/layers/pgmq.md`; write the ADRs named in Context and Orientation; validate the ADR bundle.
+- [x] (2026-09-22 02:28Z) Wrote ADR-12 through ADR-14 for database-clock leases, native SQL metrics collection, and limitation/known-defect classification; the 14-record bundle passes strict OKF validation.
 - [ ] Update the MasterPlan's Progress and Exec-Plan Registry rows for EP-8 and fill Outcomes & Retrospective.
 
 
@@ -94,6 +94,15 @@ Milestone 4 — pgmq-hs soak and telemetry arms.
 
 - Observation: resetting a live proxied PostgreSQL connection can surface as `ServerError "" "" Nothing Nothing Nothing`, with no SQLSTATE. The same proxied pool recovers after forwarding resumes, but `Pgmq.Effectful.isTransient` classifies the empty server error as permanent.
   Evidence: run `01a0c6cd-bb2d-771a-9783-75da1b115a45` records the complete reset and recovery results in `summaries.verdicts.network-partition-observations`. No existing improvement request in `mori://shinzui/pgmq-hs` covers either newly observed error shape, so this plan records the evidence without claiming that an upstream defect has been filed.
+
+- Observation: the first short soak left a bounded tail of one-second deliberate nacks at measurement end, so judging the raw final row count misclassified normal in-flight work as bloat. Waiting one visibility interval and draining the queue makes the final bloat verdict test convergence instead of an arbitrary phase boundary.
+  Evidence: run `01a0c6e5-6f29-763f-bffa-635bcbdcdf10` ended with 400 queue rows; after adding the drain, run `01a0c6e6-b6c8-75eb-8712-69d1b5f3986b` ended with zero queue rows and a bounded bloat verdict.
+
+- Observation: the shared leak catalog requested `dead_tuples`, but the PostgreSQL sampler writes the native `n_dead_tup` column name. This made the PGMQ soak's dead-tuple probe permanently insufficient even though the series was present.
+  Evidence: the first short soak reported `MissingColumn ... "dead_tuples"`; the catalog now binds `pg.dead-tuples` to `n_dead_tup`, matching `Kenshou.Measure.Sampler.Postgres`.
+
+- Observation: the first controlled tracing-overhead run found meaningful arm-specific cost: `noop` and `sdk-otlp` passed the checked-in policy, while `sdk-inmemory` regressed with approximately 37% higher p99 and 23% more allocation per operation.
+  Evidence: `runs/overhead-01a0c6ed-bfc5-7729-bf5b-3ac8db3ea7e4/overhead-report.json`. The metrics-poll study passed at `runs/overhead-01a0c6ef-8a1b-730a-9735-db121bfa73f2/overhead-report.json`.
 
 
 ## Decision Log

@@ -19,4 +19,7 @@ okf_version: "0.2"
 - [Define crashes as process or backend termination](0009-define-crashes-as-process-or-backend-termination.md) - Kenshou exercises crash recovery by terminating an operating-system process or PostgreSQL backend, never by throwing an in-process exception.
 - [Judge heap leaks on live bytes after major collections](0010-judge-heap-leaks-on-live-bytes-after-major-collections.md) - Heap leak verdicts use forced-major-collection samples or the lower envelope of post-major live bytes, while native memory is reported separately.
 - [Never mutate a sealed run during offline diagnosis](0011-never-mutate-a-sealed-run-during-offline-diagnosis.md) - Offline analysis reads immutable run evidence and writes requested derived output outside the sealed run directory.
+- [Judge message leases on the database clock](0012-judge-message-leases-on-the-database-clock.md) - PGMQ lease and due-time verdicts compare timestamps produced by PostgreSQL rather than clocks from harness or worker processes.
+- [Collect layer metrics through the native SQL surface](0013-collect-layer-metrics-through-the-native-sql-surface.md) - A layer without a metrics endpoint implements telemetry collection by polling its native SQL metrics API on a dedicated connection.
+- [Distinguish documented limitations from known defects](0014-distinguish-documented-limitations-from-known-defects.md) - Verification asserts documented implementation limitations as expected behavior and reserves known-defect status for behavior with an identified upstream correction.
 

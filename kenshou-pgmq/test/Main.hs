@@ -12,6 +12,7 @@ import Kenshou.Core.Knob qualified as CoreKnob
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (Scenario (..))
 import Kenshou.Suite.Pgmq (bundle)
+import Kenshou.Suite.Pgmq.Client (Layer (..), parseLayer)
 import Kenshou.Suite.Pgmq.Facts
 import Kenshou.Suite.Pgmq.Harness (scenarioQueueName)
 import Kenshou.Suite.Pgmq.Knobs qualified as PgmqKnobs
@@ -68,6 +69,9 @@ main = hspec do
 
     it "derives a lower-case per-run queue name" do
       queueNameToText (scenarioQueueName (contextWith CoreKnob.emptyKnobs) "My Tag") `shouldBe` "kn01a0c69b_my_tag"
+
+    it "selects three distinct benchmark client layers" do
+      traverse parseLayer ["raw-sql", "hasql", "effectful"] `shouldBe` Right [RawSql, HasqlLayer, EffectfulLayer]
 
   describe "topic matcher" do
     it "implements one-segment and tail wildcards" do

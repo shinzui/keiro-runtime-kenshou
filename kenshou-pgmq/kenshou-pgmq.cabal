@@ -46,6 +46,7 @@ library
     Kenshou.Suite.Pgmq.Bench.Overhead
     Kenshou.Suite.Pgmq.Bench.ProduceConsume
     Kenshou.Suite.Pgmq.Bench.ReadAck
+    Kenshou.Suite.Pgmq.Bench.Runner
     Kenshou.Suite.Pgmq.Bench.Send
     Kenshou.Suite.Pgmq.Catalog
     Kenshou.Suite.Pgmq.Client
@@ -76,6 +77,7 @@ library
     Kenshou.Suite.Pgmq.Oracle
     Kenshou.Suite.Pgmq.RawSql
     Kenshou.Suite.Pgmq.Roles
+    Kenshou.Suite.Pgmq.Soak.Runner
     Kenshou.Suite.Pgmq.Soak.SteadyState
     Kenshou.Suite.Pgmq.Telemetry
     Kenshou.Suite.Pgmq.TopicModel

@@ -25,6 +25,7 @@ import Hasql.Statement qualified as Statement
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (renderRunId)
+import Kenshou.Core.Knob (knobText)
 import Kenshou.Core.Scenario (ScenarioReport, failedWith)
 import Kenshou.Suite.Pgmq.Knobs
 import Kenshou.Suite.Pgmq.Telemetry (withMetricsPoller)
@@ -43,6 +44,7 @@ import Pgmq.Effectful
     runPgmq,
     runPgmqTraced,
   )
+import System.Environment (lookupEnv, setEnv, unsetEnv)
 
 data PgmqRun = PgmqRun
   { ctx :: RunContext,
@@ -111,10 +113,21 @@ withPgmqRun context action = case (resolveKnobs context, telemetrySpecFromContex
   (Left message, _) -> pure (failedWith ["invalid-pgmq-knobs"] message)
   (_, Left message) -> pure (failedWith ["invalid-telemetry"] message)
   (Right knobs, Right telemetrySpec) ->
-    withTelemetry telemetrySpec \handles ->
-      withMetricsPoller handles (requirePostgres context) context $
-        withPgmqPool (requirePostgres context) "scenario" knobs \pool ->
-          action (PgmqRun context knobs pool handles.tracer handles)
+    withSemconv (knobText context.knobs (knobName "otel.semconv-stability-opt-in")) $
+      withTelemetry telemetrySpec \handles ->
+        withMetricsPoller handles (requirePostgres context) context $
+          withPgmqPool (requirePostgres context) "scenario" knobs \pool ->
+            action (PgmqRun context knobs pool handles.tracer handles)
+
+withSemconv :: Text -> IO value -> IO value
+withSemconv selected action = bracket capture restore (const configure)
+  where
+    name = "OTEL_SEMCONV_STABILITY_OPT_IN"
+    capture = lookupEnv name
+    restore = maybe (unsetEnv name) (setEnv name)
+    configure = do
+      if selected == "unset" then unsetEnv name else setEnv name (Text.unpack selected)
+      action
 
 partmanAvailable :: Session.Session Bool
 partmanAvailable =

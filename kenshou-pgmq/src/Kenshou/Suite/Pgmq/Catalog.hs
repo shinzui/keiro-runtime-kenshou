@@ -19,13 +19,17 @@ import GHC.Clock (getMonotonicTimeNSec)
 import Kenshou.Core.Context (RunContext, SummarySection (..), putSummary)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
-import Kenshou.Core.Id (parseScenarioId)
+import Kenshou.Core.Id (Kind (Benchmark, Soak), parseScenarioId)
+import Kenshou.Core.Knob (KnobSpec)
 import Kenshou.Core.Phase (PhasePlan (..), zeroPhases)
 import Kenshou.Core.Scenario
+import Kenshou.Measure.Knobs (defaultLoadDefaults, loadKnobs, measureKnobs)
+import Kenshou.Suite.Pgmq.Bench.Runner (runBenchmark)
 import Kenshou.Suite.Pgmq.Concurrency.Runner (runConcurrency)
 import Kenshou.Suite.Pgmq.Correctness.Runner (runCorrectness)
 import Kenshou.Suite.Pgmq.Harness
 import Kenshou.Suite.Pgmq.Knobs (PgmqKnobs (..), commonKnobs)
+import Kenshou.Suite.Pgmq.Soak.Runner (runSoak)
 import Kenshou.Telemetry (telemetryKnobs)
 import Pgmq.Effectful
   ( Message (..),
@@ -75,13 +79,24 @@ pgmqScenario definition =
       summary = definition.description,
       tier = definition.tier,
       placement = definition.placement,
-      knobs = commonKnobs <> telemetryKnobs,
+      knobs = commonKnobs <> telemetryKnobs <> workloadKnobs definition.identifier,
       dimensions = supportFor definition.identifier,
       phases = phasePlan definition.identifier definition.tier,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaPgmq] [] (needsControl definition.identifier))},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaPgmq] (postgresSettings definition.identifier) (needsControl definition.identifier))},
       knownDefect = definition.defect,
-      run = \context -> maybe (runProbe definition context) id (runCorrectness definition.identifier context <|> runConcurrency definition.identifier context)
+      run = \context -> maybe (runProbe definition context) id (runCorrectness definition.identifier context <|> runConcurrency definition.identifier context <|> runBenchmark definition.identifier context <|> runSoak definition.identifier context)
     }
+
+workloadKnobs :: Text -> [KnobSpec]
+workloadKnobs identifier
+  | "/benchmark/" `Text.isInfixOf` identifier = loadKnobs defaultLoadDefaults <> measureKnobs Benchmark
+  | "/soak/" `Text.isInfixOf` identifier = loadKnobs defaultLoadDefaults <> measureKnobs Soak
+  | otherwise = []
+
+postgresSettings :: Text -> [(Text, Text)]
+postgresSettings identifier
+  | any (`Text.isInfixOf` identifier) ["/benchmark/", "/soak/"] = [("shared_preload_libraries", "'pg_stat_statements'")]
+  | otherwise = []
 
 supportFor :: Text -> DimensionSupport
 supportFor identifier =

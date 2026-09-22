@@ -77,6 +77,7 @@ commonKnobs =
     enum "pgmq.arrival" "Open-loop arrival process" "constant" ["constant", "poisson"],
     enum "pgmq.wake" "Consumer wake-up strategy" "poll" ["poll", "long-poll", "notify"],
     enum "pgmq.notify.mode" "Insert notification mode" "off" ["off", "throttled", "unthrottled"],
+    enum "pgmq.comparison-label" "Behaviour-neutral A/A comparison label" "a" ["a", "b"],
     double "pgmq.soak.nack-fraction" "Fraction of deliveries deliberately not acknowledged" 0.01 0 1,
     boolean "pgmq.soak.archive-purge" "Purge archive rows older than five minutes" False,
     boolean "pgmq.fifo-index" "Create the optional FIFO index" False,

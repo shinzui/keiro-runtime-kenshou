@@ -2,8 +2,8 @@ module Kenshou.Suite.Pgmq.Correctness.Runner (runCorrectness) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (async, wait)
-import Control.Exception (SomeException, finally, throwIO, try)
-import Control.Monad (forM)
+import Control.Exception (SomeException, bracket, finally, throwIO, try)
+import Control.Monad (forM, void)
 import Data.Aeson (object, (.=))
 import Data.Functor.Contravariant ((>$<))
 import Data.Int (Int64)
@@ -22,19 +22,21 @@ import Hasql.Encoders qualified as Encoders
 import Hasql.Pool qualified as Pool
 import Hasql.Session qualified as Session
 import Hasql.Statement qualified as Statement
-import Kenshou.Core.Context (RunContext, SummarySection (Verdicts), putSummary, requirePostgres)
+import Kenshou.Core.Context (RunContext (..), SummarySection (Verdicts), putSummary, requirePostgres)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
+import Kenshou.Core.Knob (knobBool)
 import Kenshou.Core.Scenario (ScenarioReport, failedWith, passed)
 import Kenshou.Suite.Pgmq.Facts (PgmqFact (..))
 import Kenshou.Suite.Pgmq.Harness
-import Kenshou.Suite.Pgmq.Knobs (AckMode (..), PgmqKnobs (..), QueueKind (..))
+import Kenshou.Suite.Pgmq.Knobs (AckMode (..), PgmqKnobs (..), QueueKind (..), knobName)
 import Kenshou.Suite.Pgmq.Listener (Notification (..), awaitNotifications, withListener)
 import Kenshou.Suite.Pgmq.Oracle (ConservationFinding (..), conservation)
 import Kenshou.Suite.Pgmq.TopicModel qualified as TopicModel
 import Kenshou.Telemetry (TelemetryHandles (..))
 import Kenshou.Telemetry.Tracing.Probe (SpanView (..), readSpans)
 import OpenTelemetry.Attributes (lookupAttribute)
-import OpenTelemetry.Trace.Core (SpanStatus (..))
+import OpenTelemetry.Context.ThreadLocal (attachContext, detachContext)
+import OpenTelemetry.Trace.Core (SpanStatus (..), defaultSpanArguments, inSpan)
 import Pgmq.Config qualified as Config
 import Pgmq.Config.Effectful qualified as ConfigEff
 import Pgmq.Effectful qualified as Pgmq
@@ -379,17 +381,41 @@ interpreterParity context = withPgmqRun context \runtime -> do
 tracedSpanContract :: RunContext -> IO ScenarioReport
 tracedSpanContract context = withPgmqRun context \runtime ->
   withScenarioQueue runtime.pool context runtime.knobs "traced_span" \queue -> do
-    _ <- effect runtime (Pgmq.sendMessage (Types.SendMessage queue (bodyKey "span") Nothing))
-    _ <- effect runtime (Pgmq.readMessage (Types.ReadMessage queue 30 (Just 1) Nothing))
+    propagated <-
+      if knobBool context.knobs (knobName "pgmq.trace.propagate")
+        then propagateRoundTrip runtime queue
+        else do
+          _ <- effect runtime (Pgmq.sendMessage (Types.SendMessage queue (bodyKey "span") Nothing))
+          _ <- effect runtime (Pgmq.readMessage (Types.ReadMessage queue 30 (Just 1) Nothing))
+          pure Nothing
     _ <- runOps runtime.tracer runtime.pool (Pgmq.deleteMessage (Types.MessageQuery (parsed Pgmq.parseQueueName "missing_span_queue") (Pgmq.MessageId 1)))
+    void runtime.telemetry.flushTelemetry
     spans <- maybe (pure []) readSpans runtime.telemetry.spans
     let publish = find ((== "publish " <> Pgmq.queueNameToText queue) . (.name)) spans
         receive = find ((== "receive " <> Pgmq.queueNameToText queue) . (.name)) spans
         failed = find isError spans
-        hasCoreAttributes spanValue = all (not . isNothing . lookupAttribute spanValue.attributes) ["messaging.system", "messaging.destination.name", "db.operation"]
-    verdict context "traced-span" [("three-operation-spans", length spans == 3), ("publish-shape", maybe False hasCoreAttributes publish), ("receive-shape", maybe False hasCoreAttributes receive), ("error-status", maybe False (const True) failed)]
+        hasCoreAttributes spanValue =
+          all (not . isNothing . lookupAttribute spanValue.attributes) ["messaging.system", "messaging.destination.name"]
+            && any (not . isNothing . lookupAttribute spanValue.attributes) ["db.operation", "db.operation.name"]
+        spanCount = if propagated == Nothing then length spans == 3 else length spans == 5
+        continuity = case propagated of
+          Nothing -> True
+          Just () -> case (find ((== "pgmq.producer") . (.name)) spans, find ((== "pgmq.consumer") . (.name)) spans) of
+            (Just producer, Just consumer) -> consumer.traceId == producer.traceId && consumer.parentSpanId == Just producer.spanId
+            _ -> False
+    verdict context "traced-span" [("operation-span-count", spanCount), ("publish-shape", maybe False hasCoreAttributes publish), ("receive-shape", maybe False hasCoreAttributes receive), ("error-status", maybe False (const True) failed), ("propagated-context", continuity)]
   where
     isError spanValue = case spanValue.status of Error _ -> True; _ -> False
+
+propagateRoundTrip :: PgmqRun -> Pgmq.QueueName -> IO (Maybe ())
+propagateRoundTrip runtime queue = case (runtime.telemetry.tracer, runtime.telemetry.tracerProvider) of
+  (Just tracer, Just provider) -> do
+    _ <- inSpan tracer "pgmq.producer" defaultSpanArguments (effect runtime (Pgmq.sendMessageTraced provider queue (bodyKey "span") Nothing))
+    values <- effect runtime (Pgmq.readMessageWithContext provider (Types.ReadMessage queue 30 (Just 1) Nothing))
+    case Vector.toList values of
+      [(_, parent)] -> bracket (attachContext parent) detachContext (const (inSpan tracer "pgmq.consumer" defaultSpanArguments (pure ()))) >> pure (Just ())
+      _ -> pure Nothing
+  _ -> pure Nothing
 
 create :: PgmqRun -> Pgmq.QueueName -> IO ()
 create runtime queue = case runtime.knobs.queueKind of

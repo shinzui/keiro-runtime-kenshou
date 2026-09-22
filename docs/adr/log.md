@@ -1,5 +1,10 @@
 # Bundle Update Log
 
+## 2026-09-22
+* **Decision**: Distinguished documented implementation limitations from canonically referenced upstream known defects.
+* **Decision**: Accepted native SQL polling on a dedicated connection for metrics-only layers.
+* **Decision**: Accepted the PostgreSQL clock as the authority for message lease and due-time verdicts.
+
 ## 2026-09-21
 * **Changed**: Document the telemetry-off control, isolated helpers, and controlled-evidence basis.
 * **Decision**: Accepted sealed-run immutability for offline diagnosis.
