@@ -38,6 +38,7 @@ library
   exposed-modules:
     Kenshou.Suite.Kiroku
     Kenshou.Suite.Kiroku.Correctness.Append
+    Kenshou.Suite.Kiroku.Correctness.DeadLetter
     Kenshou.Suite.Kiroku.Correctness.Lifecycle
     Kenshou.Suite.Kiroku.Correctness.Read
     Kenshou.Suite.Kiroku.Correctness.Subscription
