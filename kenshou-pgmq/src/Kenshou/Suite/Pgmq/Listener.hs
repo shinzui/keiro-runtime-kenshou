@@ -1,6 +1,7 @@
 module Kenshou.Suite.Pgmq.Listener
   ( Notification (..),
     withListener,
+    withListeners,
     awaitNotifications,
   )
 where
@@ -17,17 +18,23 @@ import System.Timeout (timeout)
 data Notification = Notification {channel :: Text, payload :: Text} deriving stock (Eq, Show)
 
 withListener :: Text -> Text -> (LibPQ.Connection -> IO a) -> IO a
-withListener connectionString channel action =
+withListener connectionString channel = withListeners connectionString [channel]
+
+withListeners :: Text -> [Text] -> (LibPQ.Connection -> IO a) -> IO a
+withListeners connectionString channels action =
   bracket (LibPQ.connectdb (Text.encodeUtf8 connectionString)) LibPQ.finish \connection -> do
     status <- LibPQ.status connection
     if status /= LibPQ.ConnectionOk
       then ioError (userError "failed to open PostgreSQL LISTEN connection")
       else do
-        let quoted = ByteString.concat ["LISTEN \"", Text.encodeUtf8 (escape channel), "\""]
-        _ <- LibPQ.exec connection quoted
+        mapM_ (listen connection) channels
         action connection
   where
     escape = T.replace "\"" "\"\""
+    listen connection channel = do
+      let quoted = ByteString.concat ["LISTEN \"", Text.encodeUtf8 (escape channel), "\""]
+      _ <- LibPQ.exec connection quoted
+      pure ()
 
 awaitNotifications :: LibPQ.Connection -> Int -> IO [Notification]
 awaitNotifications connection timeoutMs = maybe [] id <$> timeout (timeoutMs * 1000) loop

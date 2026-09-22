@@ -58,6 +58,7 @@ Milestone 2 — pgmq-hs concurrency and crash scenarios.
 - [ ] Implement the no-double-lease scenarios (threads, then processes) and prove non-vacuity with `pgmq.sabotage=unlocked-read`.
 - [ ] Implement the `SIGKILL` scenarios: crash redelivery and read-count accounting, random kills under load, producer batch atomicity, stale acknowledgement after expiry.
 - [x] (2026-09-22 02:05Z) Implemented pool exhaustion with long polling and verified transient acquisition timeout plus same-pool recovery.
+- [x] (2026-09-22 02:54Z) Added pg_partman to both dev-shell PostgreSQL majors and replaced the partition probes with live notification-storm and retention workloads; both declared defects reproduce on PostgreSQL 17 and 18 as non-blocking known defects.
 - [ ] Implement backend termination, PostgreSQL restart and crash, unlogged-queue loss, and the network proxy scenarios, with transient-error classification.
 - [x] (2026-09-22 02:05Z) Implemented and ran the FIFO concurrency scenarios (head-per-group barrier, grouped batch successor hazard, producer commit-order inversion).
 - [ ] Implement the notification scenarios (partitioned storm as known defect, throttle lost after crash, listener loss with poll fallback), partition retention as known defect, concurrent reconcile, overlapping batch acknowledgement deadlock.
@@ -104,6 +105,9 @@ Milestone 4 — pgmq-hs soak and telemetry arms.
 - Observation: the first controlled tracing-overhead run found meaningful arm-specific cost: `noop` and `sdk-otlp` passed the checked-in policy, while `sdk-inmemory` regressed with approximately 37% higher p99 and 23% more allocation per operation.
   Evidence: `runs/overhead-01a0c6ed-bfc5-7729-bf5b-3ac8db3ea7e4/overhead-report.json`. The metrics-poll study passed at `runs/overhead-01a0c6ef-8a1b-730a-9735-db121bfa73f2/overhead-report.json`.
 
+- Observation: the dev shell's bundled pg_partman reproduces both partition hazards identically on PostgreSQL 17.11 and 18.6. The notify trigger produced 1,000 notifications for 1,000 separate inserts, all on leaf-partition channels, where the 250 ms throttle permits at most 21 over five seconds. Numeric retention removed 1,799 of 2,000 acknowledged sends, including all 50 rows leased before maintenance; the default partition stayed empty, so the result is retention rather than runway overrun.
+  Evidence: PostgreSQL 17 runs `01a0c706-8745-77f6-997a-a4e569bf4349` and `01a0c706-91a7-7740-b840-0b0a06ae6adf`; PostgreSQL 18 runs `01a0c707-187b-7595-8f8e-bf52d961d61e` and `01a0c707-22d1-770e-91d6-5bb7783239fd`. All four carry `knownDefect.status=reproduced` and `blocking=false`.
+
 
 ## Decision Log
 
@@ -138,6 +142,10 @@ Milestone 4 — pgmq-hs soak and telemetry arms.
 - Decision: The "raw SQL" rung of the layer ladder is a hand-written `hasql` statement that calls the PGMQ SQL function directly through the same pool, as `pgmq-bench` does, not a separate libpq driver.
   Rationale: The question the ladder answers is what the pgmq-hs wrappers add (encoders, the `COALESCE` guards, decoders, effect dispatch, spans); changing the driver as well would confound it.
   Date: 2026-09-20
+
+- Decision: The local PostgreSQL 17 and 18 fixtures use `postgresql.withPackages (ps: [ ps.pg_partman ])`; the unextended packages remain unsuitable for accepting this layer because they turn two required known-defect experiments into infrastructure errors.
+  Rationale: Partitioning is part of the released PGMQ contract exercised by this plan. Keeping the extension in both runtime majors makes the matrix symmetric and lets `requirePartman` distinguish installation errors from unavailable binaries.
+  Date: 2026-09-22
 
 
 ## Outcomes & Retrospective

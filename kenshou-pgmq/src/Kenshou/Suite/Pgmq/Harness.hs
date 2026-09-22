@@ -138,9 +138,8 @@ partmanAvailable =
       (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.bool)))
 
 installPartman :: Session.Session ()
-installPartman =
-  Session.statement () $
-    Statement.unpreparable
-      "create schema if not exists partman; create extension if not exists pg_partman schema partman"
-      Encoders.noParams
-      Decoders.noResult
+installPartman = do
+  Session.statement () (command "create schema if not exists partman")
+  Session.statement () (command "create extension if not exists pg_partman schema partman")
+  where
+    command sql = Statement.unpreparable sql Encoders.noParams Decoders.noResult

@@ -11,8 +11,10 @@ import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Vector qualified as Vector
+import Database.PostgreSQL.LibPQ qualified as LibPQ
 import Effectful qualified
 import Effectful.Error.Static qualified
+import GHC.Clock (getMonotonicTimeNSec)
 import Hasql.Decoders qualified as Decoders
 import Hasql.Encoders qualified as Encoders
 import Hasql.Pool qualified as Pool
@@ -30,11 +32,13 @@ import Kenshou.Core.Role (ControlMessage (CtlStart))
 import Kenshou.Core.Scenario (ScenarioReport, failedWith, passed)
 import Kenshou.Suite.Pgmq.Harness
 import Kenshou.Suite.Pgmq.Knobs (PgmqKnobs (..), knobName)
+import Kenshou.Suite.Pgmq.Listener (Notification (..), awaitNotifications, withListeners)
 import Pgmq.Config qualified as Config
 import Pgmq.Effectful qualified as Pgmq
 import Pgmq.Effectful.Effect qualified as PgmqEff
 import Pgmq.Hasql.Sessions qualified as Sessions
 import Pgmq.Hasql.Statements.Types qualified as Types
+import Pgmq.Types qualified as PgmqTypes
 
 runConcurrency :: Text -> RunContext -> Maybe (IO ScenarioReport)
 runConcurrency identifier context = fmap guarded (lookup identifier runners)
@@ -263,7 +267,41 @@ partitionedNotifyStorm context = withPgmqRun context \runtime -> do
   support <- requirePartman runtime.pool
   case support of
     Left message -> pure (failedWith ["pg-partman"] message)
-    Right () -> pure (failedWith ["known-defect"] "partitioned notification trigger targets partition channels and bypasses the queue throttle")
+    Right () -> do
+      let queue = scenarioQueueName context "notify_storm"
+      _ <- effect runtime (Pgmq.createPartitionedQueue (Types.CreatePartitionedQueue queue "10000" "100000"))
+      (`finally` cleanupQueues runtime [queue]) do
+        _ <- effect runtime (Pgmq.enableNotifyInsert (Types.EnableNotifyInsert queue (Just 250)))
+        partitions <- session runtime.pool (Session.statement (Pgmq.queueNameToText queue) partitionNames)
+        let canonical = PgmqTypes.notifyChannelName queue
+            channels = canonical : fmap (\partition -> "pgmq." <> partition <> ".INSERT") partitions
+            messageCount = 1000
+            threshold = 5000 `div` 250 + 1
+        (enabledSeconds, notifications) <-
+          withListeners (requirePostgres context).connectionString channels \connection -> do
+            elapsed <- timedSeconds $ void $ mapConcurrently (sendOne runtime queue) [1 .. messageCount]
+            observed <- collectNotifications connection
+            pure (elapsed, observed)
+        _ <- effect runtime (Pgmq.disableNotifyInsert queue)
+        disabledSeconds <- timedSeconds $ void $ mapConcurrently (sendOne runtime queue) [messageCount + 1 .. messageCount * 2]
+        let observedCount = length notifications
+            partitionCount = length [() | notification <- notifications, notification.channel /= canonical]
+        putSummary
+          context
+          Verdicts
+          "partitioned-notify-storm-observations"
+          ( object
+              [ "notifications" .= observedCount,
+                "partitionNotifications" .= partitionCount,
+                "allowedByThrottle" .= threshold,
+                "channels" .= channels,
+                "sendSecondsWithNotify" .= enabledSeconds,
+                "sendSecondsWithoutNotify" .= disabledSeconds
+              ]
+          )
+        if observedCount > threshold && partitionCount == observedCount
+          then pure (failedWith ["known-defect"] ("observed " <> Text.pack (show observedCount) <> " unthrottled notifications on partition channels; allowed " <> Text.pack (show threshold)))
+          else verdict context "partitioned-notify-storm" [("notifications-observed", observedCount > 0), ("throttle-bounded", observedCount <= threshold), ("canonical-channel", partitionCount == 0)]
 
 throttleLostAfterCrash :: RunContext -> IO ScenarioReport
 throttleLostAfterCrash context = withPgmqRun context \runtime ->
@@ -290,7 +328,52 @@ partitionRetention context = withPgmqRun context \runtime -> do
   support <- requirePartman runtime.pool
   case support of
     Left message -> pure (failedWith ["pg-partman"] message)
-    Right () -> pure (failedWith ["known-defect"] "pg_partman retention drops partitions without respecting unread or leased rows")
+    Right () -> do
+      let queue = scenarioQueueName context "partition_retention"
+          queueText = Pgmq.queueNameToText queue
+          firstChunk = [1 .. 100]
+          remainingChunks = [[start .. start + 99] | start <- [101, 201 .. 1901]]
+      _ <- effect runtime (Pgmq.createPartitionedQueue (Types.CreatePartitionedQueue queue "100" "200"))
+      (`finally` cleanupQueues runtime [queue]) do
+        firstIds <- effect runtime (Pgmq.batchSendMessage (Types.BatchSendMessage queue (fmap body firstChunk) Nothing))
+        session runtime.pool (Session.statement queueText runPartmanMaintenance)
+        leased <- effect runtime (Pgmq.readMessage (Types.ReadMessage queue 5 (Just 50) Nothing))
+        remainingIds <-
+          fmap concat $
+            traverse
+              ( \chunk -> do
+                  identifiers <- effect runtime (Pgmq.batchSendMessage (Types.BatchSendMessage queue (fmap body chunk) Nothing))
+                  session runtime.pool (Session.statement queueText runPartmanMaintenance)
+                  pure identifiers
+              )
+              remainingChunks
+        session runtime.pool (Session.statement queueText runPartmanMaintenance)
+        threadDelay 5100000
+        handledVar <- newMVar []
+        drain runtime queue handledVar
+        handled <- readMVar handledVar
+        metrics <- effect runtime (Pgmq.queueMetrics queue)
+        let sent = firstIds <> remainingIds
+            lost = Set.toList (Set.fromList sent `Set.difference` Set.fromList handled)
+            leasedIds = fmap (.messageId) (Vector.toList leased)
+            lostLeased = Set.toList (Set.fromList leasedIds `Set.intersection` Set.fromList lost)
+        putSummary
+          context
+          Verdicts
+          "partition-retention-observations"
+          ( object
+              [ "sent" .= length sent,
+                "handled" .= length handled,
+                "lost" .= length lost,
+                "leasedBeforeMaintenance" .= length leasedIds,
+                "lostWhileLeased" .= length lostLeased,
+                "queueLengthAfterDrain" .= metrics.queueLength,
+                "defaultPartitionLength" .= metrics.defaultPartitionLength
+              ]
+          )
+        if null lost
+          then verdict context "partition-retention" [("all-sent-handled", sort handled == sort sent), ("queue-drained", metrics.queueLength == 0)]
+          else pure (failedWith ["known-defect"] ("partition retention dropped " <> Text.pack (show (length lost)) <> " messages, including " <> Text.pack (show (length lostLeased)) <> " leased messages"))
 
 concurrentReconcile :: RunContext -> IO ScenarioReport
 concurrentReconcile context = withPgmqRun context \runtime -> do
@@ -364,3 +447,34 @@ sleepOne = command "select from pg_sleep(1)"
 
 command :: Text -> Statement.Statement () ()
 command sql = Statement.unpreparable sql Encoders.noParams Decoders.noResult
+
+partitionNames :: Statement.Statement Text [Text]
+partitionNames =
+  Statement.unpreparable
+    "select child.relname::text from pg_inherits inheritance join pg_class child on child.oid=inheritance.inhrelid where inheritance.inhparent=to_regclass('pgmq.q_' || $1) order by child.relname"
+    (Encoders.param (Encoders.nonNullable Encoders.text))
+    (Decoders.rowList (Decoders.column (Decoders.nonNullable Decoders.text)))
+
+runPartmanMaintenance :: Statement.Statement Text ()
+runPartmanMaintenance =
+  Statement.unpreparable
+    "select from partman.run_maintenance('pgmq.q_' || $1)"
+    (Encoders.param (Encoders.nonNullable Encoders.text))
+    Decoders.noResult
+
+sendOne :: PgmqRun -> Pgmq.QueueName -> Int -> IO Pgmq.MessageId
+sendOne runtime queue index = effect runtime (Pgmq.sendMessage (Types.SendMessage queue (body index) Nothing))
+
+collectNotifications :: LibPQ.Connection -> IO [Notification]
+collectNotifications connection = go []
+  where
+    go accumulated = do
+      notifications <- awaitNotifications connection 250
+      if null notifications then pure accumulated else go (accumulated <> notifications)
+
+timedSeconds :: IO value -> IO Double
+timedSeconds action = do
+  started <- getMonotonicTimeNSec
+  _ <- action
+  finished <- getMonotonicTimeNSec
+  pure (fromIntegral (finished - started) / 1000000000)
