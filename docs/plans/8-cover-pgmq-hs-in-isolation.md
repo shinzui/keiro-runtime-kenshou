@@ -68,7 +68,7 @@ Milestone 3 — pgmq-hs benchmarks.
 
 - [x] (2026-09-22 02:28Z) Implemented `Kenshou.Suite.Pgmq.RawSql` and `Kenshou.Suite.Pgmq.Client`; live layer-ladder runs exercised distinct hand-written SQL, pgmq-hasql, and pgmq-effectful paths.
 - [x] (2026-09-22 02:28Z) Implemented measured `layer-ladder`, `send-throughput`, and `read-ack-throughput` workloads using the shared load generator and recorder.
-- [ ] Implement `produce-consume-latency` with the poll, long-poll and notify wake-up modes.
+- [x] (2026-09-22 03:11Z) Implemented distinct poll, server long-poll, and LISTEN/NOTIFY-with-poll-fallback paths in `produce-consume-latency`; benchmark-grade PostgreSQL 18 runs passed for all three modes.
 - [x] (2026-09-22 02:28Z) Implemented `invisible-backlog-read-cost`, `grouped-read-cost`, and `notify-insert-overhead`; short live runs of the grouped, send, metrics, and all three ladder paths pass.
 - [ ] Add `policies/pgmq.json` comparison policy; run each benchmark as a paired A/A comparison and confirm verdict `pass`; record first figures as illustrative.
 
@@ -107,6 +107,9 @@ Milestone 4 — pgmq-hs soak and telemetry arms.
 
 - Observation: the dev shell's bundled pg_partman reproduces both partition hazards identically on PostgreSQL 17.11 and 18.6. The notify trigger produced 1,000 notifications for 1,000 separate inserts, all on leaf-partition channels, where the 250 ms throttle permits at most 21 over five seconds. Numeric retention removed 1,799 of 2,000 acknowledged sends, including all 50 rows leased before maintenance; the default partition stayed empty, so the result is retention rather than runway overrun.
   Evidence: PostgreSQL 17 runs `01a0c706-8745-77f6-997a-a4e569bf4349` and `01a0c706-91a7-7740-b840-0b0a06ae6adf`; PostgreSQL 18 runs `01a0c707-187b-7595-8f8e-bf52d961d61e` and `01a0c707-22d1-770e-91d6-5bb7783239fd`. All four carry `knownDefect.status=reproduced` and `blocking=false`.
+
+- Observation: the three produce-consume wake paths produce materially different intended-start latency distributions under the same local PostgreSQL 18 fixture. Polling with two load workers recorded p50 0.37 ms and p99 0.88 ms; server long polling at a 5 ms poll interval with eight workers recorded p50 2.64 ms and p99 26.49 ms; unthrottled LISTEN/NOTIFY with eight workers recorded p50 4.69 ms and p99 17.27 ms. These are illustrative local figures, not cross-run performance claims.
+  Evidence: benchmark-grade passing runs `01a0c70f-5ff7-7524-bbb8-22952cb89d60`, `01a0c70e-a7bd-723c-bc2c-e380c8e7cf02`, and `01a0c70f-803a-712e-b1ef-29e6a4bac505`, respectively.
 
 
 ## Decision Log

@@ -1,6 +1,7 @@
 module Kenshou.Suite.Pgmq.Bench.Runner (runBenchmark) where
 
 import Control.Concurrent (threadDelay)
+import Control.Concurrent.Async (async, wait)
 import Control.Exception (SomeException, try)
 import Control.Monad (forM_)
 import Data.Aeson (object, (.=))
@@ -12,7 +13,8 @@ import Data.Word (Word64)
 import Effectful qualified
 import Effectful.Error.Static qualified
 import Hasql.Pool qualified as Pool
-import Kenshou.Core.Context (RunContext (..), SummarySection (Verdicts), putSummary)
+import Kenshou.Core.Context (RunContext (..), SummarySection (Verdicts), putSummary, requirePostgres)
+import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Knob (knobBool, knobInt, knobText)
 import Kenshou.Core.Scenario (ScenarioReport (..), failedWith, passed)
 import Kenshou.Measure.Knobs (loadModelFromKnobs)
@@ -22,10 +24,12 @@ import Kenshou.Measure.Session (MeasurementReport (..), measureConfigFromKnobs, 
 import Kenshou.Suite.Pgmq.Client
 import Kenshou.Suite.Pgmq.Harness
 import Kenshou.Suite.Pgmq.Knobs (PgmqKnobs (..), knobName)
+import Kenshou.Suite.Pgmq.Listener (awaitNotifications, withListener)
 import Kenshou.Telemetry (TelemetryHandles (..))
 import Pgmq.Effectful qualified as Pgmq
 import Pgmq.Hasql.Sessions qualified as Sessions
 import Pgmq.Hasql.Statements.Types qualified as Types
+import Pgmq.Types qualified as PgmqTypes
 
 runBenchmark :: Text -> RunContext -> Maybe (IO ScenarioReport)
 runBenchmark identifier context
@@ -60,7 +64,7 @@ runMeasured identifier context = case (loadModelFromKnobs context.knobs, measure
         (_, report) <- withMeasurement context measureConfig (\measurement -> runLoad measurement loadModel operation)
         let failures = sum [load.failed | load <- report.loads]
             base = if failures == 0 then passed else failedWith ["operation-errors"] ("failed operations=" <> Text.pack (show failures))
-        putSummary context Verdicts "pgmq-benchmark" (object ["identifier" .= identifier, "layer" .= show layer, "failedOperations" .= failures])
+        putSummary context Verdicts "pgmq-benchmark" (object ["identifier" .= identifier, "layer" .= show layer, "wake" .= knobText context.knobs (knobName "pgmq.wake"), "failedOperations" .= failures])
         pure (base {outcome = measuredOutcome report base.outcome})
 
 operationName :: Text -> Layer -> Text
@@ -84,6 +88,8 @@ prepare identifier runtime queue
         pure ()
       drainInvisible count
   | "notify-insert" `Text.isInfixOf` identifier = effect runtime (Pgmq.enableNotifyInsert (Types.EnableNotifyInsert queue (Just 250)))
+  | "produce-consume" `Text.isInfixOf` identifier && knobText runtime.ctx.knobs (knobName "pgmq.wake") == "notify" =
+      effect runtime (Pgmq.enableNotifyInsert (Types.EnableNotifyInsert queue (Just (fromIntegral (knobInt runtime.ctx.knobs (knobName "pgmq.notify.throttle-ms"))))))
   | otherwise = pure ()
   where
     drainInvisible remaining
@@ -103,6 +109,7 @@ runOperation identifier runtime client queue _ sequenceNumber = do
           outcome <- Pool.use runtime.pool (Sessions.queueMetrics queue)
           either (ioError . userError . show) (const (pure (OpOk 1))) outcome
       | "send-throughput" `Text.isInfixOf` identifier = sendOperation client queue sequenceNumber runtime.knobs.batchSize (knobText runtime.ctx.knobs (knobName "pgmq.op"))
+      | "produce-consume" `Text.isInfixOf` identifier = wakeCycle runtime client queue sequenceNumber
       | "grouped-read" `Text.isInfixOf` identifier = groupedCycle runtime queue sequenceNumber
       | "interpreter-tracing-overhead" `Text.isInfixOf` identifier && knobBool runtime.ctx.knobs (knobName "pgmq.trace.propagate") = propagatedCycle runtime queue sequenceNumber
       | otherwise = fullCycle client queue sequenceNumber
@@ -151,6 +158,39 @@ propagatedCycle runtime queue sequenceNumber = case runtime.telemetry.tracerProv
       (message, _) : _ -> do
         acknowledged <- effect runtime (Pgmq.deleteMessage (Types.MessageQuery queue message.messageId))
         pure (if acknowledged then OpOk 3 else OpFailed (ErrorCause "propagated-delete-returned-false"))
+
+wakeCycle :: PgmqRun -> PgmqClient -> Pgmq.QueueName -> Word64 -> IO OpResult
+wakeCycle runtime client queue sequenceNumber = case knobText runtime.ctx.knobs (knobName "pgmq.wake") of
+  "poll" -> do
+    _ <- client.send queue messageBody
+    messages <- pollUntilAvailable (100 :: Int)
+    acknowledge messages
+  "long-poll" -> do
+    reader <- async (effect runtime (Pgmq.readWithPoll (Types.ReadWithPollMessage queue 30 (Just 1) (max 1 runtime.knobs.pollMaxSeconds) runtime.knobs.pollIntervalMs Nothing)))
+    threadDelay 1000
+    _ <- client.send queue messageBody
+    wait reader >>= acknowledge
+  "notify" ->
+    withListener (requirePostgres runtime.ctx).connectionString (PgmqTypes.notifyChannelName queue) \connection -> do
+      _ <- client.send queue messageBody
+      _ <- awaitNotifications connection (fromIntegral runtime.knobs.pollIntervalMs * 10)
+      -- A configured throttle intentionally suppresses some per-insert signals.
+      -- The consumer therefore keeps the same polling fallback required by the
+      -- notification contract instead of treating a quiet interval as loss.
+      effect runtime (Pgmq.readMessage (Types.ReadMessage queue 30 (Just 1) Nothing)) >>= acknowledge
+  selected -> pure (OpFailed (ErrorCause ("unknown-wake-mode:" <> selected)))
+  where
+    messageBody = payload (fromIntegral sequenceNumber)
+    pollUntilAvailable attempts = do
+      messages <- effect runtime (Pgmq.readMessage (Types.ReadMessage queue 30 (Just 1) Nothing))
+      if Vector.null messages && attempts > 1
+        then threadDelay (fromIntegral runtime.knobs.pollIntervalMs * 1000) >> pollUntilAvailable (attempts - 1)
+        else pure messages
+    acknowledge messages = case Vector.toList messages of
+      [] -> pure (OpFailed (ErrorCause "empty-wake-read"))
+      message : _ -> do
+        deleted <- effect runtime (Pgmq.deleteMessage (Types.MessageQuery queue message.messageId))
+        pure (if deleted then OpOk 3 else OpFailed (ErrorCause "wake-delete-returned-false"))
 
 payload :: Int -> Pgmq.MessageBody
 payload index = Pgmq.MessageBody (object ["k" .= index])
