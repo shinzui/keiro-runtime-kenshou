@@ -668,27 +668,37 @@ partitionRetention context = withPgmqRun context \runtime -> do
 concurrentReconcile :: RunContext -> IO ScenarioReport
 concurrentReconcile context = withPgmqRun context \runtime -> do
   let names = [scenarioQueueName context ("reconcile_" <> Text.pack (show index)) | index <- [1 :: Int .. 10]]
-      declarations = fmap (Config.withNotifyInsert (Just 250) . Config.withFifoIndex . Config.standardQueue) names
       workers = max 8 (min 16 (fromIntegral (knobInt context.knobs (knobName "pgmq.processes")))) :: Int
       rounds = 50 :: Int
+      arguments = object ["queue" .= Pgmq.queueNameToText (scenarioQueueName context "reconcile_1"), "queues" .= fmap Pgmq.queueNameToText names, "reconcileResources" .= True]
   (`finally` cleanupQueues runtime names) do
-    results <- forM [1 .. rounds] \roundIndex -> do
-      reports <- mapConcurrently (const (Pool.use runtime.pool (Config.ensureQueuesReport declarations))) [1 .. workers]
-      queues <- effect runtime PgmqEff.listQueues
-      let actions = concat [values | Right values <- reports]
-          created = [name | Config.CreatedQueue name _ <- actions]
-          notified = [name | Config.EnabledNotify name _ <- actions]
-          indexed = [name | Config.CreatedFifoIndex name <- actions]
-          actual = [queue.name | queue <- queues, queue.name `elem` names]
-          oneEach values = sort values == sort names
-          outcome = object ["round" .= roundIndex, "errors" .= [show err | Left err <- reports], "created" .= length created, "notified" .= length notified, "indexed" .= length indexed, "catalogCount" .= length actual]
-          noErrors = all isRight reports
-          catalogCorrect = sort actual == sort names
-          uniqueActions = oneEach created && oneEach notified && oneEach indexed
-      cleanupQueues runtime names
-      pure (outcome, noErrors, catalogCorrect, uniqueActions)
-    putSummary context Verdicts "concurrent-reconcile-observations" (object ["rounds" .= rounds, "workers" .= workers, "results" .= fmap (\(outcome, _, _, _) -> outcome) results])
-    verdict context "concurrent-reconcile" [("no-worker-errors", all (\(_, ok, _, _) -> ok) results), ("final-catalog-converges", all (\(_, _, ok, _) -> ok) results), ("one-creator-report-per-resource", all (\(_, _, _, ok) -> ok) results), ("all-rounds-executed", length results == rounds)]
+    withCheck context \checkEnvironment ->
+      withSupervisor checkEnvironment \supervisor -> do
+        specs <- traverse (\index -> roleProcess checkEnvironment "pgmq/pgmq-reconciler" index arguments) [1 .. workers]
+        children <- traverse (spawn supervisor) specs
+        mapM_ (`awaitReady` 10000) children
+        results <- forM [1 .. rounds] \roundIndex -> do
+          mapM_ (`sendCommand` CtlStart) children
+          let mark = "reconciled-" <> Text.pack (show roundIndex)
+          mapM_ (\child -> awaitMark child mark 30000) children
+          reports <- traverse (\child -> do snapshot <- atomically (progress child); maybe (ioError (userError "worker omitted reconciliation report")) pure (Map.lookup mark snapshot.marks >>= parseReconcileMark)) children
+          queues <- effect runtime PgmqEff.listQueues
+          let errors = [message | (Just message, _, _, _) <- reports]
+              created = sum [count | (_, count, _, _) <- reports]
+              notified = sum [count | (_, _, count, _) <- reports]
+              indexed = sum [count | (_, _, _, count) <- reports]
+              actual = [queue.name | queue <- queues, queue.name `elem` names]
+              outcome = object ["round" .= roundIndex, "errors" .= errors, "created" .= created, "notified" .= notified, "indexed" .= indexed, "catalogCount" .= length actual]
+              noErrors = null errors
+              catalogCorrect = sort actual == sort names
+              uniqueActions = created == length names && notified == length names && indexed == length names
+          cleanupQueues runtime names
+          pure (outcome, noErrors, catalogCorrect, uniqueActions)
+        putSummary context Verdicts "concurrent-reconcile-observations" (object ["rounds" .= rounds, "workers" .= workers, "workerProcesses" .= fmap (show . childPid) children, "results" .= fmap (\(outcome, _, _, _) -> outcome) results])
+        verdict context "concurrent-reconcile" [("no-worker-errors", all (\(_, ok, _, _) -> ok) results), ("final-catalog-converges", all (\(_, _, ok, _) -> ok) results), ("one-creator-report-per-resource", all (\(_, _, _, ok) -> ok) results), ("all-rounds-executed", length results == rounds)]
+
+parseReconcileMark :: Value -> Maybe (Maybe String, Int, Int, Int)
+parseReconcileMark = parseMaybe (withObject "reconciliation report" \entry -> (,,,) <$> entry .: "error" <*> entry .: "created" <*> entry .: "notified" <*> entry .: "indexed")
 
 overlappingBatchAck :: RunContext -> IO ScenarioReport
 overlappingBatchAck context = withPgmqRun context \runtime ->

@@ -26,6 +26,8 @@ data CrashPoint = AfterRead | AfterHandled | MidBatchAck deriving stock (Eq, Ord
 
 data RoleArgs = RoleArgs
   { queue :: QueueName,
+    reconcileQueues :: [QueueName],
+    reconcileResources :: Bool,
     count :: Int,
     batchSize :: Int,
     visibilityTimeout :: Int,
@@ -99,10 +101,37 @@ reconciler :: RoleContext -> IO ()
 reconciler context = do
   arguments <- parseArgs context.init.args
   context.send WrkReady
-  awaitStart context do
-    withRolePool context \pool -> do
-      report <- use pool (Config.ensureQueuesReport [Config.standardQueue arguments.queue])
-      context.send (WrkCustom "reconciled" (object ["actions" .= fmap show report]))
+  withRolePool context \pool -> reconcileLoop arguments pool (0 :: Int)
+  where
+    reconcileLoop arguments pool roundIndex =
+      context.receive >>= \case
+        Just CtlStart -> do
+          let declarations =
+                [ if arguments.reconcileResources
+                    then Config.withNotifyInsert (Just 250) (Config.withFifoIndex (Config.standardQueue queue))
+                    else Config.standardQueue queue
+                | queue <- arguments.reconcileQueues
+                ]
+          result <- Pool.use pool (Config.ensureQueuesReport declarations)
+          let actions = either (const []) id result
+              completed = roundIndex + 1
+          context.send
+            ( WrkCustom
+                ("reconciled-" <> Text.pack (show completed))
+                ( object
+                    [ "error" .= either (Just . show) (const (Nothing :: Maybe String)) result,
+                      "created" .= length [() | Config.CreatedQueue _ _ <- actions],
+                      "notified" .= length [() | Config.EnabledNotify _ _ <- actions],
+                      "indexed" .= length [() | Config.CreatedFifoIndex _ <- actions]
+                    ]
+                )
+            )
+          now <- getCurrentTime
+          context.send (WrkProgress (fromIntegral completed) now)
+          reconcileLoop arguments pool completed
+        Just (CtlStop _) -> pure ()
+        Nothing -> pure ()
+        _ -> reconcileLoop arguments pool roundIndex
 
 awaitStart :: RoleContext -> IO () -> IO ()
 awaitStart context action =
@@ -126,7 +155,10 @@ parseArgs value = either (ioError . userError) pure (parseEither parser value)
     parser = withObject "pgmq role arguments" \objectValue -> do
       queueText <- objectValue .: "queue"
       queue <- either (fail . show) pure (parseQueueName queueText)
-      RoleArgs queue
+      queueTexts <- objectValue .:? "queues" .!= [queueText]
+      reconcileQueues <- traverse (either (fail . show) pure . parseQueueName) queueTexts
+      reconcileResources <- objectValue .:? "reconcileResources" .!= False
+      RoleArgs queue reconcileQueues reconcileResources
         <$> objectValue .:? "count" .!= 100
         <*> objectValue .:? "batchSize" .!= 10
         <*> objectValue .:? "visibilityTimeout" .!= 3
