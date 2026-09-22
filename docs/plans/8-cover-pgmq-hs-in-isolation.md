@@ -93,6 +93,7 @@ Milestone 2 — pgmq-hs concurrency and crash scenarios.
 - [x] (2026-09-22 22:12Z) Ran all other nineteen concurrency identifiers on each durable PostgreSQL major. Each version had thirteen passing scenarios and six precise, non-blocking known-defect reproductions, with no new blocking failures. Together with the full random-kill runs, all twenty identifiers have run on both versions.
 - [x] (2026-09-22 22:15Z) Expanded the TCP reset probe to 100 confirmed sends before the reset, one ambiguous interrupted send, and 100 confirmed sends after same-pool recovery. Durable key and queue-count oracles passed on PostgreSQL 17 and 18; only the known reset classifier check failed.
 - [x] (2026-09-22 22:20Z) Added 100 pre-fault and 100 post-fault confirmed sends to backend termination and immediate PostgreSQL crash, with durable-key conservation checks on both supported majors. The same pools recovered, all 200 keys remained, and only the already registered transient classifier checks failed. Expanded the unlogged-crash probe to exact keys: 100 logged rows survived and 100 unlogged rows vanished on both majors.
+- [x] (2026-09-22 22:23Z) Wired `pgmq.fault.kind=latency` to the TCP proxy. A warm send under 1 ms rose to about 402 ms with 200 ms configured in each direction, without errors or lost keys, on both durable PostgreSQL majors.
 - [ ] Complete the wider outage workloads beyond the focused recovery probes.
 
 Milestone 3 — pgmq-hs benchmarks.
@@ -221,6 +222,9 @@ Milestone 4 — pgmq-hs soak and telemetry arms.
 
 - Observation: backend termination interrupted a long poll on an empty queue while a separate queue retained the confirmed data workload. After the fault, the same pool sent another hundred rows; all 200 keys and the queue depth matched on both versions. An immediate postmaster crash gave the same conservation result, with `fsync=on` and same-pool recovery in under 0.4 seconds. The logged versus unlogged crash check confirmed loss was limited to the unlogged queue.
   Evidence: backend termination runs `01a0cb32-0116-755a-9a99-c79c78f659e0` (PostgreSQL 18) and `01a0cb32-4557-70bc-a30e-248b33b3d22f` (17) each retained 200 keys; only `transient-error` failed under `mori://shinzui/pgmq-hs/okf/improvement-requests/concepts/IR-4`. Restart runs `01a0cb33-1925-70ef-a759-a4c2e1cf2a68` (18) and `01a0cb33-5308-75d4-acbd-810f15cc3a06` (17) each retained 200 keys; only `outage-error-transient` failed under the same request. Unlogged crash runs `01a0cb33-fff6-72e8-8f1a-6840ff78c410` (18) and `01a0cb34-3631-7118-b4ef-659ad3f913e4` (17) each retained exactly 100 logged keys and zero unlogged keys.
+
+- Observation: the TCP proxy's latency mode adds a delay in each forwarding direction, and a warmed pool sent through that path without an error. A 200 ms setting added about 402 ms to one send, close to the expected request and response traversal cost.
+  Evidence: durable PostgreSQL 18 run `01a0cb36-ef53-7596-b705-d21e53044e91` measured 0.000376 seconds baseline and 0.403073 seconds delayed; PostgreSQL 17 run `01a0cb37-2ca1-7233-849a-ba85acf0b478` measured 0.000453 and 0.402041 seconds. Both passed all checks and retained the three sent keys.
 
 
 ## Decision Log
