@@ -3,6 +3,7 @@ module Kenshou.Suite.Pgmq.Soak.Runner (runSoak) where
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, try)
 import Data.Aeson (object, (.=))
+import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -16,7 +17,8 @@ import Kenshou.Core.Context (ArtifactDir (SeriesDir), RunContext (..), SummarySe
 import Kenshou.Core.Knob (knobDouble)
 import Kenshou.Core.Outcome (Outcome (Failed, Inconclusive))
 import Kenshou.Core.Scenario (ScenarioReport (..), failedWith, passed)
-import Kenshou.Diagnose.Leak (LeakReport (..), LeakSpec (..), LeakVerdict (..), defaultLeakSpec, judgeLeaks)
+import Kenshou.Diagnose.Leak (Aggregation (WindowMedian), Expectation (Bounded), LeakReport (..), LeakSpec (..), LeakVerdict (..), ProbeSpec (..), defaultLeakSpec, judgeLeaks)
+import Kenshou.Diagnose.Series (SeriesBinding (..))
 import Kenshou.Measure.Knobs (loadModelFromKnobs)
 import Kenshou.Measure.Load (LoadReport (..), Operation (..), runLoad)
 import Kenshou.Measure.Recorder (ErrorCause (..), OpName (..), OpResult (..))
@@ -29,6 +31,7 @@ import Kenshou.Suite.Pgmq.Oracle (archiveKeys)
 import Pgmq.Effectful qualified as Pgmq
 import Pgmq.Hasql.Sessions qualified as Sessions
 import Pgmq.Hasql.Statements.Types qualified as Types
+import Pgmq.Types qualified as PgmqTypes
 import System.IO (BufferMode (LineBuffering), IOMode (WriteMode), hSetBuffering, withFile)
 
 runSoak :: Text -> RunContext -> Maybe (IO ScenarioReport)
@@ -43,44 +46,49 @@ steadyState identifier context = case (loadModelFromKnobs context.knobs, measure
   (Right loadModel, Right baseConfig) ->
     withPgmqRun context \runtime ->
       withScenarioQueue runtime.pool context runtime.knobs "steady_state" \queue -> do
-        withQueueDepthSeries context runtime queue baseConfig \config -> do
-          let operation = Operation (OpName "queue-cycle") (soakCycle runtime queue)
-          (_, measurement) <- withMeasurement context config (\session -> runLoad session loadModel operation)
-          threadDelay 1100000
-          drainQueue runtime queue
-          metrics <- effect runtime (Pgmq.queueMetrics queue)
-          archived <- Set.size <$> archiveKeys runtime.pool queue
-          let operationFailures = sum [load.failed | load <- measurement.loads]
-              queueBound = metrics.queueLength <= fromIntegral (max 100 (runtime.knobs.poolSize * 20))
-              workloadReport = if operationFailures == 0 && queueBound then passed else failedWith ["soak-workload"] ("operation failures=" <> Text.pack (show operationFailures) <> ", queue length=" <> Text.pack (show metrics.queueLength))
-          putSummary context Verdicts "pgmq-soak-workload" (object ["operationFailures" .= operationFailures, "queueLength" .= metrics.queueLength, "visibleLength" .= metrics.queueVisibleLength])
-          putSummary context Diagnosis "pgmq-bloat" (object ["verdict" .= if queueBound then ("bounded" :: Text) else "growth", "queueRows" .= metrics.queueLength, "archiveRows" .= archived])
-          leak <- judgeLeaks context (leakPolicy identifier)
-          let measured = workloadReport {outcome = measuredOutcome measurement workloadReport.outcome}
-          pure case leak.verdict of
-            LeakSuspected -> measured {outcome = Failed, reason = Just "resource leak suspected", failures = "leak-suspected" : measured.failures}
-            InsufficientData | measured.outcome == passed.outcome -> measured {outcome = Inconclusive, reason = Just "leak verdict has insufficient data"}
-            _ -> measured
+        let operation = Operation (OpName "queue-cycle") (soakCycle runtime queue)
+        (_, measurement) <- withQueueDepthSeries context runtime queue baseConfig \config -> withMeasurement context config (\session -> runLoad session loadModel operation)
+        threadDelay 1100000
+        drainQueue runtime queue
+        metrics <- effect runtime (Pgmq.queueMetrics queue)
+        archived <- Set.size <$> archiveKeys runtime.pool queue
+        let operationFailures = sum [load.failed | load <- measurement.loads]
+            queueBound = metrics.queueLength <= fromIntegral (max 100 (runtime.knobs.poolSize * 20))
+            workloadReport = if operationFailures == 0 && queueBound then passed else failedWith ["soak-workload"] ("operation failures=" <> Text.pack (show operationFailures) <> ", queue length=" <> Text.pack (show metrics.queueLength))
+        putSummary context Verdicts "pgmq-soak-workload" (object ["operationFailures" .= operationFailures, "queueLength" .= metrics.queueLength, "visibleLength" .= metrics.queueVisibleLength])
+        putSummary context Diagnosis "pgmq-bloat" (object ["verdict" .= if queueBound then ("bounded" :: Text) else "growth", "queueRows" .= metrics.queueLength, "archiveRows" .= archived])
+        leak <- judgeLeaks context (leakPolicy identifier)
+        let measured = workloadReport {outcome = measuredOutcome measurement workloadReport.outcome}
+        pure case leak.verdict of
+          LeakSuspected -> measured {outcome = Failed, reason = Just "resource leak suspected", failures = "leak-suspected" : measured.failures}
+          InsufficientData | measured.outcome == passed.outcome -> measured {outcome = Inconclusive, reason = Just "leak verdict has insufficient data"}
+          _ -> measured
 
 soakCycle :: PgmqRun -> Pgmq.QueueName -> Int -> Word64 -> IO OpResult
 soakCycle runtime queue _ sequenceNumber = do
   outcome <- try @SomeException do
     _ <- effect runtime (Pgmq.sendMessage (Types.SendMessage queue (Pgmq.MessageBody (object ["k" .= sequenceNumber])) Nothing))
-    messages <- effect runtime (Pgmq.readMessage (Types.ReadMessage queue 1 (Just 1) Nothing))
-    case Vector.toList messages of
-      [] -> pure (OpFailed (ErrorCause "empty-read-after-send"))
-      message : _
-        | deliberateNack sequenceNumber -> pure (OpOk 2)
-        | sequenceNumber `mod` 10 == 0 -> do
-            archived <- effect runtime (Pgmq.archiveMessage (Types.MessageQuery queue message.messageId))
-            pure (if archived then OpOk 3 else OpFailed (ErrorCause "archive-returned-false"))
-        | otherwise -> do
-            deleted <- effect runtime (Pgmq.deleteMessage (Types.MessageQuery queue message.messageId))
-            pure (if deleted then OpOk 3 else OpFailed (ErrorCause "delete-returned-false"))
+    messages <- effect runtime (Pgmq.readMessage (Types.ReadMessage queue 1 (Just (max 2 runtime.knobs.batchSize)) Nothing))
+    acknowledgements <- traverse acknowledge (Vector.toList messages)
+    let failures = [cause | Left cause <- acknowledgements]
+        acknowledged = length [() | Right True <- acknowledgements]
+    pure case failures of
+      cause : _ -> OpFailed cause
+      [] -> OpOk (1 + acknowledged)
   pure (either (OpFailed . ErrorCause . Text.pack . show) id outcome)
   where
     fraction = knobDouble runtime.ctx.knobs (knobName "pgmq.soak.nack-fraction")
-    deliberateNack number = fraction > 0 && fromIntegral (number `mod` 10000) / 10000 < fraction
+    messageNumber :: PgmqTypes.Message -> Integer
+    messageNumber = fromIntegral . PgmqTypes.unMessageId . (.messageId)
+    deliberateNack message = message.readCount == 1 && fraction > 0 && fromIntegral (messageNumber message `mod` 10000) / 10000 < fraction
+    acknowledge message
+      | deliberateNack message = pure (Right False)
+      | messageNumber message `mod` 10 == 0 = do
+          archived <- effect runtime (Pgmq.archiveMessage (Types.MessageQuery queue message.messageId))
+          pure (if archived then Right True else Left (ErrorCause "archive-returned-false"))
+      | otherwise = do
+          deleted <- effect runtime (Pgmq.deleteMessage (Types.MessageQuery queue message.messageId))
+          pure (if deleted then Right True else Left (ErrorCause "delete-returned-false"))
 
 watchRelations :: Pgmq.QueueName -> MeasureConfig -> MeasureConfig
 watchRelations queue config = config {postgres = fmap addRelations config.postgres}
@@ -121,9 +129,30 @@ withQueueDepthSeries context runtime queue baseConfig action = do
     action config
 
 leakPolicy :: Text -> LeakSpec
-leakPolicy identifier
-  | "reduced" `Text.isInfixOf` identifier = defaultLeakSpec {warmupCutSeconds = 60, minPoints = 10, minDurationSeconds = 900, envelopeWindowSeconds = 30}
-  | otherwise = defaultLeakSpec
+leakPolicy identifier =
+  LeakSpec
+    (base.probes <> [queueDepthProbe])
+    base.warmupCutSeconds
+    base.minPoints
+    base.minDurationSeconds
+    base.envelopeWindowSeconds
+    base.resamples
+    base.confidence
+  where
+    base
+      | "reduced" `Text.isInfixOf` identifier = defaultLeakSpec {warmupCutSeconds = 60, minPoints = 10, minDurationSeconds = 900, envelopeWindowSeconds = 30}
+      | otherwise = defaultLeakSpec
+    queueDepthProbe =
+      ProbeSpec
+        "pgmq.queue-depth"
+        "count"
+        (SeriesBinding "pgmq-queue-depth.csv" "t_mono_ns" "queue_length" (Map.singleton "phase" "steady"))
+        WindowMedian
+        Bounded
+        1
+        20
+        0.1
+        Nothing
 
 effect :: PgmqRun -> Effectful.Eff '[Pgmq.Pgmq, Effectful.Error.Static.Error Pgmq.PgmqRuntimeError, Effectful.IOE] value -> IO value
 effect runtime action = either (ioError . userError . show) pure =<< runOps runtime.tracer runtime.pool action
