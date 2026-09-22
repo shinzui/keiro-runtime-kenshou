@@ -21,6 +21,26 @@
       gitRev = inputs.self.shortRev or "dirty";
       kenshou-core =
         haskellPackages.callCabal2nix "kenshou-core" (inputs.self + "/kenshou-core") { };
+      kenshou-check =
+        haskellPackages.callCabal2nix "kenshou-check" (inputs.self + "/kenshou-check") {
+          inherit kenshou-core;
+        };
+      kenshou-measure =
+        haskellPackages.callCabal2nix "kenshou-measure" (inputs.self + "/kenshou-measure") {
+          inherit kenshou-core;
+        };
+      kenshou-diagnose =
+        haskellPackages.callCabal2nix "kenshou-diagnose" (inputs.self + "/kenshou-diagnose") {
+          inherit kenshou-core kenshou-measure;
+        };
+      kenshou-telemetry =
+        haskellPackages.callCabal2nix "kenshou-telemetry" (inputs.self + "/kenshou-telemetry") {
+          inherit kenshou-core kenshou-measure;
+        };
+      kenshou-pgmq =
+        haskellPackages.callCabal2nix "kenshou-pgmq" (inputs.self + "/kenshou-pgmq") {
+          inherit kenshou-check kenshou-core kenshou-diagnose kenshou-measure kenshou-telemetry;
+        };
       kenshou-cli = pkgs.haskell.lib.compose.overrideCabal
         (drv: {
           configureFlags = (drv.configureFlags or [ ]) ++ [
@@ -28,7 +48,7 @@
           ];
         })
         (haskellPackages.callCabal2nix "kenshou-cli" (inputs.self + "/kenshou-cli") {
-          inherit kenshou-core;
+          inherit kenshou-check kenshou-core kenshou-diagnose kenshou-measure kenshou-pgmq kenshou-telemetry;
         });
     in
     {
