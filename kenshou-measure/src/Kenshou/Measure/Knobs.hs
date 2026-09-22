@@ -46,7 +46,7 @@ measureKnobs kind =
     textKnob "measure.raw-samples" "Raw sample retention" (if kind == Benchmark then "full" else "off") ["full", "sampled", "off"],
     intKnob "measure.raw-sample-one-in" "Blocks retained under sampled policy" 100 1 1_000_000,
     intKnob "measure.histogram-digits" "Histogram significant decimal digits" 3 1 5,
-    intKnob "measure.interval-histogram-seconds" "Interval histogram frame duration" 10 1 3_600,
+    intKnob "measure.interval-histogram-seconds" "Interval histogram frame duration; soaks default to one frame per day to bound retained histograms" (if kind == Soak then 86_400 else 10) 1 86_400,
     textKnob "measure.pg-statements" "PostgreSQL statement sampling" "snapshots" ["off", "snapshots", "periodic"]
   ]
 

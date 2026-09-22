@@ -43,6 +43,7 @@ main = hspec do
           resolved = resolvedOrFail (CoreKnob.resolveKnobs soak.knobs [])
       CoreKnob.knobText resolved (knob "load.model") `shouldBe` "open-constant"
       CoreKnob.knobDouble resolved (knob "load.rate-per-second") `shouldBe` 500
+      CoreKnob.knobInt resolved (knob "measure.interval-histogram-seconds") `shouldBe` 86_400
 
   describe "lease oracle" do
     it "accepts consecutive leases after visibility expiry" do
