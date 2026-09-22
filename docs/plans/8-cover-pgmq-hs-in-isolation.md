@@ -61,6 +61,7 @@ Milestone 2 — pgmq-hs concurrency and crash scenarios.
 - [x] (2026-09-22 02:54Z) Added pg_partman to both dev-shell PostgreSQL majors and replaced the partition probes with live notification-storm and retention workloads; both declared defects reproduce on PostgreSQL 17 and 18 as non-blocking known defects.
 - [ ] Implement backend termination, PostgreSQL restart and crash, unlogged-queue loss, and the network proxy scenarios, with transient-error classification.
 - [x] (2026-09-22 02:05Z) Implemented and ran the FIFO concurrency scenarios (head-per-group barrier, grouped batch successor hazard, producer commit-order inversion).
+- [x] (2026-09-22 03:38Z) Replaced the listener-fallback probe with a real LISTEN backend termination; PostgreSQL 17 and 18 both prove disconnected notifications do not replay and the polling fallback drains all 20 sends inside the configured bound.
 - [ ] Implement the notification scenarios (partitioned storm as known defect, throttle lost after crash, listener loss with poll fallback), partition retention as known defect, concurrent reconcile, overlapping batch acknowledgement deadlock.
 - [ ] Run every concurrency scenario with `pg.durability=durable` on both PostgreSQL versions; record outcomes and any new defect filed upstream.
 
@@ -70,6 +71,7 @@ Milestone 3 — pgmq-hs benchmarks.
 - [x] (2026-09-22 02:28Z) Implemented measured `layer-ladder`, `send-throughput`, and `read-ack-throughput` workloads using the shared load generator and recorder.
 - [x] (2026-09-22 03:11Z) Implemented distinct poll, server long-poll, and LISTEN/NOTIFY-with-poll-fallback paths in `produce-consume-latency`; benchmark-grade PostgreSQL 18 runs passed for all three modes.
 - [x] (2026-09-22 02:28Z) Implemented `invisible-backlog-read-cost`, `grouped-read-cost`, and `notify-insert-overhead`; short live runs of the grouped, send, metrics, and all three ladder paths pass.
+- [x] (2026-09-22 03:42Z) Added `policies/pgmq.json`, ran fixed-rate paired A/A controls for all nine benchmarks, and proved the deliberately slowed read/ack arm is detected as a regression. Send throughput and produce-consume A/A pass; the other seven remain honestly inconclusive on tail-latency interval width despite passing individual runs and stable throughput.
 - [ ] Add `policies/pgmq.json` comparison policy; run each benchmark as a paired A/A comparison and confirm verdict `pass`; record first figures as illustrative.
 
 Milestone 4 — pgmq-hs soak and telemetry arms.
@@ -110,6 +112,12 @@ Milestone 4 — pgmq-hs soak and telemetry arms.
 
 - Observation: the three produce-consume wake paths produce materially different intended-start latency distributions under the same local PostgreSQL 18 fixture. Polling with two load workers recorded p50 0.37 ms and p99 0.88 ms; server long polling at a 5 ms poll interval with eight workers recorded p50 2.64 ms and p99 26.49 ms; unthrottled LISTEN/NOTIFY with eight workers recorded p50 4.69 ms and p99 17.27 ms. These are illustrative local figures, not cross-run performance claims.
   Evidence: benchmark-grade passing runs `01a0c70f-5ff7-7524-bbb8-22952cb89d60`, `01a0c70e-a7bd-723c-bc2c-e380c8e7cf02`, and `01a0c70f-803a-712e-b1ef-29e6a4bac505`, respectively.
+
+- Observation: behavior-neutral fixed-rate A/A trials are stable in throughput but this local machine's database tail latency is too noisy for a three- or six-pair 15% p99 policy on seven of nine benchmarks. All individual arms passed; send-throughput and produce-consume controls passed the full policy, while the other controls remained inconclusive rather than creating false regressions. Increasing the rate to 1,000 operations per second worsened the layer-ladder tail instead of narrowing it, so those controls need a quieter cell rather than weakened policy.
+  Evidence: `runs/aa-pgmq-send-benchmark-send-throughput.json` (comparison `01a0c717-dbbd-749f-8d40-869ce8e6383a`) and `runs/aa-pgmq-read-benchmark-produce-consume-latency.json` (comparison `01a0c723-46c7-77fc-a3ea-9a67ea9af1ae`) pass. The six-pair reports for read/ack, backlog, grouped, notify, tracing, and metrics pass throughput but remain inconclusive on p99. Comparison `01a0c732-ce15-737e-bd03-1e0820a8d1bb` correctly classifies the 5 ms handler arm as a regression with a 4.22 median-latency ratio.
+
+- Observation: a LISTEN connection terminated by `pg_terminate_backend` loses notifications published while it is disconnected, as PostgreSQL documents, while an independent PGMQ polling fallback still drains the complete batch immediately after the fault.
+  Evidence: PostgreSQL 17 run `01a0c72d-a9df-70ed-8adc-425bde540eb9` and PostgreSQL 18 run `01a0c72d-b413-701e-90db-f030e7082f48` both handled 20 of 20 messages in under 2 ms with a one-second fallback bound; a newly connected listener received none of the notifications emitted during the outage.
 
 
 ## Decision Log

@@ -1,7 +1,7 @@
 module Kenshou.Suite.Pgmq.Concurrency.Runner (runConcurrency) where
 
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async (async, mapConcurrently, wait)
+import Control.Concurrent.Async (async, cancel, mapConcurrently, wait)
 import Control.Concurrent.MVar
 import Control.Exception (SomeException, finally, throwIO, try)
 import Control.Monad (forM_, replicateM, void)
@@ -32,7 +32,7 @@ import Kenshou.Core.Role (ControlMessage (CtlStart))
 import Kenshou.Core.Scenario (ScenarioReport, failedWith, passed)
 import Kenshou.Suite.Pgmq.Harness
 import Kenshou.Suite.Pgmq.Knobs (PgmqKnobs (..), knobName)
-import Kenshou.Suite.Pgmq.Listener (Notification (..), awaitNotifications, withListeners)
+import Kenshou.Suite.Pgmq.Listener (Notification (..), awaitNotifications, withListener, withListeners)
 import Pgmq.Config qualified as Config
 import Pgmq.Effectful qualified as Pgmq
 import Pgmq.Effectful.Effect qualified as PgmqEff
@@ -319,9 +319,23 @@ throttleLostAfterCrash context = withPgmqRun context \runtime ->
 listenerLossFallback :: RunContext -> IO ScenarioReport
 listenerLossFallback context = withPgmqRun context \runtime ->
   withScenarioQueue runtime.pool context runtime.knobs "listener_fallback" \queue -> do
+    _ <- effect runtime (Pgmq.enableNotifyInsert (Types.EnableNotifyInsert queue (Just 0)))
+    let listenerConnection = (requirePostgres context).connectionString <> " application_name=kenshou-pgmq-listener"
+        channel = PgmqTypes.notifyChannelName queue
+        fallbackSeconds = fromIntegral (knobInt context.knobs (knobName "pgmq.poll.fallback-seconds")) :: Int
+    listener <- async (try @SomeException (withListener listenerConnection channel (\connection -> awaitNotifications connection 5000)))
+    threadDelay 200000
+    faultHandle <- (terminateBackends (requirePostgres context) (ByApplicationName "kenshou-pgmq-listener")).inject
     sent <- effect runtime (Pgmq.batchSendMessage (Types.BatchSendMessage queue (fmap body [1 .. 20]) Nothing))
-    polled <- effect runtime (Pgmq.readWithPoll (Types.ReadWithPollMessage queue 30 (Just 20) 2 100 Nothing))
-    verdict context "listener-fallback" [("poll-fallback-drains", sort (fmap (.messageId) (Vector.toList polled)) == sort sent)]
+    cancel listener
+    missed <- withListener listenerConnection channel (\connection -> awaitNotifications connection 300)
+    started <- getMonotonicTimeNSec
+    polled <- effect runtime (Pgmq.readWithPoll (Types.ReadWithPollMessage queue 30 (Just 20) (fromIntegral fallbackSeconds) 100 Nothing))
+    finished <- getMonotonicTimeNSec
+    faultHandle.heal
+    let elapsedSeconds = fromIntegral (finished - started) / 1000000000 :: Double
+    putSummary context Verdicts "listener-loss-observations" (object ["missedWhileDisconnected" .= null missed, "fallbackSeconds" .= fallbackSeconds, "deliverySeconds" .= elapsedSeconds, "handled" .= Vector.length polled])
+    verdict context "listener-fallback" [("disconnected-notifications-do-not-replay", null missed), ("poll-fallback-drains", sort (fmap (.messageId) (Vector.toList polled)) == sort sent), ("delivery-within-bound", elapsedSeconds <= fromIntegral fallbackSeconds + 1)]
 
 partitionRetention :: RunContext -> IO ScenarioReport
 partitionRetention context = withPgmqRun context \runtime -> do

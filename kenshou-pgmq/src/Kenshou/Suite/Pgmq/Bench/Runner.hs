@@ -109,6 +109,7 @@ runOperation identifier runtime client queue _ sequenceNumber = do
           outcome <- Pool.use runtime.pool (Sessions.queueMetrics queue)
           either (ioError . userError . show) (const (pure (OpOk 1))) outcome
       | "send-throughput" `Text.isInfixOf` identifier = sendOperation client queue sequenceNumber runtime.knobs.batchSize (knobText runtime.ctx.knobs (knobName "pgmq.op"))
+      | "read-ack-throughput" `Text.isInfixOf` identifier = readAckCycle runtime client queue sequenceNumber
       | "produce-consume" `Text.isInfixOf` identifier = wakeCycle runtime client queue sequenceNumber
       | "grouped-read" `Text.isInfixOf` identifier = groupedCycle runtime queue sequenceNumber
       | "interpreter-tracing-overhead" `Text.isInfixOf` identifier && knobBool runtime.ctx.knobs (knobName "pgmq.trace.propagate") = propagatedCycle runtime queue sequenceNumber
@@ -126,6 +127,17 @@ fullCycle client queue sequenceNumber = do
   case Vector.toList messages of
     [] -> pure (OpFailed (ErrorCause "empty-read-after-send"))
     message : _ -> do
+      acknowledged <- client.delete queue message.messageId
+      pure (if acknowledged then OpOk 3 else OpFailed (ErrorCause "delete-returned-false"))
+
+readAckCycle :: PgmqRun -> PgmqClient -> Pgmq.QueueName -> Word64 -> IO OpResult
+readAckCycle runtime client queue sequenceNumber = do
+  _ <- client.send queue (payload (fromIntegral sequenceNumber))
+  messages <- readAvailable 10 (client.readBatch queue 30 1)
+  case Vector.toList messages of
+    [] -> pure (OpFailed (ErrorCause "empty-read-after-send"))
+    message : _ -> do
+      threadDelay (fromIntegral (knobInt runtime.ctx.knobs (knobName "pgmq.handler-ms")) * 1000)
       acknowledged <- client.delete queue message.messageId
       pure (if acknowledged then OpOk 3 else OpFailed (ErrorCause "delete-returned-false"))
 
