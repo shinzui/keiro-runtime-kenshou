@@ -95,6 +95,7 @@ Milestone 2 — pgmq-hs concurrency and crash scenarios.
 - [x] (2026-09-22 22:20Z) Added 100 pre-fault and 100 post-fault confirmed sends to backend termination and immediate PostgreSQL crash, with durable-key conservation checks on both supported majors. The same pools recovered, all 200 keys remained, and only the already registered transient classifier checks failed. Expanded the unlogged-crash probe to exact keys: 100 logged rows survived and 100 unlogged rows vanished on both majors.
 - [x] (2026-09-22 22:23Z) Wired `pgmq.fault.kind=latency` to the TCP proxy. A warm send under 1 ms rose to about 402 ms with 200 ms configured in each direction, without errors or lost keys, on both durable PostgreSQL majors.
 - [x] (2026-09-22 22:27Z) Routed `pgmq.conn.tcp-user-timeout-ms` through Hasql's `Connection.other "tcp_user_timeout"` when nonzero. PostgreSQL 17 and 18 both accepted a 5,000 ms setting in the latency scenario; its blackhole timing semantics remain unverified.
+- [x] (2026-09-22 22:29Z) Exercised `pgmq.fault.kind=stop-start` with a PostgreSQL fast stop on both majors. Each retained all 200 confirmed keys and recovered the same pool in under 0.25 seconds; only the already registered transient-classifier check failed.
 - [ ] Complete the wider outage workloads beyond the focused recovery probes.
 
 Milestone 3 — pgmq-hs benchmarks.
@@ -229,6 +230,9 @@ Milestone 4 — pgmq-hs soak and telemetry arms.
 
 - Observation: a nonzero `pgmq.conn.tcp-user-timeout-ms` now becomes a libpq connection option through Hasql's `Connection.other`; the zero default omits the option. The 5,000 ms option was accepted by both PostgreSQL majors with the latency proxy, which establishes the configuration path without claiming that it bounds a response blackhole.
   Evidence: durable PostgreSQL 18 run `01a0cb3a-c040-72c1-a32f-873fd93551a1` and PostgreSQL 17 run `01a0cb3a-f558-732b-8973-8b3f16059497` passed the latency and durable-key checks with `pgmq.conn.tcp-user-timeout-ms=5000`.
+
+- Observation: a fast stop and restart exercises a second PostgreSQL outage path with the same durable-key oracle as the immediate-crash case. Both versions recovered the same pool and retained 200 confirmed keys; the stopped-server error remains misclassified by pgmq-hs 0.6.1.0.
+  Evidence: durable PostgreSQL 18 run `01a0cb3c-b590-7428-8137-da2f21f8377f` recovered in 244 ms and PostgreSQL 17 run `01a0cb3c-f429-715b-b793-e37249e96716` in 241 ms. Both reported `FastShutdown`, 200 durable keys, queue depth 200, and only the precise `outage-error-transient` defect under `mori://shinzui/pgmq-hs/okf/improvement-requests/concepts/IR-4`.
 
 
 ## Decision Log

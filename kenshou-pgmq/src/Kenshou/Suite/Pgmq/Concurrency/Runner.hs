@@ -443,7 +443,8 @@ postgresRestart :: RunContext -> IO ScenarioReport
 postgresRestart context = withPgmqRun context \runtime ->
   withScenarioQueue runtime.pool context runtime.knobs "restart" \queue -> do
     sent <- effect runtime (Pgmq.batchSendMessage (Types.BatchSendMessage queue (fmap body [1 .. 100]) Nothing))
-    let fault = crashPostmaster (requirePostgres context) ImmediateShutdown
+    let mode = if knobText context.knobs (knobName "pgmq.fault.kind") == "stop-start" then FastShutdown else ImmediateShutdown
+        fault = crashPostmaster (requirePostgres context) mode
     handle <- fault.inject
     outage <- runOps runtime.tracer runtime.pool (Pgmq.sendMessage (Types.SendMessage queue (body 201) Nothing))
     recoveryStarted <- getMonotonicTimeNSec
@@ -459,7 +460,7 @@ postgresRestart context = withPgmqRun context \runtime ->
         confirmed = Set.fromList ["message-" <> Text.pack (show index) | index <- [1 :: Int .. 200]]
         possible = Set.insert "message-201" confirmed
         expectedCount = 200 + if "message-201" `Set.member` durable then 1 else 0 :: Int
-    putSummary context Verdicts "postgres-restart-observations" (object ["outageError" .= show outage, "recoveryMillis" .= recoveryMillis, "fsync" .= fsyncSetting, "sent" .= sent, "recovered" .= observed, "postRestartCount" .= length postRestart, "durableCount" .= Set.size durable, "outageSendDurable" .= ("message-201" `Set.member` durable), "queueLength" .= metrics.queueLength])
+    putSummary context Verdicts "postgres-restart-observations" (object ["mode" .= show mode, "outageError" .= show outage, "recoveryMillis" .= recoveryMillis, "fsync" .= fsyncSetting, "sent" .= sent, "recovered" .= observed, "postRestartCount" .= length postRestart, "durableCount" .= Set.size durable, "outageSendDurable" .= ("message-201" `Set.member` durable), "queueLength" .= metrics.queueLength])
     verdict context "postgres-restart" [("outage-error-transient", either Pgmq.isTransient (const False) outage), ("committed-survives", observed == sort sent), ("same-pool-recovers-within-five-seconds", recoveryMillis <= 5000), ("durability-still-on", fsyncSetting == "on"), ("post-restart-writes", length postRestart == 100), ("confirmed-keys-durable", confirmed `Set.isSubsetOf` durable), ("no-unknown-keys", durable `Set.isSubsetOf` possible), ("queue-length-conserved", metrics.queueLength == fromIntegral expectedCount)]
 
 showFsync :: Statement.Statement () Text
