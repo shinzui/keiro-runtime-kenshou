@@ -479,13 +479,18 @@ networkPartition context = case (requirePostgres context).tcpEndpoint of
         withScenarioQueue runtime.pool context runtime.knobs "network" \queue -> do
           let proxied = (requirePostgres context) {connectionString = proxiedConnectionString (requirePostgres context) proxy}
           withPgmqPool proxied "proxy" runtime.knobs \pool -> do
-            baseline <- runOps Nothing pool (Pgmq.sendMessage (Types.SendMessage queue (body 1) Nothing))
+            baseline <- runOps Nothing pool (Pgmq.batchSendMessage (Types.BatchSendMessage queue (fmap body [1 .. 100]) Nothing))
             _ <- resetConnections proxy
-            resetResult <- runOps Nothing pool (Pgmq.sendMessage (Types.SendMessage queue (body 2) Nothing))
+            resetResult <- runOps Nothing pool (Pgmq.sendMessage (Types.SendMessage queue (body 101) Nothing))
             setProxyMode proxy Forward
-            recovered <- retry 20 (runOps Nothing pool (Pgmq.sendMessage (Types.SendMessage queue (body 3) Nothing)))
-            putSummary context Verdicts "network-partition-observations" (object ["reset" .= show resetResult, "recovered" .= show recovered])
-            verdict context "network-partition" [("baseline", isRight baseline), ("reset-transient", either Pgmq.isTransient (const True) resetResult), ("recovery", isRight recovered)]
+            recovered <- retry 20 (runOps Nothing pool (Pgmq.batchSendMessage (Types.BatchSendMessage queue (fmap body [102 .. 201]) Nothing)))
+            durable <- queueKeys runtime.pool queue
+            metrics <- effect runtime (Pgmq.queueMetrics queue)
+            let confirmed = Set.fromList ["message-" <> Text.pack (show index) | index <- [1 :: Int .. 100] <> [102 .. 201]]
+                possible = Set.insert "message-101" confirmed
+                expectedCount = 200 + if "message-101" `Set.member` durable then 1 else 0 :: Int
+            putSummary context Verdicts "network-partition-observations" (object ["reset" .= show resetResult, "baselineCount" .= either (const (0 :: Int)) length baseline, "recoveredCount" .= either (const (0 :: Int)) length recovered, "durableCount" .= Set.size durable, "ambiguousSendDurable" .= ("message-101" `Set.member` durable), "queueLength" .= metrics.queueLength])
+            verdict context "network-partition" [("baseline", either (const False) ((== 100) . length) baseline), ("reset-transient", either Pgmq.isTransient (const True) resetResult), ("recovery", either (const False) ((== 100) . length) recovered), ("confirmed-keys-durable", confirmed `Set.isSubsetOf` durable), ("no-unknown-keys", durable `Set.isSubsetOf` possible), ("queue-length-conserved", metrics.queueLength == fromIntegral expectedCount)]
 
 headPerGroupBarrier :: RunContext -> IO ScenarioReport
 headPerGroupBarrier context = withPgmqRun context \runtime ->
@@ -849,9 +854,6 @@ retryValue attempts action = retry attempts action >>= either (throwIO . userErr
 
 cleanupQueues :: PgmqRun -> [Pgmq.QueueName] -> IO ()
 cleanupQueues runtime = mapM_ (\queue -> void (runOps Nothing runtime.pool (Pgmq.dropQueue queue)))
-
-isRight :: Either left right -> Bool
-isRight = either (const False) (const True)
 
 begin, commit, sleepOne :: Statement.Statement () ()
 begin = command "begin"

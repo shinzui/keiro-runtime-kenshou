@@ -91,6 +91,7 @@ Milestone 2 — pgmq-hs concurrency and crash scenarios.
 - [x] (2026-09-22 22:04Z) Paced the partitioned notification storm at 200 sends/s for five seconds and listened through the disabled phase. Durable PostgreSQL 17 and 18 each emitted 1,000 partition-channel notices, versus the throttle bound of 21, and zero notices after disabling. The known defect remains non-blocking with the throughput of both phases recorded.
 - [x] (2026-09-22 22:07Z) Added a controlled two-transaction batch-delete tail to the sixteen-worker overlapping acknowledgment scenario. Opposite row locks forced a live SQLSTATE `40P01` on both durable PostgreSQL majors; `pgmq-effectful` classified it transient, the winning transaction deleted both IDs, and the queue drained.
 - [x] (2026-09-22 22:12Z) Ran all other nineteen concurrency identifiers on each durable PostgreSQL major. Each version had thirteen passing scenarios and six precise, non-blocking known-defect reproductions, with no new blocking failures. Together with the full random-kill runs, all twenty identifiers have run on both versions.
+- [x] (2026-09-22 22:15Z) Expanded the TCP reset probe to 100 confirmed sends before the reset, one ambiguous interrupted send, and 100 confirmed sends after same-pool recovery. Durable key and queue-count oracles passed on PostgreSQL 17 and 18; only the known reset classifier check failed.
 - [ ] Complete the wider outage workloads beyond the focused recovery probes.
 
 Milestone 3 — pgmq-hs benchmarks.
@@ -213,6 +214,9 @@ Milestone 4 — pgmq-hs soak and telemetry arms.
 
 - Observation: the durable PostgreSQL 17/18 concurrency matrix has no unregistered failure. On each major, thirteen of the nineteen shorter scenarios passed; concurrent reconciliation, three connection-fault classifiers, partitioned notifications, and partition retention reproduced their declared non-blocking defects. The already completed ten-minute random-kill scenario passed on each major, making twenty of twenty concurrency identifiers exercised on both versions.
   Evidence: the PostgreSQL 17 matrix starts at run `01a0cb2a-4883-7156-9da1-d5f7a8c19a11` and ends at `01a0cb2b-bb71-7793-ae58-0aabd73688d5`; PostgreSQL 18 starts at `01a0cb2b-dd07-70ad-947a-1f76a8d47b4d` and ends at `01a0cb2d-5475-7740-9907-7ce4696885d0`. Each of the 38 `run-result.json` artifacts has `blocking=false`; the twelve failed outcomes have `knownDefect.status=reproduced`. Full random-kill runs are `01a0cb14-dfac-71f3-b041-157ac22270c4` and `01a0cb08-b297-7541-bdd6-314abcfcfd3d`.
+
+- Observation: after a TCP reset, the same proxied pool sent a second hundred-message batch. The harness compared durable payload keys with both confirmed batches and allowed only the interrupted send to be ambiguous. No confirmed send was lost and no extra key appeared.
+  Evidence: durable PostgreSQL 18 run `01a0cb2f-8308-7322-8167-000609017d59` and PostgreSQL 17 run `01a0cb30-300c-74eb-aaee-f3c9c999aab3` each recorded 100 baseline IDs, 100 recovered IDs, 200 durable keys, and queue depth 200. The ambiguous send did not commit in these runs. Only `reset-transient` failed under `mori://shinzui/pgmq-hs/okf/improvement-requests/concepts/IR-4`.
 
 
 ## Decision Log
