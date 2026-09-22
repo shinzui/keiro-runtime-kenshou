@@ -32,13 +32,14 @@ import Kenshou.Check.Fault (Fault (..), FaultHandle (..))
 import Kenshou.Check.Fault.Network (ProxyMode (..), proxiedConnectionString, resetConnections, setProxyMode, withTcpProxy)
 import Kenshou.Check.Fault.Postgres (BackendSelector (..), CrashMode (..), crashPostmaster, terminateBackends)
 import Kenshou.Check.Process
-import Kenshou.Check.Scenario (withCheck)
+import Kenshou.Check.Scenario (CheckEnv (..), withCheck)
 import Kenshou.Check.Verdict (InvariantClass (Contract, Implementation), RunInfo (..), Verdict (..), VerdictStatus (..), writeVerdict)
-import Kenshou.Core.Context (ArtifactDir (VerdictsDir), RunContext (..), SummarySection (Verdicts), artifactPath, declareMediaType, putSummary, requirePostgres)
+import Kenshou.Core.Context (ArtifactDir (VerdictsDir), Environment (..), RunContext (..), SummarySection (Verdicts), artifactPath, declareMediaType, putSummary, requirePostgres)
+import Kenshou.Core.Context qualified as CoreContext
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (unSeed)
 import Kenshou.Core.Knob (knobInt, knobText)
-import Kenshou.Core.Role (ControlMessage (CtlStart), WorkerMessage (WrkCustom, WrkFacts))
+import Kenshou.Core.Role (ControlMessage (CtlStart), WorkerMessage (WrkCustom, WrkDone, WrkError, WrkFacts, WrkProgress))
 import Kenshou.Core.Scenario (ScenarioReport, failedWith, passed)
 import Kenshou.Suite.Pgmq.Facts (PgmqFact (Leased))
 import Kenshou.Suite.Pgmq.Harness
@@ -72,6 +73,7 @@ runners =
     ("pgmq/effectful/concurrency/postgres-restart-recovery", postgresRestart),
     ("pgmq/queue/concurrency/unlogged-queue-crash-loss", unloggedCrashLoss),
     ("pgmq/effectful/concurrency/network-partition", networkPartition),
+    ("pgmq/effectful/concurrency/network-blackhole", networkBlackhole),
     ("pgmq/fifo/concurrency/head-per-group-barrier", headPerGroupBarrier),
     ("pgmq/fifo/concurrency/grouped-batch-successor-hazard", groupedBatchHazard),
     ("pgmq/fifo/concurrency/producer-commit-order-inversion", producerCommitOrderInversion),
@@ -528,6 +530,52 @@ networkPartition context = case (requirePostgres context).tcpEndpoint of
                 putSummary context Verdicts "network-partition-observations" (object ["reset" .= show resetResult, "baselineCount" .= either (const (0 :: Int)) length baseline, "recoveredCount" .= either (const (0 :: Int)) length recovered, "durableCount" .= Set.size durable, "ambiguousSendDurable" .= ("message-101" `Set.member` durable), "queueLength" .= metrics.queueLength])
                 verdict context "network-partition" [("baseline", either (const False) ((== 100) . length) baseline), ("reset-transient", either Pgmq.isTransient (const True) resetResult), ("recovery", either (const False) ((== 100) . length) recovered), ("confirmed-keys-durable", confirmed `Set.isSubsetOf` durable), ("no-unknown-keys", durable `Set.isSubsetOf` possible), ("queue-length-conserved", metrics.queueLength == fromIntegral expectedCount)]
               kind -> pure (failedWith ["fault-kind"] ("unsupported network fault kind: " <> kind))
+
+networkBlackhole :: RunContext -> IO ScenarioReport
+networkBlackhole context = case (requirePostgres context).tcpEndpoint of
+  Nothing -> pure (failedWith ["tcp-endpoint"] "PostgreSQL fixture has no TCP endpoint")
+  Just (host, port) ->
+    withTcpProxy (pure (Text.unpack host, fromIntegral port)) \proxy ->
+      withPgmqRun context \runtime ->
+        withScenarioQueue runtime.pool context runtime.knobs "blackhole" \queue -> do
+          let proxied = (requirePostgres context) {connectionString = proxiedConnectionString (requirePostgres context) proxy}
+              bound = fromIntegral (knobInt context.knobs (knobName "pgmq.fault.max-block-seconds")) :: Int
+              timeoutMillis = fromIntegral (knobInt context.knobs (knobName "pgmq.conn.tcp-user-timeout-ms")) :: Int
+          withPgmqPool proxied "blackhole" runtime.knobs \pool -> do
+            baseline <- runOps Nothing pool (Pgmq.sendMessage (Types.SendMessage queue (body 1) Nothing))
+            withCheck context \checkEnvironment -> do
+              let proxiedContext = context {CoreContext.env = context.env {postgres = Just proxied}}
+                  workerEnvironment = checkEnvironment {context = proxiedContext}
+                  arguments = object ["queue" .= Pgmq.queueNameToText queue, "count" .= (1 :: Int)]
+              withSupervisor workerEnvironment \supervisor -> do
+                spec <- roleProcess workerEnvironment "pgmq/pgmq-producer" 1 arguments
+                child <- spawn supervisor spec
+                awaitReady child 10000
+                setProxyMode proxy Blackhole
+                sendCommand child CtlStart
+                awaitMark child "before-send" 10000
+                started <- getMonotonicTimeNSec
+                threadDelay (bound * 1000000)
+                snapshot <- atomically (progress child)
+                finished <- getMonotonicTimeNSec
+                let returned =
+                      snapshot.count > 0 || case snapshot.lastMessage of
+                        Just WrkDone {} -> True
+                        Just WrkError {} -> True
+                        Just WrkProgress {} -> True
+                        _ -> False
+                if returned then pure () else killChild supervisor child
+                setProxyMode proxy Forward
+                _ <- resetConnections proxy
+                recovered <- retry 20 (runOps Nothing pool (Pgmq.sendMessage (Types.SendMessage queue (body 3) Nothing)))
+                durable <- queueKeys runtime.pool queue
+                metrics <- effect runtime (Pgmq.queueMetrics queue)
+                let workerKey = "pgmq/pgmq-producer-1-1"
+                    confirmed = Set.fromList ["message-1", "message-3"]
+                    possible = Set.insert workerKey confirmed
+                    elapsedSeconds = fromIntegral (finished - started) / 1000000000 :: Double
+                putSummary context Verdicts "network-blackhole-observations" (object ["tcpUserTimeoutMillis" .= timeoutMillis, "maxBlockSeconds" .= bound, "elapsedSeconds" .= elapsedSeconds, "returned" .= returned, "workerLastMessage" .= fmap show snapshot.lastMessage, "workerKeyDurable" .= (workerKey `Set.member` durable), "durableCount" .= Set.size durable, "queueLength" .= metrics.queueLength])
+                verdictClass Implementation context "network-blackhole" [("baseline", either (const False) (const True) baseline), ("client-returned-within-bound", returned), ("same-pool-recovers", either (const False) (const True) recovered), ("confirmed-keys-durable", confirmed `Set.isSubsetOf` durable), ("no-unknown-keys", durable `Set.isSubsetOf` possible), ("queue-length-conserved", metrics.queueLength == fromIntegral (Set.size durable))]
 
 headPerGroupBarrier :: RunContext -> IO ScenarioReport
 headPerGroupBarrier context = withPgmqRun context \runtime ->

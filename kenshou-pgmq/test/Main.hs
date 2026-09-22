@@ -30,7 +30,7 @@ main = hspec do
       case mkRegistry [bundle] of
         Left errors -> expectationFailure (show errors)
         Right _ -> pure ()
-      length bundle.scenarios `shouldBe` 49
+      length bundle.scenarios `shouldBe` 50
       length (filter isCorrectness bundle.scenarios) `shouldBe` 18
 
     it "documents every registered scenario" do
