@@ -2,6 +2,7 @@ module Kenshou.Suite.Keiro.Fixture.Oracle
   ( LoggedEvent (..),
     readCategoryLog,
     readBalanceTable,
+    readSnapshots,
     modelFromLog,
     logWellFormed,
   )
@@ -57,6 +58,17 @@ readBalanceTable connection = do
         (Decoders.rowList ((,,,) <$> text <*> int8 <*> int8 <*> int8))
     text = Decoders.column (Decoders.nonNullable Decoders.text)
     int8 = Decoders.column (Decoders.nonNullable Decoders.int8)
+
+readSnapshots :: Connection.Connection -> IO (Map.Map StreamName (Int64, Value))
+readSnapshots connection = do
+  rows <- Connection.use connection (Session.statement () statement) >>= either (fail . show) pure
+  pure (Map.fromList [(StreamName name, (version, state)) | (name, version, state) <- rows])
+  where
+    statement =
+      Statement.preparable
+        "SELECT s.stream_name, sn.stream_version, sn.state FROM keiro.keiro_snapshots sn JOIN kiroku.streams s ON s.stream_id = sn.stream_id ORDER BY s.stream_name"
+        Encoders.noParams
+        (Decoders.rowList ((,,) <$> Decoders.column (Decoders.nonNullable Decoders.text) <*> Decoders.column (Decoders.nonNullable Decoders.int8) <*> Decoders.column (Decoders.nonNullable Decoders.jsonb)))
 
 categoryLogStatement :: Statement.Statement Text [(Text, Int64, Int64, Text, Text, Value)]
 categoryLogStatement =

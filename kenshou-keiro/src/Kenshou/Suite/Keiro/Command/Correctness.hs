@@ -1,7 +1,8 @@
 module Kenshou.Suite.Keiro.Command.Correctness (scenarios) where
 
 import Control.Monad (foldM, when)
-import Data.Aeson (object, (.=))
+import Data.Aeson (Value (..), object, toJSON, (.=))
+import Data.Aeson.KeyMap qualified as KeyMap
 import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.Int (Int64)
 import Data.List.NonEmpty (NonEmpty (..))
@@ -36,11 +37,128 @@ import Kenshou.Suite.Keiro.Fixture.Runtime
 import Kenshou.Suite.Keiro.Fixture.Workload qualified as Workload
 import Kiroku.Store (defaultConnectionSettings, runStoreIO, runTransaction, withStore)
 import Kiroku.Store.Error (StoreError (..))
-import Kiroku.Store.Types (StreamName (..))
+import Kiroku.Store.Types (StreamName (..), StreamVersion (..))
 import System.FilePath ((</>))
 
 scenarios :: [Scenario]
-scenarios = [fixtureRoundtrip, idempotentEventIds, occRetryAndExhaustion, controlledRollback]
+scenarios = [fixtureRoundtrip, idempotentEventIds, occRetryAndExhaustion, controlledRollback, hydrationPaging, snapshotPolicyMatrix]
+
+snapshotPolicyMatrix :: Scenario
+snapshotPolicyMatrix =
+  fixtureRoundtrip
+    { id = either (error . show) id (parseScenarioId "keiro/snapshot/correctness/policy-matrix"),
+      summary = "Checks snapshot placement and encoded registers for each policy.",
+      tier = TierStandard,
+      knobs = [],
+      run = runSnapshotPolicyMatrix
+    }
+
+runSnapshotPolicyMatrix :: RunContext -> IO ScenarioReport
+runSnapshotPolicyMatrix context =
+  withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture -> do
+    let policies = [("never", SnapNever, Nothing), ("every-1", SnapEvery 1, Just 252), ("every-10", SnapEvery 10, Just 250), ("every-100", SnapEvery 100, Just 200), ("on-terminal", SnapOnTerminal, Just 252)]
+        KeiroRunner runFixture = fixture.runner
+    accepted <- traverse (writePolicy runFixture) policies
+    acquired <- Connection.acquire (Settings.connectionString (requirePostgres context).connectionString <> Settings.applicationName "kenshou-keiro-snapshot-oracle")
+    connection <- either (fail . show) pure acquired
+    snapshots <- Oracle.readSnapshots connection
+    rows <- Oracle.readCategoryLog connection "account"
+    Connection.release connection
+    let cells =
+          [ ("commands-" <> name, all id outcomes)
+          | ((name, _, _), outcomes) <- zip policies accepted
+          ]
+            <> [ ("snapshot-" <> name, snapshotMatches snapshots name expected)
+               | (name, _, expected) <- policies
+               ]
+            <> [("snapshot-log-is-well-formed", Oracle.logWellFormed rows && length rows == 5 * 252)]
+    recordCells context cells
+  where
+    writePolicy runFixture (name, policy, _) = do
+      let account = AccountId ("snapshot-" <> name)
+          stream = accountEventStream policy
+          target = accountStream account
+          commands = OpenAccount (OpenAccountData account 0) : replicate 249 (Deposit (DepositData account 1 "snapshot")) <> [Withdraw (WithdrawData account 249), CloseAccount (CloseAccountData account)]
+      traverse
+        ( \command -> do
+            outcome <- runFixture (runCommand defaultRunCommandOptions stream target command)
+            pure case outcome of Right (Right result) -> result.eventsAppended == 1; _ -> False
+        )
+        commands
+    snapshotMatches snapshots name expected =
+      let key = accountStreamName (AccountId ("snapshot-" <> name))
+       in case (expected, Map.lookup key snapshots) of
+            (Nothing, Nothing) -> True
+            (Just version, Just (actualVersion, Object state)) ->
+              actualVersion == version
+                && case KeyMap.lookup "registers" state of
+                  Just (Object registers) ->
+                    KeyMap.lookup "entries" registers == Just (toJSON version)
+                      && KeyMap.lookup "balance" registers == Just (toJSON (if version == 252 then (0 :: Int) else fromIntegral version - 1))
+                  _ -> False
+            _ -> False
+
+hydrationPaging :: Scenario
+hydrationPaging =
+  fixtureRoundtrip
+    { id = either (error . show) id (parseScenarioId "keiro/command/correctness/hydration-paging"),
+      summary = "Checks replay across zero, singleton, and page-boundary stream lengths.",
+      tier = TierStandard,
+      knobs =
+        [ KnobSpec (knobName "command.stream-length") "Comma-separated stream lengths" KnobText (VText "0,1,255,256,257,1000") AnyValue [],
+          KnobSpec (knobName "command.page-size") "Comma-separated hydration page sizes" KnobText (VText "0,1,7,256,1024") AnyValue []
+        ],
+      run = runHydrationPaging
+    }
+
+runHydrationPaging :: RunContext -> IO ScenarioReport
+runHydrationPaging context =
+  withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture -> do
+    let lengths = parseNumbers (knobText context.knobs (knobName "command.stream-length"))
+        pages = parseNumbers (knobText context.knobs (knobName "command.page-size"))
+        KeiroRunner runFixture = fixture.runner
+        stream = accountEventStream SnapNever
+    cells <- traverse (checkCase runFixture stream) [(lengthBefore, page) | lengthBefore <- lengths, page <- pages]
+    acquired <- Connection.acquire (Settings.connectionString (requirePostgres context).connectionString <> Settings.applicationName "kenshou-keiro-paging-oracle")
+    connection <- either (fail . show) pure acquired
+    rows <- Oracle.readCategoryLog connection "account"
+    Connection.release connection
+    let expected =
+          Map.fromList
+            [ (AccountId ("paging-" <> Text.pack (show lengthBefore) <> "-" <> Text.pack (show page)), lengthBefore)
+            | lengthBefore <- lengths,
+              page <- pages
+            ]
+        logChecks = case Oracle.modelFromLog rows of
+          Right (Model.Model accounts) ->
+            [ ("durable-log-versions", Oracle.logWellFormed rows && length rows == sum [lengthBefore + 1 | lengthBefore <- lengths, _ <- pages]),
+              ("durable-log-balances", Map.keysSet accounts == Map.keysSet expected && all (\(account, balance) -> maybe False ((== balance) . (.balance)) (Map.lookup account accounts)) (Map.toList expected))
+            ]
+          Left _ -> [("durable-log-versions", False), ("durable-log-balances", False)]
+    recordCells context (cells <> logChecks)
+  where
+    parseNumbers :: Text -> [Int]
+    parseNumbers input =
+      [ case reads (Text.unpack (Text.strip item)) of
+          [(n, "")] | n >= 0 -> n
+          _ -> error ("invalid nonnegative integer in hydration list: " <> Text.unpack item)
+      | item <- Text.splitOn "," input
+      ]
+    checkCase runFixture stream (lengthBefore, page) = do
+      let account = AccountId ("paging-" <> Text.pack (show lengthBefore) <> "-" <> Text.pack (show page))
+          target = accountStream account
+          baseline = OpenAccount (OpenAccountData account 0)
+          increment = Deposit (DepositData account 1 "paging")
+          options = defaultRunCommandOptions {pageSize = fromIntegral page}
+          seedCommands = if lengthBefore == 0 then [] else baseline : replicate (lengthBefore - 1) increment
+          finalCommand = if lengthBefore == 0 then baseline else increment
+      seeded <- traverse (runFixture . runCommand defaultRunCommandOptions stream target) seedCommands
+      result <- runFixture (runCommand options stream target finalCommand)
+      let seededOkay = all (\case Right (Right appended) -> appended.eventsAppended == 1; _ -> False) seeded
+          resultOkay = case result of
+            Right (Right appended) -> appended.eventsAppended == 1 && appended.streamVersion == StreamVersion (fromIntegral (lengthBefore + 1))
+            _ -> False
+      pure (Text.pack ("page-" <> show lengthBefore <> "-" <> show page), seededOkay && resultOkay)
 
 controlledRollback :: Scenario
 controlledRollback =
