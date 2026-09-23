@@ -1,7 +1,8 @@
 module Kenshou.Suite.Kiroku.Concurrency.Append (scenarios) where
 
-import Control.Concurrent (forkIO)
+import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, readMVar, takeMVar)
+import Control.Concurrent.STM (atomically)
 import Control.Exception (SomeException, try)
 import Control.Monad (forM, forM_, (<=<))
 import Data.Aeson (Value, object, withObject, (.:), (.=))
@@ -18,6 +19,8 @@ import Data.UUID qualified as UUID
 import Data.Vector qualified as Vector
 import Data.Word (Word64)
 import GHC.Clock (getMonotonicTimeNSec)
+import Kenshou.Check.Process (ProgressSnapshot (..), awaitMark, awaitReady, killChild, progress, restartChild, roleProcess, sendCommand, spawn, withSupervisor)
+import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
@@ -37,7 +40,65 @@ import Kenshou.Suite.Kiroku.Roles (appenderRoleName)
 import Kiroku.Store hiding (id, withKirokuStore)
 
 scenarios :: [Scenario]
-scenarios = [expectedVersionRace, idempotentDuplicates, modelBasedOcc]
+scenarios = [expectedVersionRace, idempotentDuplicates, modelBasedOcc, sigkillMidAppend]
+
+sigkillMidAppend :: Scenario
+sigkillMidAppend =
+  expectedVersionRace
+    { id = either (error . show) id (parseScenarioId "kiroku/append/concurrency/sigkill-mid-append"),
+      summary = "Kills and restarts an appender around caller-ID batches and audits atomic durable retries.",
+      knobs = storeKnobs <> [intKnob "crash.kills" 10 1 100, intKnob "kiroku.append.batch-size" 100 1 1000],
+      phases = PhasePlan 0 0 0,
+      run = runSigkillMidAppend
+    }
+
+runSigkillMidAppend :: RunContext -> IO ScenarioReport
+runSigkillMidAppend context = withKirokuStore context \store -> withCheck context \check -> withSupervisor check \supervisor -> do
+  let knob key = fromIntegral (knobInt context.knobs (either (error . show) id (mkKnobName key))) :: Int
+      kills = knob "crash.kills"
+      batchSize = knob "kiroku.append.batch-size"
+      render (EventId uuid) = UUID.toText uuid
+      status value = parseMaybe (withObject "crash-batch reply" (\row -> row .: "status")) value :: Maybe Text
+      loop child index accumulated
+        | index >= kills = pure (reverse accumulated)
+        | otherwise = do
+            let streamName = "crash-batch-" <> Text.pack (show index)
+                ids = [eventIdFor context.seed index (fromIntegral ordinal) | ordinal <- [1 .. batchSize]]
+                request = CtlCustom "crash-batch" (object ["stream" .= streamName, "eventIds" .= fmap render ids])
+                stream = StreamName streamName
+            sendCommand child request
+            threadDelay ((index * 911) `mod` 5000)
+            killChild supervisor child
+            before <- runStoreIO store (readStreamForward stream (StreamVersion 0) (fromIntegral (batchSize + 1)))
+            replacement <- restartChild supervisor child
+            sendCommand replacement CtlStart
+            sendCommand replacement request
+            awaitMark replacement "crash-batch" 10000
+            snapshot <- atomically (progress replacement)
+            let reply = Map.lookup "crash-batch" snapshot.marks >>= status
+            after <- runStoreIO store (readStreamForward stream (StreamVersion 0) (fromIntegral (batchSize + 1)))
+            info <- runStoreIO store (getStream stream)
+            let beforeIds = fmap (.eventId) . Vector.toList <$> before
+                afterIds = fmap (.eventId) . Vector.toList <$> after
+                intactBefore = maybe False (\values -> null values || values == ids) (either (const Nothing) Just beforeIds)
+                exactAfter = afterIds == Right ids && case info of Right (Just value) -> value.version == StreamVersion (fromIntegral batchSize); _ -> False
+                replyValid = reply `elem` [Just "success", Just "already-exists", Just "duplicate"]
+            loop replacement (index + 1) ((intactBefore, exactAfter, replyValid, reply) : accumulated)
+  spec <- roleProcess check "kiroku/appender" 0 (object [])
+  child <- spawn supervisor spec
+  awaitReady child 10000
+  sendCommand child CtlStart
+  results <- loop child 0 []
+  counts <- Oracle.threeCounts store.pool
+  let total = fromIntegral (kills * batchSize)
+      cells =
+        [ ("every-interrupted-batch-atomic", all (\(atomic, _, _, _) -> atomic) results),
+          ("same-id-retry-final-exact", all (\(_, exact, _, _) -> exact) results),
+          ("retry-responses-classified", all (\(_, _, valid, _) -> valid) results),
+          ("global-durable-counts-exact", counts == (total, total, total))
+        ]
+  putSummary context Measurements "sigkill-mid-append" (object ["kills" .= kills, "batchSize" .= batchSize, "retryStatuses" .= [reply | (_, _, _, reply) <- results], "durableCounts" .= show counts])
+  recordCells context "sigkill-mid-append" [] cells
 
 modelBasedOcc :: Scenario
 modelBasedOcc =

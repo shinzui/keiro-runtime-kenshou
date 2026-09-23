@@ -82,6 +82,21 @@ runAppender context = case context.init.postgres of
               context.send (WrkCustom "fresh-deadlock" (object ["status" .= status]))
               loop store
             _ -> context.send (WrkError "invalid fresh-deadlock event ID") >> loop store
+        Just (CtlCustom "crash-batch" payload) -> case parseMaybe parseCrashBatch payload of
+          Nothing -> context.send (WrkError "invalid crash-batch request") >> loop store
+          Just (stream, rawIds) -> case traverse UUID.fromText rawIds of
+            Nothing -> context.send (WrkError "invalid crash-batch event ID") >> loop store
+            Just identifiers -> do
+              let events = [EventData (Just (EventId uuid)) (EventType "CrashBatch") (object []) Nothing Nothing Nothing | uuid <- identifiers]
+              outcome <- try @SomeException (runStoreIO store (appendToStream (StreamName stream) NoStream events))
+              let status = case outcome of
+                    Right (Right _) -> "success" :: Text
+                    Right (Left (StreamAlreadyExists _)) -> "already-exists"
+                    Right (Left (DuplicateEvent _)) -> "duplicate"
+                    Right (Left _) -> "store-error"
+                    Left _ -> "exception"
+              context.send (WrkCustom "crash-batch" (object ["status" .= status, "stream" .= stream]))
+              loop store
         Just (CtlStop _) -> pure ()
         Just _ -> loop store
         Nothing -> pure ()
@@ -94,3 +109,6 @@ parseDuplicate = withObject "duplicate request" \value -> (,,,) <$> value .: "st
 
 parseFreshDeadlock :: Value -> Parser (Text, Text, Text, Text, Text)
 parseFreshDeadlock = withObject "fresh-deadlock request" \value -> (,,,,) <$> value .: "mode" <*> value .: "a" <*> value .: "b" <*> value .: "idA" <*> value .: "idB"
+
+parseCrashBatch :: Value -> Parser (Text, [Text])
+parseCrashBatch = withObject "crash-batch request" \value -> (,) <$> value .: "stream" <*> value .: "eventIds"
