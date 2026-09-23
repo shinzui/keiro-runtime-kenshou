@@ -102,12 +102,12 @@ main = hspec do
     it "registers unique kiroku scenarios" do
       let scenarios = bundle.scenarios
           names = fmap (renderScenarioId . (.id)) scenarios
-      length scenarios `shouldBe` 26
+      length scenarios `shouldBe` 27
       length (nub names) `shouldBe` length names
       mapM_ (\scenario -> scenario.id.layer `shouldBe` Kiroku) scenarios
       length [scenario | scenario <- scenarios, scenario.id.kind == Correctness] `shouldBe` 19
       length [scenario | scenario <- scenarios, scenario.id.kind == Concurrency] `shouldBe` 6
-      length [scenario | scenario <- scenarios, scenario.id.kind == Benchmark] `shouldBe` 1
+      length [scenario | scenario <- scenarios, scenario.id.kind == Benchmark] `shouldBe` 2
     it "passes the registry's structural validation" do
       case mkRegistry [bundle] of
         Right _ -> pure ()

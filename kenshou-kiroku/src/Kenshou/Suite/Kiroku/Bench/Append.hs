@@ -28,7 +28,15 @@ import Kiroku.Store hiding (id, withKirokuStore)
 import System.Info (os)
 
 scenarios :: [Scenario]
-scenarios = [appendOnly]
+scenarios = [appendOnly, hotStream]
+
+hotStream :: Scenario
+hotStream =
+  appendOnly
+    { id = either (error . show) id (parseScenarioId "kiroku/append/benchmark/hot-stream"),
+      summary = "Measures the same append workload with every writer on one stream.",
+      run = runAppend False
+    }
 
 appendOnly :: Scenario
 appendOnly =
@@ -49,11 +57,11 @@ appendOnly =
       phases = PhasePlan 30 120 15,
       requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku] [("shared_preload_libraries", "'pg_stat_statements'")] False)},
       knownDefect = Nothing,
-      run = runAppendOnly
+      run = runAppend True
     }
 
-runAppendOnly :: RunContext -> IO ScenarioReport
-runAppendOnly context = case (loadModelFromKnobs context.knobs, measureConfigFromKnobs context (phasePlanFromCore context.phases)) of
+runAppend :: Bool -> RunContext -> IO ScenarioReport
+runAppend ownStreams context = case (loadModelFromKnobs context.knobs, measureConfigFromKnobs context (phasePlanFromCore context.phases)) of
   (Left reason, _) -> pure (failedWith ["invalid-load-config"] reason)
   (_, Left reason) -> pure (failedWith ["invalid-measure-config"] reason)
   (Right loadModel, Right measureConfig) -> withKirokuStore context \store -> do
@@ -65,7 +73,7 @@ runAppendOnly context = case (loadModelFromKnobs context.knobs, measureConfigFro
           ClosedLoop closed -> ClosedLoop (closed {workers = writers})
           other -> other
         append worker sequenceNumber = do
-          let stream = StreamName ("bench-" <> Text.pack (show (worker `mod` writers)))
+          let stream = StreamName (if ownStreams then "bench-" <> Text.pack (show (worker `mod` writers)) else "bench-hot")
               events = [EventData Nothing (EventType "Bench") (payloadOf context.seed worker (fromIntegral sequenceNumber * fromIntegral batchSize + fromIntegral ordinal) payloadBytes) Nothing Nothing Nothing | ordinal <- [0 .. batchSize - 1]]
           result <- runStoreIO store (appendToStream stream AnyVersion events)
           pure case result of
@@ -80,9 +88,9 @@ runAppendOnly context = case (loadModelFromKnobs context.knobs, measureConfigFro
         cell = context.environmentSpec.placement == RunOnCell
         walMethod = either (const Nothing) Just walSyncMethod
         reasons = (["local-placement" | not cell] <> ["wal-sync-method-unavailable" | walMethod == Nothing] <> ["macos-fsync-does-not-flush" | os == "darwin" && walMethod /= Just "fsync_writethrough"]) :: [Text]
-        methodology = object ["authoritative" .= null reasons, "reasons" .= reasons, "walSyncMethod" .= walMethod, "poolSize" .= (storeOptionsFromKnobs context "scenario").poolSize, "writers" .= writers, "batchSize" .= batchSize, "payloadBytes" .= payloadBytes, "trialsRequired" .= (3 :: Int)]
+        methodology = object ["authoritative" .= null reasons, "reasons" .= reasons, "walSyncMethod" .= walMethod, "poolSize" .= (storeOptionsFromKnobs context "scenario").poolSize, "writers" .= writers, "batchSize" .= batchSize, "payloadBytes" .= payloadBytes, "streamMode" .= if ownStreams then ("per-writer" :: Text) else "shared", "trialsRequired" .= (3 :: Int)]
     putSummary context Measurements "methodology" methodology
-    putSummary context Verdicts "append-only" (object ["completed" .= completions, "failed" .= failures])
+    putSummary context Verdicts (if ownStreams then "append-only" else "hot-stream") (object ["completed" .= completions, "failed" .= failures])
     pure (base {outcome = measuredOutcome report base.outcome})
 
 walSyncMethodStatement :: Statement.Statement () Text
