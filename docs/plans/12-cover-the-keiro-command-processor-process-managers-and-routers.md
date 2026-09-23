@@ -76,7 +76,7 @@ Milestone 4 — Router scenarios
 
 Milestone 5 — Write-side benchmarks, soak and telemetry arms
 
-- [ ] Benchmarks: `throughput-latency`, `hydration-cost`, `all-stream-append-ceiling`, process-manager `dispatch-latency`, router `fanout-dispatch`.
+- [ ] Benchmarks: `throughput-latency` is registered and passes a 15-second local two-writer run with measured samples, series, and three durable-log verdicts. The first two-second run was inconclusive for insufficient samples; an unthrottled short run saturated the load driver. Runner, pool, snapshot, telemetry, and process knobs remain, as do `hydration-cost`, `all-stream-append-ceiling`, process-manager `dispatch-latency`, and router `fanout-dispatch`.
 - [ ] Soaks: `write-side-steady-state` and `seed-verification-backlog`, each registered at full and reduced duration.
 - [ ] Telemetry: `keiro/telemetry/correctness/write-side-signals`; all four values of both telemetry dimensions honoured by benchmark and soak scenarios; one recorded overhead report.
 - [ ] Finish `docs/layers/keiro.md`; ADR distillation pass; Outcomes & Retrospective.

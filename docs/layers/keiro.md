@@ -21,7 +21,7 @@ verdicts: `log-is-well-formed`, `model-equals-log`,
 
 The fixture also defines a bonus event stream and a transfer process manager
 with deterministic target commands. Their scenario coverage is being added
-under `docs/plans/12-cover-the-keiro-command-processor-process-managers-and-routers.md`.
+under the repository-local `docs/plans/12-cover-the-keiro-command-processor-process-managers-and-routers.md` plan.
 
 The registered command scenarios also cover duplicate event identifiers,
 optimistic retry and exhaustion, controlled SQL rollback, and hydration over
@@ -34,6 +34,12 @@ The writer crash scenario kills a process after its deposit commits and checks
 that a fresh process reports `SubmitDuplicate` for the same event ID.
 The model based parallel scenario generates concurrent account commands over
 three streams and checks their observed versions against the reference model.
+`identical-commands-one-batch` accepts `command.processes=4` to run real
+writer processes; it checks that one reports an append, the others report
+duplicates, and SQL contains one event. The snapshot seed divergence scenario
+corrupts a persisted balance and runs the writer with
+`snapshot.seed-verify-sample-rate=1` or `0`. The sampled run must log the
+divergence while accepting the command; the unsampled run must omit the marker.
 
 The process manager scenarios check stable manager and target identities under
 redelivery, timer persistence, and both orders of transfer inputs. The reactive
@@ -44,10 +50,14 @@ the harness reports it as a nonblocking known defect tied to
 `mori://shinzui/keiro/okf/adrs/concepts/ADR-41`. The process-manager
 `policy-matrix` run checks all nine poison and rejected-command policy
 combinations, including acknowledgement decisions and durable dead letters.
+The `transient-classification` scenario checks conflicting credits, malformed
+destination history, and a mixed rejected/transient dispatch group. It expects
+retry for transient groups and halt for deterministic hydration failure.
 The `sigkill-crash-windows` scenario runs a separate process-manager worker,
 parks it at one of four append or acknowledgement boundaries, kills it, and
-checks the durable saga and target effects after a fresh worker resumes the
-same subscription. Select a boundary with `--set pm.kill-window=between-targets`.
+checks the durable saga and target effects for that transfer and its neighbour
+after a fresh worker resumes the same subscription. Select a boundary with
+`--set pm.kill-window=between-targets`.
 The router's `sigkill-mid-fanout` scenario checks a partial durable fanout
 before killing the worker and exact recovery after restart. The router
 correctness scenarios check fanout under redelivery and selection drift, independent
@@ -62,3 +72,12 @@ reproduces the known defect at
 The inline projection scenario interrupts an open command transaction with
 SIGKILL, backend termination, or a projection SQL error, then checks the
 account log and balance table together.
+
+The command `throughput-latency` benchmark uses the measurement toolkit's
+warm-up, steady, and drain phases and verifies the durable ledger after the
+drain. It writes raw samples and time series. `command.writers` selects the
+number of account streams, and `command.duration-seconds` sets the steady
+window. The measurement health gates can mark a local run inconclusive or an
+infrastructure failure when the load driver is saturated. A 15-second local
+run with two writers and `load.think-time-us=10000` passed its three ledger
+checks; paired trials on the target cell are still required for comparisons.
