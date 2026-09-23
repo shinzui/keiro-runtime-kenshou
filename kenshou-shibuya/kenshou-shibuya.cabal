@@ -27,6 +27,7 @@ library
     Kenshou.Suite.Shibuya.Cohort
     Kenshou.Suite.Shibuya.Concurrency.CoreRunner
     Kenshou.Suite.Shibuya.Correctness.CoreRunner
+    Kenshou.Suite.Shibuya.Fixture.RestartLoop
     Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter
     Kenshou.Suite.Shibuya.Knobs
     Kenshou.Suite.Shibuya.Matrix
@@ -60,5 +61,6 @@ test-suite kenshou-shibuya-test
     kenshou-core,
     kenshou-shibuya,
     shibuya-core,
+    stm >=2.5 && <2.6,
     text >=2.1 && <2.2,
     time >=1.12 && <1.15,

@@ -1,10 +1,12 @@
 module SyntheticSpec (spec) where
 
 import Control.Concurrent (threadDelay)
+import Control.Concurrent.STM (newTVarIO, readTVar)
 import Control.Exception (SomeException, try)
 import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.Text (Text)
 import Effectful (liftIO, runEff)
+import Kenshou.Suite.Shibuya.Fixture.RestartLoop (RestartPolicy (..), runWithRestartLoop)
 import Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter
 import Shibuya.Adapter (Adapter (..))
 import Shibuya.App (defaultAppConfig, mkProcessor, runApp, stopApp, waitApp)
@@ -117,3 +119,27 @@ spec = describe "synthetic broker" $ do
     second `shouldBe` Just ()
     finalStats <- brokerStats broker
     finalStats.finalizedOk `shouldBe` 2
+
+  it "restarts an ended application according to the restart policy" $ do
+    broker <- newSyntheticBroker defaultSyntheticConfig {sourceFault = Just (1, "source fault")}
+    _ <- publish broker Nothing "first"
+    _ <- publish broker Nothing "second"
+    closeInput broker
+    stopRequested <- newTVarIO False
+    let policy = RestartPolicy 0 0 (Just 1)
+    restarts <-
+      timeout 2000000 $
+        runEff $
+          runTracingNoop $
+            runWithRestartLoop
+              policy
+              (readTVar stopRequested)
+              ( \number -> do
+                  liftIO $ if number > 0 then reopenSource broker else pure ()
+                  pure [(ProcessorId "restartable", mkProcessor (syntheticAdapter broker) (\_ -> pure AckOk))]
+              )
+              defaultAppConfig
+    restarts `shouldBe` Just 1
+    stats <- brokerStats broker
+    stats.finalizedOk `shouldBe` 2
+    stats.shutdownCalls `shouldBe` 2
