@@ -37,11 +37,67 @@ import Kenshou.Suite.Keiro.Fixture.Runtime
 import Kenshou.Suite.Keiro.Fixture.Workload qualified as Workload
 import Kiroku.Store (defaultConnectionSettings, runStoreIO, runTransaction, withStore)
 import Kiroku.Store.Error (StoreError (..))
+import Kiroku.Store.Lifecycle (clearStreamTruncateBefore, setStreamTruncateBefore)
 import Kiroku.Store.Types (StreamName (..), StreamVersion (..))
 import System.FilePath ((</>))
 
 scenarios :: [Scenario]
-scenarios = [fixtureRoundtrip, idempotentEventIds, occRetryAndExhaustion, controlledRollback, hydrationPaging, snapshotPolicyMatrix]
+scenarios = [fixtureRoundtrip, idempotentEventIds, occRetryAndExhaustion, controlledRollback, hydrationPaging, snapshotPolicyMatrix, truncationCoveringSnapshot]
+
+truncationCoveringSnapshot :: Scenario
+truncationCoveringSnapshot =
+  fixtureRoundtrip
+    { id = either (error . show) id (parseScenarioId "keiro/snapshot/correctness/truncation-covering-snapshot"),
+      summary = "Checks a snapshot covers truncation only while the replay suffix is contiguous.",
+      knobs = [],
+      run = runTruncation
+    }
+
+runTruncation :: RunContext -> IO ScenarioReport
+runTruncation context =
+  withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture -> do
+    let KeiroRunner runFixture = fixture.runner
+        covered = AccountId "covered"
+        uncovered = AccountId "uncovered"
+        coveredEvents = accountEventStream (SnapEvery 10)
+        uncoveredEvents = accountEventStream SnapNever
+        accountCommands account count = OpenAccount (OpenAccountData account 0) : replicate (count - 1) (Deposit (DepositData account 1 "seed"))
+        submit eventStream account command = runFixture (runCommand defaultRunCommandOptions eventStream (accountStream account) command)
+        deposit account = Deposit (DepositData account 1 "after-truncation")
+    coveredSeed <- traverse (submit coveredEvents covered) (accountCommands covered 25)
+    marker21 <- runFixture (setStreamTruncateBefore (accountStreamName covered) (StreamVersion 21))
+    coveredSuccess <- submit coveredEvents covered (deposit covered)
+    marker22 <- runFixture (setStreamTruncateBefore (accountStreamName covered) (StreamVersion 22))
+    coveredGap <- submit coveredEvents covered (deposit covered)
+    cleared <- runFixture (clearStreamTruncateBefore (accountStreamName covered))
+    coveredRecovered <- submit coveredEvents covered (deposit covered)
+    uncoveredSeed <- traverse (submit uncoveredEvents uncovered) (accountCommands uncovered 5)
+    marker3 <- runFixture (setStreamTruncateBefore (accountStreamName uncovered) (StreamVersion 3))
+    uncoveredGap <- submit uncoveredEvents uncovered (deposit uncovered)
+    marker6 <- runFixture (setStreamTruncateBefore (accountStreamName uncovered) (StreamVersion 6))
+    uncoveredFixpoint <- submit uncoveredEvents uncovered (OpenAccount (OpenAccountData uncovered 0))
+    acquired <- Connection.acquire (Settings.connectionString (requirePostgres context).connectionString <> Settings.applicationName "kenshou-keiro-truncation-oracle")
+    connection <- either (fail . show) pure acquired
+    rows <- Oracle.readCategoryLog connection "account"
+    Connection.release connection
+    let accepted outcome = case outcome of Right (Right result) -> result.eventsAppended == 1; _ -> False
+        markerSet = \case Right (Just _) -> True; _ -> False
+        cells =
+          [ ("seeded-covered", all accepted coveredSeed),
+            ("marker-21-set", markerSet marker21),
+            ("covered-by-snapshot", accepted coveredSuccess),
+            ("marker-22-set", markerSet marker22),
+            ("gap-after-snapshot", case coveredGap of Right (Left (HydrationGapDetected {})) -> True; _ -> False),
+            ("marker-cleared", markerSet cleared),
+            ("clear-recovers", accepted coveredRecovered),
+            ("seeded-uncovered", all accepted uncoveredSeed),
+            ("marker-3-set", markerSet marker3),
+            ("uncovered-gap", case uncoveredGap of Right (Left (HydrationGapDetected {})) -> True; _ -> False),
+            ("marker-6-set", markerSet marker6),
+            ("uncovered-fixpoint", case uncoveredFixpoint of Right (Left (ConflictFixpoint (StreamVersion 0) (StreamAlreadyExists _))) -> True; _ -> False),
+            ("global-log-intact", Oracle.logWellFormed rows && length rows == 32)
+          ]
+    recordCells context cells
 
 snapshotPolicyMatrix :: Scenario
 snapshotPolicyMatrix =
