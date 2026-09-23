@@ -28,23 +28,35 @@ readerRoleName = either (error . show) id (mkRoleName "kiroku/reader")
 subscriberRoleName :: RoleName
 subscriberRoleName = either (error . show) id (mkRoleName "kiroku/subscriber")
 
+data SubscriberArgs = SubscriberArgs
+  { name :: Text,
+    group :: Maybe (Int32, Int32),
+    guardEnabled :: Bool,
+    emitDeliveries :: Bool,
+    targetName :: Text,
+    requestedBatchSize :: Int32,
+    handlerDelayMicros :: Int
+  }
+
 runSubscriber :: RoleContext -> IO ()
 runSubscriber context = case (context.init.postgres, parseMaybe parseSubscriberArgs context.init.args) of
   (Nothing, _) -> context.send (WrkError "subscriber requires PostgreSQL")
   (_, Nothing) -> context.send (WrkError "invalid subscriber arguments")
-  (Just postgres, Just (name, member, size, guardEnabled, emitDeliveries)) -> withStore (defaultConnectionSettings postgres.connectionString) \store -> do
+  (Just postgres, Just args) -> withStore (defaultConnectionSettings postgres.connectionString) \store -> do
     delivered <- newIORef ([] :: [Int64])
     emitted <- newIORef (0 :: Int)
     let handler row = do
           let GlobalPosition position = row.globalPosition
           atomicModifyIORef' delivered (\positions -> (position : positions, ()))
-          if emitDeliveries
+          if args.emitDeliveries
             then do
               sequenceNumber <- atomicModifyIORef' emitted (\count -> (count + 1, count))
               context.send (WrkCustom ("delivery-" <> Text.pack (show sequenceNumber)) (object ["sequence" .= sequenceNumber, "position" .= position]))
             else pure ()
+          threadDelay args.handlerDelayMicros
           pure Continue
-        config = (defaultSubscriptionConfig (SubscriptionName name) AllStreams handler) {consumerGroup = Just (ConsumerGroup member size), consumerGroupGuard = guardEnabled}
+        target = if args.targetName == "category" then Category (CategoryName "crash") else AllStreams
+        config = (defaultSubscriptionConfig (SubscriptionName args.name) target handler) {consumerGroup = uncurry ConsumerGroup <$> args.group, consumerGroupGuard = args.guardEnabled, batchSize = args.requestedBatchSize}
         loop =
           context.receive >>= \case
             Just CtlStart -> loop
@@ -58,8 +70,17 @@ runSubscriber context = case (context.init.postgres, parseMaybe parseSubscriberA
             Nothing -> pure ()
     withSubscription store config \_ -> context.send WrkReady >> loop
 
-parseSubscriberArgs :: Value -> Parser (Text, Int32, Int32, Bool, Bool)
-parseSubscriberArgs = withObject "subscriber arguments" \value -> (,,,,) <$> value .: "name" <*> value .: "member" <*> value .: "size" <*> value .: "guard" <*> (maybe False id <$> value .:? "emitDeliveries")
+parseSubscriberArgs :: Value -> Parser SubscriberArgs
+parseSubscriberArgs = withObject "subscriber arguments" \value -> do
+  name <- value .: "name"
+  member <- value .:? "member"
+  size <- value .:? "size"
+  guardEnabled <- value .: "guard"
+  emitDeliveries <- maybe False id <$> value .:? "emitDeliveries"
+  targetName <- maybe "all" id <$> value .:? "target"
+  requestedBatchSize <- maybe 100 id <$> value .:? "batchSize"
+  handlerDelayMicros <- maybe 0 id <$> value .:? "handlerDelayMicros"
+  pure (SubscriberArgs name ((,) <$> member <*> size) guardEnabled emitDeliveries targetName requestedBatchSize handlerDelayMicros)
 
 runReader :: RoleContext -> IO ()
 runReader context = case context.init.postgres of
