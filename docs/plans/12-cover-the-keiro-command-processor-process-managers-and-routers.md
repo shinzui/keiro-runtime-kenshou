@@ -64,7 +64,7 @@ Milestone 3 — Process manager scenarios
 - [ ] Correctness with the list adapter: `deterministic-ids-redelivery` passes for 50 transfers and three deliveries each; its unstable-name sabotage arm fails its verdict as intended. `timers-commit-with-manager-append` passes with an unchanged deadline after redelivery and a rejected second debit. `order-insensitive-join` passes with both input orders and strict halt/dead-letter policies. `policy-matrix` passes all nine combinations with callback, acknowledgement, durable effect, and dead-letter checks. The poison metric assertion and `transient-classification` remain.
 - [x] (2026-09-23T21:10:00Z) Reactions: `reaction-schedule-modes` passes both input orders, cancellation, and accepted redelivery. `reaction-no-advance-receipt` reproduces its sole expected failure `no-advance-at-most-once`; the harness marks it nonblocking against `mori://shinzui/keiro/okf/adrs/concepts/ADR-41`.
 - [ ] Real bridge: `retry-budget-dead-letter` including dead-letter replay.
-- [ ] Multi-process: `sigkill-crash-windows`, `random-kill-exactly-once`, `topologies`.
+- [ ] Multi-process: `sigkill-crash-windows` passes all four park, kill, and restart variants with the production Kiroku adapter and an independent SQL oracle. Neighbour transfers and explicit `PMStateDuplicate` worker facts remain. `random-kill-exactly-once` and `topologies` remain.
 - [x] (2026-09-23T20:34:00Z) Non-vacuity check with `pm.sabotage=unstable-manager-name` fails the durable-effect verdict as intended.
 
 Milestone 4 — Router scenarios

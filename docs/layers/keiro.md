@@ -40,6 +40,10 @@ the harness reports it as a nonblocking known defect tied to
 `mori://shinzui/keiro/okf/adrs/concepts/ADR-41`. The process-manager
 `policy-matrix` run checks all nine poison and rejected-command policy
 combinations, including acknowledgement decisions and durable dead letters.
+The `sigkill-crash-windows` scenario runs a separate process-manager worker,
+parks it at one of four append or acknowledgement boundaries, kills it, and
+checks the durable saga and target effects after a fresh worker resumes the
+same subscription. Select a boundary with `--set pm.kill-window=between-targets`.
 The router
 scenarios check fanout under redelivery and selection drift, independent
 target commits with a durable dead letter, and the declarative selection
