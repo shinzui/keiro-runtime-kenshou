@@ -45,7 +45,7 @@ Milestone 1 — The keiro fixture domain
 - [ ] Create `kenshou-keiro/kenshou-keiro.cabal` with the library and the `kenshou-keiro-test` suite. The package and suite build; remaining: add the Milestone 1 fixture modules and dependencies.
 - [x] (2026-09-23T19:40:00Z) Write `Kenshou.Suite.Keiro.Fixture.Domain` and `.Fixture.Account`; prove `mkEventStream` accepts the account transducer for every snapshot policy variant. `cabal test kenshou-keiro-test` passes the four policy constructors.
 - [ ] Write `.Fixture.Transfer` (saga, strict variant, reactive variant) and `.Fixture.Bonus` (plain and declarative router). The saga, strict variant, bonus stream, and plain router compile; reactive and declarative variants remain.
-- [ ] Write `.Fixture.Projection`, `.Fixture.Runtime`, `.Fixture.Bridge`. Inline and additive async projections, the store runner, and the list adapter compile. The async worker, complete runtime wrapper, and durable bridges remain.
+- [ ] Write `.Fixture.Projection`, `.Fixture.Runtime`, `.Fixture.Bridge`. Inline and additive async projections, the subscription worker, store runner, list adapter, production Kiroku bridge, and configurable ack-stream bridge compile. End-to-end bridge runs and the complete telemetry runtime wrapper remain.
 - [ ] Write `.Fixture.Workload`, `.Fixture.Model`, `.Fixture.Oracle`, `.Fixture.Roles`. Workload, Model, and the account-log and balance SQL oracles are present; remaining oracle readers and Roles remain.
 - [ ] Unit tests: codec round trip, model agrees with the keiki transducer, workload determinism, expected identifiers, list adapter acknowledgement log. Seven unit examples pass, including the acknowledgement log and setup/worker identifier separation; exact UUID assertions remain.
 - [x] (2026-09-23T19:57:00Z) Add `Kenshou.Suite.Keiro.bundle`, the scenario `keiro/command/correctness/fixture-roundtrip`, and the three-line registration in `kenshou-cli`. The scenario passed with both 20 and 500 generated operations.
@@ -87,6 +87,7 @@ Milestone 5 — Write-side benchmarks, soak and telemetry arms
 - The released `Keiro.Snapshot` module does not export `StateCodec`; `Keiro.EventStream` does. The first fixture compile failed on that import, and the corrected import built under the pinned released cohort.
 - The strict transfer saga initially declared a `SagaAnnounceSeen` source state despite intentionally rejecting an announcement as its first input. `mkEventStreamOrThrow` reported `possibly-dead @SagaAnnounceSeen`; building that edge only for the order-tolerant variant made both streams replay-safe.
 - A process manager name also becomes part of the saga stream category. The sabotage arm initially appended a hyphen to the name, which keiro rejected as an invalid category before the oracle ran. An alphanumeric suffix keeps the manager name valid and now produces the intended failed verdict.
+- `opCommands` is pure and does not receive `WorkloadSpec`, so its transfer leg cannot derive a relative deadline from `transferDeadlineSeconds`. The original literal 3600 was a time in 1970 and made every generated transfer timer immediately due. The fixture now uses a fixed far-future epoch for deterministic command expansion; making the deadline spec-driven needs an explicit parameter in the workload API.
 
 
 ## Decision Log
@@ -97,6 +98,10 @@ Milestone 5 — Write-side benchmarks, soak and telemetry arms
 
 - Decision: Setup operations use worker index `-1` in workload event identity seeds, while generated worker operations use nonnegative indices.
   Rationale: Setup and worker operations both start their sequence at zero; separating the worker namespace prevents fixed event identifier collisions when the first generated operation is submitted.
+  Date: 2026-09-23
+
+- Decision: Pure workload command expansion uses a fixed 2100-01-01 transfer deadline until the operation type or `opCommands` signature carries the deadline from `WorkloadSpec`.
+  Rationale: The prior epoch literal 3600 was already in the past, so timer scenarios would observe an immediately due timer. Keeping expansion deterministic avoids wall-clock dependence while the workload interface is refined.
   Date: 2026-09-23
 
 - Decision: An overdraft, a non-positive amount, and any command to a closed or unopened account have no matching transducer edge and therefore surface as `CommandRejected`; the only silent (no-event) edge is `CloseAccount` on an already closed account.

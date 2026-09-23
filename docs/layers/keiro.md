@@ -30,3 +30,10 @@ checks the persisted snapshot version and register values for all five
 policies. Two concurrency scenarios check simultaneous submission of one
 identifier and sustained writes to one hot stream. The scenario IDs and
 their knobs are available through `cabal run kenshou -- list --layer keiro`.
+
+The process manager scenarios check stable manager and target identities under
+redelivery, timer persistence, and both orders of transfer inputs. The router
+scenarios check fanout under redelivery and selection drift, independent
+target commits with a durable dead letter, and the declarative selection
+policy matrix. The asynchronous projection scenario checks deduplication,
+rebuild fencing, and the documented effect of pruning deduplication rows.

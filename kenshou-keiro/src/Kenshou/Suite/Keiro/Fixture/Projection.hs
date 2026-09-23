@@ -4,10 +4,14 @@ module Kenshou.Suite.Keiro.Fixture.Projection
     accountBalanceProjection,
     accountActivityProjection,
     accountActivityReadModelName,
+    ProjectionSabotage (..),
+    runAccountActivityWorker,
   )
 where
 
+import Control.Exception (throwIO)
 import Data.Aeson (Value, object, (.=))
+import Data.Int (Int32)
 import Data.Text (Text)
 import Effectful (Eff, (:>))
 import Hasql.Decoders qualified as Decoders
@@ -16,12 +20,35 @@ import Hasql.Statement qualified as Statement
 import Hasql.Transaction qualified as Tx
 import Keiro.Codec (Codec (..))
 import Keiro.Connection (ensureProjectionSchema)
-import Keiro.Projection (AsyncProjection (..), InlineProjection (..))
+import Keiro.Projection (AsyncApplyOutcome (..), AsyncProjection (..), InlineProjection (..), applyAsyncProjection)
 import Keiro.ReadModel.Schema (registerReadModel)
 import Kenshou.Suite.Keiro.Fixture.Account (accountCodec)
 import Kenshou.Suite.Keiro.Fixture.Domain
-import Kiroku.Store (Store, runTransaction)
-import Kiroku.Store.Types (GlobalPosition (..), RecordedEvent (..), StreamVersion (..))
+import Kiroku.Store (KirokuStore, Store, runStoreIO, runTransaction)
+import Kiroku.Store.Subscription (RetryDelay (..), SubscriptionConfigM (..), SubscriptionHandleM (..), SubscriptionName (..), SubscriptionResult (..), SubscriptionTarget (..), defaultSubscriptionConfig, withSubscription)
+import Kiroku.Store.Types (CategoryName (..), GlobalPosition (..), RecordedEvent (..), StreamVersion (..))
+
+data ProjectionSabotage = NoProjectionSabotage | SkipDedup
+  deriving stock (Eq, Show)
+
+runAccountActivityWorker :: KirokuStore -> Int32 -> ProjectionSabotage -> (RecordedEvent -> AsyncApplyOutcome -> IO ()) -> IO ()
+runAccountActivityWorker store batchSize sabotage observed = do
+  let handle recorded = do
+        outcome <- runStoreIO store $ runTransaction $ case sabotage of
+          NoProjectionSabotage -> applyAsyncProjection accountActivityProjection recorded
+          SkipDedup -> accountActivityProjection.applyRecorded recorded >> pure AsyncApplied
+        case outcome of
+          Right result -> do
+            observed recorded result
+            pure $ case result of
+              AsyncFenced -> Retry (RetryDelay 1)
+              _ -> Continue
+          Left _ -> pure (Retry (RetryDelay 1))
+      config =
+        (defaultSubscriptionConfig (SubscriptionName "kenshou-account-activity") (Category (CategoryName "account")) handle)
+          { batchSize = batchSize
+          }
+  withSubscription store config \subscription -> subscription.wait >>= either throwIO pure
 
 fixtureSchema :: Text
 fixtureSchema = "kenshou_keiro"

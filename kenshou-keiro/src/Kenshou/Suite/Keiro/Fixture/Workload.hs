@@ -116,7 +116,7 @@ opCommands seed op = case op.action of
   ActDeposit account amount -> [accountLeg 0 account (Deposit (DepositData account amount "workload"))]
   ActWithdraw account amount -> [accountLeg 0 account (Withdraw (WithdrawData account amount))]
   ActTransfer transfer source destination amount ->
-    let debit = accountLeg 0 source (DebitTransfer (DebitTransferData source transfer destination amount 3600))
+    let debit = accountLeg 0 source (DebitTransfer (DebitTransferData source transfer destination amount 4102444800))
         announce = accountLeg 1 destination (AnnounceTransfer (AnnounceTransferData destination transfer))
      in if even (seed + op.index) then [debit, announce] else [announce, debit]
   ActBonus bonus segment amount ->

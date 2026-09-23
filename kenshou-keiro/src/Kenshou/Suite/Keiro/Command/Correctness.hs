@@ -24,7 +24,7 @@ import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary, r
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
-import Kenshou.Core.Id (parseScenarioId, unSeed)
+import Kenshou.Core.Id (parseScenarioId, renderScenarioId, unSeed)
 import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobInt, knobText, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
@@ -468,8 +468,8 @@ recordCells context cells = do
   checkedAt <- getCurrentTime
   mapM_ (writeCell checkedAt) cells
   let failed = [label | (label, False) <- cells]
-  putSummary context Verdicts "fixture-roundtrip" (object ["checks" .= length cells, "failures" .= failed])
-  pure $ if null failed then passed else failedWith failed "keiro fixture roundtrip failed"
+  putSummary context Verdicts (renderScenarioId context.scenario) (object ["checks" .= length cells, "failures" .= failed])
+  pure $ if null failed then passed else failedWith failed "keiro scenario checks failed"
   where
     writeCell checkedAt (label, held) = do
       let verdict =

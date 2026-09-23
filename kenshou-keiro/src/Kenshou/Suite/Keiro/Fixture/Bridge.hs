@@ -1,6 +1,10 @@
 module Kenshou.Suite.Keiro.Fixture.Bridge
   ( AckRecord (..),
     listAdapter,
+    kirokuBridge,
+    ackStreamAdapter,
+    sagaAdapterConfig,
+    bonusAdapterConfig,
     interposeAck,
   )
 where
@@ -9,8 +13,16 @@ import Data.IORef (IORef, modifyIORef')
 import Data.Text (Text)
 import Data.UUID qualified as UUID
 import Effectful (Eff, IOE, liftIO, (:>))
-import Kiroku.Store.Types (EventId (..), RecordedEvent (..))
+import Kenshou.Suite.Keiro.Fixture.Transfer (transferSignalTypes)
+import Kiroku.Store (KirokuStore)
+import Kiroku.Store.Subscription.Stream (subscriptionAckStream)
+import Kiroku.Store.Subscription.Types (ConsumerGroup (..), SubscriptionConfig, SubscriptionConfigM (..), SubscriptionName (..))
+import Kiroku.Store.Types (CategoryName (..), EventId (..), RecordedEvent (..))
+import Numeric.Natural (Natural)
 import Shibuya.Adapter (Adapter (..))
+import Shibuya.Adapter.Kiroku (EventTypeFilter (..), KirokuAdapterConfig (..), SubscriptionTarget (..), defaultKirokuAdapterConfig, kirokuAdapter)
+import Shibuya.Adapter.Kiroku qualified as KirokuAdapter
+import Shibuya.Adapter.Kiroku.Convert (kirokuEnvelopeAttrs, toIngestedAck)
 import Shibuya.Core.Ack (AckDecision)
 import Shibuya.Core.AckHandle (AckHandle (..))
 import Shibuya.Core.Ingested (Ingested (..))
@@ -23,6 +35,32 @@ data AckRecord = AckRecord
     decision :: !AckDecision
   }
   deriving stock (Eq, Show)
+
+kirokuBridge :: (IOE :> es) => KirokuStore -> KirokuAdapterConfig -> Eff es (Adapter es RecordedEvent)
+kirokuBridge = kirokuAdapter
+
+ackStreamAdapter :: (IOE :> es) => KirokuStore -> SubscriptionConfig -> Natural -> Eff es (Adapter es RecordedEvent)
+ackStreamAdapter store config capacity = do
+  (items, cancel) <- liftIO (subscriptionAckStream store config capacity)
+  let SubscriptionName name = config.name
+      memberIndex = fromIntegral . (.member) <$> config.consumerGroup
+      attributes = kirokuEnvelopeAttrs name memberIndex
+  pure
+    Adapter
+      { adapterName = name,
+        source = fmap (toIngestedAck attributes cancel) (Streamly.morphInner liftIO items),
+        shutdown = liftIO cancel
+      }
+
+sagaAdapterConfig :: SubscriptionName -> Maybe ConsumerGroup -> KirokuAdapterConfig
+sagaAdapterConfig subscription group =
+  (defaultKirokuAdapterConfig subscription (Category (CategoryName "account")))
+    { KirokuAdapter.consumerGroup = group,
+      KirokuAdapter.eventTypeFilter = OnlyEventTypes transferSignalTypes
+    }
+
+bonusAdapterConfig :: SubscriptionName -> KirokuAdapterConfig
+bonusAdapterConfig subscription = defaultKirokuAdapterConfig subscription (Category (CategoryName "bonus"))
 
 listAdapter :: (IOE :> es) => Text -> IORef [AckRecord] -> [(RecordedEvent, Maybe Word)] -> Adapter es RecordedEvent
 listAdapter adapterLabel acknowledgementLog input =

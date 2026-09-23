@@ -74,6 +74,7 @@ library
     kiroku-store,
     random,
     shibuya-core,
+    shibuya-kiroku-adapter,
     streamly,
     streamly-core,
     text,
