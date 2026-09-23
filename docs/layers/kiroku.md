@@ -45,3 +45,4 @@ The change-aware planner should map `kiroku/append/**` and the other store compo
 | Scenario | Desired contract and current observation |
 | --- | --- |
 | `kiroku/subscription/correctness/batch-size-validation` | Batch sizes 0 and -1 should be refused within five seconds without handler calls. Both were accepted on PostgreSQL 17 and 18 with the released cohort. This is a nonblocking known defect linked to `mori://shinzui/kiroku/plans/82-repair-live-reconnect-and-validate-subscription-identity-and-batch-size`. |
+| `kiroku/consumer-group/concurrency/resize-leaves-gaps` | A group resized from two to three members should deliver all 200 events or refuse the topology change. The released cohort accepted the resize but delivered only 165 distinct events in the PostgreSQL 18 run. This is a nonblocking known defect linked to `mori://shinzui/kiroku/plans/81-make-consumer-group-topology-durable-and-resize-without-gaps`. |
