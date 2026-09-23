@@ -1,6 +1,7 @@
 # Bundle Update Log
 
 ## 2026-09-22
+* **Changed**: Applied contract-strength, known-defect, and controlled-benchmark decisions to Kiroku's isolation evidence.
 * **Decision**: Distinguished documented implementation limitations from canonically referenced upstream known defects.
 * **Decision**: Accepted native SQL polling on a dedicated connection for metrics-only layers.
 * **Decision**: Accepted the PostgreSQL clock as the authority for message lease and due-time verdicts.

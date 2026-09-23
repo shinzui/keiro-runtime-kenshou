@@ -40,6 +40,16 @@ A checker that selects no relevant facts is `not-evaluated` with reason
 `vacuous` unless it explicitly allows empty input. Every checker also has a
 targeted non-vacuity test showing that a doctored ledger produces a violation.
 
+For Kiroku, acknowledged append durability, strict global order, no subscription
+loss, and monotonic subscription checkpoints are contract checks. Contiguous
+global positions and the current duplicate limits are implementation checks:
+the non-group `$all` publisher can replay up to its 1,000-event batch after a
+crash, while category and consumer-group workers use their configured batch
+size. A deleted stream can leave legitimate gaps, so no consumer may infer a
+contract from contiguous positions. These classifications follow the storage
+and subscription behavior of `mori://shinzui/kiroku` and remain visible in
+Kiroku scenario verdicts.
+
 ## Consequences
 
 - Release gates track promises made to runtime users rather than incidental

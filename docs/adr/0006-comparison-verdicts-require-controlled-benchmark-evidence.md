@@ -48,6 +48,16 @@ evidence checks take precedence over statistical regressions.
 Historical series remain useful for investigation and workload selection, but
 they never determine a comparison verdict.
 
+For Kiroku, paired trials use durable PostgreSQL and compare each arm at its
+own best measured pool size; the `$all` row lock makes a common pool size an
+unfair default when concurrency changes. Only trials on a controlled benchmark
+cell are authoritative. Local macOS runs report their actual `wal_sync_method`
+and remain exploratory because its `fsync` behavior does not establish the
+same durability and timing basis as the Linux cell. A local 10-versus-32 pool
+trial at a paced 250 append/s produced an inconclusive p99 comparison, so it
+does not establish a pool-size optimum. This applies the performance evidence
+decision in `mori://shinzui/kiroku/okf/adrs/concepts/ADR-5`.
+
 ## Consequences
 
 - A reported regression has a controlled counterfactual and clears both a
