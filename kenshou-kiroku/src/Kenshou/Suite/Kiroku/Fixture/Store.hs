@@ -1,4 +1,4 @@
-module Kenshou.Suite.Kiroku.Fixture.Store (withKirokuStore, withKirokuStoreWithTap, withKirokuStoreWithEnricher) where
+module Kenshou.Suite.Kiroku.Fixture.Store (withKirokuStore, withKirokuStoreWithTap, withKirokuStoreWithEnricher, withKirokuStoreWithCallbacks) where
 
 import Data.Text qualified as Text
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
@@ -16,6 +16,9 @@ withKirokuStoreWithTap context tap = withConfiguredStore context tap Nothing
 
 withKirokuStoreWithEnricher :: RunContext -> Maybe (EventData -> IO EventData) -> (KirokuStore -> IO result) -> IO result
 withKirokuStoreWithEnricher context enricher = withConfiguredStore context Nothing enricher
+
+withKirokuStoreWithCallbacks :: RunContext -> Maybe (KirokuEvent -> IO ()) -> Maybe (EventData -> IO EventData) -> (KirokuStore -> IO result) -> IO result
+withKirokuStoreWithCallbacks = withConfiguredStore
 
 withConfiguredStore :: RunContext -> Maybe (KirokuEvent -> IO ()) -> Maybe (EventData -> IO EventData) -> (KirokuStore -> IO result) -> IO result
 withConfiguredStore context tap enricher action =
