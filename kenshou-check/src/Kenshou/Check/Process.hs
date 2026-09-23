@@ -99,6 +99,7 @@ data Child = Child
   { spec :: !ProcessSpec,
     pid :: !CPid,
     input :: !Handle,
+    inputLock :: !(MVar ()),
     output :: !Handle,
     errorLog :: !Handle,
     processHandle :: !ProcessHandle,
@@ -153,8 +154,9 @@ spawn supervisor spec = do
   hSetBuffering output LineBuffering
   pid <- getPid processHandle >>= maybe (ioError (userError "spawned worker has no pid")) pure
   state <- newTVarIO (ProgressSnapshot False 0 Map.empty Nothing)
+  inputLock <- newMVar ()
   listener <- async (listenWorker output controlPath stdoutPath state)
-  let child = Child spec pid input output stderrHandle processHandle state listener controlPath stdoutPath
+  let child = Child spec pid input inputLock output stderrHandle processHandle state listener controlPath stdoutPath
   modifyMVar_ supervisor.children (pure . (child :))
   appendPid supervisor child
   forM_ spec.initial (sendCommand child)
@@ -164,7 +166,9 @@ awaitReady :: Child -> Int -> IO ()
 awaitReady child timeoutMillis = awaitState timeoutMillis child (\snapshot -> snapshot.ready) "worker did not become ready"
 
 sendCommand :: Child -> ControlMessage -> IO ()
-sendCommand child message = LazyByteString.hPutStrLn child.input (encode message) >> hFlush child.input
+sendCommand child message = withMVar child.inputLock \_ -> do
+  LazyByteString.hPutStrLn child.input (encode message)
+  hFlush child.input
 
 progress :: Child -> STM ProgressSnapshot
 progress child = readTVar child.state

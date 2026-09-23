@@ -1,7 +1,7 @@
 module Kenshou.Suite.Kiroku.Roles (roles, appenderRoleName, readerRoleName, subscriberRoleName, txAppenderRoleName) where
 
 import Control.Concurrent (forkIO, threadDelay)
-import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
+import Control.Concurrent.MVar (newEmptyMVar, newMVar, putMVar, takeMVar, withMVar)
 import Control.Exception (SomeException, try)
 import Control.Monad (forM_, replicateM)
 import Data.Aeson (Value, object, withObject, (.:), (.:?), (.=))
@@ -14,6 +14,7 @@ import Data.Text qualified as Text
 import Data.Time.Clock (getCurrentTime)
 import Data.UUID qualified as UUID
 import Data.Vector qualified as Vector
+import GHC.Clock (getMonotonicTimeNSec)
 import Hasql.Transaction qualified as Tx
 import Kenshou.Core.Role (ControlMessage (..), PostgresConnInfo (..), RoleContext (..), RoleName, WorkerInit (..), WorkerMessage (..), WorkerRole (..), mkRoleName)
 import Kenshou.Suite.Kiroku.Fixture.Workload (eventIdFor)
@@ -63,6 +64,7 @@ data SubscriberArgs = SubscriberArgs
     group :: Maybe (Int32, Int32),
     guardEnabled :: Bool,
     emitDeliveries :: Bool,
+    compactDeliveries :: Bool,
     targetName :: Text,
     requestedBatchSize :: Int32,
     handlerDelayMicros :: Int
@@ -82,7 +84,9 @@ runSubscriber context = case (context.init.postgres, parseMaybe parseSubscriberA
             then do
               sequenceNumber <- atomicModifyIORef' emitted (\count -> (count + 1, count))
               receivedAt <- getCurrentTime
-              context.send (WrkCustom ("delivery-" <> Text.pack (show sequenceNumber)) (object ["sequence" .= sequenceNumber, "position" .= position, "receivedAt" .= receivedAt]))
+              receivedMonoNs <- getMonotonicTimeNSec
+              let EventId uuid = row.eventId
+              context.send (WrkCustom (if args.compactDeliveries then "delivery-latest" else "delivery-" <> Text.pack (show sequenceNumber)) (object ["sequence" .= sequenceNumber, "position" .= position, "eventId" .= UUID.toText uuid, "receivedAt" .= receivedAt, "receivedMonoNs" .= receivedMonoNs]))
             else pure ()
           threadDelay args.handlerDelayMicros
           pure Continue
@@ -108,10 +112,11 @@ parseSubscriberArgs = withObject "subscriber arguments" \value -> do
   size <- value .:? "size"
   guardEnabled <- value .: "guard"
   emitDeliveries <- maybe False id <$> value .:? "emitDeliveries"
+  compactDeliveries <- maybe False id <$> value .:? "compactDeliveries"
   targetName <- maybe "all" id <$> value .:? "target"
   requestedBatchSize <- maybe 100 id <$> value .:? "batchSize"
   handlerDelayMicros <- maybe 0 id <$> value .:? "handlerDelayMicros"
-  pure (SubscriberArgs name ((,) <$> member <*> size) guardEnabled emitDeliveries targetName requestedBatchSize handlerDelayMicros)
+  pure (SubscriberArgs name ((,) <$> member <*> size) guardEnabled emitDeliveries compactDeliveries targetName requestedBatchSize handlerDelayMicros)
 
 runReader :: RoleContext -> IO ()
 runReader context = case context.init.postgres of
@@ -146,7 +151,12 @@ runReader context = case context.init.postgres of
               tailTo store next target (reverse observed <> accumulated)
 
 runAppender :: RoleContext -> IO ()
-runAppender context = case context.init.postgres of
+runAppender context = do
+  sendLock <- newMVar ()
+  runAppenderBody (context {send = \message -> withMVar sendLock (\_ -> context.send message)})
+
+runAppenderBody :: RoleContext -> IO ()
+runAppenderBody context = case context.init.postgres of
   Nothing -> context.send (WrkError "appender requires PostgreSQL")
   Just postgres -> withStore (defaultConnectionSettings postgres.connectionString) \store -> do
     context.send WrkReady
@@ -155,6 +165,19 @@ runAppender context = case context.init.postgres of
     loop store =
       context.receive >>= \case
         Just CtlStart -> loop store
+        Just (CtlCustom "bench-append" payload) -> case parseMaybe parseBenchAppend payload of
+          Nothing -> context.send (WrkError "invalid benchmark append request") >> loop store
+          Just (token, stream, rawId) -> case UUID.fromText rawId of
+            Nothing -> context.send (WrkError "invalid benchmark event ID") >> loop store
+            Just uuid -> do
+              _ <- forkIO do
+                let event = EventData (Just (EventId uuid)) (EventType "BenchSubscription") (object []) Nothing Nothing Nothing
+                result <- try @SomeException (runStoreIO store (appendToStream (StreamName stream) AnyVersion [event]))
+                ackAt <- getCurrentTime
+                ackMonoNs <- getMonotonicTimeNSec
+                let status = case result of Right (Right _) -> "success" :: Text; Right (Left _) -> "store-error"; Left _ -> "exception"
+                context.send (WrkCustom ("bench-ack-" <> Text.takeWhile (/= '-') token) (object ["token" .= token, "eventId" .= rawId, "status" .= status, "ackAt" .= ackAt, "ackMonoNs" .= ackMonoNs]))
+              loop store
         Just (CtlCustom "race" payload) -> case parseMaybe parseRace payload of
           Nothing -> context.send (WrkError "invalid race request") >> loop store
           Just (stream, version, writers) -> do
@@ -256,6 +279,9 @@ runAppender context = case context.init.postgres of
 
 parseRace :: Value -> Parser (Text, Int, Int)
 parseRace = withObject "race request" \value -> (,,) <$> value .: "stream" <*> value .: "version" <*> value .: "writers"
+
+parseBenchAppend :: Value -> Parser (Text, Text, Text)
+parseBenchAppend = withObject "benchmark append request" \value -> (,,) <$> value .: "token" <*> value .: "stream" <*> value .: "eventId"
 
 parseDuplicate :: Value -> Parser (Text, [Text], Text, Int)
 parseDuplicate = withObject "duplicate request" \value -> (,,,) <$> value .: "stream" <*> value .: "eventIds" <*> value .: "mode" <*> value .: "version"
