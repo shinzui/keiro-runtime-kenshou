@@ -1,7 +1,7 @@
 module Kenshou.Suite.Kiroku.Concurrency.Fault (scenarios) where
 
 import Control.Concurrent (forkIO, threadDelay)
-import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
+import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar, tryReadMVar)
 import Control.Concurrent.STM (atomically)
 import Control.Exception (SomeException, bracket, try)
 import Control.Monad (forM)
@@ -21,17 +21,20 @@ import Hasql.Connection qualified as Connection
 import Hasql.Connection.Settings qualified as ConnectionSettings
 import Hasql.Decoders qualified as Decoders
 import Hasql.Encoders qualified as Encoders
+import Hasql.Pool qualified as Pool
 import Hasql.Session qualified as Session
 import Hasql.Statement qualified as Statement
+import Hasql.Transaction qualified as Tx
 import Kenshou.Check.Fault.Network (ProxyMode (..), proxiedConnectionString, resetConnections, setProxyMode, withTcpProxy)
-import Kenshou.Check.Process (ProgressSnapshot (..), awaitReady, progress, roleProcess, sendCommand, spawn, withSupervisor)
+import Kenshou.Check.Fault.Postgres (Backend (..), listBackends)
+import Kenshou.Check.Process (ProgressSnapshot (..), awaitMark, awaitReady, killChild, progress, roleProcess, sendCommand, spawn, withSupervisor)
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Core.Context (Environment (..), RunContext (..), SummarySection (..), putSummary, requirePostgres)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..), ServerControl (..), StopMode (..))
 import Kenshou.Core.Id (parseScenarioId)
-import Kenshou.Core.Knob (KnobSpec (..), KnobValue (..), knobBool, mkKnobName)
+import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), knobBool, knobInt, mkKnobName)
 import Kenshou.Core.Phase (PhasePlan (..), zeroPhases)
 import Kenshou.Core.Role (ControlMessage (..))
 import Kenshou.Core.Scenario
@@ -44,7 +47,7 @@ import Kiroku.Store hiding (id, withKirokuStore)
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [postgresRestart, listenKillAndNotifyLoss, networkPartition]
+scenarios = [postgresRestart, listenKillAndNotifyLoss, networkPartition, allLockHold]
 
 postgresRestart :: Scenario
 postgresRestart =
@@ -347,6 +350,90 @@ awaitCheckpointHead store names target = do
 isRight :: Either a b -> Bool
 isRight (Right _) = True
 isRight (Left _) = False
+
+allLockHold :: Scenario
+allLockHold =
+  postgresRestart
+    { id = either (error . show) id (parseScenarioId "kiroku/transaction/concurrency/all-lock-hold"),
+      summary = "Kills a transaction continuation while it holds the global append lock.",
+      knobs = storeKnobs <> [KnobSpec sleepName "Time the continuation holds the global lock" KnobInt (VInt 200) (IntRange 100 5000) []],
+      run = runAllLockHold
+    }
+  where
+    sleepName = either (error . show) id (mkKnobName "kiroku.tx.continuation-sleep-ms")
+
+runAllLockHold :: RunContext -> IO ScenarioReport
+runAllLockHold context = withKirokuStore context \store -> withCheck context \check -> withSupervisor check \supervisor -> do
+  let sleepMs = fromIntegral (knobInt context.knobs (either (error . show) id (mkKnobName "kiroku.tx.continuation-sleep-ms"))) :: Int
+  created <- runStoreIO store (runTransaction (Tx.sql "create schema if not exists kenshou_kiroku; create table if not exists kenshou_kiroku.tx_hold_probe (value int not null)"))
+  case created of
+    Left err -> pure (failedWith ["probe-schema-failed"] (Text.pack (show err)))
+    Right () -> do
+      spec <- roleProcess check "kiroku/tx-appender" 0 (object [])
+      child <- spawn supervisor spec
+      awaitReady child 10000
+      sendCommand child (CtlCustom "hold" (object ["sleepMs" .= sleepMs]))
+      awaitMark child "hold-start" 10000
+      holder <- timeout 5000000 (awaitSleepingBackend context)
+      replies <- forM [0 .. (2 :: Int)] \index -> do
+        reply <- newEmptyMVar
+        _ <- forkIO do
+          let event = EventData (Just (eventIdFor context.seed (index + 1) 0)) (EventType "PlainAfterHold") (object []) Nothing Nothing Nothing
+          result <- runStoreIO store (appendToStream (StreamName ("plain-" <> Text.pack (show index))) NoStream [event])
+          finishedAt <- getCurrentTime
+          putMVar reply (result, finishedAt)
+        pure reply
+      blocker <- case holder of
+        Nothing -> pure 0
+        Just backend -> maybe 0 id <$> timeout (min 100000 (sleepMs * 500)) (awaitBlockedAppender context backend.pid)
+      premature <- traverse tryReadMVar replies
+      killedAt <- getCurrentTime
+      killChild supervisor child
+      results <- timeout 10000000 (traverse takeMVar replies)
+      recoveredAt <- getCurrentTime
+      durable <- runStoreIO store (readAllForward (GlobalPosition 0) 10)
+      probeCount <- Pool.use store.pool (Session.statement () probeCountStatement) >>= either (fail . show) pure
+      counts <- Oracle.threeCounts store.pool
+      let rows = case durable of Right events -> Vector.toList events; Left _ -> []
+          positions = [position | row <- rows, let GlobalPosition position = row.globalPosition]
+          ids = Set.fromList [uuid | row <- rows, let EventId uuid = row.eventId]
+          expectedIds = Set.fromList [uuid | index <- [1 .. 3], EventId uuid <- [eventIdFor context.seed index 0]]
+          resultRows = maybe [] id results
+          cells =
+            [ ("hold-backend-entered-continuation", maybe False (const True) holder),
+              ("plain-appenders-blocked-by-holder", blocker > 0 && all (maybe True (const False)) premature),
+              ("killed-transaction-rolled-back", probeCount == 0 && ids == expectedIds),
+              ("plain-appends-resumed-within-ten-seconds", length resultRows == 3 && all (isRight . fst) resultRows && diffUTCTime recoveredAt killedAt <= 10),
+              ("global-order-and-counts", positions == [1, 2, 3] && counts == (3, 3, 3))
+            ]
+      putSummary context Measurements "all-lock-hold" (object ["sleepMs" .= sleepMs, "holderPid" .= fmap (.pid) holder, "blockedAppenders" .= blocker, "prematureCompletions" .= length [() | Just _ <- premature], "probeRows" .= probeCount, "durablePositions" .= positions, "killedAt" .= killedAt, "recoveredAt" .= recoveredAt])
+      recordCells context "all-lock-hold" ["plain-appenders-blocked-by-holder"] cells
+
+awaitSleepingBackend :: RunContext -> IO Backend
+awaitSleepingBackend context = do
+  backends <- listBackends (requirePostgres context)
+  case [backend | backend <- backends, backend.applicationName == "kenshou-tx-appender", "pg_sleep" `Text.isInfixOf` backend.query, backend.state == "active"] of
+    backend : _ -> pure backend
+    [] -> threadDelay 1000 >> awaitSleepingBackend context
+
+awaitBlockedAppender :: RunContext -> Int32 -> IO Int64
+awaitBlockedAppender context holderPid = do
+  blocked <- withAdmin context \connection -> Connection.use connection (Session.statement holderPid blockingStatement) >>= either (fail . show) pure
+  if blocked > 0 then pure blocked else threadDelay 1000 >> awaitBlockedAppender context holderPid
+
+blockingStatement :: Statement.Statement Int32 Int64
+blockingStatement =
+  Statement.unpreparable
+    "select count(*) from pg_stat_activity where wait_event_type = 'Lock' and $1::int4 = any(pg_blocking_pids(pid))"
+    (Encoders.param (Encoders.nonNullable Encoders.int4))
+    (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
+
+probeCountStatement :: Statement.Statement () Int64
+probeCountStatement =
+  Statement.unpreparable
+    "select count(*) from kenshou_kiroku.tx_hold_probe"
+    Encoders.noParams
+    (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
 
 killListenerBackends :: RunContext -> IO Int
 killListenerBackends context = withAdmin context \connection -> do

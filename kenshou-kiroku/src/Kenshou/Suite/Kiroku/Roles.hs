@@ -1,4 +1,4 @@
-module Kenshou.Suite.Kiroku.Roles (roles, appenderRoleName, readerRoleName, subscriberRoleName) where
+module Kenshou.Suite.Kiroku.Roles (roles, appenderRoleName, readerRoleName, subscriberRoleName, txAppenderRoleName) where
 
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
@@ -6,6 +6,7 @@ import Control.Exception (SomeException, try)
 import Control.Monad (forM_, replicateM)
 import Data.Aeson (Value, object, withObject, (.:), (.:?), (.=))
 import Data.Aeson.Types (Parser, parseMaybe)
+import Data.ByteString.Char8 qualified as ByteString
 import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.Int (Int32, Int64)
 import Data.Text (Text)
@@ -13,12 +14,13 @@ import Data.Text qualified as Text
 import Data.Time.Clock (getCurrentTime)
 import Data.UUID qualified as UUID
 import Data.Vector qualified as Vector
+import Hasql.Transaction qualified as Tx
 import Kenshou.Core.Role (ControlMessage (..), PostgresConnInfo (..), RoleContext (..), RoleName, WorkerInit (..), WorkerMessage (..), WorkerRole (..), mkRoleName)
 import Kenshou.Suite.Kiroku.Fixture.Workload (eventIdFor)
 import Kiroku.Store hiding (id)
 
 roles :: [WorkerRole]
-roles = [WorkerRole appenderRoleName "Races expected-version appends from a separate process." runAppender, WorkerRole readerRoleName "Tails the global event stream from a separate process." runReader, WorkerRole subscriberRoleName "Collects group delivery in a separate process." runSubscriber]
+roles = [WorkerRole appenderRoleName "Races expected-version appends from a separate process." runAppender, WorkerRole readerRoleName "Tails the global event stream from a separate process." runReader, WorkerRole subscriberRoleName "Collects group delivery in a separate process." runSubscriber, WorkerRole txAppenderRoleName "Holds the global append lock inside a transaction continuation." runTxAppender]
 
 appenderRoleName :: RoleName
 appenderRoleName = either (error . show) id (mkRoleName "kiroku/appender")
@@ -28,6 +30,33 @@ readerRoleName = either (error . show) id (mkRoleName "kiroku/reader")
 
 subscriberRoleName :: RoleName
 subscriberRoleName = either (error . show) id (mkRoleName "kiroku/subscriber")
+
+txAppenderRoleName :: RoleName
+txAppenderRoleName = either (error . show) id (mkRoleName "kiroku/tx-appender")
+
+runTxAppender :: RoleContext -> IO ()
+runTxAppender context = case context.init.postgres of
+  Nothing -> context.send (WrkError "transaction appender requires PostgreSQL")
+  Just postgres -> withStore (defaultConnectionSettings (postgres.connectionString <> " application_name=kenshou-tx-appender")) \store -> do
+    context.send WrkReady
+    let loop =
+          context.receive >>= \case
+            Just (CtlCustom "hold" payload) -> case parseMaybe (withObject "hold" (.: "sleepMs")) payload of
+              Nothing -> context.send (WrkError "invalid transaction hold") >> loop
+              Just sleepMs -> do
+                let event = EventData (Just (eventIdFor context.init.seed 0 0)) (EventType "TxHold") (object []) Nothing Nothing Nothing
+                    seconds = fromIntegral (sleepMs :: Int) / 1000 :: Double
+                    continuation _ = do
+                      Tx.sql "insert into kenshou_kiroku.tx_hold_probe (value) values (1)"
+                      Tx.sql (ByteString.pack ("select pg_sleep(" <> show seconds <> ")"))
+                context.send (WrkCustom "hold-start" (object ["sleepMs" .= sleepMs]))
+                result <- runStoreIO store (runTransactionAppending (StreamName "tx-held") NoStream [event] continuation)
+                context.send (WrkCustom "hold-done" (object ["result" .= show result]))
+                loop
+            Just (CtlStop _) -> pure ()
+            Just _ -> loop
+            Nothing -> pure ()
+    loop
 
 data SubscriberArgs = SubscriberArgs
   { name :: Text,
