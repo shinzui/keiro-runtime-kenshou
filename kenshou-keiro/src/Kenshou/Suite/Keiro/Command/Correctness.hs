@@ -17,6 +17,7 @@ import Hasql.Encoders qualified as Encoders
 import Hasql.Session qualified as Session
 import Hasql.Statement qualified as Statement
 import Hasql.Transaction qualified as Tx
+import Keiro.Codec (Codec (..))
 import Keiro.Command (CommandError (..), CommandResult (..), RunCommandOptions (..), SqlCommandOutcome (..), SqlTransactionDecision (..), defaultRunCommandOptions, runCommand, runCommandWithSqlEventsControlled)
 import Keiro.Projection (runCommandWithProjections)
 import Kenshou.Check.Verdict (InvariantClass (..), RunInfo (..), Verdict (..), VerdictStatus (..), writeVerdict)
@@ -417,7 +418,7 @@ runRoundtrip context =
   withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture -> do
     let KeiroRunner runFixture = fixture.runner
     _ <- runFixture ensureFixtureReadModels >>= either (fail . show) pure
-    let spec = Workload.defaultWorkloadSpec {Workload.accounts = 10, Workload.mix = Workload.OpMix 5 3 0 0}
+    let spec = Workload.defaultWorkloadSpec
         operations = take (fromIntegral (knobInt context.knobs (knobName "workload.operations"))) (Workload.workerOps (unSeed context.seed) spec 0 1)
         allOps = Workload.setupOps spec <> operations
         stream = accountEventStream (SnapEvery 10)
@@ -425,6 +426,7 @@ runRoundtrip context =
     acquired <- Connection.acquire (Settings.connectionString (requirePostgres context).connectionString <> Settings.applicationName "kenshou-keiro-oracle")
     connection <- either (fail . show) pure acquired
     rows <- Oracle.readCategoryLog connection "account"
+    bonusRows <- Oracle.readCategoryLog connection "bonus"
     balances <- Oracle.readBalanceTable connection
     Connection.release connection
     let logModel = Oracle.modelFromLog rows
@@ -438,11 +440,19 @@ runRoundtrip context =
                     == Just (fromIntegral account.balance, fromIntegral account.entries, Map.findWithDefault 0 accountId versions)
               )
               (Map.toList expectedAccounts)
+        moneyAccounting =
+          let events = [event | row <- rows, Right event <- [accountCodec.decode row.eventType row.payload]]
+              incoming = sum [d.openingBalance | AccountOpened d <- events] + sum [d.amount | Deposited d <- events] + sum [d.amount | BonusCredited d <- events]
+              outgoing = sum [d.amount | Withdrawn d <- events]
+              inFlight = sum [d.amount | TransferDebited d <- events] - sum [d.amount | TransferCredited d <- events]
+           in Model.totalMoney expected + inFlight == incoming - outgoing
+        expectedBonusCount = length [() | operation <- operations, case operation.action of Workload.ActBonus {} -> True; _ -> False]
         cells =
           [ ("log-is-well-formed", Oracle.logWellFormed rows),
             ("model-equals-log", logModel == Right expected && decisionsMatch),
             ("inline-read-model-equals-log", balanceMatches),
-            ("money-is-conserved", Model.totalMoney expected == sum [fromIntegral balance | (balance, _, _) <- Map.elems balances])
+            ("money-is-conserved", moneyAccounting),
+            ("bonus-declarations-durable", Oracle.logWellFormed bonusRows && length bonusRows == expectedBonusCount)
           ]
     recordCells context cells
   where
@@ -450,7 +460,9 @@ runRoundtrip context =
       foldM (submitLeg fixture stream) (model, allMatched) (Workload.opCommands (unSeed context.seed) op)
     submitLeg fixture stream (model, allMatched) (choice, identifier) =
       case choice of
-        Left _ -> pure (model, allMatched)
+        Left (_, bonusCommand) -> do
+          outcome <- submitBonusCommand fixture defaultRunCommandOptions identifier bonusCommand
+          pure (model, allMatched && case outcome of SubmitAppended {} -> True; _ -> False)
         Right (target, command) -> do
           let options = defaultRunCommandOptions {eventIds = [identifier]}
               KeiroRunner runFixture = fixture.runner

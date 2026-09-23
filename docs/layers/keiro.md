@@ -12,11 +12,13 @@ Run the first scenario from the repository root inside `nix develop`:
 cabal run kenshou -- run keiro/command/correctness/fixture-roundtrip --out runs
 ```
 
-The scenario opens ten accounts, submits seeded deposits and withdrawals
-through `runCommandWithProjections`, and reads the event log and inline
+The scenario opens 100 accounts, submits 500 seeded deposits, withdrawals,
+transfer legs, and bonus declarations through the command runners, and reads
+both event logs and the inline
 balance table using a separate Hasql connection. It emits four contract
 verdicts: `log-is-well-formed`, `model-equals-log`,
-`inline-read-model-equals-log`, and `money-is-conserved`. The
+`inline-read-model-equals-log`, and `money-is-conserved`, plus a bonus log
+verdict. The conservation check includes debited transfer value still in flight. The
 `workload.operations` knob defaults to 500.
 
 The fixture also defines a bonus event stream and a transfer process manager
