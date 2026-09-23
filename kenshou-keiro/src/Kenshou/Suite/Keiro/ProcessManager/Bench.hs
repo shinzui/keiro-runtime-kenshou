@@ -9,8 +9,10 @@ import Data.Vector qualified as Vector
 import GHC.Clock (getMonotonicTimeNSec)
 import Hasql.Connection qualified as Connection
 import Hasql.Connection.Settings qualified as Settings
-import Keiro.Command (CommandResult (..), defaultRunCommandOptions, runCommand)
+import Keiro.Command (CommandResult (..), RunCommandOptions (..), defaultRunCommandOptions, runCommand)
 import Keiro.ProcessManager (defaultWorkerOptions, runProcessManagerWorkerWith)
+import Keiro.ProcessManager qualified as ProcessManager
+import Keiro.Telemetry (newKeiroMetrics)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary, requirePostgres)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
@@ -31,6 +33,7 @@ import Kenshou.Suite.Keiro.Fixture.Model qualified as Model
 import Kenshou.Suite.Keiro.Fixture.Oracle qualified as Oracle
 import Kenshou.Suite.Keiro.Fixture.Runtime
 import Kenshou.Suite.Keiro.Fixture.Transfer
+import Kenshou.Telemetry (TelemetryHandles (..), telemetryKnobs, telemetrySpecFromContext, withTelemetry)
 import Kiroku.Store (defaultConnectionSettings)
 import Kiroku.Store.Read (readStreamForward)
 import Kiroku.Store.Types (RecordedEvent (..), StreamVersion (..))
@@ -48,15 +51,16 @@ dispatchLatency =
       tier = TierStandard,
       placement = PlaceEither,
       knobs =
-        loadKnobs (defaultLoadDefaults {workers = 2})
+        telemetryKnobs
+          <> loadKnobs (defaultLoadDefaults {workers = 2})
           <> measureKnobs Benchmark
           <> [ intKnob "pm.redelivery-percent" 25 0 100,
                intKnob "pm.duration-seconds" 120 1 3600
              ],
       dimensions =
         DimensionSupport
-          { tracing = Supported (Support (TracingOff :| []) TracingOff),
-            metrics = Supported (Support (MetricsOff :| []) MetricsOff),
+          { tracing = Supported (Support (TracingOff :| [TracingNoop, TracingSdkInMemory, TracingSdkOtlp]) TracingOff),
+            metrics = Supported (Support (MetricsOff :| [MetricsCollect, MetricsServe, MetricsServeScraped]) MetricsOff),
             pgDurability = Supported (Support (PgDurable :| []) PgDurable),
             pgVersion = Supported (Support (Pg18 :| []) Pg18)
           },
@@ -71,14 +75,21 @@ runDispatchLatency context =
   case (loadModelFromKnobs context.knobs, measureConfigFromKnobs context (phasePlanFromCore (PhasePlan 5 (fromIntegral (knobInt context.knobs (knobName "pm.duration-seconds"))) 5))) of
     (Left reason, _) -> pure (failedWith ["invalid-load-config"] reason)
     (_, Left reason) -> pure (failedWith ["invalid-measure-config"] reason)
-    (Right load, Right config) ->
+    (Right load, Right config) -> case telemetrySpecFromContext context of
+      Left reason -> pure (failedWith ["invalid-telemetry-config"] reason)
+      Right spec -> withTelemetry spec (runMeasured load config)
+  where
+    runMeasured load config telemetry =
       withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture -> do
         let KeiroRunner runFixture = fixture.runner
             accountEvents = accountEventStream SnapNever
             manager = transferManager accountEvents (const [])
             redeliveryPercent = fromIntegral (knobInt context.knobs (knobName "pm.redelivery-percent")) :: Int
-            submit account command = runFixture (runCommand defaultRunCommandOptions accountEvents (accountStream account) command)
             accepted = \case Right (Right result) -> result.eventsAppended == 1; _ -> False
+        keiroMetrics <- traverse newKeiroMetrics telemetry.meter
+        let commandOptions = defaultRunCommandOptions {tracer = telemetry.tracer, metrics = keiroMetrics}
+            workerOptions = defaultWorkerOptions {ProcessManager.metrics = keiroMetrics}
+            submit account command = runFixture (runCommand commandOptions accountEvents (accountStream account) command)
         nextId <- newIORef (0 :: Int)
         observations <- newIORef ([] :: [(Bool, Double, Double)])
         let operation _ _ = do
@@ -102,7 +113,7 @@ runDispatchLatency context =
                     acks <- newIORef []
                     let adapter = listAdapter "pm-benchmark" acks deliveries
                     started <- getMonotonicTimeNSec
-                    outcome <- runFixture (runProcessManagerWorkerWith defaultWorkerOptions defaultRunCommandOptions manager adapter decodeTransferSignal)
+                    outcome <- runFixture (runProcessManagerWorkerWith workerOptions commandOptions manager adapter decodeTransferSignal)
                     ended <- getMonotonicTimeNSec
                     completed <- getCurrentTime
                     acknowledgement <- readIORef acks

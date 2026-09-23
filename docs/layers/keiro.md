@@ -121,5 +121,5 @@ percentage is delivered a second time. The run records handling time and
 source append to worker completion time, then checks that each destination
 was credited once and each saga appended one event. Its summary separates
 fresh-only and redelivery handling times. A 15-second local two-worker run
-passed with 1,181 steady samples; the Kiroku adapter and telemetry arms remain
-to be exercised.
+passed with 1,181 steady samples, and another passed with in-memory traces
+and collected metrics. The Kiroku adapter arm remains to be exercised.
