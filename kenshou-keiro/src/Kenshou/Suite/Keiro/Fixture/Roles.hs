@@ -57,7 +57,8 @@ data WriterArgs = WriterArgs
     count :: !Int,
     accounts :: !Int,
     clientRetryBudget :: !Int,
-    parkAfterIndex :: !(Maybe Int)
+    parkAfterIndex :: !(Maybe Int),
+    inlineProjectionSleep :: !Bool
   }
 
 parseWriterArgs :: Value -> Parser WriterArgs
@@ -70,6 +71,7 @@ parseWriterArgs = withObject "keiro command writer" \value ->
     <*> value .:? "accounts" .!= 100
     <*> value .:? "clientRetryBudget" .!= 5
     <*> value .:? "parkAfterIndex"
+    <*> value .:? "inlineProjectionSleep" .!= False
 
 commandWriter :: RoleContext -> IO ()
 commandWriter context = case parseMaybe parseWriterArgs context.init.args of
@@ -88,7 +90,9 @@ commandWriter context = case parseMaybe parseWriterArgs context.init.args of
               outcomes <- forM (Workload.opCommands (unSeed context.init.seed) operation) \(choice, eventId) ->
                 case choice of
                   Left (_, bonusCommand) -> submitBonusCommand fixture defaultRunCommandOptions eventId bonusCommand
-                  Right (_, accountCommand) -> submitAccountCommand fixture eventStream RunnerPlain defaultRunCommandOptions args.clientRetryBudget eventId accountCommand
+                  Right (_, accountCommand) ->
+                    let runnerKind = if args.inlineProjectionSleep then RunnerWithProjections [accountBalanceProjection, parkingProjection] else RunnerPlain
+                     in submitAccountCommand fixture eventStream runnerKind defaultRunCommandOptions args.clientRetryBudget eventId accountCommand
               if any isFailure outcomes
                 then context.send (WrkError ("command writer operation failed at index " <> Text.pack (show operation.index)))
                 else do

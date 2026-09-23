@@ -57,3 +57,6 @@ projection worker crash after apply checks that redelivery is deduplicated;
 the `skip-dedup` arm fails. The stronger apply/checkpoint atomicity run
 reproduces the known defect at
 `mori://shinzui/keiro/okf/improvement-requests/concepts/IR-10`.
+The inline projection scenario interrupts an open command transaction with
+SIGKILL, backend termination, or a projection SQL error, then checks the
+account log and balance table together.

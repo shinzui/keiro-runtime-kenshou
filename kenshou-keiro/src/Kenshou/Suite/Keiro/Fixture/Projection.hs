@@ -2,6 +2,8 @@ module Kenshou.Suite.Keiro.Fixture.Projection
   ( fixtureSchema,
     ensureFixtureReadModels,
     accountBalanceProjection,
+    parkingProjection,
+    failingProjection,
     accountActivityProjection,
     accountActivityReadModelName,
     ProjectionSabotage (..),
@@ -126,6 +128,22 @@ accountBalanceProjection =
          in Tx.statement
               (object ["accountId" .= accountId, "delta" .= delta, "version" .= version, "position" .= position, "status" .= status])
               balanceStatement
+    }
+
+parkingProjection :: InlineProjection AccountEvent
+parkingProjection =
+  InlineProjection
+    { name = "kenshou-parking-projection",
+      apply = \event _ -> case event of
+        Deposited d | d.memo == "workload" || d.memo == "kenshou:park" -> Tx.sql "SELECT pg_sleep(30)"
+        _ -> pure ()
+    }
+
+failingProjection :: InlineProjection AccountEvent
+failingProjection =
+  InlineProjection
+    { name = "kenshou-failing-projection",
+      apply = \_ _ -> Tx.sql "SELECT 1/0"
     }
 
 balanceStatement :: Statement.Statement Value ()
