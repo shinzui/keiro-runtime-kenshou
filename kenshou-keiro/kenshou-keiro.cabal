@@ -55,6 +55,7 @@ library
     Kenshou.Suite.Keiro.Fixture.Workload
     Kenshou.Suite.Keiro.ProcessManager.Concurrency
     Kenshou.Suite.Keiro.ProcessManager.Correctness
+    Kenshou.Suite.Keiro.Router.Concurrency
     Kenshou.Suite.Keiro.Router.Correctness
 
   build-depends:

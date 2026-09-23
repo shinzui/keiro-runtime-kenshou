@@ -44,8 +44,9 @@ The `sigkill-crash-windows` scenario runs a separate process-manager worker,
 parks it at one of four append or acknowledgement boundaries, kills it, and
 checks the durable saga and target effects after a fresh worker resumes the
 same subscription. Select a boundary with `--set pm.kill-window=between-targets`.
-The router
-scenarios check fanout under redelivery and selection drift, independent
+The router's `sigkill-mid-fanout` scenario checks a partial durable fanout
+before killing the worker and exact recovery after restart. The router
+correctness scenarios check fanout under redelivery and selection drift, independent
 target commits with a durable dead letter, and the declarative selection
 policy matrix. The asynchronous projection scenario checks deduplication,
 rebuild fencing, and the documented effect of pruning deduplication rows.
