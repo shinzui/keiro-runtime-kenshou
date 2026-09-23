@@ -37,6 +37,7 @@ library
   hs-source-dirs: src
   exposed-modules:
     Kenshou.Suite.Kiroku
+    Kenshou.Suite.Kiroku.Bench.Append
     Kenshou.Suite.Kiroku.Concurrency.Append
     Kenshou.Suite.Kiroku.Concurrency.KnownDefects
     Kenshou.Suite.Kiroku.Correctness.Append
@@ -75,6 +76,7 @@ library
     http-types >=0.12 && <0.13,
     kenshou-check,
     kenshou-core,
+    kenshou-measure,
     kenshou-telemetry,
     kiroku-metrics ==0.1.0.8,
     kiroku-otel ==0.2.0.8,

@@ -36,6 +36,12 @@ The change-aware planner should map `kiroku/append/**` and the other store compo
 
 The shared SQL oracle reads the migrated `kiroku` tables through a separate pool query, pages the `$all` log by stream version, and reports gaps against its durable head. It also audits stream versions and reads the frozen checkpoint view, dead letters, partition slots and PostgreSQL deadlock counter. The append, dead-letter, consumer-group and process-race scenarios exercise those queries against the API observations.
 
+## Benchmarks
+
+`kiroku/append/benchmark/append-only` runs one stream per writer with `AnyVersion` and records append latency, event throughput, errors, raw samples, histograms and PostgreSQL time series. Its default phases are 30 seconds warm-up, 120 seconds steady and 15 seconds drain. Set `kiroku.append.writers` (1 to 128, default 32), `kiroku.append.batch-size` (1 to 100, default 1), `kiroku.append.payload-bytes` (64 to 65,536, default 256), and the shared `kiroku.pool-size`. The measurement toolkit accepts `load.model=closed|open-constant|open-poisson`, `load.rate-per-second` for open loop, and its `measure.*` sampling knobs. The scenario uses `kiroku.append.writers` for closed-loop workers; `load.workers` is declared by the shared toolkit but does not override that scenario knob.
+
+Every benchmark summary includes a `methodology` object. A local run is exploratory; on macOS `fsync` alone does not establish a drive-cache flush unless `wal_sync_method=fsync_writethrough`. The benchmark reads that PostgreSQL setting and records the reason when it is unsuitable. PostgreSQL checkpoints inside a steady window are visible in the measurement health report. Compare at least three paired and interleaved trials before quoting a difference; a single laptop trial is a smoke check, not a performance claim. The expected pool optimum of 8 to 13 connections and a throughput loss of at least 20 percent at 32 connections is a hypothesis for a controlled cell run, not an assertion in the benchmark.
+
 ## Concurrency coverage
 
 | Scenario | Contract checked |
