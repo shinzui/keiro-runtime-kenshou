@@ -104,3 +104,8 @@ or `every-100` and a selected `command.page-size`. Its timed close command
 is rejected after hydration, keeping the stream length fixed across samples.
 The final ledger check confirms that measurement added no events. Both policy
 arms passed local 15-second runs at length 100.
+`all-stream-append-ceiling` uses independent account streams, so its writers
+share the Kiroku global append position without account version conflicts.
+`kiroku.pool-size` and `command.writers` select a cell for a scaling sweep.
+Local one- and four-writer runs passed the ledger checks; their throughput
+is exploratory until paired cell trials cover the full matrix.

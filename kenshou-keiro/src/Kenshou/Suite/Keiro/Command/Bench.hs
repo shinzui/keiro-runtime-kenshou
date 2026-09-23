@@ -26,9 +26,25 @@ import Kenshou.Suite.Keiro.Fixture.Model qualified as Model
 import Kenshou.Suite.Keiro.Fixture.Oracle qualified as Oracle
 import Kenshou.Suite.Keiro.Fixture.Runtime
 import Kiroku.Store (defaultConnectionSettings)
+import Kiroku.Store.Connection (ConnectionSettingsM (..))
 
 scenarios :: [Scenario]
-scenarios = [throughputLatency, hydrationCost]
+scenarios = [throughputLatency, hydrationCost, allStreamAppendCeiling]
+
+allStreamAppendCeiling :: Scenario
+allStreamAppendCeiling =
+  throughputLatency
+    { id = either (error . show) id (parseScenarioId "keiro/command/benchmark/all-stream-append-ceiling"),
+      summary = "Measures independent account writers contending only on the global append position.",
+      knobs =
+        loadKnobs (defaultLoadDefaults {workers = 8})
+          <> measureKnobs Benchmark
+          <> [ intKnob "command.writers" 8 1 64,
+               intKnob "kiroku.pool-size" 13 1 64,
+               intKnob "command.duration-seconds" 120 1 3600
+             ],
+      run = runCommandBenchmark True
+    }
 
 hydrationCost :: Scenario
 hydrationCost =
@@ -105,16 +121,16 @@ throughputLatency =
       phases = PhasePlan 5 120 5,
       requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku, SchemaKeiro] [("shared_preload_libraries", "'pg_stat_statements'")] False)},
       knownDefect = Nothing,
-      run = runThroughputLatency
+      run = runCommandBenchmark False
     }
 
-runThroughputLatency :: RunContext -> IO ScenarioReport
-runThroughputLatency context =
+runCommandBenchmark :: Bool -> RunContext -> IO ScenarioReport
+runCommandBenchmark ceiling context =
   case (loadModelFromKnobs context.knobs, measureConfigFromKnobs context (phasePlanFromCore (PhasePlan 5 (fromIntegral (knobInt context.knobs (knobName "command.duration-seconds"))) 5))) of
     (Left reason, _) -> pure (failedWith ["invalid-load-config"] reason)
     (_, Left reason) -> pure (failedWith ["invalid-measure-config"] reason)
     (Right configuredLoad, Right config) ->
-      withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture -> do
+      withFixtureEnv ((defaultConnectionSettings (requirePostgres context).connectionString) {poolSize = if ceiling then fromIntegral (knobInt context.knobs (knobName "kiroku.pool-size")) else 10}) \fixture -> do
         let KeiroRunner runFixture = fixture.runner
             writers = fromIntegral (knobInt context.knobs (knobName "command.writers")) :: Int
             account worker = AccountId ("bench-" <> Text.pack (show worker))
@@ -141,7 +157,7 @@ runThroughputLatency context =
               Right model -> Model.totalMoney model == length rows - writers
               Left _ -> False
             checks = [("seeded-writers", seedOk), ("commands-completed", failures == 0 && completions > 0), ("durable-ledger", Oracle.logWellFormed rows && ledgerOk)]
-        putSummary context Measurements "command-throughput" (object ["writers" .= writers, "completed" .= completions, "failed" .= failures, "durableEvents" .= length rows])
+        putSummary context Measurements "command-throughput" (object ["writers" .= writers, "poolSize" .= (if ceiling then fromIntegral (knobInt context.knobs (knobName "kiroku.pool-size")) :: Int else 10), "completed" .= completions, "failed" .= failures, "durableEvents" .= length rows])
         base <- recordCells context checks
         pure (base {outcome = measuredOutcome report base.outcome})
 
