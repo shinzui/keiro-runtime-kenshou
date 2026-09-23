@@ -25,14 +25,17 @@ library
   exposed-modules:
     Kenshou.Suite.Shibuya
     Kenshou.Suite.Shibuya.Cohort
+    Kenshou.Suite.Shibuya.Concurrency.CoreRunner
     Kenshou.Suite.Shibuya.Correctness.CoreRunner
     Kenshou.Suite.Shibuya.Knobs
 
   build-depends:
+    aeson >=2.2 && <2.3,
     base >=4.21 && <4.22,
     effectful-core >=2.6 && <2.7,
     kenshou-core,
     shibuya-core,
+    stm >=2.5 && <2.6,
     streamly-core >=0.3 && <0.4,
     text >=2.1 && <2.2,
 

@@ -40,16 +40,16 @@ Milestone 1 — shibuya core lifecycle, ordering, batching and metrics-truthfuln
 - [x] (2026-09-23 13:38Z) Verify the hard dependencies are complete (kernel, measurement, correctness, diagnostics, telemetry) with the checks in Concrete Steps, and read their finished plans for exact signatures. `nix develop -c cabal build all`, the self-test list, `kill-and-restart-worker`, and `leaking-worker` all passed.
 - [x] (2026-09-23 13:42Z) Create `kenshou-shibuya/kenshou-shibuya.cabal` with the library and the `kenshou-shibuya-test` suite; `nix develop -c cabal build kenshou-shibuya kenshou` succeeds on the released cohort.
 - [x] (2026-09-23 13:42Z) Implement the `Kenshou.Suite.Shibuya.Cohort` capability probe and review references; linked-core unit checks pass on the released cohort.
-- [ ] Cross-check the capability probe against the resolved head cohort and run the unit checks there.
+- [x] (2026-09-23 13:48Z) Cross-check the capability probe against the resolved head cohort and run the unit checks there; the pinned head build and four package tests pass.
 - [ ] Finish `Kenshou.Suite.Shibuya.Knobs`: common specifications and three parsers exist with example tests; partition/decision parsers and property tests remain.
 - [ ] Implement `Kenshou.Suite.Shibuya.Matrix` (13 boundaries × 5 cases, cell tags, coverage test).
 - [ ] Implement `Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter`, `.Handlers`, `.App`, `.RestartLoop` with unit tests (lease expiry, redelivery, scripted finalizer and shutdown faults).
-- [ ] Implement the `core-runner` scenarios (fifteen) and the `shibuya-core-worker` and `shibuya-gc-probe` worker roles. Two registration/configuration scenarios exist; the other thirteen and both roles remain.
+- [ ] Implement the `core-runner` scenarios (fifteen) and the `shibuya-core-worker` and `shibuya-gc-probe` worker roles. Three scenarios exist: invalid configuration, duplicate processor IDs, and idle-intake halt. The other twelve and both roles remain.
 - [ ] Implement the `core-ordering` scenarios (four).
 - [ ] Implement the `core-batch` correctness and concurrency scenarios (two).
 - [ ] Implement the `metrics` scenarios (eight) including the free-port allocation for `startMetricsServer`.
 - [x] (2026-09-23 13:42Z) Register the initial `bundle` in `kenshou-cli`; `kenshou list --layer shibuya` displays the two implemented scenarios.
-- [ ] Expand the registered bundle to all twenty-nine Milestone 1 scenarios and their roles.
+- [ ] Expand the registered bundle to all twenty-nine Milestone 1 scenarios and their roles; three are registered now.
 - [ ] Run every Milestone 1 scenario on the released cohort and on the head cohort; record the observed outcome of each cohort-sensitive scenario in Surprises & Discoveries.
 
 Milestone 2 — PGMQ adapter scenarios.
@@ -84,6 +84,7 @@ Milestone 4 — shibuya benchmarks, soak and telemetry arms.
 - The host shell does not contain `ghc-9.12.4`; all Cabal commands in this implementation need `nix develop -c`. The full build and both prerequisite worker self-tests passed inside that shell on 2026-09-23.
 - The local upstream shibuya checkout now declares `shibuya-core` 0.10.0.0, while both checked-in cohorts still pin 0.9.0.3; the PGMQ and kiroku adapter checkouts similarly declare 0.16.1.0 and 0.5.1.3 versus cohort pins 0.16.0.0 and 0.5.1.2. The implementation targets the checked-in cohort contract and must test both pins explicitly. The plan's claim that the upstream head has the same package version was true of its pinned head commit, not the checkout's current tip.
 - The released-core duplicate-ID scenario reproduced REV-3-F2: `runApp` accepted duplicate IDs and pulled a source. The run result `runs/01a0ce7f-e937-746a-a328-322fbf03641b/run-result.json` records `knownDefect.status = reproduced` and `blocking = false`. The invalid-configuration scenario passed on the same cohort.
+- The first idle-intake halt probe returned promptly in `async:4` on both cohorts despite the released-core REV-4-F1 finding. It confirmed the source reached its idle wait, but the handler returned at nearly the same instant. Holding the handler for 100 ms after intake became idle allowed the concurrent reader to block: released run `runs/01a0ce88-b274-730f-96fb-4f1885a978a1/run-result.json` has `waitAppCompleted=false`, `idleSourceReached=true`, `finalized=1`, `cleanupCompleted=true`, `knownDefect.status=reproduced`, `blocking=false`; pinned head run `runs/01a0ce89-5800-7116-b189-6ce02ca8bcb3/run-result.json` passes with no known-defect annotation. The extra wait is a fixture scheduling gate, not part of the measured wait deadline.
 
 
 ## Decision Log
@@ -126,6 +127,10 @@ Milestone 4 — shibuya benchmarks, soak and telemetry arms.
 
 - Decision: Use `shibuya/core-runner/correctness/invalid-config-rejected-before-effects` as the invalid-configuration scenario identifier.
   Rationale: The originally drafted name's final segment has 51 characters, while `Kenshou.Core.Id.mkSegment` enforces a 48-character limit. Shortening this one name preserves the kernel's established identifier contract.
+  Date: 2026-09-23
+
+- Decision: The `halt-wakes-idle-intake` handler waits until the adapter has entered its idle source pull, then allows 100 ms for the concurrent reader to block before returning `AckHalt`. The serial arm skips this gate because it cannot pull the next item while its single handler runs.
+  Rationale: An immediate halt completed on both cohorts and did not force the interleaving that REV-4-F1 describes. With this gate, the released core times out and the pinned head completes; the verdict records source-idle reach, finalization, wait completion, and cleanup independently.
   Date: 2026-09-23
 
 
@@ -566,3 +571,5 @@ Scenario modules follow the kind subtrees: `Kenshou.Suite.Shibuya.Correctness.{C
 What other plans take from this one. Nothing is imported by another layer package. `docs/plans/3-plan-and-select-runs-from-what-changed.md` maps the components `shibuya-core` to the selectors `shibuya/core-runner/**`, `shibuya/core-ordering/**` and `shibuya/core-batch/**`, `shibuya-metrics` to `shibuya/metrics/**`, `shibuya-pgmq-adapter` to `shibuya/pgmq-adapter/**` and `shibuya-kiroku-adapter` to `shibuya/kiroku-adapter/**`, so these component names are a contract. `docs/plans/11-cover-the-kafka-transport-edge-with-a-disposable-broker.md` covers the fourteenth boundary, `kafka-persistence`, with the same case vocabulary and may copy the capability-probe pattern for the `hw-kafka-client` fork. `docs/plans/13-cover-the-keiro-outbox-inbox-and-job-queue.md` should read the leased-bound and crash-budget findings, because `keiro-pgmq` is the one keiro component that calls `runApp`. `docs/plans/15-verify-the-assembled-runtime-end-to-end-and-under-soak.md`, whose package may depend on layer packages, may import `Kenshou.Suite.Shibuya.Fixture.RestartLoop`; keep that module's interface stable.
 
 Revision note (2026-09-23): Implementation started after verifying the prerequisite harness. The invalid-configuration scenario identifier was shortened to fit the kernel's 48-character segment limit; Progress and Surprises now record the initial compiled package, two registered scenarios and their released-cohort evidence. All unfinished acceptance criteria remain open.
+
+Revision note (2026-09-23): Added the bounded idle-intake halt scenario and recorded a reproducible released-versus-head result. The fixture now forces the audited concurrent interleaving before timing `waitApp`; both cohort outcomes and cleanup evidence are in Surprises & Discoveries.
