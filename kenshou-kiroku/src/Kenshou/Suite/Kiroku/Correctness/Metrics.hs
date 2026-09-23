@@ -22,6 +22,7 @@ import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario
 import Kenshou.Suite.Kiroku.Correctness.Append (recordCells)
 import Kenshou.Suite.Kiroku.Fixture.Store (withKirokuStoreWithTap)
+import Kenshou.Suite.Kiroku.Fixture.Telemetry (composeEventHandler)
 import Kenshou.Suite.Kiroku.Knobs (storeKnobs)
 import Kenshou.Telemetry (TelemetryHandles (..), TelemetrySpec (..), telemetryKnobs, telemetrySpecFromContext, withTelemetry)
 import Kenshou.Telemetry.Endpoint (Endpoint (..), EndpointKind (..))
@@ -67,7 +68,8 @@ runWithMetrics :: RunContext -> (Endpoint -> IO ()) -> IO ScenarioReport
 runWithMetrics context registerEndpoint = do
   storeVar <- newTVarIO Nothing
   metrics <- newKirokuMetricsWith (readTVar storeVar >>= maybe (pure (GlobalPosition 0)) (publisherPosition . (.publisher))) (pure 0)
-  withKirokuStoreWithTap context (Just (metricsEventHandler metrics Nothing)) \store -> do
+  eventHandler <- composeEventHandler (Just metrics) Nothing Nothing
+  withKirokuStoreWithTap context eventHandler \store -> do
     atomically (writeTVar storeVar (Just store))
     gate <- newEmptyMVar
     slowDeliveries <- newIORef (0 :: Int)

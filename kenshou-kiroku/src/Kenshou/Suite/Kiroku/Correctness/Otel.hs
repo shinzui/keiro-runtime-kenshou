@@ -14,11 +14,12 @@ import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario
 import Kenshou.Suite.Kiroku.Correctness.Append (recordCells)
 import Kenshou.Suite.Kiroku.Fixture.Store (withKirokuStoreWithCallbacks)
+import Kenshou.Suite.Kiroku.Fixture.Telemetry (composeEventHandler)
 import Kenshou.Suite.Kiroku.Knobs (storeKnobs)
 import Kenshou.Telemetry (TelemetryHandles (..), telemetryKnobs, telemetrySpecFromContext, withTelemetry)
 import Kenshou.Telemetry.Tracing.Probe (SpanView (..), readSpans)
-import Kiroku.Metrics (LifecycleCounters (..), MetricsSnapshot (..), metricsEventHandler, newKirokuMetricsWith, snapshotMetrics)
-import Kiroku.Otel.Subscription (attrBatchRows, spanCatchup, spanDeliver, spanRetrying, subscriptionTraceHandler)
+import Kiroku.Metrics (LifecycleCounters (..), MetricsSnapshot (..), newKirokuMetricsWith, snapshotMetrics)
+import Kiroku.Otel.Subscription (attrBatchRows, spanCatchup, spanDeliver, spanRetrying)
 import Kiroku.Otel.TraceContext (extractTraceContext, injectTraceContext)
 import Kiroku.Store hiding (id, withKirokuStore)
 import OpenTelemetry.Attributes (lookupAttribute)
@@ -55,15 +56,14 @@ runOtel context = case telemetrySpecFromContext context of
   Left problem -> pure (failedWith ["invalid-telemetry-configuration"] problem)
   Right spec -> withTelemetry spec \telemetry -> case (telemetry.tracer, telemetry.spans) of
     (Just tracer, Just probe) -> do
-      traceHandler <- subscriptionTraceHandler tracer
       metrics <- newKirokuMetricsWith (pure (GlobalPosition 3)) (pure 0)
       producerContext <- newIORef Nothing
       let metricsOn = context.dimensions.metrics == Just MetricsCollect
-          eventHandler = if metricsOn then metricsEventHandler metrics (Just traceHandler) else traceHandler
           enricher event = do
             current <- readIORef producerContext
             pure (maybe event (`injectTraceContext` event) current)
-      withKirokuStoreWithCallbacks context (Just eventHandler) (Just enricher) \store -> do
+      eventHandler <- composeEventHandler (if metricsOn then Just metrics else Nothing) (Just tracer) Nothing
+      withKirokuStoreWithCallbacks context eventHandler (Just enricher) \store -> do
         let name = SubscriptionName "otel-spans"
             stream = StreamName "otel-events"
             event = EventData Nothing (EventType "Traced") (object ["index" .= (1 :: Int)]) (Just (object ["source" .= ("producer" :: String)])) Nothing Nothing

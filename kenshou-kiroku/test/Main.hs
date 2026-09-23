@@ -2,9 +2,11 @@ module Main (main) where
 
 import Data.List (nub)
 import Kenshou.Core.Bundle (LayerBundle (..), mkRegistry)
+import Kenshou.Core.Dimension (MetricsArm (..), TracingArm (..))
 import Kenshou.Core.Id (Kind (..), Layer (..), ScenarioId (..), renderScenarioId)
 import Kenshou.Core.Scenario (Scenario (..))
 import Kenshou.Suite.Kiroku (bundle)
+import Kenshou.Suite.Kiroku.Fixture.Telemetry (HandlerArm (..), handlerArm)
 import Kenshou.Suite.Kiroku.Knobs (storeKnobs)
 import Test.Hspec
 
@@ -13,6 +15,12 @@ main = hspec do
   describe "kiroku knobs" do
     it "declares the four store knobs" do
       length storeKnobs `shouldBe` 4
+  describe "event handler composition" do
+    it "selects the four metric and tracing arms" do
+      handlerArm TracingOff MetricsOff `shouldBe` HandlerNone
+      handlerArm TracingOff MetricsCollect `shouldBe` HandlerMetrics
+      handlerArm TracingSdkInMemory MetricsOff `shouldBe` HandlerTrace
+      handlerArm TracingSdkInMemory MetricsCollect `shouldBe` HandlerMetricsAndTrace
   describe "kiroku bundle" do
     it "registers unique kiroku scenarios" do
       let scenarios = bundle.scenarios
