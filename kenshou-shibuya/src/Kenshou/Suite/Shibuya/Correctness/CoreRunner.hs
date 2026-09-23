@@ -15,7 +15,8 @@ import Kenshou.Core.Scenario (KnownDefect (..), Placement (..), Scenario (..), T
 import Kenshou.Suite.Shibuya.Cohort (knownOnReleasedCore, rev)
 import Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter (BrokerStats (..), brokerStats, closeInput, defaultSyntheticConfig, newSyntheticBroker, publish, syntheticAdapter)
 import Shibuya.Adapter (Adapter (..))
-import Shibuya.App (AppConfig (..), QueueProcessor (..), defaultAppConfig, mkProcessor, runApp, stopApp, waitApp)
+import Shibuya.App (AppConfig (..), QueueProcessor (..), defaultAppConfig, mkBatchProcessor, mkProcessor, runApp, stopApp, waitApp)
+import Shibuya.Batch (BatchConfig (..), BatchHandler, ackAll, defaultBatchConfig)
 import Shibuya.Core.Ack (AckDecision (..))
 import Shibuya.Core.AckHandle (AckHandle (..))
 import Shibuya.Core.Ingested (mkIngested)
@@ -75,14 +76,22 @@ invalidConfiguration = do
     (defaultAppConfig {inboxSize = 0}, [(ProcessorId "invalid-inbox", mkProcessor adapter alwaysAckOk)])
   strictAsync <- checkRejected "strict-async" $ \adapter ->
     (defaultAppConfig, [(ProcessorId "invalid-policy", (mkProcessor adapter alwaysAckOk) {ordering = StrictInOrder, concurrency = Async 2})])
-  pure (inbox <> strictAsync)
+  partitionedBatch <- checkRejected "partitioned-batch" $ \adapter ->
+    (defaultAppConfig, [(ProcessorId "invalid-batch-policy", (mkBatchProcessor adapter alwaysBatchAck defaultBatchConfig) {ordering = PartitionedInOrder, concurrency = Ahead 2})])
+  batchSize <- checkRejected "batch-size-zero" $ \adapter ->
+    (defaultAppConfig, [(ProcessorId "invalid-batch-size", mkBatchProcessor adapter alwaysBatchAck defaultBatchConfig {batchSize = 0})])
+  batchTimeout <- checkRejected "batch-timeout-zero" $ \adapter ->
+    (defaultAppConfig, [(ProcessorId "invalid-batch-timeout", mkBatchProcessor adapter alwaysBatchAck defaultBatchConfig {batchTimeout = 0})])
+  batchTick <- checkRejected "batch-tick-zero" $ \adapter ->
+    (defaultAppConfig, [(ProcessorId "invalid-batch-tick", mkBatchProcessor adapter alwaysBatchAck defaultBatchConfig {tickInterval = Just 0})])
+  pure (inbox <> strictAsync <> partitionedBatch <> batchSize <> batchTimeout <> batchTick)
 
 duplicateProcessorIds :: IO [Text]
 duplicateProcessorIds =
   checkRejected "duplicate-processor-id" $ \adapter ->
     ( defaultAppConfig,
       [ (ProcessorId "duplicate", mkProcessor adapter alwaysAckOk),
-        (ProcessorId "duplicate", mkProcessor adapter alwaysAckOk)
+        (ProcessorId "duplicate", mkBatchProcessor adapter alwaysBatchAck defaultBatchConfig)
       ]
     )
 
@@ -171,3 +180,6 @@ checkRejected label configure = do
 
 alwaysAckOk :: Handler es Text
 alwaysAckOk _ = pure AckOk
+
+alwaysBatchAck :: BatchHandler es Text
+alwaysBatchAck _ _ = pure (ackAll AckOk)
