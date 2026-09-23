@@ -2,7 +2,8 @@ module Kenshou.Suite.Kiroku.Correctness.Subscription (scenarios) where
 
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
-import Control.Exception (finally, fromException)
+import Control.Concurrent.STM (atomically, putTMVar)
+import Control.Exception (SomeException, finally, fromException, try)
 import Control.Monad (forM, unless)
 import Data.Aeson (object, (.=))
 import Data.IORef (atomicModifyIORef', modifyIORef', newIORef, readIORef)
@@ -24,6 +25,8 @@ import Kenshou.Suite.Kiroku.Correctness.Append (recordCells)
 import Kenshou.Suite.Kiroku.Fixture.Store (withKirokuStore, withKirokuStoreWithTap)
 import Kenshou.Suite.Kiroku.Knobs (storeKnobs)
 import Kiroku.Store hiding (id, withKirokuStore)
+import Kiroku.Store.Subscription.Stream (AckItem (..), subscriptionAckStream, subscriptionStream)
+import Streamly.Data.Stream qualified as Stream
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
@@ -202,7 +205,48 @@ runHandoff context = withKirokuStore context \store -> do
           ("no-duplicates-inside-incarnation", all (\rows -> Set.size (Set.fromList rows) == length rows) deliveries),
           ("graceful-restart-duplicate-budget", duplicates <= duplicateBudget)
         ]
-  recordCells context "catchup-live-handoff" ["no-duplicates-inside-incarnation", "graceful-restart-duplicate-budget"] cells
+  plainBridge <- runBridge store False "handoff-streamly-plain" globalRows
+  ackBridge <- runBridge store True "handoff-streamly-ack" =<< readGlobal
+  recordCells context "catchup-live-handoff" ["no-duplicates-inside-incarnation", "graceful-restart-duplicate-budget"] (cells <> [("streamly-plain-catchup-live", plainBridge), ("streamly-ack-catchup-live", ackBridge)])
+  where
+    runBridge store ack bridgeName before = do
+      let name = SubscriptionName bridgeName
+          stream = StreamName "handoff-events"
+          event = EventData Nothing (EventType "Handoff") (object []) Nothing Nothing Nothing
+          target = if knobText context.knobs (either (error . show) id (mkKnobName "kiroku.subscription.target")) == "category" then Category (CategoryName "handoff") else AllStreams
+          config = defaultSubscriptionConfig name target (\_ -> pure Continue)
+          expected = fmap (.globalPosition) before
+          total = length expected
+          awaitCount ref = timeout 30000000 loop
+            where
+              loop = do
+                count <- readIORef ref
+                if count >= total then pure True else threadDelay 10000 >> loop
+      (bridge, cancelBridge) <-
+        if ack
+          then do
+            (items, cancelAction) <- subscriptionAckStream store config 256
+            pure (Stream.mapM (\item -> atomically (putTMVar item.ackReply Continue) >> pure item.ackEvent) items, cancelAction)
+          else subscriptionStream store config 256
+      countRef <- newIORef (0 :: Int)
+      done <- newEmptyMVar
+      _ <- forkIO do
+        outcome <- try @SomeException (Stream.toList (Stream.take (total + 1) (Stream.mapM (\row -> atomicModifyIORef' countRef (\count -> (count + 1, ())) >> pure row) bridge)))
+        putMVar done outcome
+      result <-
+        ( do
+            caughtUp <- awaitCount countRef
+            appended <- if caughtUp == Just True then fmap Just (runStoreIO store (appendToStream stream AnyVersion [event])) else pure Nothing
+            observed <- timeout 30000000 (takeMVar done)
+            pure (caughtUp, appended, observed)
+        )
+          `finally` cancelBridge
+      let (caughtUp, appended, observed) = result
+          actual = case observed of Just (Right rows) -> fmap (.globalPosition) rows; _ -> []
+      pure $
+        caughtUp == Just True
+          && (case appended of Just (Right _) -> True; _ -> False)
+          && actual == expected <> [GlobalPosition (fromIntegral (total + 1))]
 
 filtersAdvanceCheckpoint :: Scenario
 filtersAdvanceCheckpoint =
