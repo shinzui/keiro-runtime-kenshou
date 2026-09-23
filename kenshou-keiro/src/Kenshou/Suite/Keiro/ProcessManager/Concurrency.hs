@@ -79,13 +79,19 @@ runCrashWindow context =
           source = AccountId "crash-source"
           destination = AccountId "crash-destination"
           transfer = TransferId "crash-transfer"
+          neighbourSource = AccountId "neighbour-source"
+          neighbourDestination = AccountId "neighbour-destination"
+          neighbourTransfer = TransferId "neighbour-transfer"
           submit account command = runFixture (runCommand defaultRunCommandOptions accountEvents (accountStream account) command)
           accepted = \case Right (Right result) -> result.eventsAppended == 1; _ -> False
       seeded <-
         sequence
           [ submit source (OpenAccount (OpenAccountData source 10)),
             submit destination (OpenAccount (OpenAccountData destination 0)),
-            submit source (DebitTransfer (DebitTransferData source transfer destination 2 4102444800))
+            submit source (DebitTransfer (DebitTransferData source transfer destination 2 4102444800)),
+            submit neighbourSource (OpenAccount (OpenAccountData neighbourSource 10)),
+            submit neighbourDestination (OpenAccount (OpenAccountData neighbourDestination 0)),
+            submit neighbourSource (DebitTransfer (DebitTransferData neighbourSource neighbourTransfer neighbourDestination 3 4102444800))
           ]
       armedSpec <- roleProcess check "keiro/pm-worker" 0 (object ["subscription" .= subscription, "parkBeforeAppend" .= parkAppend, "parkBeforeAck" .= parkAck])
       armed <- spawn supervisor armedSpec
@@ -118,7 +124,8 @@ runCrashWindow context =
             [ ("source-setup", all accepted seeded),
               ("parked-at-window", Map.member "parked" parked.marks && observedBefore == expectedBefore),
               ("killed-and-restarted", childPid armed /= childPid resumed && completed == Just True),
-              ("exactly-once-target-effects", length sagaRows == 1 && count "TransferCredited" accountRows == 1 && count "TransferConfirmed" accountRows == 1),
+              ("exactly-once-target-effects", length sagaRows == 2 && count "TransferCredited" accountRows == 2 && count "TransferConfirmed" accountRows == 2),
+              ("neighbour-completed", length [() | row <- accountRows, row.streamName == accountStreamName neighbourDestination, row.eventType == EventType "TransferCredited"] == 1),
               ("log-is-well-formed", Oracle.logWellFormed accountRows && Oracle.logWellFormed sagaRows)
             ]
       recordCells context cells
@@ -126,6 +133,6 @@ runCrashWindow context =
     awaitEffects connection = do
       sagaRows <- Oracle.readCategoryLog connection "pm:transferSaga"
       accountRows <- Oracle.readCategoryLog connection "account"
-      if length sagaRows == 1 && length [() | row <- accountRows, row.eventType == EventType "TransferCredited"] == 1 && length [() | row <- accountRows, row.eventType == EventType "TransferConfirmed"] == 1
+      if length sagaRows == 2 && length [() | row <- accountRows, row.eventType == EventType "TransferCredited"] == 2 && length [() | row <- accountRows, row.eventType == EventType "TransferConfirmed"] == 2
         then pure True
         else threadDelay 100000 >> awaitEffects connection
