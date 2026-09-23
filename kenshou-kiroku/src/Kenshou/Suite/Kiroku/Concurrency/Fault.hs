@@ -23,6 +23,7 @@ import Hasql.Decoders qualified as Decoders
 import Hasql.Encoders qualified as Encoders
 import Hasql.Session qualified as Session
 import Hasql.Statement qualified as Statement
+import Kenshou.Check.Fault.Network (ProxyMode (..), proxiedConnectionString, resetConnections, setProxyMode, withTcpProxy)
 import Kenshou.Check.Process (ProgressSnapshot (..), awaitReady, progress, roleProcess, sendCommand, spawn, withSupervisor)
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Core.Context (Environment (..), RunContext (..), SummarySection (..), putSummary, requirePostgres)
@@ -30,6 +31,7 @@ import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..), ServerControl (..), StopMode (..))
 import Kenshou.Core.Id (parseScenarioId)
+import Kenshou.Core.Knob (KnobSpec (..), KnobValue (..), knobBool, mkKnobName)
 import Kenshou.Core.Phase (PhasePlan (..), zeroPhases)
 import Kenshou.Core.Role (ControlMessage (..))
 import Kenshou.Core.Scenario
@@ -42,7 +44,7 @@ import Kiroku.Store hiding (id, withKirokuStore)
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [postgresRestart, listenKillAndNotifyLoss]
+scenarios = [postgresRestart, listenKillAndNotifyLoss, networkPartition]
 
 postgresRestart :: Scenario
 postgresRestart =
@@ -243,6 +245,108 @@ runListenKill context = do
           ]
     putSummary context Measurements "listen-kill-and-notify-loss" (object ["kills" .= kills, "reconnectingEvents" .= reconnectingCount, "reconnectedEvents" .= reconnectCount, "events" .= length positions, "phaseBEvents" .= length phaseB, "maxSafetyPollDelaySeconds" .= map (maximum . (0 :) . phaseBDelays) deliveredRows, "afterReconnectDeliverySeconds" .= map reconnectDelays deliveredRows, "delivered" .= map length deliveredRows, "checkpointSamples" .= checkpoints, "disabledAt" .= disabledAt, "enabledAt" .= enabledAt, "disabledTriggers" .= disabledTriggers, "enabledTriggers" .= enabledTriggers])
     recordCells context "listen-kill-and-notify-loss" [] cells
+
+networkPartition :: Scenario
+networkPartition =
+  postgresRestart
+    { id = either (error . show) id (parseScenarioId "kiroku/subscription/concurrency/network-partition"),
+      summary = "Resets, blackholes, and delays proxied subscription connections while direct appends continue.",
+      placement = PlaceLocal,
+      knobs = [if spec.name == keepaliveName then spec {def = VBool True} else spec | spec <- storeKnobs],
+      knownDefect = Just (KnownDefect "mori://shinzui/kiroku/plans/82-repair-live-reconnect-and-validate-subscription-identity-and-batch-size" "Category reconnect can replay its old live cursor after a proxy reset" ["category-order-after-reconnect"] AllCohorts),
+      run = runNetworkPartition
+    }
+  where
+    keepaliveName = either (error . show) id (mkKnobName "kiroku.conn.keepalives")
+
+runNetworkPartition :: RunContext -> IO ScenarioReport
+runNetworkPartition context = case (requirePostgres context).tcpEndpoint of
+  Nothing -> pure (failedWith ["tcp-endpoint-unavailable"] "network-partition requires a PostgreSQL TCP endpoint")
+  Just (host, port) -> withTcpProxy (pure (Text.unpack host, fromIntegral port)) \proxy -> do
+    let postgres = requirePostgres context
+        keepalives = knobBool context.knobs (either (error . show) id (mkKnobName "kiroku.conn.keepalives"))
+        connection = proxiedConnectionString postgres proxy <> if keepalives then " keepalives=1 keepalives_idle=5 keepalives_interval=2 keepalives_count=3 tcp_user_timeout=10000" else ""
+        proxiedPostgres = postgres {connectionString = connection}
+        proxiedContext = context {env = context.env {postgres = Just proxiedPostgres}}
+    withKirokuStore context \store -> withCheck proxiedContext \check -> withSupervisor check \supervisor -> do
+      let names = ["network-all", "network-category", "network-group"] :: [Text]
+          args name = object (["name" .= name, "guard" .= False, "emitDeliveries" .= True, "target" .= (if name == "network-category" then "category" else "all" :: Text)] <> if name == "network-group" then ["member" .= (0 :: Int), "size" .= (1 :: Int)] else [])
+          entries child = do
+            state <- atomically (progress child)
+            let rows = [row | (key, payload) <- Map.toList state.marks, "delivery-" `Text.isPrefixOf` key, Just row <- [parseMaybe (withObject "delivery" (\value -> (,) <$> value .: "sequence" <*> value .: "position")) payload :: Maybe (Int, Int64)]]
+            pure [position | (_, position) <- sort rows]
+          awaitHead child target = do
+            rows <- entries child
+            if Set.fromList rows == Set.fromList [1 .. target] then pure rows else threadDelay 10000 >> awaitHead child target
+          appendRange first lastIndex = forM [first .. lastIndex] \index -> do
+            let event = EventData (Just (eventIdFor context.seed index 0)) (EventType "Partition") (object []) Nothing Nothing Nothing
+            runStoreIO store (appendToStream (StreamName "crash-network") AnyVersion [event])
+          checkpoint name rows = maximum (0 : [position | (rowName, member, position) <- rows, rowName == name, member == 0])
+          coverage children target = do
+            _ <- timeout 60000000 (traverse (\child -> awaitHead child target) children)
+            map Just <$> traverse entries children
+      children <- forM (zip [0 ..] names) \(index, name) -> do
+        spec <- roleProcess check "kiroku/subscriber" index (args name)
+        child <- spawn supervisor spec
+        awaitReady child 10000
+        sendCommand child CtlStart
+        pure child
+      initial <- Oracle.checkpoints store.pool
+      baselineWrites <- appendRange 0 99
+      baseline <- coverage children 100
+      resetCount <- resetConnections proxy
+      resetWrites <- appendRange 100 199
+      threadDelay 5000000
+      afterReset <- traverse entries children
+      resetObservedAt <- getCurrentTime
+      afterResetCheckpoints <- Oracle.checkpoints store.pool
+      setProxyMode proxy Blackhole
+      blackholeStarted <- getCurrentTime
+      partitionWrites <- appendRange 200 299
+      threadDelay 20000000
+      duringBlackhole <- traverse entries children
+      setProxyMode proxy Forward
+      blackholeResetCount <- resetConnections proxy
+      forwardAt <- getCurrentTime
+      afterPartition <- coverage children 300
+      partitionRecoveredAt <- getCurrentTime
+      setProxyMode proxy (Latency 50)
+      latencyStarted <- getCurrentTime
+      latencyWrites <- appendRange 300 319
+      afterLatency <- coverage children 320
+      latencyCompleted <- getCurrentTime
+      setProxyMode proxy Forward
+      _ <- timeout 30000000 (awaitCheckpointHead store names 320)
+      final <- Oracle.checkpoints store.pool
+      let written = baselineWrites <> resetWrites <> partitionWrites <> latencyWrites
+          delivered = [maybe [] id rows | rows <- afterLatency]
+          sampleRows = [initial, afterResetCheckpoints, final]
+          checkpoints = [[checkpoint name sample | sample <- sampleRows] | name <- names]
+          waitedAfterForwardSeconds = realToFrac (diffUTCTime partitionRecoveredAt forwardAt) :: Double
+          partitionCompleteAtDeadline = all (maybe False ((== 300) . Set.size . Set.fromList)) afterPartition
+          cells =
+            [ ("all-direct-appends-acknowledged", length written == 320 && all isRight written),
+              ("baseline-delivered", all (maybe False ((== 100) . Set.size . Set.fromList)) baseline),
+              ("reset-connections", resetCount > 0 && blackholeResetCount > 0),
+              ("blackhole-blocks-proxy", all (\rows -> maximum (0 : rows) <= 200) duringBlackhole),
+              ("keepalive-recovery-within-sixty-seconds", not keepalives || partitionCompleteAtDeadline),
+              ("all-three-paths-delivered", all (\rows -> Set.fromList rows == Set.fromList [1 .. 320]) delivered),
+              ("all-and-group-ordered", case delivered of [allRows, _, groupRows] -> allRows == sort allRows && groupRows == sort groupRows; _ -> False),
+              ("category-order-after-reconnect", case delivered of [_, categoryRows, _] -> categoryRows == sort categoryRows; _ -> False),
+              ("checkpoints-monotonic-to-head", all (\samples -> samples == sort samples && last samples == 320) checkpoints)
+            ]
+      putSummary context Measurements "network-partition" (object ["keepalives" .= keepalives, "resetConnections" .= resetCount, "blackholeResetConnections" .= blackholeResetCount, "resetDistinctAfterFiveSeconds" .= map (Set.size . Set.fromList) afterReset, "blackholeStarted" .= blackholeStarted, "forwardAt" .= forwardAt, "resetObservedAt" .= resetObservedAt, "distinctAtRecoveryDeadline" .= map (maybe 0 (Set.size . Set.fromList)) afterPartition, "waitedAfterForwardSeconds" .= waitedAfterForwardSeconds, "latencyStageSeconds" .= (realToFrac (diffUTCTime latencyCompleted latencyStarted) :: Double), "delivered" .= map length delivered, "checkpointSamples" .= checkpoints])
+      recordCells context "network-partition" [] cells
+
+awaitCheckpointHead :: KirokuStore -> [Text] -> Int64 -> IO ()
+awaitCheckpointHead store names target = do
+  rows <- Oracle.checkpoints store.pool
+  let current name = maximum (0 : [position | (rowName, member, position) <- rows, rowName == name, member == 0])
+  if all ((>= target) . current) names then pure () else threadDelay 10000 >> awaitCheckpointHead store names target
+
+isRight :: Either a b -> Bool
+isRight (Right _) = True
+isRight (Left _) = False
 
 killListenerBackends :: RunContext -> IO Int
 killListenerBackends context = withAdmin context \connection -> do
