@@ -41,8 +41,8 @@ Milestone 1 — shibuya core lifecycle, ordering, batching and metrics-truthfuln
 - [x] (2026-09-23 13:42Z) Create `kenshou-shibuya/kenshou-shibuya.cabal` with the library and the `kenshou-shibuya-test` suite; `nix develop -c cabal build kenshou-shibuya kenshou` succeeds on the released cohort.
 - [x] (2026-09-23 13:42Z) Implement the `Kenshou.Suite.Shibuya.Cohort` capability probe and review references; linked-core unit checks pass on the released cohort.
 - [x] (2026-09-23 13:48Z) Cross-check the capability probe against the resolved head cohort and run the unit checks there; the pinned head build and four package tests pass.
-- [ ] Finish `Kenshou.Suite.Shibuya.Knobs`: common specifications and three parsers exist with example tests; partition/decision parsers and property tests remain.
-- [ ] Implement `Kenshou.Suite.Shibuya.Matrix` (13 boundaries × 5 cases, cell tags, coverage test).
+- [x] (2026-09-23 13:56Z) Finish `Kenshou.Suite.Shibuya.Knobs`: common specifications and all five parsers are present, with example and generated round-trip tests.
+- [ ] Complete `Kenshou.Suite.Shibuya.Matrix`: thirteen boundaries and five cases enumerate sixty-five cells; the three registered scenarios have tested tags, while the remaining scenario tags, justified exclusions, and complete sixty-five-cell coverage assertion remain.
 - [ ] Implement `Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter`, `.Handlers`, `.App`, `.RestartLoop` with unit tests (lease expiry, redelivery, scripted finalizer and shutdown faults).
 - [ ] Implement the `core-runner` scenarios (fifteen) and the `shibuya-core-worker` and `shibuya-gc-probe` worker roles. Three scenarios exist: invalid configuration, duplicate processor IDs, and idle-intake halt. The other twelve and both roles remain.
 - [ ] Implement the `core-ordering` scenarios (four).
@@ -573,3 +573,5 @@ What other plans take from this one. Nothing is imported by another layer packag
 Revision note (2026-09-23): Implementation started after verifying the prerequisite harness. The invalid-configuration scenario identifier was shortened to fit the kernel's 48-character segment limit; Progress and Surprises now record the initial compiled package, two registered scenarios and their released-cohort evidence. All unfinished acceptance criteria remain open.
 
 Revision note (2026-09-23): Added the bounded idle-intake halt scenario and recorded a reproducible released-versus-head result. The fixture now forces the audited concurrent interleaving before timing `waitApp`; both cohort outcomes and cleanup evidence are in Surprises & Discoveries.
+
+Revision note (2026-09-23): Completed shared knob parsing and generated parser checks, and introduced the lifecycle matrix vocabulary with honest tags for the three executable scenarios. Full matrix accounting remains an open Milestone 1 requirement.

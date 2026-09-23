@@ -1,8 +1,14 @@
 module Kenshou.Suite.Shibuya.Knobs
   ( coreKnobs,
+    PartitionMode (..),
+    DecisionPattern (..),
     parseConcurrency,
     parseOrdering,
     parseStrategy,
+    parsePartitions,
+    parseDecisions,
+    renderPartitions,
+    renderDecisions,
   )
 where
 
@@ -11,6 +17,12 @@ import Data.Text qualified as Text
 import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), mkKnobName)
 import Shibuya.App (SupervisionStrategy (..))
 import Shibuya.Policy (Concurrency (..), OrderingPolicy (..))
+
+data PartitionMode = NoPartitions | UniformPartitions Int | HotKey Int | HighCardinality
+  deriving stock (Eq, Show)
+
+data DecisionPattern = AllOk | RetryEvery Int | DeadLetterEvery Int | ThrowEvery Int
+  deriving stock (Eq, Show)
 
 coreKnobs :: [KnobSpec]
 coreKnobs =
@@ -51,3 +63,36 @@ parseStrategy :: Text -> Either Text SupervisionStrategy
 parseStrategy "ignore-failures" = Right IgnoreFailures
 parseStrategy "stop-all-on-failure" = Right StopAllOnFailure
 parseStrategy _ = Left "expected ignore-failures or stop-all-on-failure"
+
+parsePartitions :: Text -> Either Text PartitionMode
+parsePartitions "none" = Right NoPartitions
+parsePartitions "high-cardinality" = Right HighCardinality
+parsePartitions value = case Text.splitOn ":" value of
+  ["uniform", count] -> UniformPartitions <$> positiveCount count
+  ["hot-key", count] -> HotKey <$> positiveCount count
+  _ -> Left "expected none, uniform:N, hot-key:N, or high-cardinality"
+
+parseDecisions :: Text -> Either Text DecisionPattern
+parseDecisions "all-ok" = Right AllOk
+parseDecisions value = case Text.splitOn ":" value of
+  ["retry-every", count] -> RetryEvery <$> positiveCount count
+  ["dead-letter-every", count] -> DeadLetterEvery <$> positiveCount count
+  ["throw-every", count] -> ThrowEvery <$> positiveCount count
+  _ -> Left "expected all-ok, retry-every:N, dead-letter-every:N, or throw-every:N"
+
+renderPartitions :: PartitionMode -> Text
+renderPartitions NoPartitions = "none"
+renderPartitions (UniformPartitions count) = "uniform:" <> Text.pack (show count)
+renderPartitions (HotKey count) = "hot-key:" <> Text.pack (show count)
+renderPartitions HighCardinality = "high-cardinality"
+
+renderDecisions :: DecisionPattern -> Text
+renderDecisions AllOk = "all-ok"
+renderDecisions (RetryEvery count) = "retry-every:" <> Text.pack (show count)
+renderDecisions (DeadLetterEvery count) = "dead-letter-every:" <> Text.pack (show count)
+renderDecisions (ThrowEvery count) = "throw-every:" <> Text.pack (show count)
+
+positiveCount :: Text -> Either Text Int
+positiveCount raw = case reads (Text.unpack raw) of
+  [(count, "")] | count > 0 -> Right count
+  _ -> Left "count must be a positive integer"

@@ -1,13 +1,31 @@
 module Main (main) where
 
 import Data.Either (isLeft)
+import Data.List (nub)
+import Data.Text qualified as Text
+import Hedgehog (forAll, (===))
+import Hedgehog.Gen qualified as Gen
+import Hedgehog.Range qualified as Range
+import Kenshou.Core.Bundle (LayerBundle (..))
+import Kenshou.Core.Scenario (Scenario (..))
+import Kenshou.Suite.Shibuya (bundle)
 import Kenshou.Suite.Shibuya.Cohort (CoreLine (..), coreLine, knownOnReleasedCore, rev)
-import Kenshou.Suite.Shibuya.Knobs (parseConcurrency, parseOrdering, parseStrategy)
+import Kenshou.Suite.Shibuya.Knobs (DecisionPattern (..), PartitionMode (..), parseConcurrency, parseDecisions, parseOrdering, parsePartitions, parseStrategy, renderDecisions, renderPartitions)
+import Kenshou.Suite.Shibuya.Matrix (allCells, cellsOf, uncovered)
 import Shibuya.Policy (Concurrency (..), OrderingPolicy (..), validatePolicy)
 import Test.Hspec
+import Test.Hspec.Hedgehog (hedgehog)
 
 main :: IO ()
 main = hspec $ do
+  describe "lifecycle matrix" $ do
+    it "enumerates thirteen distinct boundaries and five cases" $ do
+      length allCells `shouldBe` 65
+      length (nub allCells) `shouldBe` 65
+    it "tags each registered scenario with distinct in-scope cells" $
+      mapM_ checkScenario bundle.scenarios
+    it "does not mark an exercised cell as inapplicable" $
+      all (\(cell, _) -> cell `notElem` exercised) uncovered `shouldBe` True
   describe "cohort capability probe" $ do
     it "agrees with the linked shibuya-core policy" $
       case coreLine of
@@ -26,5 +44,33 @@ main = hspec $ do
       parseOrdering "unknown" `shouldSatisfy` isLeft
       parseStrategy "stop-all-on-failure" `shouldSatisfy` isRight
       parseStrategy "unknown" `shouldSatisfy` isLeft
+    it "round-trips every partition pattern over a representative count range" $
+      mapM_ (\mode -> parsePartitions (renderPartitions mode) `shouldBe` Right mode) $
+        [NoPartitions, HighCardinality] <> [UniformPartitions n | n <- [1 .. 100]] <> [HotKey n | n <- [1 .. 100]]
+    it "round-trips every decision pattern over a representative count range" $
+      mapM_ (\patternValue -> parseDecisions (renderDecisions patternValue) `shouldBe` Right patternValue) $
+        [AllOk] <> [RetryEvery n | n <- [1 .. 100]] <> [DeadLetterEvery n | n <- [1 .. 100]] <> [ThrowEvery n | n <- [1 .. 100]]
+    it "round-trips arbitrary positive pattern counts" $ hedgehog $ do
+      count <- forAll (Gen.int (Range.linear 1 1000000))
+      parsePartitions (renderPartitions (UniformPartitions count)) === Right (UniformPartitions count)
+      parsePartitions (renderPartitions (HotKey count)) === Right (HotKey count)
+      parseDecisions (renderDecisions (RetryEvery count)) === Right (RetryEvery count)
+      parseDecisions (renderDecisions (DeadLetterEvery count)) === Right (DeadLetterEvery count)
+      parseDecisions (renderDecisions (ThrowEvery count)) === Right (ThrowEvery count)
+    it "parses arbitrary signed concurrency bounds without normalizing them" $ hedgehog $ do
+      count <- forAll (Gen.int (Range.linear (-1000000) 1000000))
+      parseConcurrency ("ahead:" <> Text.pack (show count)) === Right (Ahead count)
+      parseConcurrency ("async:" <> Text.pack (show count)) === Right (Async count)
+    it "rejects zero and malformed pattern counts" $ do
+      parsePartitions "uniform:0" `shouldSatisfy` isLeft
+      parsePartitions "hot-key:nope" `shouldSatisfy` isLeft
+      parseDecisions "retry-every:-1" `shouldSatisfy` isLeft
+      parseDecisions "dead-letter-every:0" `shouldSatisfy` isLeft
   where
     isRight = not . isLeft
+    checkScenario scenario = do
+      let tags = cellsOf scenario.id
+      tags `shouldNotBe` []
+      length (nub tags) `shouldBe` length tags
+      all (`elem` allCells) tags `shouldBe` True
+    exercised = concatMap (cellsOf . (.id)) bundle.scenarios

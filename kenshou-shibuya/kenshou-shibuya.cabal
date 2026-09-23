@@ -28,6 +28,7 @@ library
     Kenshou.Suite.Shibuya.Concurrency.CoreRunner
     Kenshou.Suite.Shibuya.Correctness.CoreRunner
     Kenshou.Suite.Shibuya.Knobs
+    Kenshou.Suite.Shibuya.Matrix
 
   build-depends:
     aeson >=2.2 && <2.3,
@@ -47,7 +48,10 @@ test-suite kenshou-shibuya-test
   ghc-options: -threaded
   build-depends:
     base >=4.21 && <4.22,
+    hedgehog >=1.4 && <1.8,
     hspec >=2.11 && <2.12,
+    hspec-hedgehog >=0.0 && <0.4,
+    kenshou-core,
     kenshou-shibuya,
     shibuya-core,
     text >=2.1 && <2.2,
