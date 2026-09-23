@@ -77,6 +77,7 @@ library
     kenshou-check,
     kenshou-core,
     kenshou-measure,
+    kenshou-telemetry,
     kiroku-store,
     random,
     shibuya-core,

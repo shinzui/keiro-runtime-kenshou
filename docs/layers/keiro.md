@@ -109,3 +109,8 @@ share the Kiroku global append position without account version conflicts.
 `kiroku.pool-size` and `command.writers` select a cell for a scaling sweep.
 Local one- and four-writer runs passed the ledger checks; their throughput
 is exploratory until paired cell trials cover the full matrix.
+All three command benchmarks accept the four tracing and four metrics modes.
+The throughput benchmark passed local two-writer runs with telemetry off,
+in-memory collection, OTLP tracing with scraped metrics, and no-op tracing
+with served metrics. The in-memory run recorded command spans with no drops
+or export failures, and the scraped run completed an endpoint scrape.
