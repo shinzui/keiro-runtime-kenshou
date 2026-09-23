@@ -60,7 +60,7 @@ Milestone 2 — kiroku concurrency, crash and known-defect scenarios.
 
 Milestone 3 — kiroku benchmarks lifted from kiroku-bench.
 
-- [ ] `Kenshou.Suite.Kiroku.Bench.Append` has `append-only` and `hot-stream` with pool, batch, writer and payload knobs and measurement-toolkit output; paced short local runs passed with raw samples, histograms and PostgreSQL series. A saturated short laptop run was correctly marked `infrastructure-failure` by the driver CPU health gate at 0.91 utilization. `expected-version-conflict` remains.
+- [x] `Kenshou.Suite.Kiroku.Bench.Append` has `append-only`, `hot-stream` and `expected-version-conflict` with pool, batch, writer and payload knobs and measurement-toolkit output. Paced short local runs passed with raw samples, histograms and PostgreSQL series. The conflict run recorded 1,751 wins, 5,225 conflicts and final version 1,752, with separate histograms for winning appends, conflicts and rereads. A saturated short laptop run was correctly marked `infrastructure-failure` by the driver CPU health gate at 0.91 utilization. Full 120-second default runs and cell trials remain for benchmark acceptance.
 - [ ] `Kenshou.Suite.Kiroku.Bench.Ladder` (`layer-ladder`) with its harness-owned schema `kenshou_kiroku`.
 - [ ] `Kenshou.Suite.Kiroku.Bench.Read` (`read-targets`) with prepopulation.
 - [ ] `Kenshou.Suite.Kiroku.Bench.Subscription` (`append-to-handler-latency`, `catch-up`, `fan-out`) with cross-process wall-clock latency.

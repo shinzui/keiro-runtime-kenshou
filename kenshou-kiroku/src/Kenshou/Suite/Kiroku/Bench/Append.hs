@@ -1,9 +1,11 @@
 module Kenshou.Suite.Kiroku.Bench.Append (scenarios) where
 
 import Data.Aeson (object, (.=))
+import Data.IORef (atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text (Text)
 import Data.Text qualified as Text
+import GHC.Clock (getMonotonicTimeNSec)
 import Hasql.Decoders qualified as Decoders
 import Hasql.Encoders qualified as Encoders
 import Hasql.Pool qualified as Pool
@@ -19,8 +21,8 @@ import Kenshou.Core.RunSpec (EnvironmentSpec (..), SpecPlacement (..))
 import Kenshou.Core.Scenario
 import Kenshou.Measure.Knobs (LoadDefaults (..), defaultLoadDefaults, loadKnobs, loadModelFromKnobs, measureKnobs)
 import Kenshou.Measure.Load (ClosedConfig (..), LoadModel (..), LoadReport (..), Operation (..), runLoad)
-import Kenshou.Measure.Recorder (ErrorCause (..), OpName (..), OpResult (..))
-import Kenshou.Measure.Session (MeasurementReport (..), measureConfigFromKnobs, measuredOutcome, phasePlanFromCore, withMeasurement)
+import Kenshou.Measure.Recorder (ErrorCause (..), OpName (..), OpResult (..), newWorkerRecorder, recordDuration, registerOp, timeOp)
+import Kenshou.Measure.Session (MeasurementReport (..), measureConfigFromKnobs, measuredOutcome, measurementRecorder, phasePlanFromCore, withMeasurement)
 import Kenshou.Suite.Kiroku.Fixture.Store (StoreOptions (..), storeOptionsFromKnobs, withKirokuStore)
 import Kenshou.Suite.Kiroku.Fixture.Workload (payloadOf)
 import Kenshou.Suite.Kiroku.Knobs (storeKnobs)
@@ -28,7 +30,15 @@ import Kiroku.Store hiding (id, withKirokuStore)
 import System.Info (os)
 
 scenarios :: [Scenario]
-scenarios = [appendOnly, hotStream]
+scenarios = [appendOnly, hotStream, expectedVersionConflict]
+
+expectedVersionConflict :: Scenario
+expectedVersionConflict =
+  appendOnly
+    { id = either (error . show) id (parseScenarioId "kiroku/append/benchmark/expected-version-conflict"),
+      summary = "Measures expected-version wins, conflicts, and rereads on a precreated hot stream.",
+      run = runExpectedVersionConflict
+    }
 
 hotStream :: Scenario
 hotStream =
@@ -92,6 +102,76 @@ runAppend ownStreams context = case (loadModelFromKnobs context.knobs, measureCo
     putSummary context Measurements "methodology" methodology
     putSummary context Verdicts (if ownStreams then "append-only" else "hot-stream") (object ["completed" .= completions, "failed" .= failures])
     pure (base {outcome = measuredOutcome report base.outcome})
+
+runExpectedVersionConflict :: RunContext -> IO ScenarioReport
+runExpectedVersionConflict context = case (loadModelFromKnobs context.knobs, measureConfigFromKnobs context (phasePlanFromCore context.phases)) of
+  (Left reason, _) -> pure (failedWith ["invalid-load-config"] reason)
+  (_, Left reason) -> pure (failedWith ["invalid-measure-config"] reason)
+  (Right (OpenLoop _), _) -> pure (failedWith ["unsupported-open-conflict-load"] "expected-version-conflict requires closed-loop workers")
+  (Right (ClosedLoop closed), Right measureConfig) -> withKirokuStore context \store -> do
+    let knob key = fromIntegral (knobInt context.knobs (either (error . show) id (mkKnobName key))) :: Int
+        writers = knob "kiroku.append.writers"
+        batchSize = knob "kiroku.append.batch-size"
+        payloadBytes = knob "kiroku.append.payload-bytes"
+        stream = StreamName "bench-conflict"
+        seedEvent = EventData Nothing (EventType "BenchSeed") (object []) Nothing Nothing Nothing
+    seeded <- runStoreIO store (appendToStream stream NoStream [seedEvent])
+    case seeded of
+      Left err -> pure (failedWith ["precreate-failed"] (Text.pack (show err)))
+      Right _ -> do
+        versions <- traverse (\_ -> newIORef (1 :: Int)) [1 .. writers]
+        successes <- newIORef (0 :: Int)
+        conflicts <- newIORef (0 :: Int)
+        walSyncMethod <- Pool.use store.pool (Session.statement () walSyncMethodStatement)
+        (_, report) <- withMeasurement context measureConfig \measurement -> do
+          appendHandle <- registerOp (measurementRecorder measurement) (OpName "append-ok")
+          conflictHandle <- registerOp (measurementRecorder measurement) (OpName "append-conflict")
+          rereadHandle <- registerOp (measurementRecorder measurement) (OpName "reread")
+          appendWorkers <- traverse (newWorkerRecorder appendHandle) [0 .. writers - 1]
+          conflictWorkers <- traverse (newWorkerRecorder conflictHandle) [0 .. writers - 1]
+          rereadWorkers <- traverse (newWorkerRecorder rereadHandle) [0 .. writers - 1]
+          let operation worker sequenceNumber = do
+                let slot = worker `mod` writers
+                    events = [EventData Nothing (EventType "BenchConflict") (payloadOf context.seed slot (fromIntegral sequenceNumber * fromIntegral batchSize + fromIntegral ordinal) payloadBytes) Nothing Nothing Nothing | ordinal <- [0 .. batchSize - 1]]
+                expected <- readIORef (versions !! slot)
+                started <- getMonotonicTimeNSec
+                result <- runStoreIO store (appendToStream stream (ExactVersion (StreamVersion (fromIntegral expected))) events)
+                ended <- getMonotonicTimeNSec
+                case result of
+                  Right value -> do
+                    writeIORef (versions !! slot) (fromIntegral (case value.streamVersion of StreamVersion version -> version))
+                    atomicModifyIORef' successes (\count -> (count + 1, ()))
+                    recordDuration (appendWorkers !! slot) ended (ended - started) (OpOk batchSize)
+                    pure (OpOk batchSize)
+                  Left (WrongExpectedVersion _ _ _) -> do
+                    atomicModifyIORef' conflicts (\count -> (count + 1, ()))
+                    recordDuration (conflictWorkers !! slot) ended (ended - started) (OpOk 0)
+                    timeOp (rereadWorkers !! slot) do
+                      current <- runStoreIO store (getStream stream)
+                      case current of
+                        Right (Just info) -> do
+                          writeIORef (versions !! slot) (fromIntegral (case info.version of StreamVersion version -> version))
+                          pure (OpOk 1)
+                        other -> pure (OpFailed (ErrorCause (Text.pack (show other))))
+                  Left err -> do
+                    recordDuration (appendWorkers !! slot) ended (ended - started) (OpFailed (ErrorCause (Text.pack (show err))))
+                    pure (OpFailed (ErrorCause (Text.pack (show err))))
+          runLoad measurement (ClosedLoop (closed {workers = writers})) (Operation (OpName "attempt") operation)
+        won <- readIORef successes
+        lost <- readIORef conflicts
+        current <- runStoreIO store (getStream stream)
+        let finalVersion = case current of
+              Right (Just info) -> Just (case info.version of StreamVersion version -> version)
+              _ -> Nothing
+            failures = sum [load.failed | load <- report.loads]
+            sound = won > 0 && lost > 0 && failures == 0 && finalVersion == Just (fromIntegral (1 + won * batchSize))
+            base = if sound then passed else failedWith ["conflict-goodput-or-version"] ("wins=" <> Text.pack (show won) <> ", conflicts=" <> Text.pack (show lost) <> ", failures=" <> Text.pack (show failures))
+            cell = context.environmentSpec.placement == RunOnCell
+            walMethod = either (const Nothing) Just walSyncMethod
+            reasons = (["local-placement" | not cell] <> ["wal-sync-method-unavailable" | walMethod == Nothing] <> ["macos-fsync-does-not-flush" | os == "darwin" && walMethod /= Just "fsync_writethrough"]) :: [Text]
+        putSummary context Measurements "methodology" (object ["authoritative" .= null reasons, "reasons" .= reasons, "walSyncMethod" .= walMethod, "poolSize" .= (storeOptionsFromKnobs context "scenario").poolSize, "writers" .= writers, "batchSize" .= batchSize, "payloadBytes" .= payloadBytes, "trialsRequired" .= (3 :: Int)])
+        putSummary context Verdicts "expected-version-conflict" (object ["appendWins" .= won, "appendConflicts" .= lost, "failedOperations" .= failures, "finalVersion" .= finalVersion])
+        pure (base {outcome = measuredOutcome report base.outcome})
 
 walSyncMethodStatement :: Statement.Statement () Text
 walSyncMethodStatement = Statement.preparable "show wal_sync_method" Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.text)))

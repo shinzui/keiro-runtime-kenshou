@@ -42,6 +42,8 @@ The shared SQL oracle reads the migrated `kiroku` tables through a separate pool
 
 Every benchmark summary includes a `methodology` object. A local run is exploratory; on macOS `fsync` alone does not establish a drive-cache flush unless `wal_sync_method=fsync_writethrough`. The benchmark reads that PostgreSQL setting and records the reason when it is unsuitable. PostgreSQL checkpoints inside a steady window are visible in the measurement health report. Compare at least three paired and interleaved trials before quoting a difference; a single laptop trial is a smoke check, not a performance claim. The expected pool optimum of 8 to 13 connections and a throughput loss of at least 20 percent at 32 connections is a hypothesis for a controlled cell run, not an assertion in the benchmark.
 
+`kiroku/append/benchmark/expected-version-conflict` precreates its hot stream. Each closed-loop writer attempts an `ExactVersion` append, rereads the actual stream version after a conflict, and retries in its next operation. It records separate `append-ok`, `append-conflict`, `reread`, and whole-attempt histograms. At least one append and conflict must occur, and the durable version must equal one seed event plus successful batch appends. A short local run with four writers recorded 1,751 winning appends, 5,225 conflicts, no unexpected errors, and final version 1,752. The benchmark uses the same writer, batch, payload, pool and measurement knobs as the other append benchmarks and requires closed-loop load.
+
 ## Concurrency coverage
 
 | Scenario | Contract checked |
