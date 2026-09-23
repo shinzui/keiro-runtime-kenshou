@@ -69,6 +69,7 @@ cellsOf scenario = case renderScenarioId scenario of
   "shibuya/core-runner/correctness/a-failed-processor-is-never-restarted" -> [(IngestionBackpressure, SynchronousException), (Supervision, Normal)]
   "shibuya/core-runner/concurrency/halt-wakes-idle-intake" -> [(Dispatch, Timeout)]
   "shibuya/core-runner/concurrency/adapter-shutdown-failure-does-not-skip-siblings" -> [(DrainCancel, SynchronousException), (DrainCancel, RepeatedStop), (Supervision, RepeatedStop)]
+  "shibuya/core-runner/concurrency/forced-shutdown-abandons-but-never-loses" -> [(Dispatch, Cancellation), (Finalization, Cancellation), (DrainCancel, Normal), (DrainCancel, Cancellation), (IngestionBackpressure, Timeout), (RetryLease, Timeout)]
   "shibuya/core-runner/concurrency/leased-but-unfinalized-upper-bound" -> [(IngestionBackpressure, Normal)]
   "shibuya/core-ordering/correctness/policy-matrix" -> [(Dispatch, Normal), (KeyedOrdering, Normal)]
   _ -> []

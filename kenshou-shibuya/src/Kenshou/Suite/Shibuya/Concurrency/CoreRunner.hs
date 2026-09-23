@@ -19,10 +19,10 @@ import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
 import Kenshou.Suite.Shibuya.Cohort (knownOnReleasedCore, rev)
 import Kenshou.Suite.Shibuya.Fixture.Handlers (HandlerScript (..), HandlerStats (..), defaultHandlerScript, handlerStats, newHandlerProbe, scriptedHandler)
-import Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter (BrokerStats (..), ShutdownBehaviour (..), SyntheticConfig (..), brokerStats, closeInput, defaultSyntheticConfig, newSyntheticBroker, publish, syntheticAdapter)
+import Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter (BrokerStats (..), ShutdownBehaviour (..), SyntheticConfig (..), brokerStats, closeInput, defaultSyntheticConfig, newSyntheticBroker, publish, reopenSource, syntheticAdapter)
 import Kenshou.Suite.Shibuya.Knobs (coreKnobs, parseConcurrency, parseOrdering)
 import Shibuya.Adapter (Adapter (..))
-import Shibuya.App (AppConfig (..), QueueProcessor (..), defaultAppConfig, defaultShutdownConfig, mkProcessor, runApp, stopApp, stopAppGracefully, waitApp)
+import Shibuya.App (AppConfig (..), QueueProcessor (..), ShutdownConfig (..), defaultAppConfig, defaultShutdownConfig, mkProcessor, runApp, stopApp, stopAppGracefully, waitApp)
 import Shibuya.Core.Ack (AckDecision (..), HaltReason (..))
 import Shibuya.Core.AckHandle (AckHandle (..))
 import Shibuya.Core.Ingested (mkIngested)
@@ -34,7 +34,74 @@ import Streamly.Data.Stream qualified as Stream
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [haltWakesIdleIntake, leasedButUnfinalizedUpperBound, adapterShutdownFailure]
+scenarios = [haltWakesIdleIntake, leasedButUnfinalizedUpperBound, adapterShutdownFailure, forcedShutdownConserves]
+
+forcedShutdownConserves :: Scenario
+forcedShutdownConserves =
+  Scenario
+    { id = either (error . Text.unpack) id (parseScenarioId "shibuya/core-runner/concurrency/forced-shutdown-abandons-but-never-loses"),
+      revision = 1,
+      summary = "A forced stop leaves leases for redelivery, and a replacement application eventually finalizes every message.",
+      tier = TierSmoke,
+      placement = PlaceEither,
+      knobs = [],
+      dimensions = noDimensions,
+      phases = zeroPhases,
+      requires = noEnvironment,
+      knownDefect = Nothing,
+      run = runForcedShutdown
+    }
+
+runForcedShutdown :: RunContext -> IO ScenarioReport
+runForcedShutdown context = do
+  broker <- newSyntheticBroker defaultSyntheticConfig {leaseSeconds = Just 3}
+  mapM_ (\number -> publish broker Nothing (ByteString.pack ("message-" <> show number))) [1 .. 30 :: Int]
+  closeInput broker
+  gate <- newTVarIO False
+  probe <- newHandlerProbe defaultHandlerScript {gate = Just gate}
+  observed <- timeout 12000000 $ runEff $ runTracingNoop $ do
+    let firstProcessor = (mkProcessor (syntheticAdapter broker) (scriptedHandler probe)) {concurrency = Async 4}
+    first <- runApp defaultAppConfig {inboxSize = 5} [(ProcessorId "forced-first", firstProcessor)]
+    case first of
+      Left err -> error (show err)
+      Right firstHandle -> do
+        -- Ensure cancellation interrupts active handlers rather than an idle app.
+        liftIO $
+          let awaitHandlers = do
+                stats <- handlerStats probe
+                if stats.started >= 4 then pure () else threadDelay 1000 >> awaitHandlers
+           in awaitHandlers
+        drained <- stopAppGracefully defaultShutdownConfig {drainTimeout = 1} firstHandle
+        atStop <- liftIO $ brokerStats broker
+        liftIO $ threadDelay 100000
+        afterStop <- liftIO $ brokerStats broker
+        liftIO $ atomically $ writeTVar gate True
+        liftIO $ reopenSource broker
+        second <- runApp defaultAppConfig [(ProcessorId "forced-replacement", mkProcessor (syntheticAdapter broker) (\_ -> pure AckOk))]
+        case second of
+          Left err -> error (show err)
+          Right secondHandle -> do
+            waitApp secondHandle
+            stopApp secondHandle
+            finalStats <- liftIO $ brokerStats broker
+            pure (drained, atStop, afterStop, finalStats)
+  case observed of
+    Nothing -> pure $ failedWith ["forced-stop-timeout"] "forced stop or replacement exceeded twelve seconds"
+    Just (drained, atStop, afterStop, finalStats) -> do
+      let failures =
+            ["forced-stop-reported-clean-drain" | drained]
+              <> ["finalized-after-stop" | atStop.finalizedOk /= afterStop.finalizedOk]
+              <> ["messages-lost-after-restart" | finalStats.finalizedOk /= 30]
+              <> ["leases-remain-after-restart" | finalStats.leasedUnfinalized /= 0]
+      putSummary context Verdicts "forced-shutdown-conservation" $
+        object
+          [ "cleanDrain" .= drained,
+            "finalizedAtStop" .= atStop.finalizedOk,
+            "finalizedAfterStop" .= afterStop.finalizedOk,
+            "finalizedAfterRestart" .= finalStats.finalizedOk,
+            "redeliveries" .= finalStats.redeliveries
+          ]
+      pure $ if null failures then passed else failedWith failures (Text.intercalate "; " failures)
 
 adapterShutdownFailure :: Scenario
 adapterShutdownFailure =
