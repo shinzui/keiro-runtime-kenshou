@@ -1,0 +1,26 @@
+{
+  "schema": "kenshou.comparison-policy/v1",
+  "name": "kiroku-local-pool-comparison",
+  "minimumPairs": 3,
+  "confidenceLevel": 0.95,
+  "bootstrapIterations": 1000,
+  "resamplingSeed": 9,
+  "requireInterleaving": true,
+  "requireGrade": "benchmark",
+  "maxCiRelativeWidth": 1,
+  "maxCheckpointAsymmetry": 1,
+  "metrics": [
+    {
+      "match": "op.append.throughput",
+      "direction": "higher-is-better",
+      "relativeLimit": 0.2,
+      "absoluteFloor": 1
+    },
+    {
+      "match": "op.append.latency.p99",
+      "direction": "lower-is-better",
+      "relativeLimit": 0.2,
+      "absoluteFloor": 1000000
+    }
+  ]
+}

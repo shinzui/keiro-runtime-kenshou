@@ -66,7 +66,7 @@ Milestone 3 — kiroku benchmarks lifted from kiroku-bench.
 - [ ] `Kenshou.Suite.Kiroku.Bench.Subscription` (`append-to-handler-latency`, `catch-up`, `fan-out`) with cross-process wall-clock latency.
 - [ ] `Kenshou.Suite.Kiroku.Bench.Transaction` (`lock-hold-contention`) now records separate `plain-append`, `transaction-append` and whole-attempt histograms while a configurable fraction of writes execute continuation probe statements under the `$all` lock. A 25-second paced PostgreSQL 18 durable run at one continuation statement passed with 4,860 plain and 1,391 transaction samples and no failures. The default 120-second run and 0, 5 and 20-statement comparison cells remain.
 - [ ] Methodology section written into every benchmark summary; methodology rules recorded in `docs/layers/kiroku.md`.
-- [ ] One paired comparison of two pool sizes through `kenshou compare` recorded in this plan's Outcomes.
+- [x] One paired comparison of two pool sizes through `kenshou compare` recorded in this plan's Outcomes. Three interleaved 10-versus-32-pool pairs used the same 250 append/s open-loop local workload and seeds 42–44. The comparison verdict was `inconclusive`: throughput stayed within policy limits, while the p99 latency interval crossed the policy limit.
 
 Milestone 4 — kiroku soak and telemetry arms.
 
@@ -147,7 +147,7 @@ Milestone 4 — kiroku soak and telemetry arms.
 
 ## Outcomes & Retrospective
 
-(To be filled during and after implementation.)
+The first pool-size comparison used `kiroku/append/benchmark/append-only` with `pg.durability=durable`, 32 writers, 250 open-loop appends/s, zero warm-up, six seconds steady and zero drain. Three paired runs at pool 10 and pool 32 were interleaved in A/B/B/A/A/B order with seeds 42, 43 and 44. All six runs passed. `kenshou compare --vary knob:kiroku.pool-size` with `docs/policies/kiroku-local-pool-comparison.json` returned `inconclusive` across three pairs: the throughput metric passed at the imposed arrival rate (about 250 ops/s in both arms), while the p99 latency ratio estimate was 1.37 and its confidence interval crossed the policy limit. The comparison exercised the CLI and policy path; because the runs were paced on a local macOS host whose `wal_sync_method` was `open_datasync`, it does not test the pool-size optimum hypothesis. Full-duration controlled cell trials remain.
 
 
 ## Context and Orientation
