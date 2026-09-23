@@ -68,6 +68,7 @@ cellsOf scenario = case renderScenarioId scenario of
   "shibuya/core-runner/correctness/nonpositive-concurrency-is-rejected" -> [(Dispatch, SynchronousException)]
   "shibuya/core-runner/correctness/a-failed-processor-is-never-restarted" -> [(IngestionBackpressure, SynchronousException), (Supervision, Normal)]
   "shibuya/core-runner/concurrency/halt-wakes-idle-intake" -> [(Dispatch, Timeout)]
+  "shibuya/core-runner/concurrency/leased-but-unfinalized-upper-bound" -> [(IngestionBackpressure, Normal)]
   _ -> []
 
 -- Add reasons only for cells which cannot be exercised through public APIs.

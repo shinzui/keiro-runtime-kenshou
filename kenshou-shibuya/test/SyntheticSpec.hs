@@ -1,17 +1,21 @@
 module SyntheticSpec (spec) where
 
-import Control.Concurrent (threadDelay)
+import Control.Concurrent (forkIO, killThread, threadDelay)
 import Control.Concurrent.STM (newTVarIO, readTVar)
 import Control.Exception (SomeException, try)
 import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.Text (Text)
 import Effectful (liftIO, runEff)
+import Kenshou.Suite.Shibuya.Fixture.Handlers
 import Kenshou.Suite.Shibuya.Fixture.RestartLoop (RestartPolicy (..), runWithRestartLoop)
 import Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter
 import Shibuya.Adapter (Adapter (..))
-import Shibuya.App (defaultAppConfig, mkProcessor, runApp, stopApp, waitApp)
+import Shibuya.App (QueueProcessor (..), defaultAppConfig, mkProcessor, runApp, stopApp, waitApp)
 import Shibuya.Core.Ack (AckDecision (..), RetryDelay (..))
+import Shibuya.Core.Ingested (Message (..))
 import Shibuya.Core.Metrics (ProcessorId (..))
+import Shibuya.Core.Types (MessageId (..), mkEnvelope)
+import Shibuya.Policy (Concurrency (..))
 import Shibuya.Telemetry.Effect (runTracingNoop)
 import System.Timeout (timeout)
 import Test.Hspec
@@ -143,3 +147,41 @@ spec = describe "synthetic broker" $ do
     stats <- brokerStats broker
     stats.finalizedOk `shouldBe` 2
     stats.shutdownCalls `shouldBe` 2
+
+  it "records handler intervals and concurrent high-water mark" $ do
+    broker <- newSyntheticBroker defaultSyntheticConfig
+    mapM_ (\_ -> publish broker Nothing "payload") [1 .. 8 :: Int]
+    closeInput broker
+    probe <- newHandlerProbe defaultHandlerScript {delayFor = \_ _ -> 50000}
+    completed <- timeout 2000000 $ runEff $ runTracingNoop $ do
+      let processor = (mkProcessor (syntheticAdapter broker) (scriptedHandler probe)) {concurrency = Async 4}
+      result <- runApp defaultAppConfig [(ProcessorId "tracked", processor)]
+      case result of
+        Left err -> error (show err)
+        Right app -> waitApp app >> stopApp app
+    completed `shouldBe` Just ()
+    stats <- handlerStats probe
+    stats.started `shouldBe` 8
+    stats.ended `shouldBe` 8
+    stats.active `shouldBe` 0
+    stats.highWater `shouldBe` 4
+    events <- handlerEvents probe
+    length events `shouldBe` 16
+
+  it "closes a handler interval when the handler is cancelled" $ do
+    gate <- newTVarIO False
+    probe <- newHandlerProbe defaultHandlerScript {gate = Just gate}
+    thread <- forkIO $ do
+      _ <- try @SomeException $ runEff $ scriptedHandler probe (Message (mkEnvelope (MessageId "cancelled") ()) Nothing)
+      pure ()
+    let awaitStart = do
+          stats <- handlerStats probe
+          if stats.started == 1 then pure () else threadDelay 1000 >> awaitStart
+    started <- timeout 1000000 awaitStart
+    started `shouldBe` Just ()
+    killThread thread
+    let awaitEnd = do
+          stats <- handlerStats probe
+          if stats.ended == 1 then pure stats else threadDelay 1000 >> awaitEnd
+    final <- timeout 1000000 awaitEnd
+    fmap (.active) final `shouldBe` Just 0

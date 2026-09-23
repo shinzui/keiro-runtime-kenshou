@@ -3,6 +3,7 @@ module Kenshou.Suite.Shibuya.Concurrency.CoreRunner (scenarios) where
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM (TVar, atomically, check, newTVarIO, readTVar, writeTVar)
 import Data.Aeson (object, (.=))
+import Data.ByteString.Char8 qualified as ByteString
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef)
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -15,9 +16,11 @@ import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), 
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
 import Kenshou.Suite.Shibuya.Cohort (knownOnReleasedCore, rev)
+import Kenshou.Suite.Shibuya.Fixture.Handlers (HandlerScript (..), HandlerStats (..), defaultHandlerScript, handlerStats, newHandlerProbe, scriptedHandler)
+import Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter (BrokerStats (..), brokerStats, closeInput, defaultSyntheticConfig, newSyntheticBroker, publish, syntheticAdapter)
 import Kenshou.Suite.Shibuya.Knobs (coreKnobs, parseConcurrency, parseOrdering)
 import Shibuya.Adapter (Adapter (..))
-import Shibuya.App (QueueProcessor (..), defaultAppConfig, mkProcessor, runApp, stopApp, waitApp)
+import Shibuya.App (AppConfig (..), QueueProcessor (..), defaultAppConfig, mkProcessor, runApp, stopApp, waitApp)
 import Shibuya.Core.Ack (AckDecision (..), HaltReason (..))
 import Shibuya.Core.AckHandle (AckHandle (..))
 import Shibuya.Core.Ingested (mkIngested)
@@ -29,7 +32,61 @@ import Streamly.Data.Stream qualified as Stream
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [haltWakesIdleIntake]
+scenarios = [haltWakesIdleIntake, leasedButUnfinalizedUpperBound]
+
+leasedButUnfinalizedUpperBound :: Scenario
+leasedButUnfinalizedUpperBound =
+  Scenario
+    { id = either (error . Text.unpack) id (parseScenarioId "shibuya/core-runner/concurrency/leased-but-unfinalized-upper-bound"),
+      revision = 1,
+      summary = "Bounds outstanding leases while every handler waits on a gate.",
+      tier = TierSmoke,
+      placement = PlaceEither,
+      knobs = [],
+      dimensions = noDimensions,
+      phases = zeroPhases,
+      requires = noEnvironment,
+      knownDefect = Nothing,
+      run = runLeasedBound
+    }
+
+runLeasedBound :: RunContext -> IO ScenarioReport
+runLeasedBound context = do
+  broker <- newSyntheticBroker defaultSyntheticConfig
+  mapM_ (\number -> publish broker Nothing (ByteString.pack ("message-" <> show number))) [1 .. 1000 :: Int]
+  closeInput broker
+  gate <- newTVarIO False
+  probe <- newHandlerProbe defaultHandlerScript {gate = Just gate}
+  observed <- timeout 10000000 $ runEff $ runTracingNoop $ do
+    let processor = (mkProcessor (syntheticAdapter broker) (scriptedHandler probe)) {concurrency = Async 4}
+    result <- runApp defaultAppConfig {inboxSize = 100} [(ProcessorId "leased-bound", processor)]
+    case result of
+      Left err -> error (show err)
+      Right handle -> do
+        liftIO $ threadDelay 1000000
+        brokerAtGate <- liftIO $ brokerStats broker
+        handlersAtGate <- liftIO $ handlerStats probe
+        liftIO $ atomically $ writeTVar gate True
+        waitApp handle
+        stopApp handle
+        finalStats <- liftIO $ brokerStats broker
+        pure (brokerAtGate, handlersAtGate, finalStats)
+  case observed of
+    Nothing -> pure $ failedWith ["bound-timeout"] "application did not finish after opening the handler gate"
+    Just (atGate, handlers, finalStats) -> do
+      let bound = 100 + 3 * 4 + 2
+          failures =
+            ["bound-exceeded" | atGate.leasedUnfinalizedHighWater > bound]
+              <> ["gate-not-saturated" | handlers.highWater < 4]
+              <> ["messages-not-conserved" | finalStats.finalizedOk /= 1000 || finalStats.leasedUnfinalized /= 0]
+      putSummary context Verdicts "leased-but-unfinalized-upper-bound" $
+        object
+          [ "leasedUnfinalizedHighWater" .= atGate.leasedUnfinalizedHighWater,
+            "bound" .= bound,
+            "handlerHighWater" .= handlers.highWater,
+            "finalized" .= finalStats.finalizedOk
+          ]
+      pure $ if null failures then passed else failedWith failures (Text.intercalate "; " failures)
 
 haltWakesIdleIntake :: Scenario
 haltWakesIdleIntake =
