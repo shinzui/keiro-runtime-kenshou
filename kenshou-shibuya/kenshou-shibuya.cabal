@@ -1,0 +1,50 @@
+cabal-version: 3.4
+name: kenshou-shibuya
+version: 0.1.0.0
+synopsis: Isolated verification scenarios for shibuya
+license: BSD-3-Clause
+author: Nadeem Bitar
+maintainer: Nadeem Bitar
+build-type: Simple
+tested-with: ghc >=9.12 && <9.13
+
+common defaults
+  default-language: GHC2024
+  default-extensions:
+    DuplicateRecordFields
+    LambdaCase
+    NoFieldSelectors
+    OverloadedRecordDot
+    OverloadedStrings
+
+  ghc-options: -Wall
+
+library
+  import: defaults
+  hs-source-dirs: src
+  exposed-modules:
+    Kenshou.Suite.Shibuya
+    Kenshou.Suite.Shibuya.Cohort
+    Kenshou.Suite.Shibuya.Correctness.CoreRunner
+    Kenshou.Suite.Shibuya.Knobs
+
+  build-depends:
+    base >=4.21 && <4.22,
+    effectful-core >=2.6 && <2.7,
+    kenshou-core,
+    shibuya-core,
+    streamly-core >=0.3 && <0.4,
+    text >=2.1 && <2.2,
+
+test-suite kenshou-shibuya-test
+  import: defaults
+  type: exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is: Main.hs
+  ghc-options: -threaded
+  build-depends:
+    base >=4.21 && <4.22,
+    hspec >=2.11 && <2.12,
+    kenshou-shibuya,
+    shibuya-core,
+    text >=2.1 && <2.2,

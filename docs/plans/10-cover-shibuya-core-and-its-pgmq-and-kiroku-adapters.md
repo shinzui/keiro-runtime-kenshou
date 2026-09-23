@@ -11,6 +11,12 @@ provenance:
     model: "claude-fable-5-1"
     harness: "claude-code"
     at: 2026-09-20T17:15:35Z
+  revisions:
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-23T13:35:35Z
+      mode: "implement"
+      note: "Started implementation and verified harness prerequisites"
 ---
 
 # Cover shibuya core and its PGMQ and kiroku adapters
@@ -31,17 +37,19 @@ After this plan a maintainer can, from this repository, run `kenshou list --laye
 
 Milestone 1 — shibuya core lifecycle, ordering, batching and metrics-truthfulness scenarios (no database).
 
-- [ ] Verify the hard dependencies are complete (kernel, measurement, correctness, diagnostics, telemetry) with the checks in Concrete Steps, and read their finished plans for exact signatures.
-- [ ] Create `kenshou-shibuya/kenshou-shibuya.cabal` with the library and the `kenshou-shibuya-test` suite; `cabal build kenshou-shibuya` succeeds on the released cohort.
-- [ ] Implement `Kenshou.Suite.Shibuya.Cohort` (capability probe, known-defect references) and its unit test.
-- [ ] Implement `Kenshou.Suite.Shibuya.Knobs` (knob specifications and parsers) with property tests.
+- [x] (2026-09-23 13:38Z) Verify the hard dependencies are complete (kernel, measurement, correctness, diagnostics, telemetry) with the checks in Concrete Steps, and read their finished plans for exact signatures. `nix develop -c cabal build all`, the self-test list, `kill-and-restart-worker`, and `leaking-worker` all passed.
+- [x] (2026-09-23 13:42Z) Create `kenshou-shibuya/kenshou-shibuya.cabal` with the library and the `kenshou-shibuya-test` suite; `nix develop -c cabal build kenshou-shibuya kenshou` succeeds on the released cohort.
+- [x] (2026-09-23 13:42Z) Implement the `Kenshou.Suite.Shibuya.Cohort` capability probe and review references; linked-core unit checks pass on the released cohort.
+- [ ] Cross-check the capability probe against the resolved head cohort and run the unit checks there.
+- [ ] Finish `Kenshou.Suite.Shibuya.Knobs`: common specifications and three parsers exist with example tests; partition/decision parsers and property tests remain.
 - [ ] Implement `Kenshou.Suite.Shibuya.Matrix` (13 boundaries × 5 cases, cell tags, coverage test).
 - [ ] Implement `Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter`, `.Handlers`, `.App`, `.RestartLoop` with unit tests (lease expiry, redelivery, scripted finalizer and shutdown faults).
-- [ ] Implement the `core-runner` scenarios (fifteen) and the `shibuya-core-worker` and `shibuya-gc-probe` worker roles.
+- [ ] Implement the `core-runner` scenarios (fifteen) and the `shibuya-core-worker` and `shibuya-gc-probe` worker roles. Two registration/configuration scenarios exist; the other thirteen and both roles remain.
 - [ ] Implement the `core-ordering` scenarios (four).
 - [ ] Implement the `core-batch` correctness and concurrency scenarios (two).
 - [ ] Implement the `metrics` scenarios (eight) including the free-port allocation for `startMetricsServer`.
-- [ ] Register `bundle` in `kenshou-cli` (the three-line edit) and confirm `kenshou list --layer shibuya`.
+- [x] (2026-09-23 13:42Z) Register the initial `bundle` in `kenshou-cli`; `kenshou list --layer shibuya` displays the two implemented scenarios.
+- [ ] Expand the registered bundle to all twenty-nine Milestone 1 scenarios and their roles.
 - [ ] Run every Milestone 1 scenario on the released cohort and on the head cohort; record the observed outcome of each cohort-sensitive scenario in Surprises & Discoveries.
 
 Milestone 2 — PGMQ adapter scenarios.
@@ -73,7 +81,9 @@ Milestone 4 — shibuya benchmarks, soak and telemetry arms.
 
 ## Surprises & Discoveries
 
-(None yet.)
+- The host shell does not contain `ghc-9.12.4`; all Cabal commands in this implementation need `nix develop -c`. The full build and both prerequisite worker self-tests passed inside that shell on 2026-09-23.
+- The local upstream shibuya checkout now declares `shibuya-core` 0.10.0.0, while both checked-in cohorts still pin 0.9.0.3; the PGMQ and kiroku adapter checkouts similarly declare 0.16.1.0 and 0.5.1.3 versus cohort pins 0.16.0.0 and 0.5.1.2. The implementation targets the checked-in cohort contract and must test both pins explicitly. The plan's claim that the upstream head has the same package version was true of its pinned head commit, not the checkout's current tip.
+- The released-core duplicate-ID scenario reproduced REV-3-F2: `runApp` accepted duplicate IDs and pulled a source. The run result `runs/01a0ce7f-e937-746a-a328-322fbf03641b/run-result.json` records `knownDefect.status = reproduced` and `blocking = false`. The invalid-configuration scenario passed on the same cohort.
 
 
 ## Decision Log
@@ -113,6 +123,10 @@ Milestone 4 — shibuya benchmarks, soak and telemetry arms.
 - Decision: The kiroku adapter's crash replay budget is declared per subscription shape: `batchSize` for catch-up, category and consumer-group deliveries, and 1000 (`publisherBatchSize`) for the live phase of a non-group `AllStreams` subscription.
   Rationale: Verified in kiroku-store: the checkpoint is saved at the tail of each delivered batch, and live `AllStreams` batches come from the in-process publisher, which fetches up to 1000 events regardless of the subscription's `batchSize`. A flat "at most 100" budget would produce false failures.
   Date: 2026-09-20
+
+- Decision: Use `shibuya/core-runner/correctness/invalid-config-rejected-before-effects` as the invalid-configuration scenario identifier.
+  Rationale: The originally drafted name's final segment has 51 characters, while `Kenshou.Core.Id.mkSegment` enforces a 48-character limit. Shortening this one name preserves the kernel's established identifier contract.
+  Date: 2026-09-23
 
 
 ## Outcomes & Retrospective
@@ -267,7 +281,7 @@ The `core-runner` scenarios.
 
 `shibuya/core-runner/correctness/every-delivery-is-finalized-exactly-once` proves the basic promise across configurations. Knobs: the shared core knobs, `shibuya.messages` default 10000. Procedure: publish, close the input, `runApp`, `waitApp`. Oracle (contract): every delivery has exactly one effective `finalize`; a throwing handler's delivery is finalized `AckRetry (RetryDelay 0)`; `StreamStats.received` equals deliveries; with `shibuya.inbox-size=1` the run still completes (backpressure liveness). Tier smoke. Cells: `dispatch/normal`, `finalization/normal`, `ingestion-backpressure/normal`, `dispatch/synchronousException`, `retry-lease/normal`.
 
-`shibuya/core-runner/correctness/invalid-configuration-is-rejected-before-any-effect` feeds `inboxSize` 0, `StrictInOrder` with `Async 2`, a batching processor with `PartitionedInOrder` and `Ahead 2`, and batch configurations with size 0, timeout 0 and tick 0. Oracle (contract): `runApp` returns `Left`, `sourcePulls` and `shutdownCalls` stay 0. Tier smoke. Cells: `startup-registration/normal`, `startup-registration/synchronousException`.
+`shibuya/core-runner/correctness/invalid-config-rejected-before-effects` feeds `inboxSize` 0, `StrictInOrder` with `Async 2`, a batching processor with `PartitionedInOrder` and `Ahead 2`, and batch configurations with size 0, timeout 0 and tick 0. Oracle (contract): `runApp` returns `Left`, `sourcePulls` and `shutdownCalls` stay 0. Tier smoke. Cells: `startup-registration/normal`, `startup-registration/synchronousException`.
 
 `shibuya/core-runner/correctness/duplicate-processor-ids-are-rejected` starts two processors, one ordinary and one batching, under one id. Oracle (contract): the result is `Left` (tested with `isLeft`, since the constructor is head-only) and neither source is pulled. Known defect on the released core: REV-3, keys REV-2-F2 and REV-3-F2. Tier smoke. Cell: `startup-registration/synchronousException`.
 
@@ -550,3 +564,5 @@ roles :: [WorkerRole]
 Scenario modules follow the kind subtrees: `Kenshou.Suite.Shibuya.Correctness.{CoreRunner,CoreOrdering,CoreBatch,Metrics,PgmqAdapter,KirokuAdapter,TraceContinuity}`, `Kenshou.Suite.Shibuya.Concurrency.{CoreRunner,CoreOrdering,CoreBatch,Metrics,PgmqAdapter,KirokuAdapter}`, `Kenshou.Suite.Shibuya.Bench.{Core,PgmqAdapter,KirokuAdapter}` and `Kenshou.Suite.Shibuya.Soak.{CoreBatch,PgmqAdapter,KirokuAdapter,Metrics}`, each exporting `scenarios :: [Scenario]`. Milestone 2 adds `Kenshou.Suite.Shibuya.Fixture.Pgmq` (`withPgmqFixture`, `runPgmqStack`, `queueRows`, `archiveRows`, `dlqCopiesByOriginalId`, `readCounts`) and the roles `shibuya-pgmq-consumer` and `shibuya-pgmq-producer`. Milestone 3 adds `Kenshou.Suite.Shibuya.Fixture.Kiroku` (`withKirokuFixture`, `checkpointOf`, `deadLettersOf`) and the roles `shibuya-kiroku-consumer` and `shibuya-kiroku-appender`. Milestone 4 adds `soakPair :: SoakSpec -> [Scenario]`, the `bench.arm` knob and the shibuya entries in `policies/telemetry-overhead.json`.
 
 What other plans take from this one. Nothing is imported by another layer package. `docs/plans/3-plan-and-select-runs-from-what-changed.md` maps the components `shibuya-core` to the selectors `shibuya/core-runner/**`, `shibuya/core-ordering/**` and `shibuya/core-batch/**`, `shibuya-metrics` to `shibuya/metrics/**`, `shibuya-pgmq-adapter` to `shibuya/pgmq-adapter/**` and `shibuya-kiroku-adapter` to `shibuya/kiroku-adapter/**`, so these component names are a contract. `docs/plans/11-cover-the-kafka-transport-edge-with-a-disposable-broker.md` covers the fourteenth boundary, `kafka-persistence`, with the same case vocabulary and may copy the capability-probe pattern for the `hw-kafka-client` fork. `docs/plans/13-cover-the-keiro-outbox-inbox-and-job-queue.md` should read the leased-bound and crash-budget findings, because `keiro-pgmq` is the one keiro component that calls `runApp`. `docs/plans/15-verify-the-assembled-runtime-end-to-end-and-under-soak.md`, whose package may depend on layer packages, may import `Kenshou.Suite.Shibuya.Fixture.RestartLoop`; keep that module's interface stable.
+
+Revision note (2026-09-23): Implementation started after verifying the prerequisite harness. The invalid-configuration scenario identifier was shortened to fit the kernel's 48-character segment limit; Progress and Surprises now record the initial compiled package, two registered scenarios and their released-cohort evidence. All unfinished acceptance criteria remain open.
