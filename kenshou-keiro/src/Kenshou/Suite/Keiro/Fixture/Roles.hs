@@ -10,9 +10,10 @@ import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
 import Effectful (liftIO)
 import Keiro.Command (RunCommandOptions (..), defaultRunCommandOptions)
-import Keiro.ProcessManager (RejectedCommandPolicy (..), WorkerOptions (..), defaultWorkerOptions, runProcessManagerWorkerWith)
+import Keiro.ProcessManager (PMCommandResult (..), ProcessManagerResult (..), RejectedCommandPolicy (..), WorkerOptions (..), defaultWorkerOptions, runProcessManagerOnce, runProcessManagerWorkerWith)
 import Keiro.Projection (AsyncApplyOutcome (..))
 import Keiro.Router (runRouterWorkerWith)
+import Keiro.Subscription.Shard.Worker (RetryDelay (..), ShardAck (..), ShardDelivery (..), ShardedWorkerOptions (..), defaultShardedWorkerOptions, runShardedSubscriptionGroupAck)
 import Kenshou.Core.Id (unSeed)
 import Kenshou.Core.Role (ControlMessage (..), PostgresConnInfo (..), RoleContext (..), RoleName, WorkerInit (..), WorkerMessage (..), WorkerRole (..), mkRoleName)
 import Kenshou.Suite.Keiro.Fixture.Account
@@ -23,13 +24,14 @@ import Kenshou.Suite.Keiro.Fixture.Runtime
 import Kenshou.Suite.Keiro.Fixture.Transfer
 import Kenshou.Suite.Keiro.Fixture.Workload qualified as Workload
 import Kiroku.Store (defaultConnectionSettings)
-import Kiroku.Store.Subscription.Types (ConsumerGroup (..), SubscriptionName (..))
-import Kiroku.Store.Types (RecordedEvent (..))
+import Kiroku.Store.Subscription.Types (ConsumerGroup (..), SubscriptionName (..), SubscriptionTarget (..))
+import Kiroku.Store.Types (CategoryName (..), RecordedEvent (..))
 
 roles :: [WorkerRole]
 roles =
   [ WorkerRole (roleName "keiro/command-writer") "Submits a deterministic sequence of account and bonus operations." commandWriter,
     WorkerRole (roleName "keiro/pm-worker") "Dispatches transfer saga inputs from a durable subscription." processManagerWorker,
+    WorkerRole (roleName "keiro/pm-sharded-worker") "Dispatches transfer saga inputs from owned Kiroku shards." processManagerShardedWorker,
     WorkerRole (roleName "keiro/router-worker") "Dispatches bonus fanout from a durable subscription." routerWorker,
     WorkerRole (roleName "keiro/projection-worker") "Applies the asynchronous account activity projection." projectionWorker
   ]
@@ -178,6 +180,30 @@ processManagerWorker context = case parseMaybe parseDispatcherArgs context.init.
         case result of
           Left issue -> context.send (WrkError (Text.pack (show issue)))
           Right () -> context.send (WrkDone Nothing)
+
+processManagerShardedWorker :: RoleContext -> IO ()
+processManagerShardedWorker context = case parseMaybe parseDispatcherArgs context.init.args of
+  Nothing -> context.send (WrkError "invalid pm-sharded-worker arguments")
+  Just args -> withPostgres context \postgres -> do
+    context.send WrkReady
+    started <- awaitStart context
+    if not started
+      then pure ()
+      else withFixtureEnv (defaultConnectionSettings postgres.connectionString) \fixture -> do
+        let KeiroRunner runFixture = fixture.runner
+            manager = transferManager (accountEventStream SnapNever) (const [])
+            options = (defaultShardedWorkerOptions (Category (CategoryName "account")) 8) {renewInterval = 0.2, leaseTtl = 2}
+            handle delivery = case decodeTransferSignal delivery.event of
+              Nothing -> pure ShardAckOk
+              Just (recorded, signal) ->
+                runFixture (runProcessManagerOnce defaultRunCommandOptions manager recorded signal) >>= \case
+                  Left _ -> pure (ShardAckRetry (RetryDelay 0.2))
+                  Right (Left _) -> pure (ShardAckRetry (RetryDelay 0.2))
+                  Right (Right result) ->
+                    if any (\case PMCommandFailed {} -> True; _ -> False) result.commandResults
+                      then pure (ShardAckRetry (RetryDelay 0.2))
+                      else pure ShardAckOk
+        runShardedSubscriptionGroupAck fixture.store (SubscriptionName args.subscription) options handle
 
 routerWorker :: RoleContext -> IO ()
 routerWorker context = case parseMaybe parseDispatcherArgs context.init.args of

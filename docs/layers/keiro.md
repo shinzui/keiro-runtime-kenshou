@@ -67,8 +67,9 @@ follows it. The production adapter dead-letters after five deliveries;
 `--set pm.source=ack-stream --set kiroku.retry-max-attempts=3` tests a
 configurable budget. Both bridges advance to the healthy transfer, and replay
 of the dead letter appends the missing credit once.
-`topologies` runs two process manager roles against one subscription as either
-duplicate subscribers or consumer-group members. Ten transfers use both input
+`topologies` runs two process manager roles against one subscription as
+duplicate subscribers, consumer-group members, or lease-owned shard workers.
+Ten transfers use both input
 orders; each saga has one debit and one announcement observation, and each
 transfer has one credit and confirmation. The run reports the share of sagas
 whose announcement arrived first.

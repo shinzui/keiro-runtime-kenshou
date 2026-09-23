@@ -39,9 +39,9 @@ topologies :: Scenario
 topologies =
   sigkillCrashWindows
     { id = either (error . show) id (parseScenarioId "keiro/process-manager/concurrency/topologies"),
-      summary = "Checks duplicate subscribers and consumer-group workers converge on one effect per transfer.",
+      summary = "Checks duplicate subscribers, consumer groups, and shard workers converge on one effect per transfer.",
       knobs =
-        [ KnobSpec (either (error . show) id (mkKnobName "pm.topology")) "Worker subscription layout" KnobText (VText "duplicate-subscribers") (OneOf (VText "duplicate-subscribers" :| [VText "consumer-group"])) [],
+        [ KnobSpec (either (error . show) id (mkKnobName "pm.topology")) "Worker subscription layout" KnobText (VText "duplicate-subscribers") (OneOf (VText "duplicate-subscribers" :| [VText "consumer-group", VText "sharded"])) [],
           KnobSpec (either (error . show) id (mkKnobName "pm.processes")) "Workers in the layout" KnobInt (VInt 2) (IntRange 2 4) []
         ],
       run = runTopology
@@ -77,7 +77,7 @@ runTopology context =
         traverse
           ( \index -> do
               let args = object (["subscription" .= subscription] <> if topology == "consumer-group" then ["groupMember" .= index, "groupSize" .= processCount] else [])
-              spec <- roleProcess check "keiro/pm-worker" index args
+              spec <- roleProcess check (if topology == "sharded" then "keiro/pm-sharded-worker" else "keiro/pm-worker") index args
               spawn supervisor spec
           )
           [0 .. processCount - 1]
@@ -88,6 +88,7 @@ runTopology context =
       sagaRows <- Oracle.readCategoryLog connection "pm:transferSaga"
       accountRows <- Oracle.readCategoryLog connection "account"
       Connection.release connection
+      if topology == "sharded" then traverse_ (killChild supervisor) children else pure ()
       let firstSagaEvents = [row.eventType | row <- sagaRows, row.streamVersion == 1]
           sagaStreams = Map.fromListWith (<>) [(row.streamName, [row.eventType]) | row <- sagaRows]
           joined = Map.size sagaStreams == transferCount && all (\types -> sort types == sort [EventType "AnnounceObserved", EventType "DebitObserved"]) (Map.elems sagaStreams)
