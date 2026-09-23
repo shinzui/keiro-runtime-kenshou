@@ -51,8 +51,10 @@ library
     Kenshou.Suite.Kiroku.Correctness.Retention
     Kenshou.Suite.Kiroku.Correctness.Subscription
     Kenshou.Suite.Kiroku.Correctness.Transaction
+    Kenshou.Suite.Kiroku.Fixture.Facts
     Kenshou.Suite.Kiroku.Fixture.Store
     Kenshou.Suite.Kiroku.Fixture.Telemetry
+    Kenshou.Suite.Kiroku.Fixture.Workload
     Kenshou.Suite.Kiroku.Knobs
     Kenshou.Suite.Kiroku.Roles
 
@@ -89,7 +91,10 @@ test-suite kenshou-kiroku-test
   hs-source-dirs: test
   main-is: Main.hs
   build-depends:
+    aeson >=2.2 && <2.3,
     base >=4.21 && <4.22,
+    bytestring >=0.12 && <0.13,
     hspec >=2.11 && <2.12,
     kenshou-core,
     kenshou-kiroku,
+    kiroku-store ==0.8.0.1,
