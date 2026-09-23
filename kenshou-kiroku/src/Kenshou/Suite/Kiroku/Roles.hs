@@ -10,6 +10,7 @@ import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.Int (Int32, Int64)
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Data.Time.Clock (getCurrentTime)
 import Data.UUID qualified as UUID
 import Data.Vector qualified as Vector
 import Kenshou.Core.Role (ControlMessage (..), PostgresConnInfo (..), RoleContext (..), RoleName, WorkerInit (..), WorkerMessage (..), WorkerRole (..), mkRoleName)
@@ -51,7 +52,8 @@ runSubscriber context = case (context.init.postgres, parseMaybe parseSubscriberA
           if args.emitDeliveries
             then do
               sequenceNumber <- atomicModifyIORef' emitted (\count -> (count + 1, count))
-              context.send (WrkCustom ("delivery-" <> Text.pack (show sequenceNumber)) (object ["sequence" .= sequenceNumber, "position" .= position]))
+              receivedAt <- getCurrentTime
+              context.send (WrkCustom ("delivery-" <> Text.pack (show sequenceNumber)) (object ["sequence" .= sequenceNumber, "position" .= position, "receivedAt" .= receivedAt]))
             else pure ()
           threadDelay args.handlerDelayMicros
           pure Continue
