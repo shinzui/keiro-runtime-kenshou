@@ -8,6 +8,7 @@ import Kenshou.Suite.Kiroku.Bench.Read qualified as BenchRead
 import Kenshou.Suite.Kiroku.Bench.Transaction qualified as BenchTransaction
 import Kenshou.Suite.Kiroku.Concurrency.Append qualified as ConcurrencyAppend
 import Kenshou.Suite.Kiroku.Concurrency.ConsumerGroup qualified as ConcurrencyConsumerGroup
+import Kenshou.Suite.Kiroku.Concurrency.Fault qualified as ConcurrencyFault
 import Kenshou.Suite.Kiroku.Concurrency.KnownDefects qualified as KnownDefects
 import Kenshou.Suite.Kiroku.Concurrency.Subscription qualified as ConcurrencySubscription
 import Kenshou.Suite.Kiroku.Correctness.Append qualified as Append
@@ -25,4 +26,4 @@ import Kenshou.Suite.Kiroku.Correctness.Transaction qualified as Transaction
 import Kenshou.Suite.Kiroku.Roles qualified as Roles
 
 bundle :: LayerBundle
-bundle = LayerBundle Kiroku (Append.scenarios <> Read.scenarios <> Lifecycle.scenarios <> Transaction.scenarios <> Subscription.scenarios <> Overflow.scenarios <> DeadLetter.scenarios <> Notifier.scenarios <> Retention.scenarios <> ConsumerGroup.scenarios <> Metrics.scenarios <> Otel.scenarios <> ConcurrencyAppend.scenarios <> ConcurrencyConsumerGroup.scenarios <> ConcurrencySubscription.scenarios <> KnownDefects.scenarios <> BenchAppend.scenarios <> BenchLadder.scenarios <> BenchRead.scenarios <> BenchTransaction.scenarios) Roles.roles
+bundle = LayerBundle Kiroku (Append.scenarios <> Read.scenarios <> Lifecycle.scenarios <> Transaction.scenarios <> Subscription.scenarios <> Overflow.scenarios <> DeadLetter.scenarios <> Notifier.scenarios <> Retention.scenarios <> ConsumerGroup.scenarios <> Metrics.scenarios <> Otel.scenarios <> ConcurrencyAppend.scenarios <> ConcurrencyConsumerGroup.scenarios <> ConcurrencyFault.scenarios <> ConcurrencySubscription.scenarios <> KnownDefects.scenarios <> BenchAppend.scenarios <> BenchLadder.scenarios <> BenchRead.scenarios <> BenchTransaction.scenarios) Roles.roles
