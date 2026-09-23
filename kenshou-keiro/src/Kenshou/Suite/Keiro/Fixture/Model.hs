@@ -19,10 +19,10 @@ data ModelAccount = ModelAccount
     balance :: !Int,
     entries :: !Int
   }
-  deriving stock (Eq, Show)
+  deriving stock (Eq, Ord, Show)
 
 newtype Model = Model (Map AccountId ModelAccount)
-  deriving stock (Eq, Show)
+  deriving stock (Eq, Ord, Show)
 
 data ModelVerdict = ModelAccepts !AccountEvent | ModelNoOp | ModelRejects
   deriving stock (Eq, Show)

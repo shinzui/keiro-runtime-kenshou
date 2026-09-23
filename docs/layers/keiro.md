@@ -32,6 +32,8 @@ identifier and sustained writes to one hot stream. The scenario IDs and
 their knobs are available through `cabal run kenshou -- list --layer keiro`.
 The writer crash scenario kills a process after its deposit commits and checks
 that a fresh process reports `SubmitDuplicate` for the same event ID.
+The model based parallel scenario generates concurrent account commands over
+three streams and checks their observed versions against the reference model.
 
 The process manager scenarios check stable manager and target identities under
 redelivery, timer persistence, and both orders of transfer inputs. The reactive

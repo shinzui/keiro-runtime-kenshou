@@ -68,6 +68,7 @@ library
     filepath,
     hasql,
     hasql-transaction,
+    hedgehog,
     keiki,
     keiki-codec-json,
     keiro,

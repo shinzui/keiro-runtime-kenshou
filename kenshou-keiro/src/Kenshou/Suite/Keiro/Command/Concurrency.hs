@@ -6,16 +6,26 @@ import Control.Concurrent.STM (atomically)
 import Control.Monad (replicateM)
 import Data.Aeson (object, withObject, (.:), (.=))
 import Data.Aeson.Types (parseMaybe)
+import Data.IORef (atomicModifyIORef', newIORef)
 import Data.List (findIndex, nub)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
+import Data.Text qualified as Text
 import Data.Time (addUTCTime, getCurrentTime)
+import GHC.Clock (getMonotonicTimeNSec)
 import Hasql.Connection qualified as Connection
 import Hasql.Connection.Settings qualified as Settings
+import Hedgehog (Gen, forAll)
+import Hedgehog qualified
+import Hedgehog.Gen qualified as Gen
+import Hedgehog.Range qualified as Range
 import Keiro.Command (CommandError (..), CommandResult (..), RunCommandOptions (..), defaultRunCommandOptions, runCommand)
+import Kenshou.Check.Model (ModelRun (..), runModel)
+import Kenshou.Check.Model.Linearizability (Completion (..), LinResult (..), Operation (..), SeqModel (..), checkLinearizable, defaultLinConfig)
 import Kenshou.Check.Process (ProgressSnapshot (..), awaitMark, awaitReady, childPid, killChild, progress, roleProcess, sendCommand, spawn, withSupervisor)
-import Kenshou.Check.Scenario (withCheck)
+import Kenshou.Check.Scenario (finishWithVerdicts, withCheck)
+import Kenshou.Check.Verdict (InvariantClass (..))
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
@@ -34,9 +44,91 @@ import Kenshou.Suite.Keiro.Fixture.Runtime
 import Kenshou.Suite.Keiro.Fixture.Workload qualified as Workload
 import Kiroku.Store (defaultConnectionSettings)
 import Kiroku.Store.Error (StoreError (..))
+import Kiroku.Store.Types (StreamVersion (..))
 
 scenarios :: [Scenario]
-scenarios = [identicalCommandsOneBatch, hotStreamContention, sigkillIdempotentResubmission]
+scenarios = [identicalCommandsOneBatch, hotStreamContention, sigkillIdempotentResubmission, modelBasedParallelCommands]
+
+data ModelObservation = ModelAccepted !Int | ModelRejected | ModelNoOp
+  deriving stock (Eq, Show)
+
+modelBasedParallelCommands :: Scenario
+modelBasedParallelCommands =
+  identicalCommandsOneBatch
+    { id = either (error . show) id (parseScenarioId "keiro/command/concurrency/model-based-parallel-commands"),
+      summary = "Generates parallel account command histories and checks them against the reference model.",
+      knobs =
+        [ KnobSpec (knobName "model.tests") "Generated histories" KnobInt (VInt 100) (IntRange 1 1000) [],
+          KnobSpec (knobName "model.branches") "Concurrent branches" KnobInt (VInt 3) (IntRange 2 4) []
+        ],
+      run = runModelBasedParallel
+    }
+
+runModelBasedParallel :: RunContext -> IO ScenarioReport
+runModelBasedParallel context =
+  withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture ->
+    withCheck context \check -> do
+      executionCounter <- newIORef (0 :: Int)
+      let KeiroRunner runFixture = fixture.runner
+          branchCount = fromIntegral (knobInt context.knobs (knobName "model.branches")) :: Int
+          testCount = fromIntegral (knobInt context.knobs (knobName "model.tests")) :: Int
+          accountEvents = accountEventStream SnapNever
+          property = do
+            branches <- forAll (replicateM branchCount (Gen.list (Range.linear 3 5) genCommandSpec))
+            execution <- Hedgehog.evalIO (atomicModifyIORef' executionCounter (\n -> (n + 1, n)))
+            let account i = AccountId ("parallel-" <> Text.pack (show execution) <> "-" <> Text.pack (show i))
+                accounts = map account [0 :: Int .. 2]
+                initial = foldl (\state acc -> Model.apply (AccountOpened (AccountOpenedData acc 20)) state) Model.emptyModel accounts
+                command (accountIndex, choice, amount) =
+                  let target = account accountIndex
+                   in case choice of
+                        0 -> OpenAccount (OpenAccountData target amount)
+                        1 -> Deposit (DepositData target amount "parallel")
+                        2 -> Withdraw (WithdrawData target amount)
+                        _ -> CloseAccount (CloseAccountData target)
+                runOne branch spec = do
+                  let chosen = command spec
+                      target = commandAccountId chosen
+                  invoked <- fromIntegral <$> getMonotonicTimeNSec
+                  result <- runFixture (runCommand defaultRunCommandOptions {retryLimit = 32} accountEvents (accountStream target) chosen)
+                  completed <- fromIntegral <$> getMonotonicTimeNSec
+                  let outcome = case result of
+                        Right (Right response) | response.eventsAppended == 1 -> let StreamVersion version = response.streamVersion in Returned (ModelAccepted (fromIntegral version))
+                        Right (Right response) | response.eventsAppended == 0 -> Returned ModelNoOp
+                        Right (Left CommandRejected) -> Returned ModelRejected
+                        _ -> Failed
+                  pure (Operation (Text.pack (show branch)) (case target of AccountId value -> value) chosen invoked (Just completed) outcome)
+                runBranch gate branch specs = do
+                  readMVar gate
+                  traverse (runOne branch) specs
+                model = SeqModel initial modelStep (==)
+                modelStep current chosen = case Model.decide current chosen of
+                  Model.ModelAccepts event ->
+                    let next = Model.apply event current
+                     in (ModelAccepted (Model.lookupAccount (commandAccountId chosen) next).entries, next)
+                  Model.ModelNoOp -> (ModelNoOp, current)
+                  Model.ModelRejects -> (ModelRejected, current)
+            opened <- Hedgehog.evalIO (traverse (\acc -> runFixture (runCommand defaultRunCommandOptions accountEvents (accountStream acc) (OpenAccount (OpenAccountData acc 20)))) accounts)
+            Hedgehog.assert (all (\case Right (Right result) -> result.eventsAppended == 1; _ -> False) opened)
+            gate <- Hedgehog.evalIO newEmptyMVar
+            workers <- Hedgehog.evalIO (traverse (\(branch, specs) -> async (runBranch gate branch specs)) (zip [0 :: Int ..] branches))
+            Hedgehog.evalIO (putMVar gate ())
+            histories <- Hedgehog.evalIO (concat <$> traverse wait workers)
+            Hedgehog.assert (all (\case Operation {completion = Returned _} -> True; _ -> False) histories)
+            let groups = [[operation | operation <- histories, operation.key == case acc of AccountId value -> value] | acc <- accounts]
+            Hedgehog.assert (all ((== Linearizable) . checkLinearizable defaultLinConfig model) groups)
+            acquired <- Hedgehog.evalIO (Connection.acquire (Settings.connectionString (requirePostgres context).connectionString <> Settings.applicationName "kenshou-keiro-parallel-oracle"))
+            connection <- Hedgehog.evalIO (either (fail . show) pure acquired)
+            rows <- Hedgehog.evalIO (Oracle.readCategoryLog connection "account")
+            Hedgehog.evalIO (Connection.release connection)
+            let ownRows = [row | row <- rows, row.streamName `elem` map accountStreamName accounts]
+            Hedgehog.assert (Oracle.logWellFormed ownRows)
+          modelRun = ModelRun "parallel-commands-linearizable" Contract testCount 20 property
+      verdict <- runModel check modelRun
+      finishWithVerdicts check [verdict]
+
+genCommandSpec :: Gen (Int, Int, Int)
+genCommandSpec = (,,) <$> Gen.int (Range.linear 0 2) <*> Gen.int (Range.linear 0 3) <*> Gen.int (Range.linear 0 30)
 
 sigkillIdempotentResubmission :: Scenario
 sigkillIdempotentResubmission =
