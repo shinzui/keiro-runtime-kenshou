@@ -3,7 +3,7 @@ module Kenshou.Suite.Kiroku.Roles (roles, appenderRoleName, readerRoleName, subs
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, newMVar, putMVar, takeMVar, withMVar)
 import Control.Exception (SomeException, try)
-import Control.Monad (forM_, replicateM)
+import Control.Monad (forM, forM_, replicateM)
 import Data.Aeson (Value, object, withObject, (.:), (.:?), (.=))
 import Data.Aeson.Types (Parser, parseMaybe)
 import Data.ByteString.Char8 qualified as ByteString
@@ -14,6 +14,7 @@ import Data.Text qualified as Text
 import Data.Time.Clock (getCurrentTime)
 import Data.UUID qualified as UUID
 import Data.Vector qualified as Vector
+import Data.Word (Word64)
 import GHC.Clock (getMonotonicTimeNSec)
 import Hasql.Transaction qualified as Tx
 import Kenshou.Core.Role (ControlMessage (..), PostgresConnInfo (..), RoleContext (..), RoleName, WorkerInit (..), WorkerMessage (..), WorkerRole (..), mkRoleName)
@@ -21,7 +22,7 @@ import Kenshou.Suite.Kiroku.Fixture.Workload (eventIdFor)
 import Kiroku.Store hiding (id)
 
 roles :: [WorkerRole]
-roles = [WorkerRole appenderRoleName "Races expected-version appends from a separate process." runAppender, WorkerRole readerRoleName "Tails the global event stream from a separate process." runReader, WorkerRole subscriberRoleName "Collects group delivery in a separate process." runSubscriber, WorkerRole txAppenderRoleName "Holds the global append lock inside a transaction continuation." runTxAppender]
+roles = [WorkerRole appenderRoleName "Races expected-version appends from a separate process." runAppender, WorkerRole readerRoleName "Tails the global event stream from a separate process." runReader, WorkerRole subscriberRoleName "Collects group delivery in a separate process." runSubscriber, WorkerRole fanoutRoleName "Runs several subscriptions on one publisher." runFanout, WorkerRole txAppenderRoleName "Holds the global append lock inside a transaction continuation." runTxAppender]
 
 appenderRoleName :: RoleName
 appenderRoleName = either (error . show) id (mkRoleName "kiroku/appender")
@@ -31,6 +32,9 @@ readerRoleName = either (error . show) id (mkRoleName "kiroku/reader")
 
 subscriberRoleName :: RoleName
 subscriberRoleName = either (error . show) id (mkRoleName "kiroku/subscriber")
+
+fanoutRoleName :: RoleName
+fanoutRoleName = either (error . show) id (mkRoleName "kiroku/fanout")
 
 txAppenderRoleName :: RoleName
 txAppenderRoleName = either (error . show) id (mkRoleName "kiroku/tx-appender")
@@ -117,6 +121,51 @@ parseSubscriberArgs = withObject "subscriber arguments" \value -> do
   requestedBatchSize <- maybe 100 id <$> value .:? "batchSize"
   handlerDelayMicros <- maybe 0 id <$> value .:? "handlerDelayMicros"
   pure (SubscriberArgs name ((,) <$> member <*> size) guardEnabled emitDeliveries compactDeliveries targetName requestedBatchSize handlerDelayMicros)
+
+runFanout :: RoleContext -> IO ()
+runFanout context = case (context.init.postgres, parseMaybe parseArgs context.init.args) of
+  (Nothing, _) -> context.send (WrkError "fan-out requires PostgreSQL")
+  (_, Nothing) -> context.send (WrkError "invalid fan-out arguments")
+  (Just postgres, Just (offset, subscribers, targetName, sampleEvery)) -> withStore (defaultConnectionSettings postgres.connectionString) \store -> do
+    sendLock <- newMVar ()
+    counters <- forM [offset .. offset + subscribers - 1] \index -> do
+      state <- newIORef (0 :: Int64, 0 :: Int64, 0 :: Int64)
+      pure (index, state)
+    let target = if targetName == "category" then Category (CategoryName "fanout") else AllStreams
+        send message = withMVar sendLock (\_ -> context.send message)
+        handler index state row = do
+          let GlobalPosition position = row.globalPosition
+          atomicModifyIORef' state \(count, previous, violations) ->
+            let bad = if count > 0 && position /= previous + 1 then 1 else 0
+             in ((count + 1, position, violations + bad), ())
+          if position `mod` fromIntegral sampleEvery == 0
+            then case parseMaybe (withObject "fan-out payload" (.: "issuedMonoNs")) row.payload of
+              Just (issuedMonoNs :: Word64) -> do
+                receivedMonoNs <- getMonotonicTimeNSec
+                send (WrkCustom ("fanout-sample-" <> Text.pack (show index)) (object ["subscriber" .= index, "position" .= position, "issuedMonoNs" .= issuedMonoNs, "receivedMonoNs" .= receivedMonoNs]))
+              Nothing -> pure ()
+            else pure ()
+          pure Continue
+        withMembers [] action = action
+        withMembers ((index, state) : rest) action =
+          withSubscription store (defaultSubscriptionConfig (SubscriptionName ("fanout-" <> Text.pack (show index))) target (handler index state)) \_ -> withMembers rest action
+        loop =
+          context.receive >>= \case
+            Just (CtlCustom "snapshot" payload) -> do
+              let token = parseMaybe (withObject "snapshot" (.: "token")) payload :: Maybe Text
+              rows <- forM counters \(index, state) -> do
+                (count, lastPosition, violations) <- readIORef state
+                pure (object ["subscriber" .= index, "count" .= count, "lastPosition" .= lastPosition, "orderViolations" .= violations])
+              send (WrkCustom "fanout-snapshot" (object ["token" .= token, "subscribers" .= rows]))
+              loop
+            Just (CtlStop _) -> pure ()
+            Just _ -> loop
+            Nothing -> pure ()
+    withMembers counters (send WrkReady >> loop)
+  where
+    parseArgs :: Value -> Parser (Int, Int, Text, Int)
+    parseArgs = withObject "fan-out arguments" \value ->
+      (,,,) <$> value .: "offset" <*> value .: "subscribers" <*> value .: "target" <*> value .: "sampleEvery"
 
 runReader :: RoleContext -> IO ()
 runReader context = case context.init.postgres of

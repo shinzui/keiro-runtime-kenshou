@@ -4,7 +4,7 @@ import Control.Concurrent (threadDelay)
 import Control.Concurrent.MVar (MVar, newEmptyMVar, takeMVar, tryPutMVar)
 import Control.Concurrent.STM (atomically, retry)
 import Control.Exception (SomeException, try)
-import Control.Monad (forM_, void)
+import Control.Monad (forM, forM_, void)
 import Data.Aeson (eitherDecodeStrict', object, withObject, (.:), (.=))
 import Data.Aeson.Types (parseMaybe)
 import Data.ByteString.Char8 qualified as ByteString
@@ -18,6 +18,7 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.UUID qualified as UUID
 import Data.Word (Word64)
+import GHC.Clock (getMonotonicTimeNSec)
 import Hasql.Decoders qualified as Decoders
 import Hasql.Encoders qualified as Encoders
 import Hasql.Pool qualified as Pool
@@ -49,7 +50,7 @@ import System.Info (os)
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [catchUp, appendToHandlerLatency]
+scenarios = [catchUp, appendToHandlerLatency, fanOut]
 
 catchUp :: Scenario
 catchUp =
@@ -223,6 +224,88 @@ readWorkerMessages :: FilePath -> IO [WorkerMessage]
 readWorkerMessages path = do
   contents <- ByteString.readFile path
   pure [message | line <- ByteString.lines contents, Right message <- [eitherDecodeStrict' line]]
+
+fanOut :: Scenario
+fanOut =
+  catchUp
+    { id = either (error . show) id (parseScenarioId "kiroku/subscription/benchmark/fan-out"),
+      summary = "Measures sampled delivery latency while verifying every subscriber receives every append.",
+      knobs = storeKnobs <> loadKnobs (defaultLoadDefaults {model = "open-constant", ratePerSecond = 500, executors = 32}) <> measureKnobs Benchmark <> [intKnob "kiroku.subscription.subscribers" 4 1 64, intKnob "kiroku.subscription.processes" 1 1 16, intKnob "kiroku.subscription.sample-every" 20 1 10000, choice "kiroku.subscription.target" "all" ["category"]],
+      run = runFanOut
+    }
+  where
+    name = either (error . show) id . mkKnobName
+    intKnob key value lower upper = KnobSpec (name key) key KnobInt (VInt value) (IntRange lower upper) []
+    choice key value others = KnobSpec (name key) key KnobText (VText value) (OneOf (VText value :| fmap VText others)) (fmap VText (value : others))
+
+runFanOut :: RunContext -> IO ScenarioReport
+runFanOut context = case (loadModelFromKnobs context.knobs, measureConfigFromKnobs context (phasePlanFromCore context.phases)) of
+  (Left reason, _) -> pure (failedWith ["invalid-load-config"] reason)
+  (_, Left reason) -> pure (failedWith ["invalid-measure-config"] reason)
+  (Right loadModel, Right measureConfig) -> withKirokuStore context \store -> withCheck context \check -> withSupervisor check \supervisor -> do
+    let name = either (error . show) id . mkKnobName
+        knob key = fromIntegral (knobInt context.knobs (name key)) :: Int
+        subscribers = knob "kiroku.subscription.subscribers"
+        processes = knob "kiroku.subscription.processes"
+        sampleEvery = knob "kiroku.subscription.sample-every"
+        target = knobText context.knobs (name "kiroku.subscription.target")
+        assignments = [(processIndex, processIndex * subscribers `div` processes, (processIndex + 1) * subscribers `div` processes - processIndex * subscribers `div` processes) | processIndex <- [0 .. processes - 1]]
+    if processes > subscribers
+      then pure (failedWith ["invalid-fan-out-processes"] "subscriber process count exceeds subscriber count")
+      else do
+        children <- forM assignments \(processIndex, offset, count) -> do
+          spec <- roleProcess check "kiroku/fanout" processIndex (object ["offset" .= offset, "subscribers" .= count, "target" .= target, "sampleEvery" .= sampleEvery])
+          child <- spawn supervisor spec
+          awaitReady child 10000
+          pure (processIndex, child)
+        walSync <- Pool.use store.pool (Session.statement () walSyncMethodStatement)
+        ((_, snapshots, sampleCount, negativeSamples), report) <- withMeasurement context measureConfig \measurement -> do
+          handle <- registerOp (measurementRecorder measurement) (OpName "fan-out-delivery")
+          recorder <- newWorkerRecorder handle 0
+          let operation worker sequenceNumber = do
+                issuedMonoNs <- getMonotonicTimeNSec
+                let stream = StreamName ("fanout-" <> Text.pack (show (worker `mod` 8)))
+                    event = EventData Nothing (EventType "FanOut") (object ["issuedMonoNs" .= issuedMonoNs, "sequence" .= sequenceNumber]) Nothing Nothing Nothing
+                result <- runStoreIO store (appendToStream stream AnyVersion [event])
+                pure case result of
+                  Right _ -> OpOk 1
+                  Left err -> OpFailed (ErrorCause (Text.pack (show err)))
+          loadReport <- runLoad measurement loadModel (Operation (OpName "append") operation)
+          let completed = fromIntegral loadReport.completed
+          snapshots <- timeout 60000000 (awaitFanoutCoverage children completed)
+          sampleRows <- fmap concat $ forM children \(processIndex, _) -> do
+            messages <- readWorkerMessages (context.outDir </> "logs" </> "kiroku-fanout-" <> show processIndex <> ".0.control.jsonl")
+            pure [row | WrkCustom key payload <- messages, "fanout-sample-" `Text.isPrefixOf` key, Just row <- [parseMaybe (withObject "fan-out sample" (\value -> (,) <$> value .: "issuedMonoNs" <*> value .: "receivedMonoNs")) payload :: Maybe (Word64, Word64)]]
+          forM_ sampleRows \(issued, received) -> recordDuration recorder received (received - min issued received) (OpOk 1)
+          pure (loadReport, snapshots, length sampleRows, length [() | (issued, received) <- sampleRows, received < issued])
+        counts <- Oracle.threeCounts store.pool
+        let completed = fromIntegral (sum [load.completed | load <- report.loads]) :: Int
+            failures = sum [load.failed | load <- report.loads]
+            rows = maybe [] id snapshots
+            coverage = length rows == subscribers && all (\(_, delivered, lastPosition, violations) -> delivered == fromIntegral completed && lastPosition == fromIntegral completed && violations == 0) rows
+            expectedSamples = subscribers * (completed `div` sampleEvery)
+            base = if completed > 0 && failures == 0 && coverage && sampleCount == expectedSamples && negativeSamples == 0 && counts == (fromIntegral completed, fromIntegral completed, fromIntegral completed) then passed else failedWith ["fan-out-delivery"] ("completed=" <> Text.pack (show completed) <> ", failures=" <> Text.pack (show failures) <> ", subscriber-counts=" <> Text.pack (show rows) <> ", samples=" <> Text.pack (show sampleCount) <> "/" <> Text.pack (show expectedSamples))
+            walMethod = either (const Nothing) Just walSync
+            reasons = (["local-placement" | context.environmentSpec.placement /= RunOnCell] <> ["wal-sync-method-unavailable" | walMethod == Nothing] <> ["macos-fsync-does-not-flush" | os == "darwin" && walMethod /= Just "fsync_writethrough"]) :: [Text]
+        putSummary context Measurements "methodology" (object ["authoritative" .= null reasons, "reasons" .= reasons, "walSyncMethod" .= walMethod, "subscribers" .= subscribers, "processes" .= processes, "target" .= target, "sampleEvery" .= sampleEvery, "latencyBasis" .= ("append start to handler entry on one host" :: Text), "trialsRequired" .= (3 :: Int)])
+        putSummary context Verdicts "fan-out" (object ["completed" .= completed, "failed" .= failures, "subscribers" .= rows, "sampledDeliveries" .= sampleCount, "expectedSamples" .= expectedSamples, "negativeSamples" .= negativeSamples, "durableCounts" .= counts])
+        pure (if base.outcome == Passed then base {outcome = measuredOutcome report base.outcome} else base)
+
+awaitFanoutCoverage :: [(Int, Child)] -> Int -> IO [(Int, Int64, Int64, Int64)]
+awaitFanoutCoverage children expected = go (0 :: Int)
+  where
+    go attempt = do
+      let token = Text.pack (show attempt)
+      forM_ children \(_, child) -> sendCommand child (CtlCustom "snapshot" (object ["token" .= token]))
+      rows <- fmap concat $ forM children \(_, child) -> atomically do
+        state <- progress child
+        case Map.lookup "fanout-snapshot" state.marks >>= parseMaybe (withObject "fan-out snapshot" (\value -> (,) <$> value .: "token" <*> value .: "subscribers")) of
+          Just (observed, values) | observed == Just token -> pure values
+          _ -> retry
+      let parsed = [row | value <- rows, Just row <- [parseMaybe (withObject "subscriber" (\item -> (,,,) <$> item .: "subscriber" <*> item .: "count" <*> item .: "lastPosition" <*> item .: "orderViolations")) value]]
+      if length parsed == length rows && all (\(_, count, _, _) -> count >= fromIntegral expected) parsed
+        then pure parsed
+        else threadDelay 100000 >> go (attempt + 1)
 
 walSyncMethodStatement :: Statement.Statement () Text
 walSyncMethodStatement = Statement.preparable "show wal_sync_method" Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.text)))
