@@ -44,12 +44,12 @@ Milestone 1 — The keiro fixture domain
 - [x] (2026-09-23T19:31:59Z) Verify the hard dependencies are complete (kernel, measurement, correctness, diagnostics, telemetry) using the checks in Concrete Steps. `nix develop --command cabal build all` succeeded; both required self-tests passed; the released cohort contains the stated keiro, keiki, kiroku and shibuya versions.
 - [ ] Create `kenshou-keiro/kenshou-keiro.cabal` with the library and the `kenshou-keiro-test` suite. The package and suite build; remaining: add the Milestone 1 fixture modules and dependencies.
 - [x] (2026-09-23T19:40:00Z) Write `Kenshou.Suite.Keiro.Fixture.Domain` and `.Fixture.Account`; prove `mkEventStream` accepts the account transducer for every snapshot policy variant. `cabal test kenshou-keiro-test` passes the four policy constructors.
-- [ ] Write `.Fixture.Transfer` (saga, strict variant, reactive variant) and `.Fixture.Bonus` (plain and declarative router).
-- [ ] Write `.Fixture.Projection`, `.Fixture.Runtime`, `.Fixture.Bridge`.
-- [ ] Write `.Fixture.Workload`, `.Fixture.Model`, `.Fixture.Oracle`, `.Fixture.Roles`. Workload and Model are present; Oracle and Roles remain.
-- [ ] Unit tests: codec round trip, model agrees with the keiki transducer, workload determinism, expected identifiers, list adapter acknowledgement log. The first three pass; identifier and acknowledgement tests remain.
-- [ ] Add `Kenshou.Suite.Keiro.bundle`, the scenario `keiro/command/correctness/fixture-roundtrip`, and the three-line registration in `kenshou-cli`.
-- [ ] Start `docs/layers/keiro.md`; create the two ADRs named in Context and Orientation.
+- [ ] Write `.Fixture.Transfer` (saga, strict variant, reactive variant) and `.Fixture.Bonus` (plain and declarative router). The saga, strict variant, bonus stream, and plain router compile; reactive and declarative variants remain.
+- [ ] Write `.Fixture.Projection`, `.Fixture.Runtime`, `.Fixture.Bridge`. The inline projection, store runner, and list adapter compile; asynchronous projection, complete runtime wrapper, and durable bridges remain.
+- [ ] Write `.Fixture.Workload`, `.Fixture.Model`, `.Fixture.Oracle`, `.Fixture.Roles`. Workload, Model, and the account-log and balance SQL oracles are present; remaining oracle readers and Roles remain.
+- [ ] Unit tests: codec round trip, model agrees with the keiki transducer, workload determinism, expected identifiers, list adapter acknowledgement log. Seven unit examples pass, including the acknowledgement log and setup/worker identifier separation; exact UUID assertions remain.
+- [x] (2026-09-23T19:57:00Z) Add `Kenshou.Suite.Keiro.bundle`, the scenario `keiro/command/correctness/fixture-roundtrip`, and the three-line registration in `kenshou-cli`. The scenario passed with both 20 and 500 generated operations.
+- [x] (2026-09-23T19:57:00Z) Start `docs/layers/keiro.md`; create the two ADRs named in Context and Orientation. ADR-15 and ADR-16 passed strict OKF validation.
 
 Milestone 2 — Command processor scenarios with snapshots and projections
 
@@ -85,6 +85,7 @@ Milestone 5 — Write-side benchmarks, soak and telemetry arms
 ## Surprises & Discoveries
 
 - The released `Keiro.Snapshot` module does not export `StateCodec`; `Keiro.EventStream` does. The first fixture compile failed on that import, and the corrected import built under the pinned released cohort.
+- The strict transfer saga initially declared a `SagaAnnounceSeen` source state despite intentionally rejecting an announcement as its first input. `mkEventStreamOrThrow` reported `possibly-dead @SagaAnnounceSeen`; building that edge only for the order-tolerant variant made both streams replay-safe.
 
 
 ## Decision Log
@@ -588,3 +589,5 @@ At the end of Milestone 1 these modules exist with the signatures given in the P
 What other plans consume. `docs/plans/13-cover-the-keiro-outbox-inbox-and-job-queue.md` uses the account stream, `submitAccountCommand`, the workload and the oracles as the business effect behind outbox producers, inbox handlers and jobs. `docs/plans/14-cover-keiro-durable-execution-timers-and-sharded-subscriptions.md` uses the transfer timeout timers this fixture schedules, `shardAckFor`, the saga as a sharded handler, and the ledger as the side effect of workflow steps. `docs/plans/15-verify-the-assembled-runtime-end-to-end-and-under-soak.md` depends on the whole `Kenshou.Suite.Keiro.Fixture.*` tree from `kenshou-runtime` and relies on `money-is-conserved` across its two contexts. Both keiro plans extend `bundle`, `kenshou-keiro.cabal` and `docs/layers/keiro.md` rather than creating their own. A change to any exported fixture signature after Milestone 1 must update those three plans in the same change, which is the subject of the first ADR this plan creates.
 
 Revision note (2026-09-23): Began implementation after the prerequisite build, self-tests, and cohort checks passed. Added the validated account and bonus aggregate foundation, a pure account model, deterministic workload generation, and unit checks. Milestone 1 remains in progress because the database fixture, workers, scenario registration, and ADRs are still to be implemented.
+
+Revision note (2026-09-23): Added the first database-backed command scenario, inline balance projection, SQL log oracle, transfer saga and plain bonus router foundations, list adapter acknowledgement test, layer guide, and the two architectural decisions. Milestone 1 remains in progress for reactive/declarative variants, asynchronous projection, durable bridges, worker roles, and full fixture oracles.

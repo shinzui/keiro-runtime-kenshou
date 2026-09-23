@@ -1,5 +1,9 @@
 # Bundle Update Log
 
+## 2026-09-23
+* **Decision**: Accepted parking in Keiro hooks before external process or backend termination.
+* **Decision**: Accepted kenshou-keiro ownership of the shared ledger fixture and SQL oracles.
+
 ## 2026-09-22
 * **Changed**: Applied contract-strength, known-defect, and controlled-benchmark decisions to Kiroku's isolation evidence.
 * **Decision**: Distinguished documented implementation limitations from canonically referenced upstream known defects.

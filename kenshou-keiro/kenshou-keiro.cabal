@@ -38,10 +38,17 @@ library
   import: warnings
   hs-source-dirs: src
   exposed-modules:
+    Kenshou.Suite.Keiro
+    Kenshou.Suite.Keiro.Command.Correctness
     Kenshou.Suite.Keiro.Fixture.Account
     Kenshou.Suite.Keiro.Fixture.Bonus
+    Kenshou.Suite.Keiro.Fixture.Bridge
     Kenshou.Suite.Keiro.Fixture.Domain
     Kenshou.Suite.Keiro.Fixture.Model
+    Kenshou.Suite.Keiro.Fixture.Oracle
+    Kenshou.Suite.Keiro.Fixture.Projection
+    Kenshou.Suite.Keiro.Fixture.Runtime
+    Kenshou.Suite.Keiro.Fixture.Transfer
     Kenshou.Suite.Keiro.Fixture.Workload
 
   build-depends:
@@ -49,13 +56,23 @@ library
     base,
     bytestring,
     containers,
+    effectful,
+    filepath,
+    hasql,
+    hasql-transaction,
     keiki,
     keiki-codec-json,
     keiro,
     keiro-core,
+    kenshou-check,
+    kenshou-core,
     kiroku-store,
     random,
+    shibuya-core,
+    streamly,
+    streamly-core,
     text,
+    time,
     uuid,
 
 test-suite kenshou-keiro-test
@@ -71,9 +88,15 @@ test-suite kenshou-keiro-test
   build-depends:
     aeson,
     base,
+    effectful,
     hspec,
     keiki,
+    keiro,
     keiro-core,
     kenshou-keiro,
     kiroku-store,
+    shibuya-core,
+    streamly-core,
     text,
+    time,
+    uuid,
