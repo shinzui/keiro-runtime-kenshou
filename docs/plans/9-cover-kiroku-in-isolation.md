@@ -55,7 +55,7 @@ Milestone 2 — kiroku concurrency, crash and known-defect scenarios.
 - [ ] Append concurrency scenarios: `expected-version-race` is implemented and passed a full 60-second PostgreSQL 18 durable run (61,693 winners and 431,851 expected conflicts with zero worker errors), a reduced PostgreSQL 17 run and a four-process variant; `idempotent-duplicates`, `all-order-under-contention` and `sigkill-mid-append` remain.
 - [ ] Subscription and consumer-group crash scenarios: `sigkill-redelivery-window`, `multi-process-members`, `duplicate-member-claim`.
 - [ ] Fault scenarios: `listen-kill-and-notify-loss`, `postgres-restart`, `network-partition`, `all-lock-hold`.
-- [ ] Known-defect scenarios (five) carrying `KnownDefect` references; confirm each is reported as a known defect and does not change the exit code of a plan run.
+- [ ] Known-defect scenarios (five) carrying `KnownDefect` references; `batch-size-validation` is registered and reproduced on PostgreSQL 17 and 18, with `blocking=false` and process exit code 0. Four known-defect scenarios and plan-run validation remain.
 - [ ] Create or update the ADRs named in Context and Orientation; validate the ADR bundle.
 
 Milestone 3 — kiroku benchmarks lifted from kiroku-bench.
@@ -86,6 +86,7 @@ Milestone 4 — kiroku soak and telemetry arms.
 - Source-stream reads also populate `RecordedEvent.globalPosition` with zero in this cohort, whereas `$all` reads carry the true global position. The lifecycle subscriber oracle must compare delivery positions to the `$all` read, not to source-stream rows. It now passes on PostgreSQL 18 with a live subscriber throughout soft delete, restoration, truncation and hard delete.
 - The authoritative Hackage preferred-version index and upstream tags report hasql-pool 1.5.0.1, while the resolved Kiroku store constrains hasql-pool below 1.5. The retention oracle uses hasql-pool 1.4 APIs to inspect the server SQLSTATE directly; the suite's bound follows that current cohort and needs re-verification when Kiroku advances.
 - The tracing probe retained one catch-up episode, delivery spans and an error-ended retry episode while a producer trace identifier survived all four deliveries; the composed metrics handler observed the same lifecycle events on PostgreSQL 17.
+- The invalid-batch probe observed both zero and negative batch sizes accepted by kiroku-store 0.8.0.1. On PostgreSQL 18, zero delivered the seeded event once while negative delivered none within five seconds; neither was refused. Its two failed cells were classified as the declared, nonblocking known defect on both PostgreSQL versions. The canonical URI does not yet resolve through the installed Mori CLI; the matching plan file exists in the registered kiroku source.
 - A held subscriber caused readiness to return 503 as expected. After the handler caught up, readiness and reported lag remained stale while the worker stayed live; a graceful stop emitted the position update that brought lag to zero and readiness back to 200. The collector documents its lag as an upper bound, so the zero-lag check is placed after that lifecycle event.
 
 ## Decision Log

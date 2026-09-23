@@ -39,3 +39,9 @@ The change-aware planner should map `kiroku/append/**` and the other store compo
 | Scenario | Contract checked |
 | --- | --- |
 | `kiroku/append/concurrency/expected-version-race` | Two or four worker processes race 8 to 32 writers over 1 to 16 precreated streams. Exactly one writer wins each expected version, all other writers report a version conflict, and a durable stream read has versions 1 through the final head. The default steady phase is 60 seconds and requires durable PostgreSQL. |
+
+## Known defects
+
+| Scenario | Desired contract and current observation |
+| --- | --- |
+| `kiroku/subscription/correctness/batch-size-validation` | Batch sizes 0 and -1 should be refused within five seconds without handler calls. Both were accepted on PostgreSQL 17 and 18 with the released cohort. This is a nonblocking known defect linked to `mori://shinzui/kiroku/plans/82-repair-live-reconnect-and-validate-subscription-identity-and-batch-size`. |
