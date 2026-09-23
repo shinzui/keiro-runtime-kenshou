@@ -61,11 +61,11 @@ Milestone 2 — Command processor scenarios with snapshots and projections
 
 Milestone 3 — Process manager scenarios
 
-- [ ] Correctness with the list adapter: `deterministic-ids-redelivery`, `policy-matrix`, `transient-classification`, `order-insensitive-join`, `timers-commit-with-manager-append`.
+- [ ] Correctness with the list adapter: `deterministic-ids-redelivery` passes for 50 transfers and three deliveries each; its unstable-name sabotage arm fails its verdict as intended. `policy-matrix`, `transient-classification`, `order-insensitive-join`, and `timers-commit-with-manager-append` remain.
 - [ ] Reactions: `reaction-schedule-modes` and the known-defect scenario `reaction-no-advance-receipt`.
 - [ ] Real bridge: `retry-budget-dead-letter` including dead-letter replay.
 - [ ] Multi-process: `sigkill-crash-windows`, `random-kill-exactly-once`, `topologies`.
-- [ ] Non-vacuity check with `pm.sabotage=unstable-manager-name`.
+- [x] (2026-09-23T20:34:00Z) Non-vacuity check with `pm.sabotage=unstable-manager-name` fails the durable-effect verdict as intended.
 
 Milestone 4 — Router scenarios
 
@@ -86,6 +86,7 @@ Milestone 5 — Write-side benchmarks, soak and telemetry arms
 
 - The released `Keiro.Snapshot` module does not export `StateCodec`; `Keiro.EventStream` does. The first fixture compile failed on that import, and the corrected import built under the pinned released cohort.
 - The strict transfer saga initially declared a `SagaAnnounceSeen` source state despite intentionally rejecting an announcement as its first input. `mkEventStreamOrThrow` reported `possibly-dead @SagaAnnounceSeen`; building that edge only for the order-tolerant variant made both streams replay-safe.
+- A process manager name also becomes part of the saga stream category. The sabotage arm initially appended a hyphen to the name, which keiro rejected as an invalid category before the oracle ran. An alphanumeric suffix keeps the manager name valid and now produces the intended failed verdict.
 
 
 ## Decision Log

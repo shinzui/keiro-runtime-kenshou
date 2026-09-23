@@ -51,6 +51,7 @@ library
     Kenshou.Suite.Keiro.Fixture.Runtime
     Kenshou.Suite.Keiro.Fixture.Transfer
     Kenshou.Suite.Keiro.Fixture.Workload
+    Kenshou.Suite.Keiro.ProcessManager.Correctness
 
   build-depends:
     aeson,
@@ -76,6 +77,7 @@ library
     text,
     time,
     uuid,
+    vector,
 
 test-suite kenshou-keiro-test
   import: warnings
