@@ -72,6 +72,7 @@ cellsOf scenario = case renderScenarioId scenario of
   "shibuya/core-runner/concurrency/forced-shutdown-abandons-but-never-loses" -> [(Dispatch, Cancellation), (Finalization, Cancellation), (DrainCancel, Normal), (DrainCancel, Cancellation), (IngestionBackpressure, Timeout), (RetryLease, Timeout)]
   "shibuya/core-runner/concurrency/leased-but-unfinalized-upper-bound" -> [(IngestionBackpressure, Normal)]
   "shibuya/core-ordering/correctness/policy-matrix" -> [(Dispatch, Normal), (KeyedOrdering, Normal)]
+  "shibuya/core-ordering/concurrency/hot-key-head-of-line" -> [(KeyedOrdering, Normal)]
   _ -> []
 
 -- Add reasons only for cells which cannot be exercised through public APIs.
