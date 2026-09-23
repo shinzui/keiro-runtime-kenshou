@@ -81,7 +81,10 @@ policy matrix. A reordered redelivery probe checks that dead-letter rows still
 identify their rejected targets. The asynchronous projection scenario checks deduplication,
 rebuild fencing, and the documented effect of pruning deduplication rows. A
 projection worker crash after apply checks that redelivery is deduplicated;
-the `skip-dedup` arm fails. The stronger apply/checkpoint atomicity run
+the `skip-dedup` arm fails. `projection.batch-size` and `projection.events`
+let the run keep more events pending across the crash; batch sizes 1 and 10
+both replayed one duplicate within the batch bound. The stronger
+apply/checkpoint atomicity run
 reproduces the known defect at
 `mori://shinzui/keiro/okf/improvement-requests/concepts/IR-10`.
 The inline projection scenario interrupts an open command transaction with

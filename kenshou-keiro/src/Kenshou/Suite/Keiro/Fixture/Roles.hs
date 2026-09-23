@@ -250,10 +250,14 @@ projectionWorker context = case parseMaybe parseProjectionArgs context.init.args
       then pure ()
       else withFixtureEnv (defaultConnectionSettings postgres.connectionString) \fixture -> do
         let sabotage = if args.skipDedup then SkipDedup else NoProjectionSabotage
+        duplicates <- newIORef (0 :: Int)
         runAccountActivityWorker fixture.store (fromIntegral args.batchSize) sabotage \recorded outcome -> do
           context.send (WrkFacts [object ["eventId" .= show recorded.eventId, "outcome" .= show outcome]])
           case outcome of
-            AsyncDuplicate -> context.send (WrkCustom "projection-duplicate" (object ["eventId" .= show recorded.eventId]))
+            AsyncDuplicate -> do
+              count <- atomicModifyIORef' duplicates (\n -> (n + 1, n + 1))
+              context.send (WrkCustom "projection-duplicate" (object ["eventId" .= show recorded.eventId]))
+              context.send (WrkCustom "projection-duplicate-count" (object ["count" .= count]))
             AsyncApplied -> context.send (WrkCustom "projection-applied" (object ["eventId" .= show recorded.eventId]))
             AsyncFenced -> pure ()
           if args.parkAfterApply && outcome == AsyncApplied

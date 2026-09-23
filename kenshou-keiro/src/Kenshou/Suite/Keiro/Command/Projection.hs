@@ -2,7 +2,8 @@ module Kenshou.Suite.Keiro.Command.Projection (scenarios) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM (atomically)
-import Data.Aeson (object, (.=))
+import Data.Aeson (object, withObject, (.:), (.=))
+import Data.Aeson.Types (parseMaybe)
 import Data.Int (Int32)
 import Data.List (findIndex)
 import Data.List.NonEmpty (NonEmpty (..))
@@ -144,7 +145,11 @@ asyncAtLeastOnceUnderKill =
     { id = either (error . show) id (parseScenarioId "keiro/projection/concurrency/async-at-least-once-under-kill"),
       summary = "Kills a projection worker after apply and checks deduplication on restart.",
       tier = TierStandard,
-      knobs = [KnobSpec (either (error . show) id (mkKnobName "projection.sabotage")) "Disable deduplication on restart" KnobText (VText "none") (OneOf (VText "none" :| [VText "skip-dedup"])) []],
+      knobs =
+        [ KnobSpec (either (error . show) id (mkKnobName "projection.sabotage")) "Disable deduplication on restart" KnobText (VText "none") (OneOf (VText "none" :| [VText "skip-dedup"])) [],
+          KnobSpec (either (error . show) id (mkKnobName "projection.batch-size")) "Projection fetch batch size" KnobInt (VInt 10) (IntRange 1 100) [],
+          KnobSpec (either (error . show) id (mkKnobName "projection.events")) "Deposits pending when the worker crashes" KnobInt (VInt 10) (IntRange 1 100) []
+        ],
       dimensions =
         DimensionSupport
           { tracing = Supported (Support (TracingOff :| []) TracingOff),
@@ -173,11 +178,13 @@ runAsyncCrash atomicContract context =
           account = AccountId "projection-crash"
           accountEvents = accountEventStream SnapNever
           sabotage = if atomicContract then False else knobText context.knobs (either (error . show) id (mkKnobName "projection.sabotage")) == "skip-dedup"
+          batchSize = if atomicContract then 100 else fromIntegral (knobInt context.knobs (either (error . show) id (mkKnobName "projection.batch-size"))) :: Int
+          eventCount = if atomicContract then 1 else fromIntegral (knobInt context.knobs (either (error . show) id (mkKnobName "projection.events"))) :: Int
           accepted = \case Right (Right result) -> result.eventsAppended == 1; _ -> False
       _ <- runFixture ensureFixtureReadModels >>= either (fail . show) pure
       opened <- runFixture (runCommand defaultRunCommandOptions accountEvents (accountStream account) (OpenAccount (OpenAccountData account 5)))
-      deposited <- runFixture (runCommand defaultRunCommandOptions accountEvents (accountStream account) (Deposit (DepositData account 1 "after-crash")))
-      armedSpec <- roleProcess check "keiro/projection-worker" 0 (object ["batchSize" .= (100 :: Int), "parkAfterApply" .= True])
+      deposited <- traverse (\_ -> runFixture (runCommand defaultRunCommandOptions accountEvents (accountStream account) (Deposit (DepositData account 1 "after-crash")))) [1 .. eventCount]
+      armedSpec <- roleProcess check "keiro/projection-worker" 0 (object ["batchSize" .= batchSize, "parkAfterApply" .= True])
       armed <- spawn supervisor armedSpec
       awaitReady armed 10000
       sendCommand armed CtlStart
@@ -186,22 +193,26 @@ runAsyncCrash atomicContract context =
       connection <- either (fail . show) pure acquired
       before <- Oracle.readActivityTable connection
       killChild supervisor armed
-      resumedSpec <- roleProcess check "keiro/projection-worker" 1 (object ["batchSize" .= (100 :: Int), "skipDedup" .= sabotage])
+      resumedSpec <- roleProcess check "keiro/projection-worker" 1 (object ["batchSize" .= batchSize, "skipDedup" .= sabotage])
       resumed <- spawn supervisor resumedSpec
       awaitReady resumed 10000
       sendCommand resumed CtlStart
-      completed <- timeout 90000000 (awaitActivity connection account (if sabotage then 3 else 2))
+      completed <- timeout 90000000 (awaitActivity connection account (fromIntegral (if sabotage then eventCount + 2 else eventCount + 1)))
       after <- Oracle.readActivityTable connection
       observed <- atomically (progress resumed)
       Connection.release connection
       killChild supervisor resumed
       let redelivered = Map.member "projection-duplicate" observed.marks
+          duplicateCount = do
+            payload <- Map.lookup "projection-duplicate-count" observed.marks
+            parseMaybe (withObject "projection-duplicate-count" (.: "count")) payload :: Maybe Int
           baseCells =
-            [ ("source-setup", accepted opened && accepted deposited),
+            [ ("source-setup", accepted opened && all accepted deposited),
               ("applied-before-kill", Map.lookup account before == Just (1, 5)),
               ("killed-and-restarted", childPid armed /= childPid resumed && completed == Just True),
-              ("activity-equals-log", Map.lookup account after == Just (2, 6)),
-              ("redelivery-deduplicated", redelivered)
+              ("activity-equals-log", Map.lookup account after == Just (fromIntegral (eventCount + 1), fromIntegral (eventCount + 5))),
+              ("redelivery-deduplicated", redelivered),
+              ("redelivery-within-batch", duplicateCount == Just 1 && maybe False (<= batchSize) duplicateCount)
             ]
           cells = if atomicContract then baseCells <> [("no-redelivery-after-apply", not redelivered)] else baseCells
       recordCells context cells
