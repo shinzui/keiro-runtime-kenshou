@@ -38,6 +38,7 @@ library
   exposed-modules:
     Kenshou.Suite.Kiroku
     Kenshou.Suite.Kiroku.Bench.Append
+    Kenshou.Suite.Kiroku.Bench.Ladder
     Kenshou.Suite.Kiroku.Bench.Read
     Kenshou.Suite.Kiroku.Bench.Transaction
     Kenshou.Suite.Kiroku.Concurrency.Append
