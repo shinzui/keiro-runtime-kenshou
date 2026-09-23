@@ -61,7 +61,7 @@ Milestone 2 — Command processor scenarios with snapshots and projections
 
 Milestone 3 — Process manager scenarios
 
-- [ ] Correctness with the list adapter: `deterministic-ids-redelivery` passes for 50 transfers and three deliveries each; its unstable-name sabotage arm fails its verdict as intended. `timers-commit-with-manager-append` passes with an unchanged deadline after redelivery and a rejected second debit. `order-insensitive-join` passes with both input orders and strict halt/dead-letter policies. `policy-matrix` and `transient-classification` remain.
+- [ ] Correctness with the list adapter: `deterministic-ids-redelivery` passes for 50 transfers and three deliveries each; its unstable-name sabotage arm fails its verdict as intended. `timers-commit-with-manager-append` passes with an unchanged deadline after redelivery and a rejected second debit. `order-insensitive-join` passes with both input orders and strict halt/dead-letter policies. `policy-matrix` passes all nine combinations with callback, acknowledgement, durable effect, and dead-letter checks. The poison metric assertion and `transient-classification` remain.
 - [x] (2026-09-23T21:10:00Z) Reactions: `reaction-schedule-modes` passes both input orders, cancellation, and accepted redelivery. `reaction-no-advance-receipt` reproduces its sole expected failure `no-advance-at-most-once`; the harness marks it nonblocking against `mori://shinzui/keiro/okf/adrs/concepts/ADR-41`.
 - [ ] Real bridge: `retry-budget-dead-letter` including dead-letter replay.
 - [ ] Multi-process: `sigkill-crash-windows`, `random-kill-exactly-once`, `topologies`.
@@ -89,6 +89,7 @@ Milestone 5 — Write-side benchmarks, soak and telemetry arms
 - A process manager name also becomes part of the saga stream category. The sabotage arm initially appended a hyphen to the name, which keiro rejected as an invalid category before the oracle ran. An alphanumeric suffix keeps the manager name valid and now produces the intended failed verdict.
 - `opCommands` is pure and does not receive `WorkloadSpec`, so its transfer leg cannot derive a relative deadline from `transferDeadlineSeconds`. The original literal 3600 was a time in 1970 and made every generated transfer timer immediately due. The fixture now uses a fixed far-future epoch for deterministic command expansion; making the deadline spec-driven needs an explicit parameter in the workload API.
 - `WorkerRole` names must have the shape `<layer>/<name>`, so the executable role names are `keiro/command-writer`, `keiro/pm-worker`, `keiro/router-worker`, and `keiro/projection-worker` rather than the dot-form names in the plan's prose.
+- The harness knob types are scalar; it does not support the plan's proposed enum-list policy knobs. `policy-matrix` therefore executes all nine policy combinations in one run with distinct stream names.
 
 
 ## Decision Log

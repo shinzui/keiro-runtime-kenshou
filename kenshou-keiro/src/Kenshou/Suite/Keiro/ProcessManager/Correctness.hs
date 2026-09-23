@@ -1,17 +1,19 @@
 module Kenshou.Suite.Keiro.ProcessManager.Correctness (scenarios) where
 
 import Control.Monad (forM, forM_)
-import Data.IORef (newIORef, readIORef)
+import Data.Aeson (object)
+import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import Data.UUID qualified as UUID
 import Data.Vector qualified as Vector
+import Effectful (liftIO)
 import Hasql.Connection qualified as Connection
 import Hasql.Connection.Settings qualified as Settings
 import Keiro.Command (CommandError (..), CommandResult (..), RunCommandOptions (..), defaultRunCommandOptions, runCommand)
-import Keiro.ProcessManager (RejectedCommandPolicy (..), WorkerOptions (..), defaultWorkerOptions, deterministicCommandId, runProcessManagerOnce, runProcessManagerWorkerWith)
+import Keiro.ProcessManager (PoisonPolicy (..), RejectedCommandPolicy (..), WorkerOptions (..), defaultWorkerOptions, deterministicCommandId, runProcessManagerOnce, runProcessManagerWorkerWith)
 import Keiro.ProcessManager.Reaction (ReactionStateResult (..), ReactionTimerEffects (..), ReactiveProcessManagerResult (..), runReactiveProcessManagerOnce)
 import Keiro.Timer (TimerId (..), cancelTimer)
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
@@ -33,11 +35,98 @@ import Kenshou.Suite.Keiro.Fixture.Transfer
 import Kenshou.Suite.Keiro.Fixture.Workload qualified as Workload
 import Kiroku.Store (defaultConnectionSettings)
 import Kiroku.Store.Read (readCategory)
-import Kiroku.Store.Types (CategoryName (..), GlobalPosition (..), RecordedEvent (..), StreamName (..))
-import Shibuya.Core.Ack (AckDecision (..))
+import Kiroku.Store.Types (CategoryName (..), EventType (..), GlobalPosition (..), RecordedEvent (..), StreamName (..))
+import Shibuya.Core.Ack (AckDecision (..), DeadLetterReason (..), HaltReason (..))
 
 scenarios :: [Scenario]
-scenarios = [deterministicIdsRedelivery, timersCommitWithManagerAppend, orderInsensitiveJoin, reactionScheduleModes, reactionNoAdvanceReceipt]
+scenarios = [deterministicIdsRedelivery, timersCommitWithManagerAppend, orderInsensitiveJoin, reactionScheduleModes, reactionNoAdvanceReceipt, policyMatrix]
+
+policyMatrix :: Scenario
+policyMatrix =
+  deterministicIdsRedelivery
+    { id = either (error . show) id (parseScenarioId "keiro/process-manager/correctness/policy-matrix"),
+      summary = "Checks all poison and rejected-command worker policy combinations.",
+      tier = TierStandard,
+      knobs = [],
+      run = runPolicyMatrix
+    }
+
+runPolicyMatrix :: RunContext -> IO ScenarioReport
+runPolicyMatrix context =
+  withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture -> do
+    let KeiroRunner runFixture = fixture.runner
+        accountEvents = accountEventStream SnapNever
+        manager = transferManager accountEvents (const [])
+        submit account command = runFixture (runCommand defaultRunCommandOptions accountEvents (accountStream account) command)
+        accepted = \case Right (Right result) -> result.eventsAppended == 1; _ -> False
+        policies = [("halt", RejectedHalt), ("dead-letter", RejectedDeadLetter), ("skip", RejectedSkip)]
+        poisonNames = ["halt", "skip", "dead-letter"]
+    cells <- forM [(poisonName, rejectedName, rejectedPolicy) | poisonName <- poisonNames, (rejectedName, rejectedPolicy) <- policies] \(poisonName, rejectedName, rejectedPolicy) -> do
+      let suffix = poisonName <> "-" <> rejectedName
+          rejectedTransfer = TransferId ("rejected-" <> suffix)
+          normalTransfer = TransferId ("normal-" <> suffix)
+          rejectedSource = AccountId ("rejected-source-" <> suffix)
+          rejectedDestination = AccountId ("rejected-destination-" <> suffix)
+          normalSource = AccountId ("normal-source-" <> suffix)
+          normalDestination = AccountId ("normal-destination-" <> suffix)
+      setup <-
+        sequence
+          [ submit rejectedSource (OpenAccount (OpenAccountData rejectedSource 10)),
+            submit rejectedDestination (OpenAccount (OpenAccountData rejectedDestination 0)),
+            submit rejectedDestination (CloseAccount (CloseAccountData rejectedDestination)),
+            submit rejectedSource (DebitTransfer (DebitTransferData rejectedSource rejectedTransfer rejectedDestination 2 4102444800)),
+            submit normalSource (OpenAccount (OpenAccountData normalSource 10)),
+            submit normalDestination (OpenAccount (OpenAccountData normalDestination 0)),
+            submit normalSource (DebitTransfer (DebitTransferData normalSource normalTransfer normalDestination 2 4102444800))
+          ]
+      sourceBatch <- runFixture (readCategory (CategoryName "account") (GlobalPosition 0) 1000) >>= either (fail . show) pure
+      let debits = [(recorded, d.transferId) | recorded <- Vector.toList sourceBatch, Just (_, SignalDebited d) <- [decodeTransferSignal recorded]]
+          findDebit transfer = case [recorded | (recorded, identifier) <- debits, identifier == transfer] of
+            [recorded] -> pure recorded
+            other -> fail ("expected one policy debit, observed " <> show (length other))
+      rejectedEvent <- findDebit rejectedTransfer
+      normalEvent <- findDebit normalTransfer
+      acknowledgements <- newIORef []
+      poisonCallbacks <- newIORef (0 :: Int)
+      let poisonEvent = rejectedEvent {payload = object []}
+          poisonPolicy = case poisonName of
+            "halt" -> PoisonHalt
+            "skip" -> PoisonSkip (\_ -> liftIO (modifyIORef' poisonCallbacks (+ 1)))
+            _ -> PoisonDeadLetter (\_ -> liftIO (modifyIORef' poisonCallbacks (+ 1)))
+          options = defaultWorkerOptions {poisonPolicy, rejectedCommandPolicy = rejectedPolicy}
+          adapter = listAdapter ("policy-" <> suffix) acknowledgements [(poisonEvent, Nothing), (rejectedEvent, Nothing), (rejectedEvent, Just 1), (normalEvent, Nothing)]
+      _ <- runFixture (runProcessManagerWorkerWith options defaultRunCommandOptions manager adapter decodeTransferSignal) >>= either (fail . show) pure
+      acks <- readIORef acknowledgements
+      callbacks <- readIORef poisonCallbacks
+      acquired <- Connection.acquire (Settings.connectionString (requirePostgres context).connectionString <> Settings.applicationName "kenshou-keiro-policy-oracle")
+      connection <- either (fail . show) pure acquired
+      letters <- Oracle.readDispatchDeadLetters connection
+      sagaRows <- Oracle.readCategoryLog connection "pm:transferSaga"
+      accountRows <- Oracle.readCategoryLog connection "account"
+      Connection.release connection
+      let poisonDecision = case poisonName of
+            "halt" -> \case AckHalt (HaltFatal reason) -> reason == "process-manager worker could not decode message"; _ -> False
+            "skip" -> (== AckOk)
+            _ -> \case AckDeadLetter (InvalidPayload _) -> True; _ -> False
+          rejectedDecision = case rejectedPolicy of
+            RejectedHalt -> \case AckHalt _ -> True; _ -> False
+            _ -> (== AckOk)
+          StreamName targetName = accountStreamName rejectedDestination
+          matchingLetters = [letter | letter <- letters, letter.targetStreamName == targetName]
+          deadLetterExpected = case rejectedPolicy of
+            RejectedDeadLetter -> case matchingLetters of
+              [letter] -> letter.dispatcherKind == "process-manager" && letter.dispatcherName == "transferSaga" && letter.emitIndex == 0 && letter.errorClass == "command_rejected"
+              _ -> False
+            _ -> null matchingLetters
+          policyChecks = case acks of
+            [poisonAck, rejectedAck, repeatedAck, normalAck] -> poisonDecision poisonAck.decision && rejectedDecision rejectedAck.decision && rejectedDecision repeatedAck.decision && normalAck.decision == AckOk
+            _ -> False
+          ownRows transfer = length [() | row <- sagaRows, row.streamName == StreamName ("pm:transferSaga-" <> case transfer of TransferId value -> value)]
+          normalCredited = length [() | row <- accountRows, row.streamName == accountStreamName normalDestination, row.eventType == EventType "TransferCredited"] == 1
+          rejectionConfirmed = length [() | row <- accountRows, row.streamName == accountStreamName rejectedSource, row.eventType == EventType "TransferConfirmed"] == 1
+          cellPassed = and (map accepted setup) && policyChecks && callbacks == (if poisonName == "halt" then 0 else 1) && deadLetterExpected && ownRows rejectedTransfer == 1 && ownRows normalTransfer == 1 && normalCredited && rejectionConfirmed
+      pure ("policy-" <> suffix, cellPassed)
+    recordCells context cells
 
 reactionNoAdvanceReceipt :: Scenario
 reactionNoAdvanceReceipt =

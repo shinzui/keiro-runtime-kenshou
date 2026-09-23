@@ -37,7 +37,10 @@ manager scenario checks insert-only timeout scheduling, reminder rearming,
 cancellation, and duplicate delivery. The `reaction-no-advance-receipt` run
 reproduces the documented missing durable receipt for a `NoAdvance` input;
 the harness reports it as a nonblocking known defect tied to
-`mori://shinzui/keiro/okf/adrs/concepts/ADR-41`. The router
+`mori://shinzui/keiro/okf/adrs/concepts/ADR-41`. The process-manager
+`policy-matrix` run checks all nine poison and rejected-command policy
+combinations, including acknowledgement decisions and durable dead letters.
+The router
 scenarios check fanout under redelivery and selection drift, independent
 target commits with a durable dead letter, and the declarative selection
 policy matrix. The asynchronous projection scenario checks deduplication,
