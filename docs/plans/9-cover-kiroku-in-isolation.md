@@ -64,7 +64,7 @@ Milestone 3 — kiroku benchmarks lifted from kiroku-bench.
 - [ ] `Kenshou.Suite.Kiroku.Bench.Ladder` (`layer-ladder`) with its harness-owned schema `kenshou_kiroku`.
 - [ ] `Kenshou.Suite.Kiroku.Bench.Read` (`read-targets`) now prepopulates before measurement and records paced read histograms and a methodology summary. Reduced PostgreSQL 18 durable runs passed for paged single-stream forward, Streamly single-stream forward, paged category forward and paged `$all` backward. The released store exposes Streamly only for single-stream forward reads and no category backward read, so those combinations return an explicit unsupported verdict. A full 100,000-event default run and the remaining supported target/direction combinations remain.
 - [ ] `Kenshou.Suite.Kiroku.Bench.Subscription` (`append-to-handler-latency`, `catch-up`, `fan-out`) with cross-process wall-clock latency.
-- [ ] `Kenshou.Suite.Kiroku.Bench.Transaction` (`lock-hold-contention`).
+- [ ] `Kenshou.Suite.Kiroku.Bench.Transaction` (`lock-hold-contention`) now records separate `plain-append`, `transaction-append` and whole-attempt histograms while a configurable fraction of writes execute continuation probe statements under the `$all` lock. A 25-second paced PostgreSQL 18 durable run at one continuation statement passed with 4,860 plain and 1,391 transaction samples and no failures. The default 120-second run and 0, 5 and 20-statement comparison cells remain.
 - [ ] Methodology section written into every benchmark summary; methodology rules recorded in `docs/layers/kiroku.md`.
 - [ ] One paired comparison of two pool sizes through `kenshou compare` recorded in this plan's Outcomes.
 
