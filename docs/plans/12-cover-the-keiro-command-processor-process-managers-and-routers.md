@@ -78,7 +78,7 @@ Milestone 5 — Write-side benchmarks, soak and telemetry arms
 
 - [ ] Benchmarks: `throughput-latency` passes a 15-second local two-writer run with measured samples, series, and three durable-log verdicts. `hydration-cost` passes local 15-second cases at stream length 100 with `never`/page 256 and `every-100`/page 64; a rejected close command keeps the hydrated stream immutable. `all-stream-append-ceiling` passes 15-second local runs at one and four independent writers with pool size four and durable ledger verdicts. The first two-second throughput run was inconclusive for insufficient samples; an unthrottled short run saturated the load driver. Telemetry is wired to all three command benchmarks, and four throughput tracing/metrics combinations plus one hydrated in-memory/collect run passed. Process-manager `dispatch-latency` passed 15-second local list-adapter runs with telemetry off and in-memory/collect, measured samples, and durable saga and account checks. Router `fanout-dispatch` passed a 40-second one-recipient run; a ten-recipient two-worker run passed durable checks but exceeded the local driver CPU gate. Runner and process knobs remain for throughput, as do the full hydration and ceiling matrices, and the Kiroku adapter arms of both dispatch benchmarks.
 - [ ] Soaks: `write-side-steady-state` and `seed-verification-backlog`, each registered at full and reduced duration.
-- [ ] Telemetry: `keiro/telemetry/correctness/write-side-signals` passes with in-memory/collect and off/off. It checks command span attributes and exact counts for nine command, router, and snapshot counters against durable effects. All four values of both telemetry dimensions are supported by the five benchmarks; soak scenarios and one recorded overhead report remain.
+- [ ] Telemetry: `keiro/telemetry/correctness/write-side-signals` passes with in-memory/collect and off/off. It checks command span attributes and exact counts for nine command, router, and snapshot counters against durable effects. All four values of both telemetry dimensions are supported by the five benchmarks. A three-trial command overhead report was produced; its overall verdict is inconclusive. Soak scenarios and a process-manager overhead report remain.
 - [ ] Finish `docs/layers/keiro.md`; ADR distillation pass; Outcomes & Retrospective.
 
 
@@ -145,7 +145,16 @@ Milestone 5 — Write-side benchmarks, soak and telemetry arms
 
 ## Outcomes & Retrospective
 
-(To be filled during and after implementation.)
+A three-trial, one-factor overhead comparison of the command throughput benchmark
+was produced at `runs/overhead-01a0d08a-e764-74ce-8f54-e9bb90ced418` with
+two writers, a 15-second steady window, and a 10 ms think time. All 18 slots
+completed successfully and three paired blocks were valid. Relative to
+telemetry off, collected metrics, no-op tracing, and OTLP tracing passed the
+configured comparison policy. Scraped metrics and in-memory tracing were
+inconclusive because their confidence intervals were too wide; the overall
+report is therefore inconclusive. The observed throughput differences were
+small (from −0.26% to +0.71%), but this local run is not evidence of a
+general overhead bound. No run results are committed.
 
 
 ## Context and Orientation

@@ -139,3 +139,8 @@ names, internal kind, stream and database attributes, retry attempts, append
 counts, and error class. It compares nine counter totals with the durable
 account and dead-letter rows. With both telemetry dimensions off, the same
 durable outcomes pass and no spans or metric sums are exported.
+The command telemetry overhead comparison produced a three-trial report with
+18 successful slots and three valid paired blocks. The overall result was
+inconclusive because the scraped-metrics and in-memory-tracing comparisons
+had wide confidence intervals; the other three comparisons passed their
+policy. Results remain in the ignored `runs/` directory.
