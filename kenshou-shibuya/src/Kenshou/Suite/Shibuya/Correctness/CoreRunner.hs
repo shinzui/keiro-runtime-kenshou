@@ -13,7 +13,7 @@ import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (KnownDefect (..), Placement (..), Scenario (..), Tier (..), failedWith, passed)
 import Kenshou.Suite.Shibuya.Cohort (knownOnReleasedCore, rev)
-import Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter (BrokerStats (..), brokerStats, closeInput, defaultSyntheticConfig, newSyntheticBroker, publish, syntheticAdapter)
+import Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter (BrokerStats (..), SyntheticConfig (..), brokerStats, closeInput, defaultSyntheticConfig, newSyntheticBroker, publish, reopenSource, syntheticAdapter)
 import Shibuya.Adapter (Adapter (..))
 import Shibuya.App (AppConfig (..), QueueProcessor (..), defaultAppConfig, mkBatchProcessor, mkProcessor, runApp, stopApp, waitApp)
 import Shibuya.Batch (BatchConfig (..), BatchHandler, ackAll, defaultBatchConfig)
@@ -49,7 +49,12 @@ scenarios =
       "shibuya/core-runner/correctness/nonpositive-concurrency-is-rejected"
       "Rejects zero and negative concurrency bounds or runs at most one handler."
       (knownOnReleasedCore (rev 6 "REV-6-F1"))
-      nonpositiveConcurrency
+      nonpositiveConcurrency,
+    coreScenario
+      "shibuya/core-runner/correctness/a-failed-processor-is-never-restarted"
+      "A failed source stays stopped until an application restart resumes the broker."
+      Nothing
+      failedProcessorNeedsRestart
   ]
 
 coreScenario :: Text -> Text -> Maybe KnownDefect -> IO [Text] -> Scenario
@@ -152,6 +157,40 @@ nonpositiveConcurrency = concat <$> mapM runArm [Async 0, Async (-1), Ahead 0]
           <> [label <> ": rejected policy pulled the source" | rejected == Just True && stats.sourcePulls /= 0]
           <> [label <> ": accepted policy ran concurrent handlers" | rejected == Just False && peak > 1]
           <> [label <> ": accepted policy did not complete all messages" | rejected == Just False && stats.finalizedOk /= 40]
+
+failedProcessorNeedsRestart :: IO [Text]
+failedProcessorNeedsRestart = do
+  broker <- newSyntheticBroker defaultSyntheticConfig {sourceFault = Just (100, "scripted source failure")}
+  mapM_ (\number -> publish broker Nothing (ByteString.pack ("message-" <> show number))) [1 .. 200 :: Int]
+  closeInput broker
+  result <- timeout 15000000 $ runEff $ runTracingNoop $ do
+    let start name = runApp defaultAppConfig [(ProcessorId name, mkProcessor (syntheticAdapter broker) (\_ -> pure AckOk))]
+    first <- start "first"
+    case first of
+      Left err -> error (show err)
+      Right firstHandle -> do
+        waitApp firstHandle
+        atFailure <- liftIO $ brokerStats broker
+        liftIO $ threadDelay 5000000
+        afterObservation <- liftIO $ brokerStats broker
+        stopApp firstHandle
+        liftIO $ reopenSource broker
+        second <- start "replacement"
+        case second of
+          Left err -> error (show err)
+          Right secondHandle -> do
+            waitApp secondHandle
+            stopApp secondHandle
+            afterRestart <- liftIO $ brokerStats broker
+            pure (atFailure, afterObservation, afterRestart)
+  pure $ case result of
+    Nothing -> ["failed processor or replacement did not finish within fifteen seconds"]
+    Just (atFailure, afterObservation, afterRestart) ->
+      ["source did not fail after one hundred deliveries" | atFailure.yielded /= 100]
+        <> ["source kept pulling without an application restart" | atFailure.sourcePulls /= afterObservation.sourcePulls]
+        <> ["source resumed before an application restart" | atFailure.finalizedOk /= afterObservation.finalizedOk]
+        <> ["replacement failed to finalize every published message" | afterRestart.finalizedOk /= 200]
+        <> ["replacement left leases behind" | afterRestart.leasedUnfinalized /= 0]
 
 -- A rejected configuration must not touch the adapter, even on a failing cohort.
 checkRejected :: Text -> (Adapter '[Tracing, IOE] Text -> (AppConfig, [(ProcessorId, QueueProcessor '[Tracing, IOE])])) -> IO [Text]

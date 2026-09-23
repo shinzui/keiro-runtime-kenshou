@@ -94,3 +94,26 @@ spec = describe "synthetic broker" $ do
     blocked `shouldBe` Nothing
     blockStats <- brokerStats blocking
     blockStats.shutdownCalls `shouldBe` 1
+
+  it "lets a replacement adapter resume after a one-shot source fault" $ do
+    broker <- newSyntheticBroker defaultSyntheticConfig {sourceFault = Just (1, "source fault")}
+    _ <- publish broker Nothing "first"
+    _ <- publish broker Nothing "second"
+    closeInput broker
+    first <- timeout 2000000 $ runEff $ runTracingNoop $ do
+      result <- runApp defaultAppConfig [(ProcessorId "first", mkProcessor (syntheticAdapter broker) (\_ -> pure AckOk))]
+      case result of
+        Left err -> error (show err)
+        Right app -> waitApp app >> stopApp app
+    first `shouldBe` Just ()
+    firstStats <- brokerStats broker
+    firstStats.finalizedOk `shouldBe` 1
+    reopenSource broker
+    second <- timeout 2000000 $ runEff $ runTracingNoop $ do
+      result <- runApp defaultAppConfig [(ProcessorId "second", mkProcessor (syntheticAdapter broker) (\_ -> pure AckOk))]
+      case result of
+        Left err -> error (show err)
+        Right app -> waitApp app >> stopApp app
+    second `shouldBe` Just ()
+    finalStats <- brokerStats broker
+    finalStats.finalizedOk `shouldBe` 2

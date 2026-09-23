@@ -9,6 +9,7 @@ module Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter
     newSyntheticBroker,
     publish,
     closeInput,
+    reopenSource,
     syntheticAdapter,
     brokerStats,
     brokerEvents,
@@ -95,6 +96,7 @@ data BrokerState = BrokerState
     messages :: !(IntMap BrokerMessage),
     inputClosed :: !Bool,
     stopped :: !Bool,
+    sourceFaultFired :: !Bool,
     stats :: !BrokerStats,
     events :: ![BrokerEvent]
   }
@@ -109,7 +111,7 @@ emptyStats = BrokerStats 0 0 0 0 0 0 0 0 0 0 0
 
 newSyntheticBroker :: SyntheticConfig -> IO SyntheticBroker
 newSyntheticBroker config =
-  SyntheticBroker config <$> newTVarIO (BrokerState 1 IntMap.empty False False emptyStats [])
+  SyntheticBroker config <$> newTVarIO (BrokerState 1 IntMap.empty False False False emptyStats [])
 
 publish :: SyntheticBroker -> Maybe Text -> ByteString -> IO MessageId
 publish broker partitionKey payload = do
@@ -128,6 +130,11 @@ publish broker partitionKey payload = do
 
 closeInput :: SyntheticBroker -> IO ()
 closeInput broker = atomically $ modifyTVar' broker.state $ \current -> current {inputClosed = True, events = InputClosed : current.events}
+
+-- After a stopped application has released its adapter, a new application can
+-- consume the same broker state, including messages that outlived the stop.
+reopenSource :: SyntheticBroker -> IO ()
+reopenSource broker = atomically $ modifyTVar' broker.state $ \current -> current {stopped = False}
 
 brokerStats :: SyntheticBroker -> IO BrokerStats
 brokerStats broker = (.stats) <$> atomically (readTVar broker.state)
@@ -161,7 +168,9 @@ nextDelivery broker = do
       result <- atomically $ do
         current <- readTVar broker.state
         case broker.config.sourceFault of
-          Just (after, reason) | current.stats.yielded >= after -> pure (Left reason)
+          Just (after, reason) | not current.sourceFaultFired && current.stats.yielded >= after -> do
+            writeTVar broker.state current {sourceFaultFired = True}
+            pure (Left reason)
           _ -> case firstReady now current.messages of
             Just (number, message, wasExpired) -> do
               let token = message.deliveries + 1
