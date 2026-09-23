@@ -51,6 +51,7 @@ Milestone 1 — shibuya core lifecycle, ordering, batching and metrics-truthfuln
 - [x] (2026-09-23 13:42Z) Register the initial `bundle` in `kenshou-cli`; `kenshou list --layer shibuya` displays the two implemented scenarios.
 - [ ] Expand the registered bundle to all twenty-nine Milestone 1 scenarios and their roles; eight are registered now.
 - [ ] Run every Milestone 1 scenario on the released cohort and on the head cohort; record the observed outcome of each cohort-sensitive scenario in Surprises & Discoveries.
+- [x] (2026-09-23 16:12Z) Re-run `nix develop -c cabal test kenshou-shibuya-test` after the ordering addition (20 examples, 0 failures) and `nix develop -c just cohort-check` on the restored released cohort; both passed and the working tree is clean.
 
 Milestone 2 — PGMQ adapter scenarios.
 
@@ -581,3 +582,5 @@ Revision note (2026-09-23): Implementation started after verifying the prerequis
 Revision note (2026-09-23): Added the bounded idle-intake halt scenario and recorded a reproducible released-versus-head result. The fixture now forces the audited concurrent interleaving before timing `waitApp`; both cohort outcomes and cleanup evidence are in Surprises & Discoveries.
 
 Revision note (2026-09-23): Completed shared knob parsing and generated parser checks, and introduced the lifecycle matrix vocabulary with honest tags for the three executable scenarios. Full matrix accounting remains an open Milestone 1 requirement.
+
+Revision note (2026-09-23): Added the synthetic broker, scripted handler and restart fixtures, then exercised conservation, invalid concurrency, source failure, lease bounds, and all valid ordering policy pairs. Eight scenarios are registered and the released and pinned-head results cited above are reproducible; database adapters, metrics, worker roles, benchmarks, soaks, and full matrix accounting remain open.
