@@ -1,4 +1,4 @@
-module Kenshou.Suite.Kiroku.Fixture.Store (StoreOptions (..), storeOptionsFromKnobs, storeOptionsFromValues, withKirokuStore, withKirokuStoreWithTap, withKirokuStoreWithEnricher, withKirokuStoreWithCallbacks, withKirokuStoreWithDecodeHook) where
+module Kenshou.Suite.Kiroku.Fixture.Store (StoreOptions (..), storeOptionsFromKnobs, storeOptionsFromValues, withKirokuStore, withKirokuStoreWithTap, withKirokuStoreWithRole, withKirokuStoreWithEnricher, withKirokuStoreWithCallbacks, withKirokuStoreWithDecodeHook) where
 
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -43,6 +43,9 @@ withKirokuStore context = withConfiguredStore context Nothing Nothing Nothing
 withKirokuStoreWithTap :: RunContext -> Maybe (KirokuEvent -> IO ()) -> (KirokuStore -> IO result) -> IO result
 withKirokuStoreWithTap context tap = withConfiguredStore context tap Nothing Nothing
 
+withKirokuStoreWithRole :: RunContext -> Text -> (KirokuStore -> IO result) -> IO result
+withKirokuStoreWithRole context role = withConfiguredStoreForRole context role Nothing Nothing Nothing
+
 withKirokuStoreWithEnricher :: RunContext -> Maybe (EventData -> IO EventData) -> (KirokuStore -> IO result) -> IO result
 withKirokuStoreWithEnricher context enricher = withConfiguredStore context Nothing enricher Nothing
 
@@ -54,9 +57,13 @@ withKirokuStoreWithDecodeHook context hook tap = withConfiguredStore context tap
 
 withConfiguredStore :: RunContext -> Maybe (KirokuEvent -> IO ()) -> Maybe (EventData -> IO EventData) -> Maybe (RecordedEvent -> IO RecordedEvent) -> (KirokuStore -> IO result) -> IO result
 withConfiguredStore context tap enricher hook action =
+  withConfiguredStoreForRole context "scenario" tap enricher hook action
+
+withConfiguredStoreForRole :: RunContext -> Text -> Maybe (KirokuEvent -> IO ()) -> Maybe (EventData -> IO EventData) -> Maybe (RecordedEvent -> IO RecordedEvent) -> (KirokuStore -> IO result) -> IO result
+withConfiguredStoreForRole context role tap enricher hook action =
   withStore settings action
   where
-    options = (storeOptionsFromKnobs context "scenario") {eventTap = tap, decodeHook = hook}
+    options = (storeOptionsFromKnobs context role) {eventTap = tap, decodeHook = hook}
     settings =
       (defaultConnectionSettings connectionString)
         { poolSize = options.poolSize,

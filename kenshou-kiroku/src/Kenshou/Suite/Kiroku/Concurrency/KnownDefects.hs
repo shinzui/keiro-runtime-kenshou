@@ -1,29 +1,151 @@
 module Kenshou.Suite.Kiroku.Concurrency.KnownDefects (scenarios) where
 
 import Control.Concurrent (threadDelay)
-import Control.Exception (SomeException, throwIO, try)
+import Control.Exception (SomeException, bracket, throwIO, try)
 import Control.Monad (forM)
 import Data.Aeson (object, (.=))
 import Data.IORef (atomicModifyIORef', newIORef, readIORef)
-import Data.Int (Int32)
+import Data.Int (Int32, Int64)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Set qualified as Set
 import Data.Text qualified as Text
 import Data.Vector qualified as Vector
-import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
+import Hasql.Connection qualified as Connection
+import Hasql.Connection.Settings qualified as ConnectionSettings
+import Hasql.Decoders qualified as Decoders
+import Hasql.Encoders qualified as Encoders
+import Hasql.Session qualified as Session
+import Hasql.Statement qualified as Statement
+import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary, requirePostgres)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (parseScenarioId)
+import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), knobInt, mkKnobName)
 import Kenshou.Core.Phase (PhasePlan (..), zeroPhases)
 import Kenshou.Core.Scenario
 import Kenshou.Suite.Kiroku.Correctness.Append (recordCells)
-import Kenshou.Suite.Kiroku.Fixture.Store (withKirokuStore, withKirokuStoreWithDecodeHook)
+import Kenshou.Suite.Kiroku.Fixture.Store (StoreOptions (..), storeOptionsFromKnobs, withKirokuStore, withKirokuStoreWithDecodeHook, withKirokuStoreWithRole, withKirokuStoreWithTap)
 import Kenshou.Suite.Kiroku.Knobs (storeKnobs)
 import Kiroku.Store hiding (id, withKirokuStore)
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [batchSizeValidation, resizeLeavesGaps, decodeHookStallsSubscribers]
+scenarios = [batchSizeValidation, resizeLeavesGaps, decodeHookStallsSubscribers, reconnectCursorRegression]
+
+reconnectCursorRegression :: Scenario
+reconnectCursorRegression =
+  batchSizeValidation
+    { id = either (error . show) id (parseScenarioId "kiroku/subscription/concurrency/reconnect-cursor-regression"),
+      summary = "Expects a live category subscriber to reconnect without replaying its entire live history.",
+      knobs = storeKnobs <> [intKnob "workload.live-events" 5000 100 10000, intKnob "workload.after-reconnect" 100 1 1000, intKnob "kiroku.subscription.batch-size" 100 1 1000],
+      knownDefect = Just (KnownDefect "mori://shinzui/kiroku/plans/82-repair-live-reconnect-and-validate-subscription-identity-and-batch-size" "Category reconnect resumes from its old live cursor" ["reconnect-duplicate-bound"] AllCohorts),
+      run = runReconnect
+    }
+
+runReconnect :: RunContext -> IO ScenarioReport
+runReconnect context = do
+  reconnects <- newIORef (0 :: Int)
+  let name = SubscriptionName "reconnect-cursor"
+      knob key = fromIntegral (knobInt context.knobs (either (error . show) id (mkKnobName key))) :: Int
+      beforeCount = knob "workload.live-events"
+      afterCount = knob "workload.after-reconnect"
+      batch = knob "kiroku.subscription.batch-size"
+      tap = \case
+        KirokuEventSubscriptionReconnecting observed _ _ | observed == name -> atomicModifyIORef' reconnects (\count -> (count + 1, ()))
+        _ -> pure ()
+  withKirokuStoreWithRole context "producer" \producer -> withKirokuStoreWithTap context (Just tap) \store -> do
+    observed <- newIORef []
+    let stream = StreamName "reconnect-events"
+        event = EventData Nothing (EventType "Reconnect") (object []) Nothing Nothing Nothing
+        config = (defaultSubscriptionConfig name (Category (CategoryName "reconnect")) (\row -> atomicModifyIORef' observed (\rows -> (row.globalPosition : rows, ())) >> pure Continue)) {batchSize = fromIntegral batch}
+        awaitPosition target = timeout 30000000 loop
+          where
+            loop = do
+              rows <- readIORef observed
+              if GlobalPosition (fromIntegral target) `elem` rows then pure True else threadDelay 10000 >> loop
+        awaitLive handle = timeout 10000000 loop
+          where
+            loop = do
+              state <- handle.currentState
+              case state of
+                Just value | stateName value == "live" -> pure True
+                _ -> threadDelay 10000 >> loop
+    withSubscription store config \handle -> do
+      live <- awaitLive handle
+      firstAppend <- runStoreIO producer (appendToStream stream NoStream (replicate beforeCount event))
+      firstCaughtUp <- awaitPosition beforeCount
+      firstCheckpoint <- awaitCheckpoint producer name beforeCount
+      killed <- terminateStoreBackends context (storeOptionsFromKnobs context "scenario").applicationName
+      secondAppend <- runStoreIO producer (appendToStream stream AnyVersion (replicate afterCount event))
+      secondCaughtUp <- awaitPosition (beforeCount + afterCount)
+      secondCheckpoint <- awaitCheckpoint producer name (beforeCount + afterCount)
+      positions <- reverse <$> readIORef observed
+      reconnectCount <- readIORef reconnects
+      let distinct = Set.fromList positions
+          duplicates = length positions - Set.size distinct
+          cells =
+            [ ("entered-live", live == Just True),
+              ("initial-live-history-delivered", isRight firstAppend && firstCaughtUp == Just True),
+              ("pooled-backends-terminated", killed > 0),
+              ("reconnect-event-observed", reconnectCount > 0),
+              ("post-reconnect-events-delivered", isRight secondAppend && secondCaughtUp == Just True),
+              ("all-positions-covered", distinct == Set.fromList [GlobalPosition value | value <- [1 .. fromIntegral (beforeCount + afterCount)]]),
+              ("durable-checkpoint-monotonic", maybe False (>= GlobalPosition (fromIntegral beforeCount)) firstCheckpoint && maybe False (>= maybe (GlobalPosition 0) id firstCheckpoint) secondCheckpoint),
+              ("reconnect-duplicate-bound", duplicates <= batch)
+            ]
+      putSummary context Measurements "reconnect-cursor" (object ["beforeEvents" .= beforeCount, "afterEvents" .= afterCount, "backendsTerminated" .= killed, "reconnectEpisodes" .= reconnectCount, "duplicates" .= duplicates, "batchSize" .= batch, "firstCheckpoint" .= fmap (\(GlobalPosition value) -> value) firstCheckpoint, "secondCheckpoint" .= fmap (\(GlobalPosition value) -> value) secondCheckpoint])
+      recordCells context "reconnect-cursor-regression" [] cells
+  where
+    isRight (Right _) = True
+    isRight _ = False
+
+checkpointPositionFor :: KirokuStore -> SubscriptionName -> IO (Maybe GlobalPosition)
+checkpointPositionFor store name = do
+  snapshot <- runStoreIO store subscriptionCheckpointInventory
+  pure case snapshot of
+    Right inventory -> case [row.checkpointPosition | row <- Vector.toList inventory.checkpoints, row.subscriptionName == name] of
+      position : _ -> Just position
+      [] -> Nothing
+    Left _ -> Nothing
+
+awaitCheckpoint :: KirokuStore -> SubscriptionName -> Int -> IO (Maybe GlobalPosition)
+awaitCheckpoint store name target = do
+  result <- timeout 10000000 loop
+  pure (result >>= id)
+  where
+    loop = do
+      position <- checkpointPositionFor store name
+      if maybe False (>= GlobalPosition (fromIntegral target)) position
+        then pure position
+        else threadDelay 10000 >> loop
+
+intKnob :: Text.Text -> Int -> Int -> Int -> KnobSpec
+intKnob key def low high = KnobSpec (either (error . show) id (mkKnobName key)) key KnobInt (VInt (fromIntegral def)) (IntRange (fromIntegral low) (fromIntegral high)) []
+
+terminateStoreBackends :: RunContext -> Text.Text -> IO Int64
+terminateStoreBackends context applicationName = bracket acquire Connection.release \connection -> do
+  found <- Connection.use connection (Session.statement applicationName storeBackendStatement) >>= either (fail . show) pure
+  killed <- forM found \pid -> do
+    result <- Connection.use connection (Session.statement pid terminateStatement)
+    either (fail . show) pure result
+  pure (fromIntegral (length (filter id killed)))
+  where
+    acquire = Connection.acquire (ConnectionSettings.connectionString (requirePostgres context).adminConnectionString <> ConnectionSettings.applicationName "kenshou-kiroku-oracle") >>= either (fail . show) pure
+
+storeBackendStatement :: Statement.Statement Text.Text [Int32]
+storeBackendStatement =
+  Statement.unpreparable
+    "select pid from pg_stat_activity where application_name = $1 and pid <> pg_backend_pid()"
+    (Encoders.param (Encoders.nonNullable Encoders.text))
+    (Decoders.rowList (Decoders.column (Decoders.nonNullable Decoders.int4)))
+
+terminateStatement :: Statement.Statement Int32 Bool
+terminateStatement =
+  Statement.unpreparable
+    "select pg_terminate_backend($1::int4)"
+    (Encoders.param (Encoders.nonNullable Encoders.int4))
+    (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.bool)))
 
 decodeHookStallsSubscribers :: Scenario
 decodeHookStallsSubscribers =
