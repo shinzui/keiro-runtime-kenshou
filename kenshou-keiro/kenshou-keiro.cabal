@@ -1,0 +1,79 @@
+cabal-version: 3.4
+name: kenshou-keiro
+version: 0.1.0.0
+synopsis: Verification scenarios for the keiro write side
+license: BSD-3-Clause
+author: Nadeem Bitar
+maintainer: Nadeem Bitar
+build-type: Simple
+tested-with: ghc >=9.12 && <9.13
+
+common warnings
+  ghc-options:
+    -Wall
+    -Wcompat
+    -Widentities
+    -Wincomplete-record-updates
+    -Wincomplete-uni-patterns
+    -Wpartial-fields
+    -Wredundant-constraints
+
+  default-language: GHC2024
+  default-extensions:
+    BlockArguments
+    DeriveAnyClass
+    DeriveGeneric
+    DuplicateRecordFields
+    ImportQualifiedPost
+    LambdaCase
+    NoFieldSelectors
+    OverloadedLabels
+    OverloadedRecordDot
+    OverloadedStrings
+    QualifiedDo
+    TemplateHaskell
+    TypeApplications
+
+library
+  import: warnings
+  hs-source-dirs: src
+  exposed-modules:
+    Kenshou.Suite.Keiro.Fixture.Account
+    Kenshou.Suite.Keiro.Fixture.Bonus
+    Kenshou.Suite.Keiro.Fixture.Domain
+    Kenshou.Suite.Keiro.Fixture.Model
+    Kenshou.Suite.Keiro.Fixture.Workload
+
+  build-depends:
+    aeson,
+    base,
+    bytestring,
+    containers,
+    keiki,
+    keiki-codec-json,
+    keiro,
+    keiro-core,
+    kiroku-store,
+    random,
+    text,
+    uuid,
+
+test-suite kenshou-keiro-test
+  import: warnings
+  type: exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is: Main.hs
+  ghc-options:
+    -threaded
+    -rtsopts
+    -with-rtsopts=-N
+
+  build-depends:
+    aeson,
+    base,
+    hspec,
+    keiki,
+    keiro-core,
+    kenshou-keiro,
+    kiroku-store,
+    text,

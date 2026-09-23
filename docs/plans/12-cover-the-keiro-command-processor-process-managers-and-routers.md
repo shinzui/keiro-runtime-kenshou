@@ -11,6 +11,12 @@ provenance:
     model: "claude-fable-5-1"
     harness: "claude-code"
     at: 2026-09-20T17:15:35Z
+  revisions:
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-23T19:31:59Z
+      mode: "implement"
+      note: "Verified prerequisite build, self-tests, and released cohort"
 ---
 
 # Cover the keiro command processor, process managers and routers
@@ -35,13 +41,13 @@ To see it working after the first milestone, run `cabal run kenshou -- run keiro
 
 Milestone 1 — The keiro fixture domain
 
-- [ ] Verify the hard dependencies are complete (kernel, measurement, correctness, diagnostics, telemetry) using the checks in Concrete Steps.
-- [ ] Create `kenshou-keiro/kenshou-keiro.cabal` with the library and the `kenshou-keiro-test` suite.
-- [ ] Write `Kenshou.Suite.Keiro.Fixture.Domain` and `.Fixture.Account`; prove `mkEventStream` accepts the account transducer for every snapshot policy variant.
+- [x] (2026-09-23T19:31:59Z) Verify the hard dependencies are complete (kernel, measurement, correctness, diagnostics, telemetry) using the checks in Concrete Steps. `nix develop --command cabal build all` succeeded; both required self-tests passed; the released cohort contains the stated keiro, keiki, kiroku and shibuya versions.
+- [ ] Create `kenshou-keiro/kenshou-keiro.cabal` with the library and the `kenshou-keiro-test` suite. The package and suite build; remaining: add the Milestone 1 fixture modules and dependencies.
+- [x] (2026-09-23T19:40:00Z) Write `Kenshou.Suite.Keiro.Fixture.Domain` and `.Fixture.Account`; prove `mkEventStream` accepts the account transducer for every snapshot policy variant. `cabal test kenshou-keiro-test` passes the four policy constructors.
 - [ ] Write `.Fixture.Transfer` (saga, strict variant, reactive variant) and `.Fixture.Bonus` (plain and declarative router).
 - [ ] Write `.Fixture.Projection`, `.Fixture.Runtime`, `.Fixture.Bridge`.
-- [ ] Write `.Fixture.Workload`, `.Fixture.Model`, `.Fixture.Oracle`, `.Fixture.Roles`.
-- [ ] Unit tests: codec round trip, model agrees with the keiki transducer, workload determinism, expected identifiers, list adapter acknowledgement log.
+- [ ] Write `.Fixture.Workload`, `.Fixture.Model`, `.Fixture.Oracle`, `.Fixture.Roles`. Workload and Model are present; Oracle and Roles remain.
+- [ ] Unit tests: codec round trip, model agrees with the keiki transducer, workload determinism, expected identifiers, list adapter acknowledgement log. The first three pass; identifier and acknowledgement tests remain.
 - [ ] Add `Kenshou.Suite.Keiro.bundle`, the scenario `keiro/command/correctness/fixture-roundtrip`, and the three-line registration in `kenshou-cli`.
 - [ ] Start `docs/layers/keiro.md`; create the two ADRs named in Context and Orientation.
 
@@ -78,7 +84,7 @@ Milestone 5 — Write-side benchmarks, soak and telemetry arms
 
 ## Surprises & Discoveries
 
-(None yet.)
+- The released `Keiro.Snapshot` module does not export `StateCodec`; `Keiro.EventStream` does. The first fixture compile failed on that import, and the corrected import built under the pinned released cohort.
 
 
 ## Decision Log
@@ -86,6 +92,10 @@ Milestone 5 — Write-side benchmarks, soak and telemetry arms
 - Decision: The shared fixture domain is a bank ledger: an `account` aggregate with a balance register, a transfer saga (process manager) whose inputs come from two different account streams, a `bonus` aggregate whose single event is fanned out by a router to N accounts, one inline and one asynchronous projection.
   Rationale: Money gives every dependent plan a conservation law to check (the sum of balances changes only by known amounts), a register-carrying keiki transducer exercises snapshots honestly (the jitsurei examples almost all use an empty register file), and the saga and the router both target the same aggregate type, which is what keiro's `ProcessManager` and `Router` records require.
   Date: 2026-09-20
+
+- Decision: Setup operations use worker index `-1` in workload event identity seeds, while generated worker operations use nonnegative indices.
+  Rationale: Setup and worker operations both start their sequence at zero; separating the worker namespace prevents fixed event identifier collisions when the first generated operation is submitted.
+  Date: 2026-09-23
 
 - Decision: An overdraft, a non-positive amount, and any command to a closed or unopened account have no matching transducer edge and therefore surface as `CommandRejected`; the only silent (no-event) edge is `CloseAccount` on an already closed account.
   Rationale: `RejectedCommandPolicy` in the process-manager and router workers is triggered by `CommandRejected`, so the fixture needs a cheap, deterministic way to produce it (credit a closed account). One silent edge is enough to exercise the `SqlCommandNoOp` path.
@@ -576,3 +586,5 @@ Runtime libraries, at the versions the released cohort pins in `cohort/released.
 At the end of Milestone 1 these modules exist with the signatures given in the Plan of Work: `Kenshou.Suite.Keiro` (`bundle :: LayerBundle`), `Kenshou.Suite.Keiro.Fixture.Domain`, `.Fixture.Account`, `.Fixture.Transfer`, `.Fixture.Bonus`, `.Fixture.Projection`, `.Fixture.Runtime`, `.Fixture.Bridge`, `.Fixture.Workload`, `.Fixture.Model`, `.Fixture.Oracle`, `.Fixture.Roles`. At the end of Milestone 2: `Kenshou.Suite.Keiro.Command` (`scenarios :: [Scenario]`) with `.Command.Correctness`, `.Command.Concurrency`, `.Command.Snapshot`, `.Command.Projection`. Milestone 3: `Kenshou.Suite.Keiro.ProcessManager` with `.Correctness`, `.Concurrency`, `.Reaction`. Milestone 4: `Kenshou.Suite.Keiro.Router` with `.Correctness`, `.Concurrency`. Milestone 5: `.Command.Bench`, `.Command.Soak`, `.ProcessManager.Bench`, `.Router.Bench`, `Kenshou.Suite.Keiro.Telemetry`.
 
 What other plans consume. `docs/plans/13-cover-the-keiro-outbox-inbox-and-job-queue.md` uses the account stream, `submitAccountCommand`, the workload and the oracles as the business effect behind outbox producers, inbox handlers and jobs. `docs/plans/14-cover-keiro-durable-execution-timers-and-sharded-subscriptions.md` uses the transfer timeout timers this fixture schedules, `shardAckFor`, the saga as a sharded handler, and the ledger as the side effect of workflow steps. `docs/plans/15-verify-the-assembled-runtime-end-to-end-and-under-soak.md` depends on the whole `Kenshou.Suite.Keiro.Fixture.*` tree from `kenshou-runtime` and relies on `money-is-conserved` across its two contexts. Both keiro plans extend `bundle`, `kenshou-keiro.cabal` and `docs/layers/keiro.md` rather than creating their own. A change to any exported fixture signature after Milestone 1 must update those three plans in the same change, which is the subject of the first ADR this plan creates.
+
+Revision note (2026-09-23): Began implementation after the prerequisite build, self-tests, and cohort checks passed. Added the validated account and bonus aggregate foundation, a pure account model, deterministic workload generation, and unit checks. Milestone 1 remains in progress because the database fixture, workers, scenario registration, and ADRs are still to be implemented.
