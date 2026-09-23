@@ -14,13 +14,14 @@ main = hspec do
     it "declares the four store knobs" do
       length storeKnobs `shouldBe` 4
   describe "kiroku bundle" do
-    it "registers unique kiroku correctness scenarios" do
+    it "registers unique kiroku scenarios" do
       let scenarios = bundle.scenarios
           names = fmap (renderScenarioId . (.id)) scenarios
-      length scenarios `shouldBe` 18
+      length scenarios `shouldBe` 19
       length (nub names) `shouldBe` length names
       mapM_ (\scenario -> scenario.id.layer `shouldBe` Kiroku) scenarios
-      mapM_ (\scenario -> scenario.id.kind `shouldBe` Correctness) scenarios
+      length [scenario | scenario <- scenarios, scenario.id.kind == Correctness] `shouldBe` 18
+      length [scenario | scenario <- scenarios, scenario.id.kind == Concurrency] `shouldBe` 1
     it "passes the registry's structural validation" do
       case mkRegistry [bundle] of
         Right _ -> pure ()

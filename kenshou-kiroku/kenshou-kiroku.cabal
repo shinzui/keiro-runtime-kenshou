@@ -37,6 +37,7 @@ library
   hs-source-dirs: src
   exposed-modules:
     Kenshou.Suite.Kiroku
+    Kenshou.Suite.Kiroku.Concurrency.Append
     Kenshou.Suite.Kiroku.Correctness.Append
     Kenshou.Suite.Kiroku.Correctness.ConsumerGroup
     Kenshou.Suite.Kiroku.Correctness.DeadLetter
@@ -51,6 +52,7 @@ library
     Kenshou.Suite.Kiroku.Correctness.Transaction
     Kenshou.Suite.Kiroku.Fixture.Store
     Kenshou.Suite.Kiroku.Knobs
+    Kenshou.Suite.Kiroku.Roles
 
   build-depends:
     aeson >=2.2 && <2.3,
