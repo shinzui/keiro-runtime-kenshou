@@ -6,6 +6,7 @@ import Control.Concurrent.STM (atomically)
 import Control.Monad (replicateM)
 import Data.Aeson (object, withObject, (.:), (.=))
 import Data.Aeson.Types (parseMaybe)
+import Data.Foldable (traverse_)
 import Data.IORef (atomicModifyIORef', newIORef)
 import Data.List (findIndex, nub)
 import Data.List.NonEmpty (NonEmpty (..))
@@ -264,7 +265,10 @@ identicalCommandsOneBatch =
       summary = "Checks concurrent submissions of one event identifier append exactly once.",
       tier = TierStandard,
       placement = PlaceEither,
-      knobs = [KnobSpec (either (error . show) id (mkKnobName "command.concurrency")) "Simultaneous clients" KnobInt (VInt 16) (IntRange 2 256) []],
+      knobs =
+        [ KnobSpec (either (error . show) id (mkKnobName "command.concurrency")) "Simultaneous thread clients" KnobInt (VInt 16) (IntRange 2 256) [],
+          KnobSpec (knobName "command.processes") "Identical client processes (1 selects threads)" KnobInt (VInt 1) (IntRange 1 16) []
+        ],
       dimensions =
         DimensionSupport
           { tracing = Supported (Support (TracingOff :| []) TracingOff),
@@ -279,6 +283,7 @@ identicalCommandsOneBatch =
     }
 
 runIdentical :: RunContext -> IO ScenarioReport
+runIdentical context | knobInt context.knobs (knobName "command.processes") > 1 = runIdenticalProcesses context
 runIdentical context =
   withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture -> do
     let account = AccountId "concurrent-identical"
@@ -311,3 +316,44 @@ runIdentical context =
             ("balance-once", case Oracle.modelFromLog rows of Right model -> Model.totalMoney model == 7; _ -> False)
           ]
     recordCells context cells
+
+runIdenticalProcesses :: RunContext -> IO ScenarioReport
+runIdenticalProcesses context =
+  withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture ->
+    withCheck context \check -> withSupervisor check \supervisor -> do
+      let KeiroRunner runFixture = fixture.runner
+          seed = unSeed context.seed
+          account = AccountId "0"
+          accountEvents = accountEventStream SnapNever
+          processCount = fromIntegral (knobInt context.knobs (knobName "command.processes")) :: Int
+          workload = take 100 (Workload.workerOps seed Workload.defaultWorkloadSpec {Workload.accounts = 1} 0 1)
+          isDepositOp operation = case operation.action of Workload.ActDeposit {} -> True; _ -> False
+      startIndex <- maybe (fail "no deposit in first 100 seeded operations") pure (findIndex isDepositOp workload)
+      let operation = workload !! startIndex
+          eventId = Workload.opEventId seed operation 0
+          amount = case operation.action of Workload.ActDeposit _ value -> value; _ -> 0
+          args = object ["worker" .= (0 :: Int), "workers" .= (1 :: Int), "startIndex" .= startIndex, "count" .= (1 :: Int), "accounts" .= (1 :: Int)]
+      opened <- runFixture (runCommand defaultRunCommandOptions accountEvents (accountStream account) (OpenAccount (OpenAccountData account 10000)))
+      children <- traverse (\index -> roleProcess check "keiro/command-writer" index args >>= spawn supervisor) [0 .. processCount - 1]
+      traverse_ (\child -> awaitReady child 10000) children
+      traverse_ (\child -> sendCommand child CtlStart) children
+      traverse_ (\child -> awaitMark child "submission" 30000) children
+      snapshots <- traverse (atomically . progress) children
+      acquired <- Connection.acquire (Settings.connectionString (requirePostgres context).connectionString <> Settings.applicationName "kenshou-keiro-identical-process-oracle")
+      connection <- either (fail . show) pure acquired
+      rows <- Oracle.readCategoryLog connection "account"
+      Connection.release connection
+      let outcomes snapshot = do
+            payload <- Map.lookup "submission" snapshot.marks
+            parseMaybe (withObject "submission" (.: "outcomes")) payload :: Maybe [Text]
+          reported = map outcomes snapshots
+          appended = length [() | Just [value] <- reported, "SubmitAppended" `Text.isPrefixOf` value]
+          duplicates = length [() | Just ["SubmitDuplicate"] <- reported]
+          cells =
+            [ ("source-setup", case opened of Right (Right result) -> result.eventsAppended == 1; _ -> False),
+              ("distinct-processes", length (nub (map childPid children)) == processCount),
+              ("one-accepted", appended == 1 && duplicates == processCount - 1),
+              ("one-durable-effect", length [() | row <- rows, row.eventId == eventId] == 1 && length rows == 2 && Oracle.logWellFormed rows),
+              ("final-balance", case Oracle.modelFromLog rows of Right model -> Model.totalMoney model == 10000 + amount; _ -> False)
+            ]
+      recordCells context cells
