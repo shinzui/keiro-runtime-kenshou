@@ -1,14 +1,16 @@
 module Kenshou.Suite.Kiroku.Concurrency.KnownDefects (scenarios) where
 
-import Control.Concurrent (threadDelay)
+import Control.Concurrent (forkIO, killThread, threadDelay, yield)
 import Control.Exception (SomeException, bracket, throwIO, try)
-import Control.Monad (forM)
-import Data.Aeson (object, (.=))
+import Control.Monad (forM, replicateM, replicateM_)
+import Data.Aeson (object, withObject, (.:), (.=))
+import Data.Aeson.Types (parseMaybe)
 import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.Int (Int32, Int64)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Set qualified as Set
 import Data.Text qualified as Text
+import Data.UUID qualified as UUID
 import Data.Vector qualified as Vector
 import Hasql.Connection qualified as Connection
 import Hasql.Connection.Settings qualified as ConnectionSettings
@@ -23,15 +25,90 @@ import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), knobInt, mkKnobName)
 import Kenshou.Core.Phase (PhasePlan (..), zeroPhases)
+import Kenshou.Core.Role (ControlMessage (..), WorkerMessage (..))
+import Kenshou.Core.Role.Spawn (WorkerHandle (..), withWorker)
 import Kenshou.Core.Scenario
 import Kenshou.Suite.Kiroku.Correctness.Append (recordCells)
+import Kenshou.Suite.Kiroku.Fixture.Oracle qualified as Oracle
 import Kenshou.Suite.Kiroku.Fixture.Store (StoreOptions (..), storeOptionsFromKnobs, withKirokuStore, withKirokuStoreWithDecodeHook, withKirokuStoreWithRole, withKirokuStoreWithTap)
+import Kenshou.Suite.Kiroku.Fixture.Workload (eventIdFor)
 import Kenshou.Suite.Kiroku.Knobs (storeKnobs)
+import Kenshou.Suite.Kiroku.Roles (appenderRoleName)
 import Kiroku.Store hiding (id, withKirokuStore)
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [batchSizeValidation, resizeLeavesGaps, decodeHookStallsSubscribers, reconnectCursorRegression]
+scenarios = [batchSizeValidation, resizeLeavesGaps, decodeHookStallsSubscribers, reconnectCursorRegression, multiStreamFreshDeadlock]
+
+multiStreamFreshDeadlock :: Scenario
+multiStreamFreshDeadlock =
+  batchSizeValidation
+    { id = either (error . show) id (parseScenarioId "kiroku/append/concurrency/multi-stream-fresh-deadlock"),
+      summary = "Races multi-stream and single-stream fresh appends while auditing transaction atomicity and deadlocks.",
+      knobs = storeKnobs <> [intKnob "deadlock.rounds" 500 1 5000, intKnob "deadlock.spinners" 8 0 32],
+      knownDefect = Just (KnownDefect "mori://shinzui/kiroku/okf/improvement-requests/concepts/IR-7" "Fresh-stream append can deadlock" ["deadlock-count-stable"] AllCohorts),
+      run = runFreshDeadlock
+    }
+
+runFreshDeadlock :: RunContext -> IO ScenarioReport
+runFreshDeadlock context = withKirokuStore context \store -> do
+  let knob key = fromIntegral (knobInt context.knobs (either (error . show) id (mkKnobName key))) :: Int
+      rounds = knob "deadlock.rounds"
+      spinnerCount = knob "deadlock.spinners"
+      asText (EventId uuid) = UUID.toText uuid
+      status :: Maybe WorkerMessage -> Maybe Text.Text
+      status (Just (WrkCustom "fresh-deadlock" value)) = parseMaybe (withObject "fresh-deadlock reply" (.: "status")) value
+      status _ = Nothing
+  before <- Oracle.deadlockCount store.pool
+  withWorker context appenderRoleName "deadlock-multi" (object []) \multi ->
+    withWorker context appenderRoleName "deadlock-single" (object []) \single -> do
+      ready <- traverse (\worker -> worker.receive 10000) [multi, single]
+      multi.send CtlStart
+      single.send CtlStart
+      bracket (replicateM spinnerCount (forkIO spin)) (traverse killThread) \_ -> do
+        results <- forM [0 .. rounds - 1] \index -> do
+          let a = Text.pack ("deadlock-a-" <> show index)
+              b = Text.pack ("deadlock-b-" <> show index)
+              payload mode ordinal = object ["mode" .= (mode :: Text.Text), "a" .= a, "b" .= b, "idA" .= asText (eventIdFor context.seed index (fromIntegral (ordinal :: Int))), "idB" .= asText (eventIdFor context.seed index (fromIntegral (ordinal + 1)))]
+              multiRequest = CtlCustom "fresh-deadlock" (payload "multi" 10)
+              singleRequest = CtlCustom "fresh-deadlock" (payload "single" 20)
+          multi.send multiRequest
+          single.send singleRequest
+          multiStatus <- status <$> multi.receive 30000
+          singleStatus <- status <$> single.receive 30000
+          first <- runStoreIO store (getStream (StreamName a))
+          second <- runStoreIO store (getStream (StreamName b))
+          firstRows <- runStoreIO store (readStreamForward (StreamName a) (StreamVersion 0) 2)
+          secondRows <- runStoreIO store (readStreamForward (StreamName b) (StreamVersion 0) 2)
+          multi.send multiRequest
+          single.send singleRequest
+          multiRetry <- status <$> multi.receive 30000
+          singleRetry <- status <$> single.receive 30000
+          retryFirst <- runStoreIO store (readStreamForward (StreamName a) (StreamVersion 0) 2)
+          retrySecond <- runStoreIO store (readStreamForward (StreamName b) (StreamVersion 0) 2)
+          let aExists = case first of Right (Just value) -> value.version == StreamVersion 1; Right Nothing -> True; _ -> False
+              bExists = case second of Right (Just value) -> value.version == StreamVersion 1; _ -> False
+              aRows = either (const []) Vector.toList firstRows
+              bRows = either (const []) Vector.toList secondRows
+              batchAtomic =
+                length bRows == 1 && case aRows of
+                  [] -> fmap (.eventId) bRows == [eventIdFor context.seed index 21]
+                  [row] -> row.eventId == eventIdFor context.seed index 10 && fmap (.eventId) bRows == [eventIdFor context.seed index 11]
+                  _ -> False
+              statusesOk = all (`elem` [Just "success", Just "conflict", Just "transient"]) [multiStatus, singleStatus] && Just "success" `elem` [multiStatus, singleStatus]
+              retried = all (`elem` [Just "conflict", Just "duplicate"]) [multiRetry, singleRetry] && fmap (fmap (.eventId)) retryFirst == fmap (fmap (.eventId)) firstRows && fmap (fmap (.eventId)) retrySecond == fmap (fmap (.eventId)) secondRows
+          pure (aExists && bExists, batchAtomic, statusesOk, retried, multiStatus, singleStatus)
+        after <- Oracle.deadlockCount store.pool
+        let infrastructure = all (\(exists, _, _, _, _, _) -> exists) results && all (== Just WrkReady) ready
+            atomic = all (\(_, clean, _, _, _, _) -> clean) results
+            statusesValid = all (\(_, _, valid, _, _, _) -> valid) results
+            retriesStable = all (\(_, _, _, stable, _, _) -> stable) results
+            deadlocks = max 0 (after - before)
+            cells = [("workers-ready-and-streams-created", infrastructure), ("no-partial-multi-stream-commits", atomic), ("responses-classified", statusesValid), ("same-id-retries-converge", retriesStable), ("deadlock-count-stable", deadlocks == 0)]
+        putSummary context Measurements "multi-stream-fresh-deadlock" (object ["rounds" .= rounds, "spinners" .= spinnerCount, "databaseDeadlocksBefore" .= before, "databaseDeadlocksAfter" .= after, "databaseDeadlocks" .= deadlocks, "transientResults" .= length [() | (_, _, _, _, left, right) <- results, Just "transient" <- [left, right]]])
+        recordCells context "multi-stream-fresh-deadlock" [] cells
+  where
+    spin = replicateM_ 100 yield >> threadDelay 5000 >> spin
 
 reconnectCursorRegression :: Scenario
 reconnectCursorRegression =

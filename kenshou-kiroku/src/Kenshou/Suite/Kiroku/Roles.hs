@@ -59,6 +59,29 @@ runAppender context = case context.init.postgres of
                     _ -> ("error", Nothing)
               context.send (WrkCustom "duplicate" (object ["status" .= status, "version" .= finalVersion]))
               loop store
+        Just (CtlCustom "fresh-deadlock" payload) -> case parseMaybe parseFreshDeadlock payload of
+          Nothing -> context.send (WrkError "invalid fresh-deadlock request") >> loop store
+          Just (mode, rawA, rawB, rawIdA, rawIdB) -> case (UUID.fromText rawIdA, UUID.fromText rawIdB) of
+            (Just idA, Just idB) -> do
+              let event uuid = EventData (Just (EventId uuid)) (EventType "FreshDeadlock") (object []) Nothing Nothing Nothing
+                  first = StreamName rawA
+                  second = StreamName rawB
+                  action =
+                    if mode == "multi"
+                      then fmap (fmap (const ())) (runStoreIO store (appendMultiStream [(first, NoStream, [event idA]), (second, NoStream, [event idB])]))
+                      else fmap (fmap (const ())) (runStoreIO store (appendToStream second NoStream [event idB]))
+              outcome <- try @SomeException action
+              let status = case outcome of
+                    Right (Right ()) -> "success" :: Text
+                    Right (Left (TransientTransactionFailure _ _)) -> "transient"
+                    Right (Left (StreamAlreadyExists _)) -> "conflict"
+                    Right (Left (WrongExpectedVersion _ _ _)) -> "conflict"
+                    Right (Left (DuplicateEvent _)) -> "duplicate"
+                    Right (Left _) -> "store-error"
+                    Left _ -> "exception"
+              context.send (WrkCustom "fresh-deadlock" (object ["status" .= status]))
+              loop store
+            _ -> context.send (WrkError "invalid fresh-deadlock event ID") >> loop store
         Just (CtlStop _) -> pure ()
         Just _ -> loop store
         Nothing -> pure ()
@@ -68,3 +91,6 @@ parseRace = withObject "race request" \value -> (,,) <$> value .: "stream" <*> v
 
 parseDuplicate :: Value -> Parser (Text, [Text], Text, Int)
 parseDuplicate = withObject "duplicate request" \value -> (,,,) <$> value .: "stream" <*> value .: "eventIds" <*> value .: "mode" <*> value .: "version"
+
+parseFreshDeadlock :: Value -> Parser (Text, Text, Text, Text, Text)
+parseFreshDeadlock = withObject "fresh-deadlock request" \value -> (,,,,) <$> value .: "mode" <*> value .: "a" <*> value .: "b" <*> value .: "idA" <*> value .: "idB"
