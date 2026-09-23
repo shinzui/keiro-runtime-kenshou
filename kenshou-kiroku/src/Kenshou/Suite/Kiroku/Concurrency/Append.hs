@@ -7,6 +7,8 @@ import Control.Exception (SomeException, try)
 import Control.Monad (forM, forM_, (<=<))
 import Data.Aeson (Value, object, withObject, (.:), (.=))
 import Data.Aeson.Types (Parser, parseMaybe)
+import Data.IORef (atomicModifyIORef', newIORef, readIORef)
+import Data.Int (Int64)
 import Data.List (find, permutations)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
@@ -36,11 +38,107 @@ import Kenshou.Suite.Kiroku.Fixture.Oracle qualified as Oracle
 import Kenshou.Suite.Kiroku.Fixture.Store (withKirokuStore)
 import Kenshou.Suite.Kiroku.Fixture.Workload (eventIdFor)
 import Kenshou.Suite.Kiroku.Knobs (storeKnobs)
-import Kenshou.Suite.Kiroku.Roles (appenderRoleName)
+import Kenshou.Suite.Kiroku.Roles (appenderRoleName, readerRoleName)
 import Kiroku.Store hiding (id, withKirokuStore)
+import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [expectedVersionRace, idempotentDuplicates, modelBasedOcc, sigkillMidAppend]
+scenarios = [expectedVersionRace, idempotentDuplicates, modelBasedOcc, sigkillMidAppend, allOrderUnderContention]
+
+allOrderUnderContention :: Scenario
+allOrderUnderContention =
+  expectedVersionRace
+    { id = either (error . show) id (parseScenarioId "kiroku/append/concurrency/all-order-under-contention"),
+      summary = "Compares a separate-process global tail with the final durable order under process writers.",
+      knobs = storeKnobs <> [intKnob "kiroku.append.writers" 32 2 32, intKnob "kiroku.append.processes" 2 2 4, intKnob "workload.round-events" 100 32 1000],
+      phases = PhasePlan 0 120 0,
+      run = runAllOrder
+    }
+
+runAllOrder :: RunContext -> IO ScenarioReport
+runAllOrder context = withKirokuStore context \store -> do
+  subscriberRows <- newIORef (0 :: Int, [] :: [(Int64, Text)])
+  let knob key = fromIntegral (knobInt context.knobs (either (error . show) id (mkKnobName key))) :: Int
+      writers = knob "kiroku.append.writers"
+      processes = knob "kiroku.append.processes"
+      roundEvents = knob "workload.round-events"
+      subscription =
+        defaultSubscriptionConfig
+          (SubscriptionName "order-subscriber")
+          AllStreams
+          ( \row -> do
+              let GlobalPosition position = row.globalPosition
+                  EventId uuid = row.eventId
+              atomicModifyIORef' subscriberRows (\(count, rows) -> ((count + 1, (position, UUID.toText uuid) : rows), ()))
+              pure Continue
+          )
+      withWriters remaining accumulated action
+        | remaining <= 0 = action (reverse accumulated)
+        | otherwise = withWorker context appenderRoleName ("order-writer-" <> Text.pack (show remaining)) (object []) \worker -> withWriters (remaining - 1) (worker : accumulated) action
+      parseWrite (Just (WrkCustom "order-write" payload)) = parseMaybe (withObject "order-write" (\value -> (,,) <$> value .: "committed" <*> value .: "errors" <*> value .: "acknowledgementsMonotonic" :: Parser (Int, Int, Bool))) payload
+      parseWrite _ = Nothing
+      parseTail (Just (WrkCustom "tail-to" payload)) = parseMaybe (withObject "tail-to" (.: "rows")) payload :: Maybe [(Int64, Text)]
+      parseTail _ = Nothing
+      readAll cursor accumulated = do
+        page <- runStoreIO store (readAllForward (GlobalPosition cursor) 1000)
+        case page of
+          Left _ -> pure Nothing
+          Right rows | Vector.null rows -> pure (Just (reverse accumulated))
+          Right rows -> do
+            let values = [(position, UUID.toText uuid) | row <- Vector.toList rows, let GlobalPosition position = row.globalPosition, let EventId uuid = row.eventId]
+            readAll (fst (last values)) (reverse values <> accumulated)
+      awaitSubscriber target = do
+        (count, _) <- readIORef subscriberRows
+        if count >= target then pure True else threadDelay 10000 >> awaitSubscriber target
+  if writers `mod` processes /= 0
+    then pure (failedWith ["invalid-worker-count"] "writer count must be divisible by process count")
+    else withSubscription store subscription \_ -> withWorker context readerRoleName "order-reader" (object []) \reader -> withWriters processes [] \workers -> do
+      ready <- traverse (\worker -> worker.receive 10000) (reader : workers)
+      forM_ (reader : workers) (\worker -> worker.send CtlStart)
+      began <- getCurrentTime
+      let deadline = addUTCTime (realToFrac context.phases.steadySeconds) began
+          loop roundIndex observed valid = do
+            now <- getCurrentTime
+            if now >= deadline && roundIndex > 0
+              then pure (roundIndex, observed, valid)
+              else do
+                let target = (roundIndex + 1) * roundEvents * processes
+                    request processIndex = object ["prefix" .= ("order" :: Text), "count" .= roundEvents, "writers" .= (writers `div` processes), "writerBase" .= (processIndex * writers `div` processes), "ordinalBase" .= (roundIndex * roundEvents)]
+                reader.send (CtlCustom "tail-to" (object ["target" .= target]))
+                forM_ (zip [0 :: Int ..] workers) (\(index, worker) -> worker.send (CtlCustom "order-write" (request index)))
+                writes <- traverse (\worker -> parseWrite <$> worker.receive 30000) workers
+                tailRows <- parseTail <$> reader.receive 30000
+                let good = all (== Just (roundEvents, 0, True)) writes && maybe False ((== roundEvents * processes) . length) tailRows
+                loop (roundIndex + 1) (maybe observed (\rows -> reverse rows <> observed) tailRows) (valid && good)
+      (rounds, observedReversed, roundsValid) <- loop 0 [] True
+      let observed = reverse observedReversed
+      durable <- readAll 0 []
+      counts <- Oracle.threeCounts store.pool
+      caughtUp <- timeout 60000000 (awaitSubscriber (rounds * roundEvents * processes))
+      (_, subscriberReversed) <- readIORef subscriberRows
+      streams <- forM [0 .. writers - 1] \writer -> do
+        let stream = StreamName ("order-w" <> Text.pack (show writer))
+        info <- runStoreIO store (getStream stream)
+        rows <- runStoreIO store (readStreamForward stream (StreamVersion 0) (fromIntegral (rounds * roundEvents + 1)))
+        pure (info, rows)
+      let expected = rounds * roundEvents * processes
+          positions = fmap fst observed
+          streamAudit (Right (Just info), Right rows) =
+            let versions = fmap (.streamVersion) (Vector.toList rows)
+             in info.version == StreamVersion (fromIntegral (Vector.length rows)) && versions == fmap (StreamVersion . fromIntegral) [1 .. Vector.length rows]
+          streamAudit _ = False
+          cells =
+            [ ("processes-ready", all (== Just WrkReady) ready),
+              ("writer-rounds-complete", rounds > 0 && roundsValid),
+              ("writer-acknowledgements-monotonic", roundsValid),
+              ("tail-equals-final-global-order", durable == Just observed),
+              ("subscriber-equals-final-global-order", caughtUp == Just True && durable == Just (reverse subscriberReversed)),
+              ("global-positions-contiguous", positions == [1 .. fromIntegral expected]),
+              ("per-stream-versions-contiguous", all streamAudit streams && sum [Vector.length rows | (_, Right rows) <- streams] == expected),
+              ("durable-three-counts-agree", counts == (fromIntegral expected, fromIntegral expected, fromIntegral expected))
+            ]
+      putSummary context Measurements "all-order-under-contention" (object ["rounds" .= rounds, "writers" .= writers, "processes" .= processes, "events" .= length observed, "durableEvents" .= fmap length durable, "subscriberEvents" .= length subscriberReversed])
+      recordCells context "all-order-under-contention" ["global-positions-contiguous", "durable-three-counts-agree"] cells
 
 sigkillMidAppend :: Scenario
 sigkillMidAppend =

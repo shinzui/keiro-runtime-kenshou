@@ -1,21 +1,59 @@
-module Kenshou.Suite.Kiroku.Roles (roles, appenderRoleName) where
+module Kenshou.Suite.Kiroku.Roles (roles, appenderRoleName, readerRoleName) where
 
-import Control.Concurrent (forkIO)
+import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 import Control.Exception (SomeException, try)
 import Control.Monad (forM_, replicateM)
 import Data.Aeson (Value, object, withObject, (.:), (.=))
 import Data.Aeson.Types (Parser, parseMaybe)
 import Data.Text (Text)
+import Data.Text qualified as Text
 import Data.UUID qualified as UUID
+import Data.Vector qualified as Vector
 import Kenshou.Core.Role (ControlMessage (..), PostgresConnInfo (..), RoleContext (..), RoleName, WorkerInit (..), WorkerMessage (..), WorkerRole (..), mkRoleName)
+import Kenshou.Suite.Kiroku.Fixture.Workload (eventIdFor)
 import Kiroku.Store hiding (id)
 
 roles :: [WorkerRole]
-roles = [WorkerRole appenderRoleName "Races expected-version appends from a separate process." runAppender]
+roles = [WorkerRole appenderRoleName "Races expected-version appends from a separate process." runAppender, WorkerRole readerRoleName "Tails the global event stream from a separate process." runReader]
 
 appenderRoleName :: RoleName
 appenderRoleName = either (error . show) id (mkRoleName "kiroku/appender")
+
+readerRoleName :: RoleName
+readerRoleName = either (error . show) id (mkRoleName "kiroku/reader")
+
+runReader :: RoleContext -> IO ()
+runReader context = case context.init.postgres of
+  Nothing -> context.send (WrkError "reader requires PostgreSQL")
+  Just postgres -> withStore (defaultConnectionSettings postgres.connectionString) \store -> do
+    context.send WrkReady
+    loop store 0
+  where
+    loop store cursor =
+      context.receive >>= \case
+        Just CtlStart -> loop store cursor
+        Just (CtlCustom "tail-to" payload) -> case parseMaybe (withObject "tail target" (.: "target")) payload of
+          Nothing -> context.send (WrkError "invalid tail target") >> loop store cursor
+          Just target -> do
+            result <- tailTo store cursor target []
+            case result of
+              Left message -> context.send (WrkError message) >> loop store cursor
+              Right (next, observations) -> context.send (WrkCustom "tail-to" (object ["rows" .= observations])) >> loop store next
+        Just (CtlStop _) -> pure ()
+        Just _ -> loop store cursor
+        Nothing -> pure ()
+    tailTo store cursor target accumulated
+      | cursor >= target = pure (Right (cursor, reverse accumulated))
+      | otherwise = do
+          result <- runStoreIO store (readAllForward (GlobalPosition cursor) 256)
+          case result of
+            Left err -> pure (Left (Text.pack (show err)))
+            Right rows | Vector.null rows -> threadDelay 1000 >> tailTo store cursor target accumulated
+            Right rows -> do
+              let observed = [(position, UUID.toText uuid) | row <- Vector.toList rows, let GlobalPosition position = row.globalPosition, let EventId uuid = row.eventId]
+                  next = fst (last observed)
+              tailTo store next target (reverse observed <> accumulated)
 
 runAppender :: RoleContext -> IO ()
 runAppender context = case context.init.postgres of
@@ -97,6 +135,31 @@ runAppender context = case context.init.postgres of
                     Left _ -> "exception"
               context.send (WrkCustom "crash-batch" (object ["status" .= status, "stream" .= stream]))
               loop store
+        Just (CtlCustom "order-write" payload) -> case parseMaybe parseOrderWrite payload of
+          Nothing -> context.send (WrkError "invalid order-write request") >> loop store
+          Just (prefix, count, writers, writerBase, ordinalBase) -> do
+            replies <- newEmptyMVar
+            forM_ [0 .. writers - 1] \localWriter -> do
+              _ <- forkIO do
+                let writer = writerBase + localWriter
+                    stream = StreamName (prefix <> "-w" <> Text.pack (show writer))
+                    indexes = [localWriter, localWriter + writers .. count - 1]
+                    batches = makeBatches writer indexes
+                outcomes <-
+                  traverse
+                    ( \batch -> do
+                        let events = [EventData (Just (eventIdFor context.init.seed writer (fromIntegral (ordinalBase + index)))) (EventType "Order") (object []) Nothing Nothing Nothing | index <- batch]
+                        result <- try @SomeException (runStoreIO store (appendToStream stream AnyVersion events))
+                        pure (length batch, result)
+                    )
+                    batches
+                let positions = [position | (_, Right (Right result)) <- outcomes, let GlobalPosition position = result.globalPosition]
+                    monotonic = and (zipWith (<) positions (drop 1 positions))
+                putMVar replies (sum [size | (size, Right (Right _)) <- outcomes], length [() | (_, outcome) <- outcomes, case outcome of Right (Right _) -> False; _ -> True], monotonic)
+              pure ()
+            outcomes <- replicateM writers (takeMVar replies)
+            context.send (WrkCustom "order-write" (object ["committed" .= sum [committed | (committed, _, _) <- outcomes], "errors" .= sum [errors | (_, errors, _) <- outcomes], "acknowledgementsMonotonic" .= and [monotonic | (_, _, monotonic) <- outcomes]]))
+            loop store
         Just (CtlStop _) -> pure ()
         Just _ -> loop store
         Nothing -> pure ()
@@ -112,3 +175,13 @@ parseFreshDeadlock = withObject "fresh-deadlock request" \value -> (,,,,) <$> va
 
 parseCrashBatch :: Value -> Parser (Text, [Text])
 parseCrashBatch = withObject "crash-batch request" \value -> (,) <$> value .: "stream" <*> value .: "eventIds"
+
+parseOrderWrite :: Value -> Parser (Text, Int, Int, Int, Int)
+parseOrderWrite = withObject "order-write request" \value -> (,,,,) <$> value .: "prefix" <*> value .: "count" <*> value .: "writers" <*> value .: "writerBase" <*> value .: "ordinalBase"
+
+makeBatches :: Int -> [Int] -> [[Int]]
+makeBatches _ [] = []
+makeBatches writer indexes@(first : _) =
+  let size = 1 + (writer + first) `mod` 20
+      (batch, rest) = splitAt size indexes
+   in batch : makeBatches writer rest
