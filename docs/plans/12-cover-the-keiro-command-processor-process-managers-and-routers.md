@@ -53,7 +53,7 @@ Milestone 1 — The keiro fixture domain
 
 Milestone 2 — Command processor scenarios with snapshots and projections
 
-- [ ] Command correctness: `occ-retry-and-exhaustion`, `idempotent-event-ids`, `hydration-paging`, `controlled-rollback`.
+- [ ] Command correctness: `occ-retry-and-exhaustion`, `idempotent-event-ids`, and `controlled-rollback` pass, including retry exhaustion and the idempotency sabotage arm. `hydration-paging` remains.
 - [ ] Command concurrency: `identical-commands-one-batch`, `hot-stream-contention`, `model-based-parallel-commands`, `sigkill-idempotent-resubmission`.
 - [ ] Snapshot correctness: `policy-matrix`, `truncation-covering-snapshot`, `seed-divergence-detection`.
 - [ ] Projection scenarios: `async-dedup-and-fence`, `inline-atomicity-under-kill`, `async-at-least-once-under-kill`, and the known-defect scenario `async-apply-checkpoint-atomic`.
