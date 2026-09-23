@@ -33,13 +33,71 @@ import Kenshou.Suite.Keiro.Fixture.Oracle qualified as Oracle
 import Kenshou.Suite.Keiro.Fixture.Runtime
 import Kenshou.Suite.Keiro.Fixture.Transfer
 import Kenshou.Suite.Keiro.Fixture.Workload qualified as Workload
-import Kiroku.Store (defaultConnectionSettings)
+import Kiroku.Store (appendToStream, defaultConnectionSettings)
 import Kiroku.Store.Read (readCategory)
-import Kiroku.Store.Types (CategoryName (..), EventType (..), GlobalPosition (..), RecordedEvent (..), StreamName (..))
-import Shibuya.Core.Ack (AckDecision (..), DeadLetterReason (..), HaltReason (..))
+import Kiroku.Store.Types (CategoryName (..), EventType (..), ExpectedVersion (..), GlobalPosition (..), RecordedEvent (..), StreamName (..))
+import Kiroku.Store.Types qualified as StoreTypes
+import Shibuya.Core.Ack (AckDecision (..), DeadLetterReason (..), HaltReason (..), RetryDelay (..))
 
 scenarios :: [Scenario]
-scenarios = [deterministicIdsRedelivery, timersCommitWithManagerAppend, orderInsensitiveJoin, reactionScheduleModes, reactionNoAdvanceReceipt, policyMatrix]
+scenarios = [deterministicIdsRedelivery, timersCommitWithManagerAppend, orderInsensitiveJoin, reactionScheduleModes, reactionNoAdvanceReceipt, policyMatrix, transientClassification]
+
+transientClassification :: Scenario
+transientClassification =
+  deterministicIdsRedelivery
+    { id = either (error . show) id (parseScenarioId "keiro/process-manager/correctness/transient-classification"),
+      summary = "Checks retry precedence and deterministic hydration failures in process-manager dispatch.",
+      tier = TierStandard,
+      knobs = [],
+      run = runTransientClassification
+    }
+
+runTransientClassification :: RunContext -> IO ScenarioReport
+runTransientClassification context =
+  withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture -> do
+    let KeiroRunner runFixture = fixture.runner
+        accountEvents = accountEventStream SnapNever
+        manager = transferManager accountEvents (const [])
+        submit account command = runFixture (runCommand defaultRunCommandOptions accountEvents (accountStream account) command)
+        accepted = \case Right (Right result) -> result.eventsAppended == 1; _ -> False
+        caseNames = ["conflict", "decode", "mixed"]
+    results <- forM caseNames \caseName -> do
+      let source = AccountId ("transient-source-" <> caseName)
+          destination = AccountId ("transient-destination-" <> caseName)
+          transfer = TransferId ("transient-transfer-" <> caseName)
+      setup <- sequence [submit source (OpenAccount (OpenAccountData source 2)), submit destination (OpenAccount (OpenAccountData destination 0)), submit source (DebitTransfer (DebitTransferData source transfer destination 2 4102444800))]
+      closed <- if caseName == "mixed" then accepted <$> submit source (CloseAccount (CloseAccountData source)) else pure True
+      malformed <-
+        if caseName == "decode"
+          then do
+            let event = StoreTypes.EventData {StoreTypes.eventId = Nothing, StoreTypes.eventType = EventType "UndecodableAccountEvent", StoreTypes.payload = object [], StoreTypes.metadata = Nothing, StoreTypes.causationId = Nothing, StoreTypes.correlationId = Nothing}
+            runFixture (appendToStream (accountStreamName destination) AnyVersion [event]) >>= \case Right _ -> pure True; Left _ -> pure False
+          else pure True
+      sourceBatch <- runFixture (readCategory (CategoryName "account") (GlobalPosition 0) 1000) >>= either (fail . show) pure
+      debit <- case [recorded | recorded <- Vector.toList sourceBatch, Just (_, SignalDebited d) <- [decodeTransferSignal recorded], d.transferId == transfer] of
+        [recorded] -> pure recorded
+        other -> fail ("expected one classification debit, observed " <> show (length other))
+      hooks <- newIORef (0 :: Int)
+      let inject = do
+            modifyIORef' hooks (+ 1)
+            _ <- submit destination (Deposit (DepositData destination 1 "foreign"))
+            pure ()
+          commandOptions = defaultRunCommandOptions {retryLimit = 1, beforeAppend = if caseName == "decode" then pure () else inject}
+          options = defaultWorkerOptions {transientRetryDelay = RetryDelay 5}
+      acknowledgements <- newIORef []
+      let adapter = listAdapter ("transient-" <> caseName) acknowledgements [(debit, Nothing)]
+      _ <- runFixture (runProcessManagerWorkerWith options commandOptions manager adapter decodeTransferSignal) >>= either (fail . show) pure
+      acks <- readIORef acknowledgements
+      hookCount <- readIORef hooks
+      let decision = case acks of
+            [ack] -> case ack.decision of
+              AckRetry (RetryDelay delay) -> caseName /= "decode" && delay == 5
+              AckHalt (HaltFatal reason) -> caseName == "decode" && "HydrationDecodeFailed" `Text.isInfixOf` reason
+              _ -> False
+            _ -> False
+          expected = decision && (caseName == "decode" || hookCount >= 2)
+      pure (caseName, all accepted setup && closed && malformed && expected)
+    recordCells context results
 
 policyMatrix :: Scenario
 policyMatrix =
