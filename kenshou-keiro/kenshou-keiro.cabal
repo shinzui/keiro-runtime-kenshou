@@ -49,6 +49,7 @@ library
     Kenshou.Suite.Keiro.Fixture.Model
     Kenshou.Suite.Keiro.Fixture.Oracle
     Kenshou.Suite.Keiro.Fixture.Projection
+    Kenshou.Suite.Keiro.Fixture.Roles
     Kenshou.Suite.Keiro.Fixture.Runtime
     Kenshou.Suite.Keiro.Fixture.Transfer
     Kenshou.Suite.Keiro.Fixture.Workload
