@@ -26,6 +26,7 @@ library
     Kenshou.Suite.Shibuya
     Kenshou.Suite.Shibuya.Cohort
     Kenshou.Suite.Shibuya.Concurrency.CoreRunner
+    Kenshou.Suite.Shibuya.Correctness.CoreOrdering
     Kenshou.Suite.Shibuya.Correctness.CoreRunner
     Kenshou.Suite.Shibuya.Fixture.Handlers
     Kenshou.Suite.Shibuya.Fixture.RestartLoop
