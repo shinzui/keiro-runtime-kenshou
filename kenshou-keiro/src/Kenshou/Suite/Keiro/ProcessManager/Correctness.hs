@@ -1,5 +1,7 @@
 module Kenshou.Suite.Keiro.ProcessManager.Correctness (scenarios) where
 
+import Control.Concurrent (threadDelay)
+import Control.Concurrent.Async (async, cancel)
 import Control.Monad (forM, forM_)
 import Data.Aeson (object)
 import Data.IORef (modifyIORef', newIORef, readIORef)
@@ -12,8 +14,13 @@ import Data.Vector qualified as Vector
 import Effectful (liftIO)
 import Hasql.Connection qualified as Connection
 import Hasql.Connection.Settings qualified as Settings
+import Hasql.Decoders qualified as Decoders
+import Hasql.Encoders qualified as Encoders
+import Hasql.Session qualified as Session
+import Hasql.Statement qualified as Statement
 import Keiro.Command (CommandError (..), CommandResult (..), RunCommandOptions (..), defaultRunCommandOptions, runCommand)
-import Keiro.ProcessManager (PoisonPolicy (..), RejectedCommandPolicy (..), WorkerOptions (..), defaultWorkerOptions, deterministicCommandId, runProcessManagerOnce, runProcessManagerWorkerWith)
+import Keiro.DeadLetter.Replay (ReplayOutcome (..), ReplayResult (..), replaySubscriptionDeadLetters)
+import Keiro.ProcessManager (PMCommandResult (..), PMStateResult (..), PoisonPolicy (..), ProcessManagerResult (..), RejectedCommandPolicy (..), WorkerOptions (..), defaultWorkerOptions, deterministicCommandId, runProcessManagerOnce, runProcessManagerWorkerWith)
 import Keiro.ProcessManager.Reaction (ReactionStateResult (..), ReactionTimerEffects (..), ReactiveProcessManagerResult (..), runReactiveProcessManagerOnce)
 import Keiro.Timer (TimerId (..), cancelTimer)
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
@@ -35,12 +42,123 @@ import Kenshou.Suite.Keiro.Fixture.Transfer
 import Kenshou.Suite.Keiro.Fixture.Workload qualified as Workload
 import Kiroku.Store (appendToStream, defaultConnectionSettings)
 import Kiroku.Store.Read (readCategory)
+import Kiroku.Store.Subscription.Types (EventTypeFilter (..), RetryPolicy (..), SubscriptionConfigM (..), SubscriptionName (..), SubscriptionResult (..), SubscriptionTarget (..), defaultSubscriptionConfig)
 import Kiroku.Store.Types (CategoryName (..), EventType (..), ExpectedVersion (..), GlobalPosition (..), RecordedEvent (..), StreamName (..))
 import Kiroku.Store.Types qualified as StoreTypes
 import Shibuya.Core.Ack (AckDecision (..), DeadLetterReason (..), HaltReason (..), RetryDelay (..))
+import Shibuya.Core.Types (Envelope (attempt, messageId))
+import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [deterministicIdsRedelivery, timersCommitWithManagerAppend, orderInsensitiveJoin, reactionScheduleModes, reactionNoAdvanceReceipt, policyMatrix, transientClassification]
+scenarios = [deterministicIdsRedelivery, timersCommitWithManagerAppend, orderInsensitiveJoin, reactionScheduleModes, reactionNoAdvanceReceipt, policyMatrix, transientClassification, retryBudgetDeadLetter]
+
+retryBudgetDeadLetter :: Scenario
+retryBudgetDeadLetter =
+  deterministicIdsRedelivery
+    { id = either (error . show) id (parseScenarioId "keiro/process-manager/correctness/retry-budget-dead-letter"),
+      summary = "Checks the production subscription exhausts transient retries and advances to a healthy transfer.",
+      tier = TierStandard,
+      knobs =
+        [ KnobSpec (knobName "pm.source") "Subscription bridge" KnobText (VText "kiroku-adapter") (OneOf (VText "kiroku-adapter" :| [VText "ack-stream"])) [],
+          KnobSpec (knobName "kiroku.retry-max-attempts") "Ack-stream retry budget" KnobInt (VInt 5) (IntRange 1 10) []
+        ],
+      run = runRetryBudget
+    }
+
+runRetryBudget :: RunContext -> IO ScenarioReport
+runRetryBudget context =
+  withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture -> do
+    let KeiroRunner runFixture = fixture.runner
+        accountEvents = accountEventStream SnapNever
+        manager = transferManager accountEvents (const [])
+        subscription = SubscriptionName "kenshou-keiro-retry-budget"
+        sourceKind = knobText context.knobs (knobName "pm.source")
+        attempts = if sourceKind == "ack-stream" then fromIntegral (knobInt context.knobs (knobName "kiroku.retry-max-attempts")) else 5
+        source suffix = AccountId ("retry-source-" <> suffix)
+        destination suffix = AccountId ("retry-destination-" <> suffix)
+        transfer suffix = TransferId ("retry-transfer-" <> suffix)
+        submit account command = runFixture (runCommand defaultRunCommandOptions accountEvents (accountStream account) command)
+        accepted = \case Right (Right result) -> result.eventsAppended == 1; _ -> False
+        seed suffix =
+          sequence
+            [ submit (source suffix) (OpenAccount (OpenAccountData (source suffix) 10)),
+              submit (destination suffix) (OpenAccount (OpenAccountData (destination suffix) 0)),
+              submit (source suffix) (DebitTransfer (DebitTransferData (source suffix) (transfer suffix) (destination suffix) 2 4102444800))
+            ]
+    failedSeed <- seed "failed"
+    healthySeed <- seed "healthy"
+    hooks <- newIORef (0 :: Int)
+    let inject = do
+          modifyIORef' hooks (+ 1)
+          _ <- submit (destination "failed") (Deposit (DepositData (destination "failed") 1 "foreign"))
+          pure ()
+        commandOptions = defaultRunCommandOptions {retryLimit = 1, beforeAppend = inject}
+        workerOptions = defaultWorkerOptions {transientRetryDelay = RetryDelay 0.2}
+    ackLog <- newIORef []
+    worker <-
+      async
+        ( runFixture do
+            adapter <-
+              if sourceKind == "ack-stream"
+                then
+                  ackStreamAdapter
+                    fixture.store
+                    ( (defaultSubscriptionConfig subscription (Category (CategoryName "account")) (\_ -> pure Continue))
+                        { retryPolicy = RetryPolicy attempts,
+                          eventTypeFilter = OnlyEventTypes transferSignalTypes
+                        }
+                    )
+                    16
+                else kirokuBridge fixture.store (sagaAdapterConfig subscription Nothing)
+            runProcessManagerWorkerWith workerOptions commandOptions manager (interposeAck (\envelope decision -> liftIO (modifyIORef' ackLog (<> [(envelope.messageId, envelope.attempt, decision)]))) adapter) decodeTransferSignal
+        )
+    acquired <- Connection.acquire (Settings.connectionString (requirePostgres context).connectionString <> Settings.applicationName "kenshou-keiro-retry-budget-oracle")
+    connection <- either (fail . show) pure acquired
+    reached <- timeout 30000000 (awaitCompletion connection)
+    cancel worker
+    letters <- readDeadLetters connection
+    accountRows <- Oracle.readCategoryLog connection "account"
+    let replay recorded = case decodeTransferSignal recorded of
+          Nothing -> pure (Left "cannot decode replayed transfer")
+          Just (_, signal) ->
+            runProcessManagerOnce defaultRunCommandOptions manager recorded signal >>= \case
+              Left issue -> pure (Left (Text.pack (show issue)))
+              Right outcome -> pure $ case [issue | PMCommandFailed _ issue <- outcome.commandResults] of
+                issue : _ -> Left (Text.pack (show issue))
+                [] -> Right $ case (outcome.managerResult, outcome.commandResults) of
+                  (PMStateDuplicate _, results) | all isDuplicate results -> ReplayedDuplicate
+                  _ -> ReplayedFresh
+        isDuplicate = \case PMCommandDuplicate _ -> True; _ -> False
+    firstReplay <- runFixture (replaySubscriptionDeadLetters subscription 0 replay) >>= either (fail . show) pure
+    secondReplay <- runFixture (replaySubscriptionDeadLetters subscription 0 replay) >>= either (fail . show) pure
+    afterReplay <- Oracle.readCategoryLog connection "account"
+    Connection.release connection
+    acks <- readIORef ackLog
+    let failedRetries = [() | (_, _, AckRetry _) <- acks]
+        healthyCredits = length [() | row <- accountRows, row.streamName == accountStreamName (destination "healthy"), row.eventType == EventType "TransferCredited"]
+        failedCredits = length [() | row <- accountRows, row.streamName == accountStreamName (destination "failed"), row.eventType == EventType "TransferCredited"]
+        cells =
+          [ ("source-setup", all accepted (failedSeed <> healthySeed)),
+            ("retry-budget-reached", reached == Just True && length failedRetries == attempts),
+            ("dead-letter-recorded", letters == [("max_attempts_exceeded", fromIntegral attempts)]),
+            ("healthy-transfer-advanced", healthyCredits == 1 && failedCredits == 0 && Oracle.logWellFormed accountRows),
+            ("replay-fresh-then-duplicate", map replayResult firstReplay == [ReplayedFresh] && map replayResult secondReplay == [ReplayedDuplicate]),
+            ("replayed-effect-once", length [() | row <- afterReplay, row.streamName == accountStreamName (destination "failed"), row.eventType == EventType "TransferCredited"] == 1 && Oracle.logWellFormed afterReplay)
+          ]
+    recordCells context cells
+  where
+    awaitCompletion connection = do
+      letters <- readDeadLetters connection
+      rows <- Oracle.readCategoryLog connection "account"
+      if length letters == 1 && length [() | row <- rows, row.streamName == accountStreamName (AccountId "retry-destination-healthy"), row.eventType == EventType "TransferCredited"] == 1
+        then pure True
+        else threadDelay 100000 >> awaitCompletion connection
+    readDeadLetters connection = Connection.use connection (Session.statement () deadLettersStatement) >>= either (fail . show) pure
+    deadLettersStatement =
+      Statement.preparable
+        "SELECT reason->>'kind', attempt_count FROM kiroku.dead_letters WHERE subscription_name = 'kenshou-keiro-retry-budget' ORDER BY global_position"
+        Encoders.noParams
+        (Decoders.rowList ((,) <$> Decoders.column (Decoders.nonNullable Decoders.text) <*> Decoders.column (Decoders.nonNullable Decoders.int4)))
 
 transientClassification :: Scenario
 transientClassification =

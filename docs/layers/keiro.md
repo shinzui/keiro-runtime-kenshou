@@ -58,6 +58,11 @@ parks it at one of four append or acknowledgement boundaries, kills it, and
 checks the durable saga and target effects for that transfer and its neighbour
 after a fresh worker resumes the same subscription. Select a boundary with
 `--set pm.kill-window=between-targets`.
+`retry-budget-dead-letter` keeps one credit in conflict while a healthy transfer
+follows it. The production adapter dead-letters after five deliveries;
+`--set pm.source=ack-stream --set kiroku.retry-max-attempts=3` tests a
+configurable budget. Both bridges advance to the healthy transfer, and replay
+of the dead letter appends the missing credit once.
 The router's `sigkill-mid-fanout` scenario checks a partial durable fanout
 before killing the worker and exact recovery after restart. The router
 correctness scenarios check fanout under redelivery and selection drift, independent
