@@ -13,11 +13,13 @@ import Kenshou.Suite.Shibuya.Cohort (CoreLine (..), coreLine, knownOnReleasedCor
 import Kenshou.Suite.Shibuya.Knobs (DecisionPattern (..), PartitionMode (..), parseConcurrency, parseDecisions, parseOrdering, parsePartitions, parseStrategy, renderDecisions, renderPartitions)
 import Kenshou.Suite.Shibuya.Matrix (allCells, cellsOf, uncovered)
 import Shibuya.Policy (Concurrency (..), OrderingPolicy (..), validatePolicy)
+import SyntheticSpec qualified
 import Test.Hspec
 import Test.Hspec.Hedgehog (hedgehog)
 
 main :: IO ()
 main = hspec $ do
+  SyntheticSpec.spec
   describe "lifecycle matrix" $ do
     it "enumerates thirteen distinct boundaries and five cases" $ do
       length allCells `shouldBe` 65

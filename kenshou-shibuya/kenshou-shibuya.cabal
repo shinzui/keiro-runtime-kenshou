@@ -27,27 +27,33 @@ library
     Kenshou.Suite.Shibuya.Cohort
     Kenshou.Suite.Shibuya.Concurrency.CoreRunner
     Kenshou.Suite.Shibuya.Correctness.CoreRunner
+    Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter
     Kenshou.Suite.Shibuya.Knobs
     Kenshou.Suite.Shibuya.Matrix
 
   build-depends:
     aeson >=2.2 && <2.3,
     base >=4.21 && <4.22,
+    bytestring >=0.12 && <0.13,
+    containers >=0.7 && <0.8,
     effectful-core >=2.6 && <2.7,
     kenshou-core,
     shibuya-core,
     stm >=2.5 && <2.6,
     streamly-core >=0.3 && <0.4,
     text >=2.1 && <2.2,
+    time >=1.12 && <1.15,
 
 test-suite kenshou-shibuya-test
   import: defaults
   type: exitcode-stdio-1.0
   hs-source-dirs: test
   main-is: Main.hs
+  other-modules: SyntheticSpec
   ghc-options: -threaded
   build-depends:
     base >=4.21 && <4.22,
+    effectful-core >=2.6 && <2.7,
     hedgehog >=1.4 && <1.8,
     hspec >=2.11 && <2.12,
     hspec-hedgehog >=0.0 && <0.4,
@@ -55,3 +61,4 @@ test-suite kenshou-shibuya-test
     kenshou-shibuya,
     shibuya-core,
     text >=2.1 && <2.2,
+    time >=1.12 && <1.15,

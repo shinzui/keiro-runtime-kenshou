@@ -43,7 +43,7 @@ Milestone 1 — shibuya core lifecycle, ordering, batching and metrics-truthfuln
 - [x] (2026-09-23 13:48Z) Cross-check the capability probe against the resolved head cohort and run the unit checks there; the pinned head build and four package tests pass.
 - [x] (2026-09-23 13:56Z) Finish `Kenshou.Suite.Shibuya.Knobs`: common specifications and all five parsers are present, with example and generated round-trip tests.
 - [ ] Complete `Kenshou.Suite.Shibuya.Matrix`: thirteen boundaries and five cases enumerate sixty-five cells; the three registered scenarios have tested tags, while the remaining scenario tags, justified exclusions, and complete sixty-five-cell coverage assertion remain.
-- [ ] Implement `Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter`, `.Handlers`, `.App`, `.RestartLoop` with unit tests (lease expiry, redelivery, scripted finalizer and shutdown faults).
+- [ ] Implement `Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter`, `.Handlers`, `.App`, `.RestartLoop` with unit tests. The synthetic broker now covers lease expiry, retry redelivery, stale finalization, scripted finalizer faults, and throwing or blocking shutdowns (16 package tests pass); handler, app, and restart helpers remain.
 - [ ] Implement the `core-runner` scenarios (fifteen) and the `shibuya-core-worker` and `shibuya-gc-probe` worker roles. Three scenarios exist: invalid configuration, duplicate processor IDs, and idle-intake halt. The other twelve and both roles remain.
 - [ ] Implement the `core-ordering` scenarios (four).
 - [ ] Implement the `core-batch` correctness and concurrency scenarios (two).
