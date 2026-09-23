@@ -60,6 +60,7 @@ library
     Kenshou.Suite.Keiro.Router.Bench
     Kenshou.Suite.Keiro.Router.Concurrency
     Kenshou.Suite.Keiro.Router.Correctness
+    Kenshou.Suite.Keiro.Telemetry
 
   build-depends:
     aeson,
@@ -72,6 +73,7 @@ library
     hasql,
     hasql-transaction,
     hedgehog,
+    hs-opentelemetry-api,
     keiki,
     keiki-codec-json,
     keiro,

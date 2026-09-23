@@ -131,3 +131,11 @@ separate summaries for fresh-only and redelivered inputs. SQL checks the bonus
 source count, target credit count, and total money. A 40-second one-recipient
 local run passed. The ten-recipient two-worker run had correct durable effects
 but exceeded the local driver CPU gate, so the default uses one worker.
+
+`write-side-signals` exercises a command conflict and retry, a repeated event
+ID, snapshot hydration, router redelivery, a poison input, and a rejected
+dispatch. With in-memory tracing and collected metrics it checks command span
+names, internal kind, stream and database attributes, retry attempts, append
+counts, and error class. It compares nine counter totals with the durable
+account and dead-letter rows. With both telemetry dimensions off, the same
+durable outcomes pass and no spans or metric sums are exported.

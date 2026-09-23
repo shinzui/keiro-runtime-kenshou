@@ -3,6 +3,7 @@ module Kenshou.Telemetry.Metrics
     MetricsSnapshot (..),
     startMetrics,
     flushMetrics,
+    readMetricSums,
     stopMetrics,
   )
 where
@@ -17,7 +18,7 @@ import Kenshou.Telemetry.Spec
 import Kenshou.Telemetry.Tracing (otlpExporterConfig)
 import Network.Socket (Socket, close)
 import Network.Wai.Handler.Warp (defaultSettings, openFreePort, runSettingsSocket)
-import OpenTelemetry.Exporter.Metric (ResourceMetricsExport (..), ScopeMetricsExport (..))
+import OpenTelemetry.Exporter.Metric (MetricExport (..), NumberValue (..), ResourceMetricsExport (..), ScopeMetricsExport (..), SumDataPoint (..))
 import OpenTelemetry.Exporter.OTLP.Metric qualified as OtlpMetric
 import OpenTelemetry.Exporter.Prometheus.WAI (prometheusApplication)
 import OpenTelemetry.MeterProvider (SdkMeterEnv, collectResourceMetrics, createMeterProvider, defaultSdkMeterProviderOptions)
@@ -66,6 +67,20 @@ startMetrics spec = case spec.metrics of
 
 flushMetrics :: Int -> MetricsRuntime -> IO (Maybe FlushResult)
 flushMetrics timeoutMs runtime = traverse (\provider -> forceFlushMeterProvider provider (Just (timeoutMs * 1000))) runtime.provider
+
+readMetricSums :: MetricsRuntime -> IO [(Text.Text, Double)]
+readMetricSums runtime = do
+  batches <- maybe (pure []) collectResourceMetrics runtime.env
+  pure
+    [ (metric.mesName, sum (fmap pointValue metric.mesSumPoints))
+    | resource <- batches,
+      scope <- Vector.toList resource.resourceMetricsScopes,
+      metric@MetricExportSum {} <- Vector.toList scope.scopeMetricsExports
+    ]
+  where
+    pointValue point = case point.sumDataPointValue of
+      IntNumber value -> fromIntegral value
+      DoubleNumber value -> value
 
 stopMetrics :: Int -> MetricsRuntime -> IO (Maybe MetricsSnapshot, Maybe ShutdownResult)
 stopMetrics timeoutMs runtime = do

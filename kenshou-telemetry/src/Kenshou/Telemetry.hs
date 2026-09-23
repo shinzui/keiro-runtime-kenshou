@@ -26,6 +26,7 @@ import Kenshou.Telemetry.Continuity (ContinuityResult, IsolationResult)
 import Kenshou.Telemetry.Detect
 import Kenshou.Telemetry.Endpoint
 import Kenshou.Telemetry.Metrics
+import Kenshou.Telemetry.Metrics qualified as Metrics
 import Kenshou.Telemetry.Scrape
 import Kenshou.Telemetry.Sink
 import Kenshou.Telemetry.Spec
@@ -63,6 +64,7 @@ data TelemetryHandles = TelemetryHandles
     spans :: Maybe SpanProbe,
     pipeline :: Maybe PipelineStats,
     metricsLive :: Bool,
+    readMetricSums :: IO [(Text, Double)],
     servesEndpoints :: Bool,
     registerEndpoint :: Endpoint -> IO (),
     setSinkFault :: SinkFault -> IO (),
@@ -102,6 +104,7 @@ withTelemetry spec action = withConfiguredScraper spec \scraper -> case spec.end
                 spans = runtime.probe,
                 pipeline = runtime.pipeline,
                 metricsLive = spec.metrics /= MetricsOff,
+                readMetricSums = Metrics.readMetricSums metricsRuntime,
                 servesEndpoints = spec.metrics `elem` [MetricsServe, MetricsServeScraped],
                 registerEndpoint = register,
                 setSinkFault = maybe (const (pure ())) (.setFault) sink,
