@@ -123,3 +123,11 @@ was credited once and each saga appended one event. Its summary separates
 fresh-only and redelivery handling times. A 15-second local two-worker run
 passed with 1,181 steady samples, and another passed with in-memory traces
 and collected metrics. The Kiroku adapter arm remains to be exercised.
+
+The router `fanout-dispatch` benchmark preopens a fixed recipient set, creates
+one bonus declaration per operation, and sends it through the list worker.
+It records worker handling time and source append to completion time, with
+separate summaries for fresh-only and redelivered inputs. SQL checks the bonus
+source count, target credit count, and total money. A 40-second one-recipient
+local run passed. The ten-recipient two-worker run had correct durable effects
+but exceeded the local driver CPU gate, so the default uses one worker.
