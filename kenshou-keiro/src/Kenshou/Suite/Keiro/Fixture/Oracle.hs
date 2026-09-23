@@ -1,17 +1,19 @@
 module Kenshou.Suite.Keiro.Fixture.Oracle
   ( LoggedEvent (..),
     TimerRow (..),
+    DispatchDeadLetter (..),
     readCategoryLog,
     readBalanceTable,
     readSnapshots,
     readTimers,
+    readDispatchDeadLetters,
     modelFromLog,
     logWellFormed,
   )
 where
 
 import Data.Aeson (Value)
-import Data.Int (Int64)
+import Data.Int (Int32, Int64)
 import Data.List (group, sort)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
@@ -47,6 +49,27 @@ data TimerRow = TimerRow
     status :: !Text
   }
   deriving stock (Eq, Show)
+
+data DispatchDeadLetter = DispatchDeadLetter
+  { dispatcherKind :: !Text,
+    dispatcherName :: !Text,
+    emitIndex :: !Int32,
+    targetStreamName :: !Text,
+    errorClass :: !Text
+  }
+  deriving stock (Eq, Show)
+
+readDispatchDeadLetters :: Connection.Connection -> IO [DispatchDeadLetter]
+readDispatchDeadLetters connection = do
+  rows <- Connection.use connection (Session.statement () statement) >>= either (fail . show) pure
+  pure [DispatchDeadLetter kind name index target category | (kind, name, index, target, category) <- rows]
+  where
+    statement =
+      Statement.preparable
+        "SELECT dispatcher_kind, dispatcher_name, emit_index, target_stream_name, error_class FROM keiro.keiro_dead_letters ORDER BY dead_letter_id"
+        Encoders.noParams
+        (Decoders.rowList ((,,,,) <$> text <*> text <*> Decoders.column (Decoders.nonNullable Decoders.int4) <*> text <*> text))
+    text = Decoders.column (Decoders.nonNullable Decoders.text)
 
 readTimers :: Connection.Connection -> IO [TimerRow]
 readTimers connection = do

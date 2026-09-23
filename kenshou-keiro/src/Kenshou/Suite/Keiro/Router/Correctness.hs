@@ -11,7 +11,7 @@ import Effectful (liftIO)
 import Hasql.Connection qualified as Connection
 import Hasql.Connection.Settings qualified as Settings
 import Keiro.Command (CommandResult (..), defaultRunCommandOptions, runCommand)
-import Keiro.ProcessManager (defaultWorkerOptions)
+import Keiro.ProcessManager (RejectedCommandPolicy (..), WorkerOptions (..), defaultWorkerOptions)
 import Keiro.Router (deterministicRouterCommandId, runRouterWorkerWith)
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
@@ -32,11 +32,56 @@ import Kenshou.Suite.Keiro.Fixture.Projection (ensureFixtureReadModels)
 import Kenshou.Suite.Keiro.Fixture.Runtime
 import Kiroku.Store (defaultConnectionSettings)
 import Kiroku.Store.Read (readCategory)
-import Kiroku.Store.Types (CategoryName (..), GlobalPosition (..), StreamName (..))
+import Kiroku.Store.Types (CategoryName (..), EventType (..), GlobalPosition (..), StreamName (..))
 import Shibuya.Core.Ack (AckDecision (..))
 
 scenarios :: [Scenario]
-scenarios = [fanoutExactlyOnce]
+scenarios = [fanoutExactlyOnce, perTargetIndependentCommits]
+
+perTargetIndependentCommits :: Scenario
+perTargetIndependentCommits =
+  fanoutExactlyOnce
+    { id = either (error . show) id (parseScenarioId "keiro/router/correctness/per-target-independent-commits"),
+      summary = "Checks a rejected target records one dead letter while other credits commit.",
+      knobs = [],
+      run = runIndependentTargets
+    }
+
+runIndependentTargets :: RunContext -> IO ScenarioReport
+runIndependentTargets context =
+  withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture -> do
+    let KeiroRunner runFixture = fixture.runner
+        accountEvents = accountEventStream SnapNever
+        recipients = [AccountId ("target-" <> Text.pack (show i)) | i <- [0 :: Int .. 7]]
+        closed = AccountId "target-3"
+        bonusId = BonusId "partial"
+        accepted = \case Right (Right result) -> result.eventsAppended == 1; _ -> False
+    _ <- runFixture ensureFixtureReadModels >>= either (fail . show) pure
+    opened <- traverse (\account -> runFixture (runCommand defaultRunCommandOptions accountEvents (accountStream account) (OpenAccount (OpenAccountData account 0)))) recipients
+    closeResult <- runFixture (runCommand defaultRunCommandOptions accountEvents (accountStream closed) (CloseAccount (CloseAccountData closed)))
+    declared <- runFixture (runCommand defaultRunCommandOptions bonusEventStream (bonusStream bonusId) (DeclareBonus (DeclareBonusData bonusId "all" 4)))
+    sourceBatch <- runFixture (readCategory (CategoryName "bonus") (GlobalPosition 0) 10) >>= either (fail . show) pure
+    acknowledgementLog <- newIORef []
+    let deliveries = [(recorded, Nothing) | recorded <- Vector.toList sourceBatch]
+        router = bonusRouterWith bonusRouterName accountEvents (\_ -> pure recipients)
+        adapter = listAdapter "partial-router" acknowledgementLog deliveries
+        options = defaultWorkerOptions {rejectedCommandPolicy = RejectedDeadLetter}
+    _ <- runFixture (runRouterWorkerWith options defaultRunCommandOptions router adapter decodeBonusDeclared) >>= either (fail . show) pure
+    acks <- readIORef acknowledgementLog
+    acquired <- Connection.acquire (Settings.connectionString (requirePostgres context).connectionString <> Settings.applicationName "kenshou-keiro-partial-router-oracle")
+    connection <- either (fail . show) pure acquired
+    accountRows <- Oracle.readCategoryLog connection "account"
+    deadLetters <- Oracle.readDispatchDeadLetters connection
+    Connection.release connection
+    let credits = [row | row <- accountRows, row.eventType == EventType "BonusCredited"]
+        cells =
+          [ ("targets-opened", all accepted opened && accepted closeResult && case declared of Right (Right result) -> result.eventsAppended == 1; _ -> False),
+            ("seven-credits", length credits == 7 && all (\account -> length [() | row <- credits, row.streamName == accountStreamName account] == if account == closed then 0 else 1) recipients),
+            ("one-dead-letter", case deadLetters of [letter] -> letter.dispatcherKind == "router" && letter.dispatcherName == bonusRouterName && letter.targetStreamName == "account-target-3" && letter.errorClass == "command_rejected"; _ -> False),
+            ("acknowledged", case acks of [ack] -> ack.decision == AckOk; _ -> False),
+            ("money-is-conserved", case Oracle.modelFromLog accountRows of Right model -> Model.totalMoney model == 7 * 4; _ -> False)
+          ]
+    recordCells context cells
 
 knobName :: Text -> KnobName
 knobName = either (error . show) id . mkKnobName

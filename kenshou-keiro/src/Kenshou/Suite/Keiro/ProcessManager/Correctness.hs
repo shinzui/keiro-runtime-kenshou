@@ -11,7 +11,7 @@ import Data.Vector qualified as Vector
 import Hasql.Connection qualified as Connection
 import Hasql.Connection.Settings qualified as Settings
 import Keiro.Command (CommandError (..), CommandResult (..), RunCommandOptions (..), defaultRunCommandOptions, runCommand)
-import Keiro.ProcessManager (defaultWorkerOptions, deterministicCommandId, runProcessManagerOnce, runProcessManagerWorkerWith)
+import Keiro.ProcessManager (RejectedCommandPolicy (..), WorkerOptions (..), defaultWorkerOptions, deterministicCommandId, runProcessManagerOnce, runProcessManagerWorkerWith)
 import Keiro.Timer (TimerId (..))
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
@@ -32,11 +32,85 @@ import Kenshou.Suite.Keiro.Fixture.Transfer
 import Kenshou.Suite.Keiro.Fixture.Workload qualified as Workload
 import Kiroku.Store (defaultConnectionSettings)
 import Kiroku.Store.Read (readCategory)
-import Kiroku.Store.Types (CategoryName (..), GlobalPosition (..), RecordedEvent (..))
+import Kiroku.Store.Types (CategoryName (..), GlobalPosition (..), RecordedEvent (..), StreamName (..))
 import Shibuya.Core.Ack (AckDecision (..))
 
 scenarios :: [Scenario]
-scenarios = [deterministicIdsRedelivery, timersCommitWithManagerAppend]
+scenarios = [deterministicIdsRedelivery, timersCommitWithManagerAppend, orderInsensitiveJoin]
+
+orderInsensitiveJoin :: Scenario
+orderInsensitiveJoin =
+  deterministicIdsRedelivery
+    { id = either (error . show) id (parseScenarioId "keiro/process-manager/correctness/order-insensitive-join"),
+      summary = "Checks the saga accepts both source orders and the strict variant rejects announce-first.",
+      knobs = [],
+      run = runOrderInsensitive
+    }
+
+runOrderInsensitive :: RunContext -> IO ScenarioReport
+runOrderInsensitive context =
+  withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture -> do
+    let KeiroRunner runFixture = fixture.runner
+        accountEvents = accountEventStream SnapNever
+        source :: Int -> AccountId
+        source i = AccountId ("join-source-" <> Text.pack (show i))
+        destination :: Int -> AccountId
+        destination i = AccountId ("join-destination-" <> Text.pack (show i))
+        transfer :: Int -> TransferId
+        transfer i = TransferId ("join-" <> Text.pack (show i))
+        accepted = \case Right (Right result) -> result.eventsAppended == 1; _ -> False
+        submit account command = runFixture (runCommand defaultRunCommandOptions accountEvents (accountStream account) command)
+    seeded <- forM [0 :: Int, 1] \i -> do
+      openSource <- submit (source i) (OpenAccount (OpenAccountData (source i) 10))
+      openDestination <- submit (destination i) (OpenAccount (OpenAccountData (destination i) 0))
+      debit <- submit (source i) (DebitTransfer (DebitTransferData (source i) (transfer i) (destination i) 3 4102444800))
+      announce <- submit (destination i) (AnnounceTransfer (AnnounceTransferData (destination i) (transfer i)))
+      pure (all accepted [openSource, openDestination, debit, announce])
+    categoryEvents <- runFixture (readCategory (CategoryName "account") (GlobalPosition 0) 20) >>= either (fail . show) pure
+    let decoded = [pair | recorded <- Vector.toList categoryEvents, Just pair <- [decodeTransferSignal recorded]]
+        byKind :: Int -> Text -> [RecordedEvent]
+        byKind i kind =
+          [ recorded
+          | (recorded, signal) <- decoded,
+            case signal of
+              SignalDebited d -> kind == "debit" && d.transferId == transfer i
+              SignalAnnounced d -> kind == "announce" && d.transferId == transfer i
+          ]
+    (strictInput, ordered) <- case (byKind 0 "announce", byKind 0 "debit", byKind 1 "debit", byKind 1 "announce") of
+      ([announce0], [debit0], [debit1], [announce1]) -> pure (announce0, [announce0, debit0, debit1, announce1])
+      _ -> fail "expected exactly one of each transfer source event"
+    ackLog <- newIORef []
+    let adapter = listAdapter "join-manager" ackLog [(recorded, Nothing) | recorded <- ordered]
+    _ <- runFixture (runProcessManagerWorkerWith defaultWorkerOptions defaultRunCommandOptions (transferManager accountEvents (const [])) adapter decodeTransferSignal) >>= either (fail . show) pure
+    tolerantAcks <- readIORef ackLog
+    strictHaltLog <- newIORef []
+    let strictManager = strictTransferManager accountEvents
+        haltAdapter = listAdapter "strict-halt" strictHaltLog [(strictInput, Nothing)]
+    _ <- runFixture (runProcessManagerWorkerWith defaultWorkerOptions defaultRunCommandOptions strictManager haltAdapter decodeTransferSignal) >>= either (fail . show) pure
+    strictHaltAcks <- readIORef strictHaltLog
+    strictDeadLog <- newIORef []
+    let deadAdapter = listAdapter "strict-dead-letter" strictDeadLog [(strictInput, Nothing)]
+        deadOptions = defaultWorkerOptions {rejectedCommandPolicy = RejectedDeadLetter}
+    _ <- runFixture (runProcessManagerWorkerWith deadOptions defaultRunCommandOptions strictManager deadAdapter decodeTransferSignal) >>= either (fail . show) pure
+    strictDeadAcks <- readIORef strictDeadLog
+    acquired <- Connection.acquire (Settings.connectionString (requirePostgres context).connectionString <> Settings.applicationName "kenshou-keiro-join-oracle")
+    connection <- either (fail . show) pure acquired
+    accountRows <- Oracle.readCategoryLog connection "account"
+    tolerantRows <- Oracle.readCategoryLog connection "pm:transferSaga"
+    strictRows <- Oracle.readCategoryLog connection "pm:transferSagaStrict"
+    deadLetters <- Oracle.readDispatchDeadLetters connection
+    Connection.release connection
+    let isHalt = \case AckHalt _ -> True; _ -> False
+        cells =
+          [ ("source-setup", and seeded && length decoded == 4),
+            ("both-orders-joined", length tolerantRows == 4 && all (\i -> length [() | row <- tolerantRows, row.streamName == StreamName ("pm:transferSaga-join-" <> Text.pack (show i))] == 2) [0 :: Int, 1]),
+            ("target-effects", length accountRows == 12 && case Oracle.modelFromLog accountRows of Right model -> Model.totalMoney model == 20; _ -> False),
+            ("tolerant-acks", length tolerantAcks == 4 && all ((== AckOk) . (.decision)) tolerantAcks),
+            ("strict-halt", case strictHaltAcks of [ack] -> isHalt ack.decision; _ -> False),
+            ("strict-dead-letter", case (strictDeadAcks, deadLetters) of ([ack], [letter]) -> ack.decision == AckOk && letter.dispatcherKind == "process-manager" && letter.dispatcherName == "transferSagaStrict" && letter.emitIndex == -1; _ -> False),
+            ("strict-no-saga-event", null strictRows)
+          ]
+    recordCells context cells
 
 timersCommitWithManagerAppend :: Scenario
 timersCommitWithManagerAppend =
