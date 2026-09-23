@@ -1,12 +1,41 @@
-module Kenshou.Suite.Kiroku.Fixture.Store (withKirokuStore, withKirokuStoreWithTap, withKirokuStoreWithEnricher, withKirokuStoreWithCallbacks) where
+module Kenshou.Suite.Kiroku.Fixture.Store (StoreOptions (..), storeOptionsFromKnobs, storeOptionsFromValues, withKirokuStore, withKirokuStoreWithTap, withKirokuStoreWithEnricher, withKirokuStoreWithCallbacks) where
 
+import Data.Text (Text)
 import Data.Text qualified as Text
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
-import Kenshou.Core.Id (renderRunId)
-import Kenshou.Core.Knob (knobBool, knobInt, mkKnobName)
+import Kenshou.Core.Id (RunId, renderRunId)
+import Kenshou.Core.Knob (ResolvedKnobs, knobBool, knobInt, mkKnobName)
 import Kenshou.Suite.Kiroku.Knobs qualified as Knobs
-import Kiroku.Store (ConnectionSettingsM (..), EventData, KirokuEvent, KirokuStore, StoreSettings (..), defaultConnectionSettings, defaultStoreSettings, withStore)
+import Kiroku.Store (ConnectionSettingsM (..), EventData, KirokuEvent, KirokuStore, RecordedEvent, StoreSettings (..), defaultConnectionSettings, defaultStoreSettings, withStore)
+
+data StoreOptions = StoreOptions
+  { poolSize :: Int,
+    statementTimeout :: Maybe Int,
+    idleInTransactionTimeout :: Int,
+    applicationName :: Text,
+    keepalives :: Bool,
+    decodeHook :: Maybe (RecordedEvent -> IO RecordedEvent),
+    eventTap :: Maybe (KirokuEvent -> IO ())
+  }
+
+storeOptionsFromKnobs :: RunContext -> Text -> StoreOptions
+storeOptionsFromKnobs context = storeOptionsFromValues context.knobs context.runId
+
+storeOptionsFromValues :: ResolvedKnobs -> RunId -> Text -> StoreOptions
+storeOptionsFromValues knobs runId role =
+  StoreOptions
+    { poolSize = Knobs.poolSize knobs,
+      statementTimeout = if seconds == 0 then Nothing else Just (fromIntegral seconds),
+      idleInTransactionTimeout = fromIntegral (knobInt knobs (name "kiroku.idle-in-transaction-timeout-seconds")),
+      applicationName = "kenshou-kiroku-" <> role <> "-" <> Text.take 8 (Text.filter (/= '-') (renderRunId runId)),
+      keepalives = knobBool knobs (name "kiroku.conn.keepalives"),
+      decodeHook = Nothing,
+      eventTap = Nothing
+    }
+  where
+    seconds = knobInt knobs (name "kiroku.statement-timeout-seconds")
+    name = either (error . show) id . mkKnobName
 
 withKirokuStore :: RunContext -> (KirokuStore -> IO result) -> IO result
 withKirokuStore context = withConfiguredStore context Nothing Nothing
@@ -24,21 +53,19 @@ withConfiguredStore :: RunContext -> Maybe (KirokuEvent -> IO ()) -> Maybe (Even
 withConfiguredStore context tap enricher action =
   withStore settings action
   where
+    options = (storeOptionsFromKnobs context "scenario") {eventTap = tap}
     settings =
       (defaultConnectionSettings connectionString)
-        { poolSize = Knobs.poolSize context.knobs,
-          statementTimeout = timeout,
-          idleInTransactionTimeout = fromIntegral (knobInt context.knobs (name "kiroku.idle-in-transaction-timeout-seconds")),
-          eventHandler = tap,
-          storeSettings = defaultStoreSettings {enrichEvent = enricher}
+        { poolSize = options.poolSize,
+          statementTimeout = options.statementTimeout,
+          idleInTransactionTimeout = options.idleInTransactionTimeout,
+          eventHandler = options.eventTap,
+          storeSettings = defaultStoreSettings {enrichEvent = enricher, decodeHook = options.decodeHook}
         }
-    seconds = knobInt context.knobs (name "kiroku.statement-timeout-seconds")
-    timeout = if seconds == 0 then Nothing else Just (fromIntegral seconds)
     connectionString =
       (requirePostgres context).connectionString
-        <> " application_name=kenshou-kiroku-scenario-"
-        <> Text.take 8 (Text.filter (/= '-') (renderRunId context.runId))
-        <> if knobBool context.knobs (name "kiroku.conn.keepalives")
+        <> " application_name="
+        <> options.applicationName
+        <> if options.keepalives
           then " keepalives=1 keepalives_idle=5 keepalives_interval=2 keepalives_count=3 tcp_user_timeout=10000"
           else ""
-    name = either (error . show) id . mkKnobName

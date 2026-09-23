@@ -5,10 +5,12 @@ import Data.ByteString.Lazy qualified as LazyByteString
 import Data.List (nub)
 import Kenshou.Core.Bundle (LayerBundle (..), mkRegistry)
 import Kenshou.Core.Dimension (MetricsArm (..), TracingArm (..))
-import Kenshou.Core.Id (Kind (..), Layer (..), ScenarioId (..), mkSeed, renderScenarioId)
+import Kenshou.Core.Id (Kind (..), Layer (..), ScenarioId (..), mkSeed, parseRunId, renderScenarioId)
+import Kenshou.Core.Knob (RawKnob (..), mkKnobName, resolveKnobs)
 import Kenshou.Core.Scenario (Scenario (..))
 import Kenshou.Suite.Kiroku (bundle)
 import Kenshou.Suite.Kiroku.Fixture.Facts (CheckpointSample (..), Delivered (..), KirokuFact (..), Produced (..))
+import Kenshou.Suite.Kiroku.Fixture.Store (StoreOptions (..), storeOptionsFromValues)
 import Kenshou.Suite.Kiroku.Fixture.Telemetry (HandlerArm (..), handlerArm)
 import Kenshou.Suite.Kiroku.Fixture.Workload (IdPolicy (..), RunTag (..), eventIdFor, mkEvents, payloadOf, streamNameFor)
 import Kenshou.Suite.Kiroku.Knobs (storeKnobs)
@@ -20,6 +22,22 @@ main = hspec do
   describe "kiroku knobs" do
     it "declares the four store knobs" do
       length storeKnobs `shouldBe` 4
+    it "maps resolved knobs to concrete store options" do
+      let runId = either (error . show) id (parseRunId "01923456-789a-7abc-8def-0123456789ab")
+          knob key = either (error . show) id (mkKnobName key)
+          defaults = either (error . show) id (resolveKnobs storeKnobs [])
+          overrides = either (error . show) id (resolveKnobs storeKnobs [(knob "kiroku.pool-size", RawText "3"), (knob "kiroku.statement-timeout-seconds", RawText "4"), (knob "kiroku.conn.keepalives", RawText "true")])
+          standard = storeOptionsFromValues defaults runId "scenario"
+          configured = storeOptionsFromValues overrides runId "reader"
+      standard.poolSize `shouldBe` 10
+      standard.statementTimeout `shouldBe` Nothing
+      standard.idleInTransactionTimeout `shouldBe` 30
+      standard.keepalives `shouldBe` False
+      standard.applicationName `shouldBe` "kenshou-kiroku-scenario-01923456"
+      configured.poolSize `shouldBe` 3
+      configured.statementTimeout `shouldBe` Just 4
+      configured.keepalives `shouldBe` True
+      configured.applicationName `shouldBe` "kenshou-kiroku-reader-01923456"
   describe "event handler composition" do
     it "selects the four metric and tracing arms" do
       handlerArm TracingOff MetricsOff `shouldBe` HandlerNone
