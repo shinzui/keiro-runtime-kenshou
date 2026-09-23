@@ -1,4 +1,4 @@
-module Kenshou.Suite.Kiroku.Fixture.Store (StoreOptions (..), storeOptionsFromKnobs, storeOptionsFromValues, withKirokuStore, withKirokuStoreWithTap, withKirokuStoreWithEnricher, withKirokuStoreWithCallbacks) where
+module Kenshou.Suite.Kiroku.Fixture.Store (StoreOptions (..), storeOptionsFromKnobs, storeOptionsFromValues, withKirokuStore, withKirokuStoreWithTap, withKirokuStoreWithEnricher, withKirokuStoreWithCallbacks, withKirokuStoreWithDecodeHook) where
 
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -38,22 +38,25 @@ storeOptionsFromValues knobs runId role =
     name = either (error . show) id . mkKnobName
 
 withKirokuStore :: RunContext -> (KirokuStore -> IO result) -> IO result
-withKirokuStore context = withConfiguredStore context Nothing Nothing
+withKirokuStore context = withConfiguredStore context Nothing Nothing Nothing
 
 withKirokuStoreWithTap :: RunContext -> Maybe (KirokuEvent -> IO ()) -> (KirokuStore -> IO result) -> IO result
-withKirokuStoreWithTap context tap = withConfiguredStore context tap Nothing
+withKirokuStoreWithTap context tap = withConfiguredStore context tap Nothing Nothing
 
 withKirokuStoreWithEnricher :: RunContext -> Maybe (EventData -> IO EventData) -> (KirokuStore -> IO result) -> IO result
-withKirokuStoreWithEnricher context enricher = withConfiguredStore context Nothing enricher
+withKirokuStoreWithEnricher context enricher = withConfiguredStore context Nothing enricher Nothing
 
 withKirokuStoreWithCallbacks :: RunContext -> Maybe (KirokuEvent -> IO ()) -> Maybe (EventData -> IO EventData) -> (KirokuStore -> IO result) -> IO result
-withKirokuStoreWithCallbacks = withConfiguredStore
+withKirokuStoreWithCallbacks context tap enricher = withConfiguredStore context tap enricher Nothing
 
-withConfiguredStore :: RunContext -> Maybe (KirokuEvent -> IO ()) -> Maybe (EventData -> IO EventData) -> (KirokuStore -> IO result) -> IO result
-withConfiguredStore context tap enricher action =
+withKirokuStoreWithDecodeHook :: RunContext -> (RecordedEvent -> IO RecordedEvent) -> Maybe (KirokuEvent -> IO ()) -> (KirokuStore -> IO result) -> IO result
+withKirokuStoreWithDecodeHook context hook tap = withConfiguredStore context tap Nothing (Just hook)
+
+withConfiguredStore :: RunContext -> Maybe (KirokuEvent -> IO ()) -> Maybe (EventData -> IO EventData) -> Maybe (RecordedEvent -> IO RecordedEvent) -> (KirokuStore -> IO result) -> IO result
+withConfiguredStore context tap enricher hook action =
   withStore settings action
   where
-    options = (storeOptionsFromKnobs context "scenario") {eventTap = tap}
+    options = (storeOptionsFromKnobs context "scenario") {eventTap = tap, decodeHook = hook}
     settings =
       (defaultConnectionSettings connectionString)
         { poolSize = options.poolSize,
