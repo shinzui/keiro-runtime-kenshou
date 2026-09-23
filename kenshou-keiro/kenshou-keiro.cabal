@@ -43,6 +43,7 @@ library
     Kenshou.Suite.Keiro.Command.Concurrency
     Kenshou.Suite.Keiro.Command.Correctness
     Kenshou.Suite.Keiro.Command.Projection
+    Kenshou.Suite.Keiro.Command.Soak
     Kenshou.Suite.Keiro.Fixture.Account
     Kenshou.Suite.Keiro.Fixture.Bonus
     Kenshou.Suite.Keiro.Fixture.Bridge
@@ -80,6 +81,7 @@ library
     keiro-core,
     kenshou-check,
     kenshou-core,
+    kenshou-diagnose,
     kenshou-measure,
     kenshou-telemetry,
     kiroku-store,

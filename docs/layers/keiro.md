@@ -144,3 +144,16 @@ The command telemetry overhead comparison produced a three-trial report with
 inconclusive because the scraped-metrics and in-memory-tracing comparisons
 had wide confidence intervals; the other three comparisons passed their
 policy. Results remain in the ignored `runs/` directory.
+The matching process-manager dispatch comparison completed 18 successful
+slots and three valid paired blocks. Its overall result was inconclusive
+because the in-memory tracing arm had a wide confidence interval.
+
+`seed-verification-backlog` runs commands on one snapshotted stream at a
+configured verification sampling rate and stream length. It writes measurement
+series, checks the final account ledger, and produces a leak diagnosis for
+heap, threads, file descriptors, and connections. The reduced duration is 20
+minutes by default. One-minute local probes at stream length 100 completed
+without command failures at rates zero and one. Rate zero had too few major
+collections for a heap verdict. Rate one saturated the local load driver and
+showed a short-window heap-growth signal; a longer controlled run is needed to
+tell whether growth persists.

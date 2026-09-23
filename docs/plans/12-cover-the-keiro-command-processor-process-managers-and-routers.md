@@ -77,8 +77,8 @@ Milestone 4 — Router scenarios
 Milestone 5 — Write-side benchmarks, soak and telemetry arms
 
 - [ ] Benchmarks: `throughput-latency` passes a 15-second local two-writer run with measured samples, series, and three durable-log verdicts. `hydration-cost` passes local 15-second cases at stream length 100 with `never`/page 256 and `every-100`/page 64; a rejected close command keeps the hydrated stream immutable. `all-stream-append-ceiling` passes 15-second local runs at one and four independent writers with pool size four and durable ledger verdicts. The first two-second throughput run was inconclusive for insufficient samples; an unthrottled short run saturated the load driver. Telemetry is wired to all three command benchmarks, and four throughput tracing/metrics combinations plus one hydrated in-memory/collect run passed. Process-manager `dispatch-latency` passed 15-second local list-adapter runs with telemetry off and in-memory/collect, measured samples, and durable saga and account checks. Router `fanout-dispatch` passed a 40-second one-recipient run; a ten-recipient two-worker run passed durable checks but exceeded the local driver CPU gate. Runner and process knobs remain for throughput, as do the full hydration and ceiling matrices, and the Kiroku adapter arms of both dispatch benchmarks.
-- [ ] Soaks: `write-side-steady-state` and `seed-verification-backlog`, each registered at full and reduced duration.
-- [ ] Telemetry: `keiro/telemetry/correctness/write-side-signals` passes with in-memory/collect and off/off. It checks command span attributes and exact counts for nine command, router, and snapshot counters against durable effects. All four values of both telemetry dimensions are supported by the five benchmarks. A three-trial command overhead report was produced; its overall verdict is inconclusive. Soak scenarios and a process-manager overhead report remain.
+- [ ] Soaks: `seed-verification-backlog` is registered at full and reduced duration with stream length, sampling rate, telemetry, durable ledger checks, and a leak diagnosis. One-minute local probes at stream length 100 completed 4,889 commands at rate zero and 2,438 at rate one, with no command or ledger failures. The rate-zero leak diagnosis lacked enough major collections; the rate-one run saturated the load driver and its short-window heap slope cannot establish a leak. Run the planned longer, controlled rate comparison. `write-side-steady-state` remains.
+- [ ] Telemetry: `keiro/telemetry/correctness/write-side-signals` passes with in-memory/collect and off/off. It checks command span attributes and exact counts for nine command, router, and snapshot counters against durable effects. All four values of both telemetry dimensions are supported by the five benchmarks. Three-trial command and process-manager overhead reports were produced; both overall verdicts are inconclusive. Soak arms remain.
 - [ ] Finish `docs/layers/keiro.md`; ADR distillation pass; Outcomes & Retrospective.
 
 
@@ -155,6 +155,14 @@ inconclusive because their confidence intervals were too wide; the overall
 report is therefore inconclusive. The observed throughput differences were
 small (from −0.26% to +0.71%), but this local run is not evidence of a
 general overhead bound. No run results are committed.
+
+The same three-trial comparison for process-manager dispatch completed all
+18 slots with three valid blocks at
+`runs/overhead-01a0d092-8eef-73a0-924d-6c4855f46655`. Collected and
+scraped metrics, no-op tracing, and OTLP tracing passed their policy.
+In-memory tracing was inconclusive, making the overall report inconclusive.
+The observed throughput differences ranged from −0.07% to +2.24%; this local
+run likewise does not establish a general overhead bound.
 
 
 ## Context and Orientation
