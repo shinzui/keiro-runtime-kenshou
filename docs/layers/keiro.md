@@ -114,3 +114,12 @@ The throughput benchmark passed local two-writer runs with telemetry off,
 in-memory collection, OTLP tracing with scraped metrics, and no-op tracing
 with served metrics. The in-memory run recorded command spans with no drops
 or export failures, and the scraped run completed an endpoint scrape.
+
+The process manager `dispatch-latency` benchmark creates a fresh transfer per
+operation and handles its debit through the list adapter. A configured
+percentage is delivered a second time. The run records handling time and
+source append to worker completion time, then checks that each destination
+was credited once and each saga appended one event. Its summary separates
+fresh-only and redelivery handling times. A 15-second local two-worker run
+passed with 1,181 steady samples; the Kiroku adapter and telemetry arms remain
+to be exercised.

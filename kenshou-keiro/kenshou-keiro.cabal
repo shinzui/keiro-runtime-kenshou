@@ -54,6 +54,7 @@ library
     Kenshou.Suite.Keiro.Fixture.Runtime
     Kenshou.Suite.Keiro.Fixture.Transfer
     Kenshou.Suite.Keiro.Fixture.Workload
+    Kenshou.Suite.Keiro.ProcessManager.Bench
     Kenshou.Suite.Keiro.ProcessManager.Concurrency
     Kenshou.Suite.Keiro.ProcessManager.Correctness
     Kenshou.Suite.Keiro.Router.Concurrency
