@@ -37,6 +37,11 @@ spec = describe "Kenshou.Diagnose.Leak" do
     (judgeSeries testSpec 42 testProbe stable).verdict `shouldBe` Stable
     (judgeSeries testSpec 42 testProbe rising).verdict `shouldBe` LeakSuspected
 
+  it "uses only samples following major collections for heap evidence" do
+    let live = Vector.fromList [(0, 100), (1, 1000), (2, 101), (3, 1000), (4, 102), (5, 1000), (6, 103)]
+        majors = Vector.fromList [(0, 0), (1, 0), (2, 1), (3, 1), (4, 2), (5, 2), (6, 3)]
+    majorGcSamples live majors `shouldBe` Vector.fromList [(2, 101), (4, 102), (6, 103)]
+
   it "recognises a plateau after initial growth" do
     let points = Vector.fromList [(fromIntegral index, fromIntegral (min index 30) * 100) | index <- [0 .. 79 :: Int]]
         report = judgeSeries testSpec {envelopeWindowSeconds = 1} 42 testProbe {floorPerHour = 1000} points

@@ -26,7 +26,7 @@ module Kenshou.Check.Process
 where
 
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async (Async, async, cancel)
+import Control.Concurrent.Async (Async, async, cancel, waitCatch)
 import Control.Concurrent.MVar
 import Control.Concurrent.STM
 import Control.Exception (SomeException, bracket, catch)
@@ -292,9 +292,13 @@ appendPid supervisor child = do
 
 cleanupChild :: Child -> IO ()
 cleanupChild child = do
-  cancel child.listener
   (signalProcessGroup sigKILL child.pid >> pure ()) `catch` ignoreUnit
   void (timeout 1000000 (waitExit child))
+  closeChildHandles child
+
+closeChildHandles :: Child -> IO ()
+closeChildHandles child = do
+  cancel child.listener
   hClose child.input `catch` ignoreUnit
   hClose child.output `catch` ignoreUnit
   hClose child.errorLog `catch` ignoreUnit
@@ -315,7 +319,11 @@ tryRead :: FilePath -> IO (Maybe ByteString.ByteString)
 tryRead path = (Just <$> ByteString.readFile path) `catch` ignoreMaybe
 
 waitExit :: Child -> IO ExitCode
-waitExit child = waitForProcess child.processHandle
+waitExit child = do
+  code <- waitForProcess child.processHandle
+  void (timeout 1000000 (waitCatch child.listener))
+  closeChildHandles child
+  pure code
 
 ignoreUnit :: SomeException -> IO ()
 ignoreUnit _ = pure ()

@@ -1,3 +1,5 @@
+{-# LANGUAGE BangPatterns #-}
+
 module Kenshou.Measure.Load.Open (runOpen) where
 
 import Control.Concurrent.Async
@@ -72,13 +74,13 @@ runOpen measurement config operation = do
           (sequenceNumber, intended) <- atomicModifyIORef' tickets \(TicketState index next generator) ->
             let (gap, nextGenerator) = nextGapNs config.arrival generator
              in (TicketState (index + 1) (next + gap) nextGenerator, (index, next))
-          atomicModifyIORef' offered (\value -> (value + 1, ()))
+          increment offered
           sleepUntilNs intended
           actual <- nowNs
           let lag = actual - min actual intended
-          atomicModifyIORef' maxLag (\value -> (max value lag, ()))
+          atomicModifyIORef' maxLag (\value -> let !next = max value lag in (next, ()))
           when (lag > config.overload.abortLagNs) (writeIORef aborted True)
-          atomicModifyIORef' started (\value -> (value + 1, ()))
+          increment started
           result <- try (operation.run executorId sequenceNumber)
           ended <- nowNs
           opResult <- case result of
@@ -86,9 +88,12 @@ runOpen measurement config operation = do
             Left (_ :: SomeException) -> pure (OpFailed (ErrorCause "exception"))
             Right value -> pure value
           recordOp workerRecorder intended actual ended opResult
-          atomicModifyIORef' completed (\value -> (value + 1, ()))
-          case opResult of OpFailed _ -> atomicModifyIORef' failed (\value -> (value + 1, ())); OpOk _ -> pure ()
+          increment completed
+          case opResult of OpFailed _ -> increment failed; OpOk _ -> pure ()
           executorLoop phaseClock workerRecorder executorId tickets offered started completed failed maxLag aborted
+
+increment :: IORef Word64 -> IO ()
+increment counter = atomicModifyIORef' counter (\value -> let !next = value + 1 in (next, ()))
 
 waitForCount :: IORef Word64 -> Word64 -> IO ()
 waitForCount counter target = do

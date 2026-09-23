@@ -10,6 +10,7 @@ module Kenshou.Diagnose.Leak
     loadLeakPolicy,
     judgeLeaks,
     analyseRunDirectory,
+    majorGcSamples,
     judgeSeries,
     leakOutcome,
   )
@@ -165,10 +166,37 @@ analyse runDirectory spec seed getWindow = do
 
 analyseProbe :: FilePath -> LeakSpec -> Word64 -> ProbeSpec -> IO (Maybe ProbeReport)
 analyseProbe runDirectory spec seed probe = do
-  series <- if probe.name == "process.native-bytes" then nativeSeries runDirectory probe else ordinarySeries runDirectory probe
+  (series, postMajor) <-
+    if probe.name == "heap.live-bytes"
+      then heapSeries runDirectory probe
+      else do
+        result <- if probe.name == "process.native-bytes" then nativeSeries runDirectory probe else ordinarySeries runDirectory probe
+        pure (result, False)
   pure $ Just case series of
     Left err -> emptyReport probe (Text.pack (show err))
-    Right raw -> judgeSeries spec seed probe raw
+    Right raw ->
+      let report = judgeSeries (if postMajor then spec {minPoints = min 10 spec.minPoints} else spec) seed probe raw
+       in if postMajor then report {basis = "post-major-collection"} else report
+
+heapSeries :: FilePath -> ProbeSpec -> IO (Either DiagnoseError (Vector (Double, Double)), Bool)
+heapSeries runDirectory probe = do
+  let path = runDirectory </> "series" </> probe.binding.file
+      unfiltered = probe.binding {filters = Map.empty}
+  live <- readBinding path unfiltered
+  majors <- readBinding path (unfiltered {valueColumn = "major_gcs"})
+  pure case (live, majors) of
+    (Right values, Right counts) -> (Right (majorGcSamples values counts), True)
+    (Right _, Left (MissingColumn _ _)) -> (live, False)
+    (Left err, _) -> (Left err, False)
+    (_, Left err) -> (Left err, False)
+
+majorGcSamples :: Vector (Double, Double) -> Vector (Double, Double) -> Vector (Double, Double)
+majorGcSamples live majors = Vector.fromList (go Nothing (Vector.toList (Vector.zip live majors)))
+  where
+    go _ [] = []
+    go previous (((time, value), (_, count)) : rest) =
+      let selected = maybe False (count >) previous
+       in (if selected then [(time, value)] else []) <> go (Just count) rest
 
 ordinarySeries :: FilePath -> ProbeSpec -> IO (Either DiagnoseError (Vector (Double, Double)))
 ordinarySeries runDirectory probe =

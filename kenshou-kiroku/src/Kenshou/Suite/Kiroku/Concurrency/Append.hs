@@ -9,7 +9,6 @@ import Data.Aeson (Value, object, withObject, (.:), (.=))
 import Data.Aeson.Types (Parser, parseMaybe)
 import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.Int (Int64)
-import Data.List (permutations)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust)
@@ -21,6 +20,7 @@ import Data.UUID qualified as UUID
 import Data.Vector qualified as Vector
 import Data.Word (Word64)
 import GHC.Clock (getMonotonicTimeNSec)
+import Kenshou.Check.Model.Linearizability qualified as Lin
 import Kenshou.Check.Process (ProgressSnapshot (..), awaitMark, awaitReady, killChild, progress, restartChild, roleProcess, sendCommand, spawn, withSupervisor)
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Check.Verdict (InvariantClass (..), Replay (..), RunInfo (..), Verdict (..), VerdictStatus (..), writeVerdict)
@@ -247,14 +247,18 @@ runModelCases context = withKirokuStore context \store -> do
           pure slot
         putMVar gate ()
         observations <- traverse takeMVar slots
-        let allowed ordering =
-              all (\(leftIndex, left) -> all (\(rightIndex, right) -> left.ended >= right.started || leftIndex < rightIndex) (zip [0 :: Int ..] ordering)) (zip [0 :: Int ..] ordering)
-            explains ordering = snd (foldl step (modelAfterSeed, True) ordering)
-              where
-                step (model, valid) observation =
-                  let (next, predicted) = Model.stepModel model observation.command
-                   in (next, valid && observation.outcome == Just predicted)
-            linearizable = any (\ordering -> allowed ordering && explains ordering) (permutations observations)
+        let model = Lin.SeqModel modelAfterSeed (\state command -> let (next, predicted) = Model.stepModel state command in (Just predicted, next)) (==)
+            history =
+              [ Lin.Operation
+                  (Text.pack (show index))
+                  "model"
+                  observation.command
+                  (fromIntegral observation.started)
+                  (Just (fromIntegral observation.ended))
+                  (Lin.Returned observation.outcome)
+              | (index, observation) <- zip [0 :: Int ..] observations
+              ]
+            linearizable = Lin.checkLinearizable Lin.defaultLinConfig model history == Lin.Linearizable
         pure (seeded == expectedSeed, linearizable, observations)
       candidates = filter (\selected -> all (< branches) selected) [[0], [1], [2], [0, 1], [0, 2], [1, 2]]
       shrinkFailure _ [] = pure Nothing

@@ -38,6 +38,7 @@ import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue 
 import Kenshou.Core.Phase (PhasePlan (..), zeroPhases)
 import Kenshou.Core.Role (ControlMessage (..))
 import Kenshou.Core.Scenario
+import Kenshou.Diagnose.Stall qualified as Stall
 import Kenshou.Suite.Kiroku.Correctness.Append (recordCells)
 import Kenshou.Suite.Kiroku.Fixture.Oracle qualified as Oracle
 import Kenshou.Suite.Kiroku.Fixture.Store (withKirokuStore, withKirokuStoreWithTap)
@@ -363,7 +364,7 @@ allLockHold =
     sleepName = either (error . show) id (mkKnobName "kiroku.tx.continuation-sleep-ms")
 
 runAllLockHold :: RunContext -> IO ScenarioReport
-runAllLockHold context = withKirokuStore context \store -> withCheck context \check -> withSupervisor check \supervisor -> do
+runAllLockHold context = Stall.withWatchdog context watchdogConfig \watchdog -> withKirokuStore context \store -> withCheck context \check -> withSupervisor check \supervisor -> do
   let sleepMs = fromIntegral (knobInt context.knobs (either (error . show) id (mkKnobName "kiroku.tx.continuation-sleep-ms"))) :: Int
   created <- runStoreIO store (runTransaction (Tx.sql "create schema if not exists kenshou_kiroku; create table if not exists kenshou_kiroku.tx_hold_probe (value int not null)"))
   case created of
@@ -386,6 +387,10 @@ runAllLockHold context = withKirokuStore context \store -> withCheck context \ch
       blocker <- case holder of
         Nothing -> pure 0
         Just backend -> maybe 0 id <$> timeout (min 100000 (sleepMs * 500)) (awaitBlockedAppender context backend.pid)
+      diagnosis <-
+        if sleepMs >= 1000 && blocker > 0
+          then threadDelay 300000 >> Just <$> Stall.captureNow watchdog "plain appenders waiting behind the transaction continuation"
+          else pure Nothing
       premature <- traverse tryReadMVar replies
       killedAt <- getCurrentTime
       killChild supervisor child
@@ -406,8 +411,11 @@ runAllLockHold context = withKirokuStore context \store -> withCheck context \ch
               ("plain-appends-resumed-within-ten-seconds", length resultRows == 3 && all (isRight . fst) resultRows && diffUTCTime recoveredAt killedAt <= 10),
               ("global-order-and-counts", positions == [1, 2, 3] && counts == (3, 3, 3))
             ]
-      putSummary context Measurements "all-lock-hold" (object ["sleepMs" .= sleepMs, "holderPid" .= fmap (.pid) holder, "blockedAppenders" .= blocker, "prematureCompletions" .= length [() | Just _ <- premature], "probeRows" .= probeCount, "durablePositions" .= positions, "killedAt" .= killedAt, "recoveredAt" .= recoveredAt])
+              <> [("watchdog-classifies-lock-wait", maybe False ((== Stall.LockWait) . (.classification)) diagnosis) | sleepMs >= 1000]
+      putSummary context Measurements "all-lock-hold" (object ["sleepMs" .= sleepMs, "holderPid" .= fmap (.pid) holder, "blockedAppenders" .= blocker, "prematureCompletions" .= length [() | Just _ <- premature], "probeRows" .= probeCount, "durablePositions" .= positions, "killedAt" .= killedAt, "recoveredAt" .= recoveredAt, "stallClassification" .= fmap (Stall.stallClassText . (.classification)) diagnosis])
       recordCells context "all-lock-hold" ["plain-appenders-blocked-by-holder"] cells
+  where
+    watchdogConfig = Stall.defaultWatchdogConfig {Stall.deadlineSeconds = 0.2, Stall.maxCaptures = 0, Stall.onStall = Stall.CaptureAndContinue, Stall.postgres = Just (requirePostgres context).connectionString, Stall.captureStacks = False, Stall.spinProbeSeconds = 0.05}
 
 awaitSleepingBackend :: RunContext -> IO Backend
 awaitSleepingBackend context = do

@@ -52,3 +52,10 @@ the major-collection basis for a Haskell heap verdict.
 - Native leaks remain visible but carry a distinct confidence statement.
 - Exact major-collection sampling can change pauses and object ageing, so it is
   opt-in for correctness and soak diagnosis only.
+- A periodic `live_bytes_last_gc` value is eligible for the heap trend only when
+  `major_gcs` has advanced since the previous sample. A value carried through a
+  minute without a major collection cannot stand in for post-major evidence.
+- Long-running measurement counters must force their numeric state on each
+  update, and supervised worker handles must close when workers exit. Otherwise
+  the harness itself can satisfy the leak detector's growth criteria, as the
+  Kiroku reduced soak demonstrated with retained heap and descriptors.

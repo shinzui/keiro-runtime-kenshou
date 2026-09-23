@@ -1,3 +1,5 @@
+{-# LANGUAGE BangPatterns #-}
+
 module Kenshou.Measure.Recorder
   ( OpName (..),
     ErrorCause (..),
@@ -292,4 +294,8 @@ writeIntervalHistograms config path histograms =
        in word64LE start <> word64LE (start + intervalNs) <> word8 2 <> word32LE (fromIntegral (ByteString.length encoded)) <> byteString encoded
 
 addCounts :: (Word64, Word64, Word64) -> (Word64, Word64, Word64) -> (Word64, Word64, Word64)
-addCounts (a, b, c) (x, y, z) = (a + x, b + y, c + z)
+addCounts (a, b, c) (x, y, z) =
+  let !successes = a + x
+      !failures = b + y
+      !units = c + z
+   in (successes, failures, units)

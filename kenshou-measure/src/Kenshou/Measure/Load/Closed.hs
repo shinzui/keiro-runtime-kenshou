@@ -1,3 +1,5 @@
+{-# LANGUAGE BangPatterns #-}
+
 module Kenshou.Measure.Load.Closed (runClosed) where
 
 import Control.Concurrent (threadDelay)
@@ -62,7 +64,7 @@ runClosed measurement config operation = do
         Done -> pure ()
         _ -> do
           intended <- nowNs
-          atomicModifyIORef' offered (\value -> (value + 1, ()))
+          increment offered
           result <- try (operation.run workerId sequenceNumber)
           ended <- nowNs
           opResult <- case result of
@@ -70,11 +72,14 @@ runClosed measurement config operation = do
             Left (_ :: SomeException) -> pure (OpFailed (ErrorCause "exception"))
             Right value -> pure value
           recordOp workerRecorder intended intended ended opResult
-          atomicModifyIORef' completed (\value -> (value + 1, ()))
-          case opResult of OpFailed _ -> atomicModifyIORef' failed (\value -> (value + 1, ())); OpOk _ -> pure ()
-          when (phase == Steady) (atomicModifyIORef' steadyCompleted (\value -> (value + 1, ())))
+          increment completed
+          case opResult of OpFailed _ -> increment failed; OpOk _ -> pure ()
+          when (phase == Steady) (increment steadyCompleted)
           when (config.thinkTimeNs > 0) (sleepNanos config.thinkTimeNs)
           workerLoop phaseClock workerRecorder workerId (sequenceNumber + 1) offered completed failed steadyCompleted
+
+increment :: IORef Word64 -> IO ()
+increment counter = atomicModifyIORef' counter (\value -> let !next = value + 1 in (next, ()))
 
 waitForCount :: IORef Word64 -> Word64 -> IO ()
 waitForCount counter target = do

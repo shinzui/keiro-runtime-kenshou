@@ -1,22 +1,29 @@
 module Main (main) where
 
-import Data.Aeson (decode, encode)
+import Data.Aeson (decode, encode, object)
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.List (nub)
 import Data.Map.Strict qualified as Map
+import Kenshou.Check.Model.Linearizability qualified as Lin
 import Kenshou.Core.Bundle (LayerBundle (..), mkRegistry)
-import Kenshou.Core.Dimension (MetricsArm (..), TracingArm (..))
+import Kenshou.Core.Dimension (Dimensions (..), MetricsArm (..), PgDurability (..), PgVersion (..), TracingArm (..))
+import Kenshou.Core.Env (PostgresRequirement (..), SchemaComponent (..))
+import Kenshou.Core.Env.Postgres (PostgresEnv (..), withPostgresEnv)
 import Kenshou.Core.Id (Kind (..), Layer (..), ScenarioId (..), mkSeed, parseRunId, renderScenarioId)
 import Kenshou.Core.Knob (RawKnob (..), mkKnobName, resolveKnobs)
+import Kenshou.Core.Log (nullLogger)
+import Kenshou.Core.RunSpec (PostgresSpec (..))
 import Kenshou.Core.Scenario (Scenario (..))
 import Kenshou.Suite.Kiroku (bundle)
 import Kenshou.Suite.Kiroku.Fixture.Facts (CheckpointSample (..), Delivered (..), KirokuFact (..), Produced (..))
 import Kenshou.Suite.Kiroku.Fixture.Model (Cmd (..), Model (..), Outcome (..), StoreErrorTag (..), stepModel)
+import Kenshou.Suite.Kiroku.Fixture.Oracle qualified as Oracle
 import Kenshou.Suite.Kiroku.Fixture.Store (StoreOptions (..), storeOptionsFromValues)
 import Kenshou.Suite.Kiroku.Fixture.Telemetry (HandlerArm (..), handlerArm)
 import Kenshou.Suite.Kiroku.Fixture.Workload (IdPolicy (..), RunTag (..), eventIdFor, mkEvents, payloadOf, streamNameFor)
 import Kenshou.Suite.Kiroku.Knobs (storeKnobs)
-import Kiroku.Store (EventData (..), EventId (..), ExpectedVersion (..), StreamVersion (..))
+import Kiroku.Store (EventData (..), EventId (..), EventType (..), ExpectedVersion (..), KirokuStore (..), StreamName (..), StreamVersion (..), appendToStream, defaultConnectionSettings, hardDeleteStream, runStoreIO, withStore)
+import System.IO.Temp (withSystemTempDirectory)
 import Test.Hspec
 
 main :: IO ()
@@ -98,6 +105,41 @@ main = hspec do
           (unchanged, response) = stepModel created (CmdAppend "second" NoStream [identifier])
       response `shouldBe` Rejected DuplicateId
       unchanged `shouldBe` created
+    it "rejects a mutated observed outcome through the shared history checker" do
+      let seed = either (error . show) id (mkSeed 42)
+          EventId first = eventIdFor seed 0 1
+          command = CmdAppend "model" NoStream [first]
+          model = Lin.SeqModel (Model Map.empty) (\state cmd -> let (next, outcome) = stepModel state cmd in (Just outcome, next)) (==)
+          observed outcome = [Lin.Operation "worker" "model" command 1 (Just 2) (Lin.Returned outcome)]
+      Lin.checkLinearizable Lin.defaultLinConfig model (observed (Just (Appended 1))) `shouldBe` Lin.Linearizable
+      Lin.checkLinearizable Lin.defaultLinConfig model (observed (Just (Appended 2))) `shouldBe` Lin.NotLinearizable ["No legal sequential history agrees with the completed operations."]
+  describe "migrated SQL oracle" do
+    it "counts durable rows and detects the gap created by a hard delete" $ withSystemTempDirectory "kenshou-kiroku-oracle" \directory -> do
+      let runId = either (error . show) id (parseRunId "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e55")
+          requirement = PostgresRequirement [SchemaKiroku] [] False
+          dimensions = Dimensions Nothing Nothing (Just PgFsyncOff) (Just Pg18)
+          event = EventData Nothing (EventType "Oracle") (object []) Nothing Nothing Nothing
+      result <- withPostgresEnv nullLogger directory runId requirement (PostgresEphemeral []) dimensions \database -> withStore (defaultConnectionSettings database.connectionString) \store -> do
+        initial <- Oracle.threeCounts store.pool
+        first <- runStoreIO store (appendToStream (StreamName "oracle-first") NoStream [event])
+        second <- runStoreIO store (appendToStream (StreamName "oracle-second") NoStream [event])
+        gapsBefore <- Oracle.gapReport store.pool
+        deleted <- runStoreIO store (hardDeleteStream (StreamName "oracle-first"))
+        gapsAfter <- Oracle.gapReport store.pool
+        final <- Oracle.threeCounts store.pool
+        pure (initial, first, second, gapsBefore, deleted, gapsAfter, final)
+      case result of
+        Left err -> expectationFailure (show err)
+        Right (initial, first, second, gapsBefore, deleted, gapsAfter, final) -> do
+          initial `shouldBe` (0, 0, 0)
+          first `shouldSatisfy` either (const False) (const True)
+          second `shouldSatisfy` either (const False) (const True)
+          gapsBefore.rowCount `shouldBe` 2
+          gapsBefore.missingRanges `shouldBe` []
+          deleted `shouldSatisfy` either (const False) (const True)
+          gapsAfter.rowCount `shouldBe` 1
+          gapsAfter.missingRanges `shouldBe` [Oracle.GapRange 1 1]
+          final `shouldBe` (1, 1, 2)
   describe "kiroku bundle" do
     it "registers unique kiroku scenarios" do
       let scenarios = bundle.scenarios

@@ -10,16 +10,19 @@ import Hasql.Encoders qualified as Encoders
 import Hasql.Pool qualified as Pool
 import Hasql.Session qualified as Session
 import Hasql.Statement qualified as Statement
-import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
+import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary, requirePostgres)
+import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Knob (knobInt, mkKnobName)
 import Kenshou.Core.Outcome (Outcome (..))
 import Kenshou.Core.Scenario (Scenario, ScenarioReport (..), failedWith, passed)
 import Kenshou.Diagnose.Leak (LeakReport (..), judgeLeaks)
+import Kenshou.Diagnose.Stall qualified as Stall
 import Kenshou.Measure.Knobs (loadModelFromKnobs)
 import Kenshou.Measure.Load (LoadReport (..), Operation (..), runLoad)
 import Kenshou.Measure.Recorder (ErrorCause (..), OpName (..), OpResult (..))
 import Kenshou.Measure.Sampler.Postgres (PgSamplerConfig (..))
 import Kenshou.Measure.Session (MeasureConfig (..), MeasurementReport (..), measureConfigFromKnobs, measuredOutcome, phasePlanFromCore, withMeasurement)
+import Kenshou.Suite.Kiroku.Fixture.Oracle qualified as Oracle
 import Kenshou.Suite.Kiroku.Fixture.Store (withKirokuStore)
 import Kenshou.Suite.Kiroku.Soak.Common (SoakDefinition (..), SoakProfile, applyLeakVerdict, effectivePhases, soakLeakSpec, soakPair)
 import Kiroku.Store hiding (id, withKirokuStore)
@@ -31,7 +34,9 @@ runLeaseChurn :: SoakProfile -> RunContext -> IO ScenarioReport
 runLeaseChurn profile context = case (loadModelFromKnobs context.knobs, measureConfigFromKnobs context (phasePlanFromCore (effectivePhases profile context))) of
   (Left reason, _) -> pure (failedWith ["invalid-load-config"] reason)
   (_, Left reason) -> pure (failedWith ["invalid-measure-config"] reason)
-  (Right loadModel, Right baseConfig) -> withKirokuStore context \store -> do
+  (Right loadModel, Right baseConfig) -> Stall.withWatchdog context watchdogConfig \watchdog -> withKirokuStore context \store -> do
+    progress <- Stall.newProgress watchdog "lease-churn-operations" True
+    deadlocksBefore <- Oracle.deadlockCount store.pool
     let name = either (error . show) id . mkKnobName
         verifyMinutes = fromIntegral (knobInt context.knobs (name "soak.verify-interval-minutes")) :: Int
         duration = either (error . show) id (mkHistoryRetentionLeaseDuration (secondsToDiffTime 1))
@@ -39,7 +44,11 @@ runLeaseChurn profile context = case (loadModelFromKnobs context.knobs, measureC
         reason = either (error . show) id (mkHistoryRetentionLeaseReason "soak")
         request = HistoryRetentionLeaseRequest owner reason duration
         config = baseConfig {postgres = fmap (\pg -> pg {relations = ["kiroku.history_retention_leases"]}) baseConfig.postgres}
-        operation _ sequenceNumber = do
+        operation worker sequenceNumber = do
+          result <- leaseOperation worker sequenceNumber
+          Stall.tick progress
+          pure result
+        leaseOperation _ sequenceNumber = do
           let stream = StreamName ("lease-churn-" <> Text.pack (show sequenceNumber))
               event = EventData Nothing (EventType "LeaseChurn") (object ["sequence" .= sequenceNumber]) Nothing Nothing Nothing
           appended <- runStoreIO store (appendToStream stream NoStream [event])
@@ -76,14 +85,18 @@ runLeaseChurn profile context = case (loadModelFromKnobs context.knobs, measureC
     now <- getCurrentTime
     pruned <- runStoreIO store (pruneHistoryRetentionLeases now)
     remaining <- Pool.use store.pool (Session.statement () leaseCountStatement)
+    deadlocksAfter <- Oracle.deadlockCount store.pool
     let completed = sum [load.completed | load <- measurement.loads]
         failed = sum [load.failed | load <- measurement.loads]
         rowCount = either (const Nothing) Just remaining
-        base = if completed > 0 && failed == 0 && rowCount == Just 0 && either (const False) (const True) pruned then passed else failedWith ["lease-churn-contract-or-growth"] ("completed=" <> Text.pack (show completed) <> ", failed=" <> Text.pack (show failed) <> ", remaining-leases=" <> Text.pack (show rowCount))
+        base = if completed > 0 && failed == 0 && rowCount == Just 0 && either (const False) (const True) pruned && deadlocksAfter == deadlocksBefore then passed else failedWith ["lease-churn-contract-or-growth"] ("completed=" <> Text.pack (show completed) <> ", failed=" <> Text.pack (show failed) <> ", remaining-leases=" <> Text.pack (show rowCount) <> ", deadlocks=" <> Text.pack (show (deadlocksAfter - deadlocksBefore)))
         measured = if base.outcome == Passed then base {outcome = measuredOutcome measurement base.outcome} else base
-    putSummary context Verdicts "lease-churn" (object ["completed" .= completed, "failed" .= failed, "remainingLeases" .= rowCount, "pruned" .= show pruned])
+    putSummary context Verdicts "lease-churn" (object ["completed" .= completed, "failed" .= failed, "remainingLeases" .= rowCount, "pruned" .= show pruned, "deadlocks" .= (deadlocksAfter - deadlocksBefore)])
     leak <- judgeLeaks context (soakLeakSpec profile)
     pure (applyLeakVerdict leak.verdict measured)
+  where
+    watchdogConfig :: Stall.WatchdogConfig
+    watchdogConfig = Stall.WatchdogConfig 60 1 3 Stall.CaptureAndAbort (Just (requirePostgres context).connectionString) [] True 2
 
 leaseCountStatement :: Statement.Statement () Int64
 leaseCountStatement = Statement.preparable "select count(*) from kiroku.history_retention_leases" Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))

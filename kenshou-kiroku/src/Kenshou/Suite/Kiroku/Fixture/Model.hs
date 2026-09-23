@@ -25,10 +25,10 @@ data ModelStream = ModelStream
     deleted :: Bool,
     eventIds :: Seq UUID
   }
-  deriving stock (Eq, Show)
+  deriving stock (Eq, Ord, Show)
 
 newtype Model = Model (Map Text ModelStream)
-  deriving stock (Eq, Show)
+  deriving stock (Eq, Ord, Show)
 
 data Cmd
   = CmdAppend Text ExpectedVersion [UUID]

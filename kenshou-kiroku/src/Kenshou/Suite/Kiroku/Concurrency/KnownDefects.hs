@@ -28,6 +28,7 @@ import Kenshou.Core.Phase (PhasePlan (..), zeroPhases)
 import Kenshou.Core.Role (ControlMessage (..), WorkerMessage (..))
 import Kenshou.Core.Role.Spawn (WorkerHandle (..), withWorker)
 import Kenshou.Core.Scenario
+import Kenshou.Diagnose.Stall qualified as Stall
 import Kenshou.Suite.Kiroku.Correctness.Append (recordCells)
 import Kenshou.Suite.Kiroku.Fixture.Oracle qualified as Oracle
 import Kenshou.Suite.Kiroku.Fixture.Store (StoreOptions (..), storeOptionsFromKnobs, withKirokuStore, withKirokuStoreWithDecodeHook, withKirokuStoreWithRole, withKirokuStoreWithTap)
@@ -235,8 +236,9 @@ decodeHookStallsSubscribers =
     }
 
 runDecodeHook :: RunContext -> IO ScenarioReport
-runDecodeHook context = do
+runDecodeHook context = Stall.withWatchdog context watchdogConfig \watchdog -> do
   publisherErrors <- newIORef (0 :: Int)
+  deliveryProgress <- Stall.newProgress watchdog "decode-hook-delivery" True
   let hook row
         | row.eventType == EventType "Poison" = throwIO (userError "seeded decode-hook failure")
         | otherwise = pure row
@@ -248,7 +250,7 @@ runDecodeHook context = do
     secondSeen <- newIORef []
     let stream = StreamName "decode-hook-events"
         event eventType = EventData Nothing eventType (object []) Nothing Nothing Nothing
-        config name ref = defaultSubscriptionConfig (SubscriptionName name) AllStreams (\row -> atomicModifyIORef' ref (\rows -> (row.globalPosition : rows, ())) >> pure Continue)
+        config name ref = defaultSubscriptionConfig (SubscriptionName name) AllStreams (\row -> atomicModifyIORef' ref (\rows -> (row.globalPosition : rows, ())) >> Stall.tick deliveryProgress >> pure Continue)
         awaitLive handles = timeout 10000000 loop
           where
             loop = do
@@ -267,6 +269,7 @@ runDecodeHook context = do
         poison <- runStoreIO store (appendToStream stream (ExactVersion (StreamVersion 1)) [event (EventType "Poison")])
         tailEvent <- runStoreIO store (appendToStream stream (ExactVersion (StreamVersion 2)) [event (EventType "Ordinary")])
         threadDelay (round (context.phases.steadySeconds * 1000000))
+        diagnosis <- Stall.captureNow watchdog "decode hook blocked both subscriptions"
         firstResolved <- resolved first firstSeen
         secondResolved <- resolved second secondSeen
         firstPositions <- readIORef firstSeen
@@ -279,9 +282,10 @@ runDecodeHook context = do
                 ("pre-poison-delivered", GlobalPosition 1 `elem` firstPositions && GlobalPosition 1 `elem` secondPositions),
                 ("subscriber-stalled", firstResolved && secondResolved)
               ]
-        putSummary context Measurements "decode-hook" (object ["publisherLoopErrors" .= errors, "firstPositions" .= fmap (\(GlobalPosition value) -> value) (reverse firstPositions), "secondPositions" .= fmap (\(GlobalPosition value) -> value) (reverse secondPositions), "firstResolved" .= firstResolved, "secondResolved" .= secondResolved])
+        putSummary context Measurements "decode-hook" (object ["publisherLoopErrors" .= errors, "firstPositions" .= fmap (\(GlobalPosition value) -> value) (reverse firstPositions), "secondPositions" .= fmap (\(GlobalPosition value) -> value) (reverse secondPositions), "firstResolved" .= firstResolved, "secondResolved" .= secondResolved, "stallClassification" .= Stall.stallClassText diagnosis.classification])
         recordCells context "decode-hook-stalls-subscribers" [] cells
   where
+    watchdogConfig = Stall.defaultWatchdogConfig {Stall.deadlineSeconds = 10, Stall.maxCaptures = 0, Stall.onStall = Stall.CaptureAndContinue, Stall.postgres = Just (requirePostgres context).connectionString}
     isRight (Right _) = True
     isRight _ = False
 
