@@ -8,29 +8,56 @@ module Kenshou.Suite.Keiro.Fixture.Oracle
     readSnapshots,
     readTimers,
     readDispatchDeadLetters,
+    expectedSagaStateId,
+    expectedSagaCommandId,
+    expectedRouterCommandId,
     modelFromLog,
     logWellFormed,
   )
 where
 
 import Data.Aeson (Value)
+import Data.ByteString qualified as ByteString
+import Data.ByteString.Char8 qualified as ByteString.Char8
 import Data.Int (Int32, Int64)
 import Data.List (group, sort)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Data.Text.Encoding qualified as Text
 import Data.Time (UTCTime)
 import Data.UUID qualified as UUID
+import Data.UUID.V5 qualified as UUID.V5
 import Hasql.Connection qualified as Connection
 import Hasql.Decoders qualified as Decoders
 import Hasql.Encoders qualified as Encoders
 import Hasql.Session qualified as Session
 import Hasql.Statement qualified as Statement
 import Keiro.Codec (Codec (..))
-import Kenshou.Suite.Keiro.Fixture.Account (accountCodec)
+import Kenshou.Suite.Keiro.Fixture.Account (accountCodec, accountStreamName)
 import Kenshou.Suite.Keiro.Fixture.Domain
 import Kenshou.Suite.Keiro.Fixture.Model qualified as Model
 import Kiroku.Store.Types (EventId (..), EventType (..), StreamName (..))
+
+expectedSagaStateId :: Text -> TransferId -> EventId -> EventId
+expectedSagaStateId manager transfer source = expectedSagaCommandId manager transfer source (-1)
+
+expectedSagaCommandId :: Text -> TransferId -> EventId -> Int -> EventId
+expectedSagaCommandId manager (TransferId transfer) (EventId source) index =
+  EventId (UUID.V5.generateNamed UUID.V5.namespaceURL (ByteString.unpack (Text.encodeUtf8 seed)))
+  where
+    seed = Text.intercalate ":" ["keiro", "process-manager", manager, transfer, UUID.toText source, Text.pack (show index)]
+
+expectedRouterCommandId :: Text -> BonusId -> EventId -> AccountId -> Int -> EventId
+expectedRouterCommandId router (BonusId bonus) (EventId source) account occurrence =
+  EventId (UUID.V5.generateNamed UUID.V5.namespaceURL (ByteString.unpack encoded))
+  where
+    StreamName target = accountStreamName account
+    fields = ["keiro", "router", router, bonus, UUID.toText source, target, Text.pack (show occurrence)]
+    encodeField field =
+      let bytes = Text.encodeUtf8 field
+       in ByteString.concat [ByteString.Char8.pack (show (ByteString.length bytes)), ByteString.singleton 58, bytes]
+    encoded = ByteString.concat (map encodeField fields)
 
 data LoggedEvent = LoggedEvent
   { streamName :: !StreamName,

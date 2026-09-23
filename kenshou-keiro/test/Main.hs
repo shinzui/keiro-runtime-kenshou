@@ -2,18 +2,25 @@ module Main (main) where
 
 import Data.Aeson (object)
 import Data.IORef (newIORef, readIORef)
+import Data.List (intersect)
 import Data.Proxy (Proxy (..))
 import Data.Time (getCurrentTime)
 import Data.UUID qualified as UUID
 import Effectful (runEff)
+import Hedgehog (forAll)
+import Hedgehog qualified
+import Hedgehog.Gen qualified as Gen
+import Hedgehog.Range qualified as Range
 import Keiki.Core (RegFile (..), step)
 import Keiro.Codec (Codec (..))
-import Keiro.ProcessManager (ProcessManager (..))
+import Keiro.ProcessManager (ProcessManager (..), deterministicCommandId)
+import Keiro.Router (deterministicRouterCommandId)
 import Kenshou.Suite.Keiro.Fixture.Account
 import Kenshou.Suite.Keiro.Fixture.Bonus
 import Kenshou.Suite.Keiro.Fixture.Bridge
 import Kenshou.Suite.Keiro.Fixture.Domain
 import Kenshou.Suite.Keiro.Fixture.Model qualified as Model
+import Kenshou.Suite.Keiro.Fixture.Oracle qualified as Oracle
 import Kenshou.Suite.Keiro.Fixture.Transfer
 import Kenshou.Suite.Keiro.Fixture.Workload qualified as Workload
 import Kiroku.Store.Types (EventId (..), EventType (..), GlobalPosition (..), RecordedEvent (..), StreamId (..), StreamVersion (..))
@@ -24,6 +31,7 @@ import Shibuya.Core.Ingested (Ingested (..))
 import Streamly.Data.Fold qualified as Fold
 import Streamly.Data.Stream qualified as Stream
 import Test.Hspec
+import Test.Hspec.Hedgehog (hedgehog)
 
 main :: IO ()
 main = hspec do
@@ -42,6 +50,9 @@ main = hspec do
   describe "reference model" do
     it "agrees with the keiki transducer on a command sequence" do
       compareSteps commands
+    it "agrees on generated accepts, no-ops, rejections, and balances" $ hedgehog do
+      generated <- forAll (Gen.list (Range.linear 1 80) genCommand)
+      Hedgehog.assert (matchesSequence generated)
   describe "workload" do
     it "is deterministic for a seed and worker" do
       take 50 (Workload.workerOps 91 Workload.defaultWorkloadSpec 0 2)
@@ -50,6 +61,24 @@ main = hspec do
       let setup = Workload.Op (-1) 0 (Workload.ActOpen (AccountId "0") 100)
           generated = Workload.Op 0 0 (Workload.ActDeposit (AccountId "0") 1)
       Workload.opEventId 91 setup 0 `shouldNotBe` Workload.opEventId 91 generated 0
+    it "separates event identifiers across workers" $ hedgehog do
+      seed <- forAll (Gen.word64 Range.constantBounded)
+      let spec = Workload.defaultWorkloadSpec
+          identifiers worker = [Workload.opEventId seed operation leg | operation <- take 100 (Workload.workerOps seed spec worker 2), leg <- [0, 1]]
+      Hedgehog.assert (null (identifiers 0 `intersect` identifiers 1))
+  describe "dispatch identifiers" do
+    it "matches process-manager identity and a fixed UUID witness" do
+      let source = EventId UUID.nil
+          expected = Oracle.expectedSagaCommandId "transferSaga" (TransferId "t") source 0
+      expected `shouldBe` deterministicCommandId "transferSaga" "t" source 0
+      expected `shouldBe` EventId (read "bb2033a0-9c9d-5a6e-afbc-520a4c80c0d5")
+      Oracle.expectedSagaStateId "transferSaga" (TransferId "t") source
+        `shouldBe` deterministicCommandId "transferSaga" "t" source (-1)
+    it "matches router identity and a fixed UUID witness" do
+      let source = EventId UUID.nil
+          expected = Oracle.expectedRouterCommandId "bonusRouter" (BonusId "b") source (AccountId "a") 0
+      expected `shouldBe` deterministicRouterCommandId "bonusRouter" "b" source (accountStreamName (AccountId "a")) 0
+      expected `shouldBe` EventId (read "2fa4be29-7c5d-5665-b5a2-b5a7a6054754")
   describe "list adapter" do
     it "records one acknowledgement for every delivery" do
       now <- getCurrentTime
@@ -109,3 +138,28 @@ main = hspec do
           actual `shouldBe` expected
           go (Model.apply actual model) (nextState, nextRegs) rest
         other -> expectationFailure ("model/transducer disagreement: " <> show (fst other))
+    genCommand = do
+      amount <- Gen.int (Range.linear (-2) 20)
+      Gen.element
+        [ OpenAccount (OpenAccountData a amount),
+          Deposit (DepositData a amount "generated"),
+          Withdraw (WithdrawData a amount),
+          DebitTransfer (DebitTransferData a t b amount 4102444800),
+          AnnounceTransfer (AnnounceTransferData a t),
+          CreditTransfer (CreditTransferData a t b amount),
+          ConfirmTransfer (ConfirmTransferData a t),
+          CreditBonus (CreditBonusData a (BonusId "generated") amount),
+          CloseAccount (CloseAccountData a)
+        ]
+    matchesSequence = check Model.emptyModel (AcctUnopened, RCons (Proxy @"balance") (0 :: Int) (RCons (Proxy @"entries") (0 :: Int) RNil))
+    check _ _ [] = True
+    check model state (command : rest) =
+      case (Model.decide model command, step accountTransducer state command) of
+        (Model.ModelAccepts expected, Just (nextState, nextRegs, [actual])) ->
+          let nextModel = Model.apply actual model
+              RCons _ balance (RCons _ entries RNil) = nextRegs
+              account = Model.lookupAccount a nextModel
+           in actual == expected && balance == account.balance && entries == account.entries && check nextModel (nextState, nextRegs) rest
+        (Model.ModelNoOp, Just (nextState, nextRegs, [])) -> check model (nextState, nextRegs) rest
+        (Model.ModelRejects, Nothing) -> check model state rest
+        _ -> False
