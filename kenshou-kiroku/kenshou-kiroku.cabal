@@ -38,6 +38,7 @@ library
   exposed-modules:
     Kenshou.Suite.Kiroku
     Kenshou.Suite.Kiroku.Bench.Append
+    Kenshou.Suite.Kiroku.Bench.Read
     Kenshou.Suite.Kiroku.Concurrency.Append
     Kenshou.Suite.Kiroku.Concurrency.ConsumerGroup
     Kenshou.Suite.Kiroku.Concurrency.KnownDefects

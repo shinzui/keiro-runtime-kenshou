@@ -62,7 +62,7 @@ Milestone 3 — kiroku benchmarks lifted from kiroku-bench.
 
 - [x] `Kenshou.Suite.Kiroku.Bench.Append` has `append-only`, `hot-stream` and `expected-version-conflict` with pool, batch, writer and payload knobs and measurement-toolkit output. Paced short local runs passed with raw samples, histograms and PostgreSQL series. The conflict run recorded 1,751 wins, 5,225 conflicts and final version 1,752, with separate histograms for winning appends, conflicts and rereads. A saturated short laptop run was correctly marked `infrastructure-failure` by the driver CPU health gate at 0.91 utilization. Full 120-second default runs and cell trials remain for benchmark acceptance.
 - [ ] `Kenshou.Suite.Kiroku.Bench.Ladder` (`layer-ladder`) with its harness-owned schema `kenshou_kiroku`.
-- [ ] `Kenshou.Suite.Kiroku.Bench.Read` (`read-targets`) with prepopulation.
+- [ ] `Kenshou.Suite.Kiroku.Bench.Read` (`read-targets`) now prepopulates before measurement and records paced read histograms and a methodology summary. Reduced PostgreSQL 18 durable runs passed for paged single-stream forward, Streamly single-stream forward, paged category forward and paged `$all` backward. The released store exposes Streamly only for single-stream forward reads and no category backward read, so those combinations return an explicit unsupported verdict. A full 100,000-event default run and the remaining supported target/direction combinations remain.
 - [ ] `Kenshou.Suite.Kiroku.Bench.Subscription` (`append-to-handler-latency`, `catch-up`, `fan-out`) with cross-process wall-clock latency.
 - [ ] `Kenshou.Suite.Kiroku.Bench.Transaction` (`lock-hold-contention`).
 - [ ] Methodology section written into every benchmark summary; methodology rules recorded in `docs/layers/kiroku.md`.
