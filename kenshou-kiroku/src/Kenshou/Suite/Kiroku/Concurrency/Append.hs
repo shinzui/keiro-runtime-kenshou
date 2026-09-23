@@ -5,9 +5,11 @@ import Data.Aeson (Value, object, withObject, (.:), (.=))
 import Data.Aeson.Types (Parser, parseMaybe)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
+import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time.Clock (addUTCTime, getCurrentTime)
+import Data.UUID qualified as UUID
 import Data.Vector qualified as Vector
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension
@@ -21,12 +23,72 @@ import Kenshou.Core.Scenario
 import Kenshou.Suite.Kiroku.Correctness.Append (recordCells)
 import Kenshou.Suite.Kiroku.Fixture.Oracle qualified as Oracle
 import Kenshou.Suite.Kiroku.Fixture.Store (withKirokuStore)
+import Kenshou.Suite.Kiroku.Fixture.Workload (eventIdFor)
 import Kenshou.Suite.Kiroku.Knobs (storeKnobs)
 import Kenshou.Suite.Kiroku.Roles (appenderRoleName)
 import Kiroku.Store hiding (id, withKirokuStore)
 
 scenarios :: [Scenario]
-scenarios = [expectedVersionRace]
+scenarios = [expectedVersionRace, idempotentDuplicates]
+
+idempotentDuplicates :: Scenario
+idempotentDuplicates =
+  expectedVersionRace
+    { id = either (error . show) id (parseScenarioId "kiroku/append/concurrency/idempotent-duplicates"),
+      summary = "Races identical caller-ID batches across child processes under AnyVersion and ExactVersion.",
+      knobs = storeKnobs <> [intKnob "kiroku.append.processes" 4 2 8, intKnob "workload.batches" 500 2 10000, intKnob "kiroku.append.batch-size" 10 1 100],
+      phases = PhasePlan 0 0 0,
+      run = runDuplicates
+    }
+
+runDuplicates :: RunContext -> IO ScenarioReport
+runDuplicates context = withKirokuStore context \store -> do
+  let knob key = fromIntegral (knobInt context.knobs (either (error . show) id (mkKnobName key))) :: Int
+      processes = knob "kiroku.append.processes"
+      batches = knob "workload.batches"
+      batchSize = knob "kiroku.append.batch-size"
+      total = batches * batchSize
+      stream = StreamName "duplicate-batches"
+      callerIds = [eventIdFor context.seed 0 (fromIntegral ordinal) | ordinal <- [1 .. total]]
+      render (EventId uuid) = UUID.toText uuid
+      withWorkers count accumulated action
+        | count <= 0 = action (reverse accumulated)
+        | otherwise = withWorker context appenderRoleName ("duplicate-" <> Text.pack (show count)) (object []) (\worker -> withWorkers (count - 1) (worker : accumulated) action)
+      parseResponse (Just (WrkCustom "duplicate" payload)) = parseMaybe (withObject "duplicate reply" \value -> (,) <$> value .: "status" <*> value .: "version" :: Parser (Text, Maybe Int)) payload
+      parseResponse _ = Nothing
+  withWorkers processes [] \workers -> do
+    ready <- traverse (\worker -> worker.receive 10000) workers
+    forM_ workers (\worker -> worker.send CtlStart)
+    rounds <- forM [0 .. batches - 1] \batchIndex -> do
+      let ids = take batchSize (drop (batchIndex * batchSize) callerIds)
+          mode = if batchIndex < batches `div` 2 then "any" else "exact" :: Text
+          request = object ["stream" .= ("duplicate-batches" :: Text), "eventIds" .= fmap render ids, "mode" .= mode, "version" .= (batchIndex * batchSize)]
+      forM_ workers (\worker -> worker.send (CtlCustom "duplicate" request))
+      replies <- traverse (\worker -> worker.receive 30000) workers
+      let parsed = traverse parseResponse replies
+          successes = maybe [] (filter ((== "success") . fst)) parsed
+          losers = maybe [] (filter ((/= "success") . fst)) parsed
+          allowed (status, _) = status == "duplicate" || (mode == "exact" && status == "version")
+      pure (length successes == 1 && successes == [("success", Just ((batchIndex + 1) * batchSize))] && length losers == processes - 1 && all allowed losers, parsed)
+    info <- runStoreIO store (getStream stream)
+    readRows <- runStoreIO store (readStreamForward stream (StreamVersion 0) (fromIntegral total))
+    counts <- Oracle.threeCounts store.pool
+    let observed = case readRows of Right rows -> Vector.toList rows; _ -> []
+        observedIds = fmap (.eventId) observed
+        statuses = concat [fmap fst values | (_, Just values) <- rounds]
+        duplicateCount = length (filter (== "duplicate") statuses)
+        anyDuplicateCount = length [() | (_, Just values) <- take (batches `div` 2) rounds, (status, _) <- values, status == "duplicate"]
+        versionCount = length (filter (== "version") statuses)
+        cells =
+          [ ("child-processes-ready", all (== Just WrkReady) ready),
+            ("one-winner-per-batch", all fst rounds),
+            ("every-caller-id-once", length observed == total && observedIds == callerIds && Set.size (Set.fromList observedIds) == total),
+            ("durable-final-version", case info of Right (Just value) -> value.version == StreamVersion (fromIntegral total); _ -> False),
+            ("global-count-agrees", counts == (fromIntegral total, fromIntegral total, fromIntegral total)),
+            ("any-version-duplicates-observed", anyDuplicateCount > 0)
+          ]
+    putSummary context Measurements "idempotent-duplicates" (object ["batches" .= batches, "batchSize" .= batchSize, "processes" .= processes, "duplicateErrors" .= duplicateCount, "wrongVersionErrors" .= versionCount, "committedEvents" .= length observed])
+    recordCells context "idempotent-duplicates" [] cells
 
 expectedVersionRace :: Scenario
 expectedVersionRace =
