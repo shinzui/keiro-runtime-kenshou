@@ -157,3 +157,12 @@ without command failures at rates zero and one. Rate zero had too few major
 collections for a heap verdict. Rate one saturated the local load driver and
 showed a short-window heap-growth signal; a longer controlled run is needed to
 tell whether growth persists.
+
+`write-side-steady-state` starts two command-writer processes and durable
+process-manager, router, and activity-projection workers. It stops writers at
+an operation boundary, waits for dispatch and projection to catch up, then
+checks account and saga logs, inline balances, async activity, dead letters,
+and snapshot row bounds. A one-minute four-account, one-recipient local probe
+passed all eight SQL checks over 835 account events. Its outcome remains
+inconclusive while child-process leak probes, projection pruning, optional
+kills, and longer runs are pending.
