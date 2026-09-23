@@ -55,7 +55,8 @@ data WriterArgs = WriterArgs
     startIndex :: !Int,
     count :: !Int,
     accounts :: !Int,
-    clientRetryBudget :: !Int
+    clientRetryBudget :: !Int,
+    parkAfterIndex :: !(Maybe Int)
   }
 
 parseWriterArgs :: Value -> Parser WriterArgs
@@ -67,6 +68,7 @@ parseWriterArgs = withObject "keiro command writer" \value ->
     <*> value .: "count"
     <*> value .:? "accounts" .!= 100
     <*> value .:? "clientRetryBudget" .!= 5
+    <*> value .:? "parkAfterIndex"
 
 commandWriter :: RoleContext -> IO ()
 commandWriter context = case parseMaybe parseWriterArgs context.init.args of
@@ -89,6 +91,10 @@ commandWriter context = case parseMaybe parseWriterArgs context.init.args of
               if any isFailure outcomes
                 then context.send (WrkError ("command writer operation failed at index " <> Text.pack (show operation.index)))
                 else do
+                  if args.parkAfterIndex == Just (fromIntegral operation.index)
+                    then parkForever context ("after-operation-" <> Text.pack (show operation.index))
+                    else pure ()
+                  context.send (WrkCustom "submission" (object ["index" .= operation.index, "outcomes" .= map show outcomes]))
                   context.send (WrkFacts [object ["worker" .= args.worker, "index" .= operation.index, "outcomes" .= map show outcomes]])
                   now <- getCurrentTime
                   context.send (WrkProgress (fromIntegral operation.index) now)

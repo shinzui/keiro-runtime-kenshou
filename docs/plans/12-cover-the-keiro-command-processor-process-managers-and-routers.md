@@ -54,7 +54,7 @@ Milestone 1 — The keiro fixture domain
 Milestone 2 — Command processor scenarios with snapshots and projections
 
 - [x] (2026-09-23T20:14:00Z) Command correctness: `occ-retry-and-exhaustion`, `idempotent-event-ids`, `hydration-paging`, and `controlled-rollback` pass, including retry exhaustion and the idempotency sabotage arm. The full paging matrix passed over 30 combinations and checked the independent durable log.
-- [ ] Command concurrency: `identical-commands-one-batch` passes with 16 simultaneous clients; `hot-stream-contention` passes with eight writers for 30 seconds. Multi-process support for the first, `model-based-parallel-commands`, and `sigkill-idempotent-resubmission` remain.
+- [ ] Command concurrency: `identical-commands-one-batch` passes with 16 simultaneous clients; `hot-stream-contention` passes with eight writers for 30 seconds. `sigkill-idempotent-resubmission` passes with two real writer processes and a durable single-event oracle. Multi-process support for the first and `model-based-parallel-commands` remain.
 - [ ] Snapshot correctness: `policy-matrix` passes for all five policies with durable snapshot row checks; `truncation-covering-snapshot` passes with covered, gapped, cleared, and uncovered streams. `seed-divergence-detection` remains.
 - [ ] Projection scenarios: `async-dedup-and-fence` passes applied, duplicate, fenced, and post-prune outcomes with SQL table checks. `inline-atomicity-under-kill`, `async-at-least-once-under-kill`, and the known-defect scenario `async-apply-checkpoint-atomic` remain.
 - [ ] Non-vacuity check with `command.sabotage=omit-event-ids` and `projection.sabotage=skip-dedup`.

@@ -30,6 +30,8 @@ checks the persisted snapshot version and register values for all five
 policies. Two concurrency scenarios check simultaneous submission of one
 identifier and sustained writes to one hot stream. The scenario IDs and
 their knobs are available through `cabal run kenshou -- list --layer keiro`.
+The writer crash scenario kills a process after its deposit commits and checks
+that a fresh process reports `SubmitDuplicate` for the same event ID.
 
 The process manager scenarios check stable manager and target identities under
 redelivery, timer persistence, and both orders of transfer inputs. The reactive
