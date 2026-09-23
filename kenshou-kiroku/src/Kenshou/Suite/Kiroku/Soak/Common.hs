@@ -21,6 +21,7 @@ import Kenshou.Core.Scenario
 import Kenshou.Diagnose.Leak (LeakSpec (..), LeakVerdict (..), defaultLeakSpec)
 import Kenshou.Measure.Knobs (LoadDefaults (..), defaultLoadDefaults, loadKnobs, measureKnobs)
 import Kenshou.Suite.Kiroku.Knobs (storeKnobs)
+import Kenshou.Telemetry.Spec (telemetryKnobs)
 
 data SoakProfile = FullSoak | ReducedSoak deriving stock (Eq, Ord, Show)
 
@@ -41,10 +42,10 @@ soakPair definition = [build FullSoak, build ReducedSoak]
           summary = definition.summary,
           tier = if profile == FullSoak then TierSoak else TierExtended,
           placement = if profile == FullSoak then PlaceCell else PlaceEither,
-          knobs = storeKnobs <> loadKnobs (defaultLoadDefaults {model = "open-constant", ratePerSecond = 200, executors = 32}) <> soakMeasureKnobs <> sharedKnobs profile,
+          knobs = storeKnobs <> loadKnobs (defaultLoadDefaults {model = "open-constant", ratePerSecond = 200, executors = 32}) <> soakMeasureKnobs <> sharedKnobs profile <> [knob | definition.component == "subscription", knob <- telemetryKnobs],
           dimensions =
             DimensionSupport
-              { tracing = Supported (Support (TracingOff :| []) TracingOff),
+              { tracing = Supported (Support (TracingOff :| [TracingSdkOtlp | definition.component == "subscription"]) TracingOff),
                 metrics = Supported (Support (MetricsOff :| []) MetricsOff),
                 pgDurability = Supported (Support (PgDurable :| []) PgDurable),
                 pgVersion = Supported (Support (Pg18 :| [Pg17]) Pg18)

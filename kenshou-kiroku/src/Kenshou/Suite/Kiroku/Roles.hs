@@ -1,13 +1,14 @@
 module Kenshou.Suite.Kiroku.Roles (roles, appenderRoleName, readerRoleName, subscriberRoleName, txAppenderRoleName) where
 
-import Control.Concurrent (forkIO, threadDelay)
+import Control.Concurrent (forkIO, killThread, threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, newMVar, putMVar, takeMVar, withMVar)
-import Control.Exception (SomeException, try)
-import Control.Monad (forM, forM_, replicateM)
+import Control.Concurrent.STM (atomically, putTMVar)
+import Control.Exception (SomeException, finally, throwIO, try)
+import Control.Monad (forM, forM_, replicateM, void, when)
 import Data.Aeson (Value, object, withObject, (.:), (.:?), (.=))
 import Data.Aeson.Types (Parser, parseMaybe)
 import Data.ByteString.Char8 qualified as ByteString
-import Data.IORef (atomicModifyIORef', newIORef, readIORef)
+import Data.IORef (atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.Int (Int32, Int64)
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -20,6 +21,9 @@ import Hasql.Transaction qualified as Tx
 import Kenshou.Core.Role (ControlMessage (..), PostgresConnInfo (..), RoleContext (..), RoleName, WorkerInit (..), WorkerMessage (..), WorkerRole (..), mkRoleName)
 import Kenshou.Suite.Kiroku.Fixture.Workload (eventIdFor)
 import Kiroku.Store hiding (id)
+import Kiroku.Store.Subscription.Stream (AckItem (..), subscriptionAckStream, subscriptionStream)
+import Streamly.Data.Fold qualified as Fold
+import Streamly.Data.Stream qualified as Stream
 
 roles :: [WorkerRole]
 roles = [WorkerRole appenderRoleName "Races expected-version appends from a separate process." runAppender, WorkerRole readerRoleName "Tails the global event stream from a separate process." runReader, WorkerRole subscriberRoleName "Collects group delivery in a separate process." runSubscriber, WorkerRole fanoutRoleName "Runs several subscriptions on one publisher." runFanout, WorkerRole poisonRoleName "Retries and dead-letters poison events through process crashes." runPoisonSubscriber, WorkerRole txAppenderRoleName "Holds the global append lock inside a transaction continuation." runTxAppender]
@@ -68,6 +72,7 @@ runTxAppender context = case context.init.postgres of
 
 data SubscriberArgs = SubscriberArgs
   { name :: Text,
+    api :: Text,
     group :: Maybe (Int32, Int32),
     guardEnabled :: Bool,
     emitDeliveries :: Bool,
@@ -84,6 +89,7 @@ runSubscriber context = case (context.init.postgres, parseMaybe parseSubscriberA
   (Just postgres, Just args) -> withStore (defaultConnectionSettings postgres.connectionString) \store -> do
     delivered <- newIORef ([] :: [Int64])
     emitted <- newIORef (0 :: Int)
+    throwAt <- newIORef (Nothing :: Maybe Int64)
     let handler row = do
           let GlobalPosition position = row.globalPosition
           if args.compactDeliveries then pure () else atomicModifyIORef' delivered (\positions -> (position : positions, ()))
@@ -95,6 +101,11 @@ runSubscriber context = case (context.init.postgres, parseMaybe parseSubscriberA
               let EventId uuid = row.eventId
               context.send (WrkCustom (if args.compactDeliveries then "delivery-latest" else "delivery-" <> Text.pack (show sequenceNumber)) (object ["sequence" .= sequenceNumber, "position" .= position, "eventId" .= UUID.toText uuid, "receivedAt" .= receivedAt, "receivedMonoNs" .= receivedMonoNs]))
             else pure ()
+          armed <- readIORef throwAt
+          when (armed == Just position) do
+            writeIORef throwAt Nothing
+            context.send (WrkCustom "handler-exception" (object ["position" .= position]))
+            throwIO (userError "injected subscriber handler exception")
           threadDelay args.handlerDelayMicros
           pure Continue
         target = if args.targetName == "category" then Category (CategoryName "crash") else AllStreams
@@ -102,6 +113,11 @@ runSubscriber context = case (context.init.postgres, parseMaybe parseSubscriberA
         loop =
           context.receive >>= \case
             Just CtlStart -> loop
+            Just (CtlCustom "arm-handler-exception" request) -> do
+              case parseMaybe (withObject "handler exception request" (.: "position")) request of
+                Nothing -> context.send (WrkError "invalid handler-exception position")
+                Just position -> writeIORef throwAt (Just position) >> context.send (WrkCustom "handler-armed" (object ["position" .= (position :: Int64)]))
+              loop
             Just (CtlCustom "snapshot" request) -> do
               positions <- reverse <$> readIORef delivered
               let marker = maybe "snapshot" ("snapshot-" <>) (parseMaybe (withObject "snapshot request" (.: "requestId")) request :: Maybe Text)
@@ -110,11 +126,21 @@ runSubscriber context = case (context.init.postgres, parseMaybe parseSubscriberA
             Just (CtlStop _) -> pure ()
             Just _ -> loop
             Nothing -> pure ()
-    withSubscription store config \_ -> context.send WrkReady >> loop
+    case args.api of
+      "plain" -> do
+        (items, cancel) <- subscriptionStream store config 256
+        consumer <- forkIO $ void $ Stream.fold Fold.drain $ Stream.mapM handler items
+        (context.send WrkReady >> loop) `finally` (cancel >> killThread consumer)
+      "ack" -> do
+        (items, cancel) <- subscriptionAckStream store config 256
+        consumer <- forkIO $ void $ Stream.fold Fold.drain $ Stream.mapM (\item -> handler item.ackEvent >>= atomically . putTMVar item.ackReply) items
+        (context.send WrkReady >> loop) `finally` (cancel >> killThread consumer)
+      _ -> withSubscription store config \_ -> context.send WrkReady >> loop
 
 parseSubscriberArgs :: Value -> Parser SubscriberArgs
 parseSubscriberArgs = withObject "subscriber arguments" \value -> do
   name <- value .: "name"
+  api <- maybe "native" id <$> value .:? "api"
   member <- value .:? "member"
   size <- value .:? "size"
   guardEnabled <- value .: "guard"
@@ -123,7 +149,7 @@ parseSubscriberArgs = withObject "subscriber arguments" \value -> do
   targetName <- maybe "all" id <$> value .:? "target"
   requestedBatchSize <- maybe 100 id <$> value .:? "batchSize"
   handlerDelayMicros <- maybe 0 id <$> value .:? "handlerDelayMicros"
-  pure (SubscriberArgs name ((,) <$> member <*> size) guardEnabled emitDeliveries compactDeliveries targetName requestedBatchSize handlerDelayMicros)
+  pure (SubscriberArgs name api ((,) <$> member <*> size) guardEnabled emitDeliveries compactDeliveries targetName requestedBatchSize handlerDelayMicros)
 
 runPoisonSubscriber :: RoleContext -> IO ()
 runPoisonSubscriber context = case context.init.postgres of

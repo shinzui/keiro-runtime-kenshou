@@ -1,3 +1,5 @@
+{-# LANGUAGE BangPatterns #-}
+
 module Kenshou.Suite.Kiroku.Soak.AppendSubscribe (scenarios) where
 
 import Control.Concurrent (forkIO, killThread, threadDelay)
@@ -22,6 +24,7 @@ import Hasql.Statement qualified as Statement
 import Kenshou.Check.Process (awaitReady, killChild, restartChild, roleProcess, spawn, withSupervisor)
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
+import Kenshou.Core.Dimension (Dimensions (..), TracingArm (..))
 import Kenshou.Core.Knob (knobInt, mkKnobName)
 import Kenshou.Core.Outcome (Outcome (..))
 import Kenshou.Core.Role (WorkerMessage (..))
@@ -34,9 +37,12 @@ import Kenshou.Measure.Sampler.Postgres (PgSamplerConfig (..))
 import Kenshou.Measure.Session (MeasureConfig (..), MeasurementReport (..), measureConfigFromKnobs, measuredOutcome, phasePlanFromCore, withMeasurement)
 import Kenshou.Measure.Summary (MeasurementSummary (..), SummaryWindow (..))
 import Kenshou.Suite.Kiroku.Fixture.Oracle qualified as Oracle
-import Kenshou.Suite.Kiroku.Fixture.Store (withKirokuStore)
+import Kenshou.Suite.Kiroku.Fixture.Store (withKirokuStore, withKirokuStoreWithCallbacks)
+import Kenshou.Suite.Kiroku.Fixture.Telemetry (composeEventHandler)
 import Kenshou.Suite.Kiroku.Soak.Common (SoakDefinition (..), SoakProfile, applyLeakVerdict, effectivePhases, soakLeakSpec, soakPair)
 import Kenshou.Suite.Kiroku.Soak.Growth (Drift (..), Growth (..), appendLatencyDrift, relationGrowth)
+import Kenshou.Telemetry (TelemetryHandles (..), withTelemetry)
+import Kenshou.Telemetry.Spec (telemetrySpecFromContext)
 import Kiroku.Store hiding (id, withKirokuStore)
 import Kiroku.Store.Subscription.Stream (AckItem (..), subscriptionAckStream)
 import Streamly.Data.Fold qualified as Fold
@@ -55,7 +61,7 @@ runAppendSubscribe :: SoakProfile -> RunContext -> IO ScenarioReport
 runAppendSubscribe profile context = case (loadModelFromKnobs context.knobs, measureConfigFromKnobs context (phasePlanFromCore (effectivePhases profile context))) of
   (Left reason, _) -> pure (failedWith ["invalid-load-config"] reason)
   (_, Left reason) -> pure (failedWith ["invalid-measure-config"] reason)
-  (Right loadModel, Right baseConfig) -> withKirokuStore context \store -> withCheck context \check -> withSupervisor check \supervisor -> do
+  (Right loadModel, Right baseConfig) -> withSoakStore context \store -> withCheck context \check -> withSupervisor check \supervisor -> do
     let name = either (error . show) id . mkKnobName
         killMinutes = fromIntegral (knobInt context.knobs (name "soak.kill-interval-minutes")) :: Int
         config = baseConfig {postgres = fmap (\pg -> pg {relations = ["kiroku.events", "kiroku.stream_events", "kiroku.streams", "kiroku.subscriptions"]}) baseConfig.postgres}
@@ -82,7 +88,9 @@ runAppendSubscribe profile context = case (loadModelFromKnobs context.knobs, mea
           let GlobalPosition position = row.globalPosition
           atomicModifyIORef' state \(count, previous, violations) ->
             let bad = if count > 0 && (if contiguous then position /= previous + 1 else position <= previous) then 1 else 0
-             in ((count + 1, position, violations + bad), ())
+                !nextCount = count + 1
+                !nextViolations = violations + bad
+             in ((nextCount, position, nextViolations), ())
         native subscriptionName target state contiguous = defaultSubscriptionConfig subscriptionName target (\row -> update contiguous state row >> pure Continue)
         allConfigs = [native (SubscriptionName ("soak-all-" <> Text.pack (show index))) AllStreams state True | (index, state) <- zip [0 :: Int ..] allStates]
         categoryConfigs = [native (SubscriptionName ("soak-category-" <> Text.pack (show index))) (Category (CategoryName ("soak" <> Text.pack (show index)))) state False | (index, state) <- zip [0 :: Int ..] categoryStates]
@@ -201,3 +209,12 @@ driftValue :: Maybe Drift -> Value
 driftValue value = case value of
   Nothing -> object ["sufficientData" .= False]
   Just drift -> object ["sufficientData" .= True, "firstP99Ns" .= drift.firstP99Ns, "lastP99Ns" .= drift.lastP99Ns, "firstSamples" .= drift.firstSamples, "lastSamples" .= drift.lastSamples, "withinFactorTwo" .= drift.withinFactorTwo]
+
+withSoakStore :: RunContext -> (KirokuStore -> IO result) -> IO result
+withSoakStore context action = case context.dimensions.tracing of
+  Just TracingSdkOtlp -> case telemetrySpecFromContext context of
+    Left reason -> fail (Text.unpack reason)
+    Right spec -> withTelemetry spec \telemetry -> do
+      handler <- composeEventHandler Nothing telemetry.tracer Nothing
+      withKirokuStoreWithCallbacks context handler Nothing action
+  _ -> withKirokuStore context action

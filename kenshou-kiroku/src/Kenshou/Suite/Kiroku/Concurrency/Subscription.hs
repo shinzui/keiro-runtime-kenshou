@@ -2,6 +2,7 @@ module Kenshou.Suite.Kiroku.Concurrency.Subscription (scenarios) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM (atomically)
+import Control.Monad (void)
 import Data.Aeson (object, withObject, (.:), (.=))
 import Data.Aeson.Types (parseMaybe)
 import Data.Int (Int64)
@@ -11,7 +12,7 @@ import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Kenshou.Check.Process (ProgressSnapshot (..), awaitReady, killChild, progress, restartChild, roleProcess, sendCommand, spawn, withSupervisor)
+import Kenshou.Check.Process (ProgressSnapshot (..), awaitMark, awaitReady, killChild, progress, restartChild, roleProcess, sendCommand, spawn, stopGracefully, terminateChild, withSupervisor)
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension
@@ -36,10 +37,10 @@ sigkillRedeliveryWindow =
   Scenario
     { id = either (error . show) id (parseScenarioId "kiroku/subscription/concurrency/sigkill-redelivery-window"),
       revision = 1,
-      summary = "Kills a live subscriber inside delivery batches and checks bounded redelivery.",
+      summary = "Interrupts a live subscriber inside delivery batches and checks bounded redelivery.",
       tier = TierStandard,
       placement = PlaceEither,
-      knobs = storeKnobs <> [intKnob "crash.kills" 10 1 32, intKnob "kiroku.subscription.batch-size" 100 1 1000, targetKnob],
+      knobs = storeKnobs <> [intKnob "crash.kills" 10 1 32, intKnob "kiroku.subscription.batch-size" 100 1 1000, targetKnob, apiKnob, modeKnob],
       dimensions =
         DimensionSupport
           { tracing = Supported (Support (TracingOff :| []) TracingOff),
@@ -56,6 +57,8 @@ sigkillRedeliveryWindow =
     name = either (error . show) id . mkKnobName
     intKnob key value lower upper = KnobSpec (name key) key KnobInt (VInt value) (IntRange lower upper) []
     targetKnob = KnobSpec (name "kiroku.subscription.target") "All streams or one category" KnobText (VText "all") (OneOf (VText "all" :| [VText "category"])) [VText "all", VText "category"]
+    apiKnob = KnobSpec (name "kiroku.subscription.api") "Native handler, plain Streamly, or acknowledged Streamly" KnobText (VText "native") (OneOf (VText "native" :| [VText "plain", VText "ack"])) [VText "native", VText "plain", VText "ack"]
+    modeKnob = KnobSpec (name "crash.mode") "Subscriber interruption mode" KnobText (VText "sigkill") (OneOf (VText "sigkill" :| [VText "sigterm", VText "cancel", VText "handler-exception"])) [VText "sigkill", VText "sigterm", VText "cancel", VText "handler-exception"]
 
 runRedelivery :: RunContext -> IO ScenarioReport
 runRedelivery context = withKirokuStore context \store -> withCheck context \check -> withSupervisor check \supervisor -> do
@@ -63,8 +66,10 @@ runRedelivery context = withKirokuStore context \store -> withCheck context \che
       kills = fromIntegral (knobInt context.knobs (name "crash.kills")) :: Int
       batchSize = fromIntegral (knobInt context.knobs (name "kiroku.subscription.batch-size")) :: Int
       target = knobText context.knobs (name "kiroku.subscription.target")
+      api = knobText context.knobs (name "kiroku.subscription.api")
+      crashMode = knobText context.knobs (name "crash.mode")
       eventsPerRound = 500
-      subscriberArgs = object ["name" .= ("redelivery-window" :: Text), "guard" .= False, "target" .= target, "batchSize" .= batchSize, "emitDeliveries" .= True, "handlerDelayMicros" .= (1000 :: Int)]
+      subscriberArgs = object ["name" .= ("redelivery-window" :: Text), "guard" .= False, "target" .= target, "api" .= api, "batchSize" .= batchSize, "emitDeliveries" .= True, "handlerDelayMicros" .= (1000 :: Int)]
       event = EventData Nothing (EventType "CrashWindow") (object []) Nothing Nothing Nothing
       deliveryPositions child = do
         state <- atomically (progress child)
@@ -92,10 +97,18 @@ runRedelivery context = withKirokuStore context \store -> withCheck context \che
                 end = (index + 1) * eventsPerRound
                 streamName = if target == "category" then StreamName "crash-events" else StreamName "window-events"
             beforeCount <- length <$> deliveryPositions child
+            if crashMode == "handler-exception"
+              then sendCommand child (CtlCustom "arm-handler-exception" (object ["position" .= (fromIntegral (start + 150) :: Int64)])) >> awaitMark child "handler-armed" 10000
+              else pure ()
             result <- runStoreIO store (appendToStream streamName AnyVersion (replicate eventsPerRound event))
             case result of Right _ -> pure (); Left err -> fail ("redelivery append failed: " <> show err)
             _ <- timeout 30000000 (awaitCount child (beforeCount + 150))
-            killChild supervisor child
+            if crashMode == "handler-exception" then awaitMark child "handler-exception" 30000 else pure ()
+            case crashMode of
+              "sigterm" -> terminateChild supervisor child
+              "cancel" -> void (stopGracefully supervisor child 5000)
+              "handler-exception" -> void (stopGracefully supervisor child 5000)
+              _ -> killChild supervisor child
             threadDelay 10000
             oldDeliveries <- deliveryPositions child
             replacement <- restartChild supervisor child
@@ -123,5 +136,5 @@ runRedelivery context = withKirokuStore context \store -> withCheck context \che
           ("duplicates-within-crash-windows", all inWindow duplicates),
           ("per-crash-duplicate-budget", all (<= budget) perWindow)
         ]
-  putSummary context Measurements "sigkill-redelivery-window" (object ["target" .= target, "kills" .= kills, "batchSize" .= batchSize, "budget" .= budget, "distinctPositions" .= Set.size actual, "totalEvents" .= total, "duplicatePositions" .= length duplicates, "duplicatesPerWindow" .= perWindow, "checkpointSamples" .= (samples <> [finalCheckpoint])])
+  putSummary context Measurements "sigkill-redelivery-window" (object ["target" .= target, "api" .= api, "crashMode" .= crashMode, "kills" .= kills, "batchSize" .= batchSize, "budget" .= budget, "distinctPositions" .= Set.size actual, "totalEvents" .= total, "duplicatePositions" .= length duplicates, "duplicatesPerWindow" .= perWindow, "checkpointSamples" .= (samples <> [finalCheckpoint])])
   recordCells context "sigkill-redelivery-window" ["per-crash-duplicate-budget"] cells

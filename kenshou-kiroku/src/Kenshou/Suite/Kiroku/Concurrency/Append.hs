@@ -9,7 +9,7 @@ import Data.Aeson (Value, object, withObject, (.:), (.=))
 import Data.Aeson.Types (Parser, parseMaybe)
 import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.Int (Int64)
-import Data.List (find, permutations)
+import Data.List (permutations)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust)
@@ -23,10 +23,11 @@ import Data.Word (Word64)
 import GHC.Clock (getMonotonicTimeNSec)
 import Kenshou.Check.Process (ProgressSnapshot (..), awaitMark, awaitReady, killChild, progress, restartChild, roleProcess, sendCommand, spawn, withSupervisor)
 import Kenshou.Check.Scenario (withCheck)
+import Kenshou.Check.Verdict (InvariantClass (..), Replay (..), RunInfo (..), Verdict (..), VerdictStatus (..), writeVerdict)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
-import Kenshou.Core.Id (parseScenarioId)
+import Kenshou.Core.Id (parseScenarioId, renderScenarioId, unSeed)
 import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), knobInt, mkKnobName)
 import Kenshou.Core.Phase (PhasePlan (..))
 import Kenshou.Core.Role (ControlMessage (..), WorkerMessage (..))
@@ -40,6 +41,7 @@ import Kenshou.Suite.Kiroku.Fixture.Workload (eventIdFor)
 import Kenshou.Suite.Kiroku.Knobs (storeKnobs)
 import Kenshou.Suite.Kiroku.Roles (appenderRoleName, readerRoleName)
 import Kiroku.Store hiding (id, withKirokuStore)
+import System.FilePath ((</>))
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
@@ -220,51 +222,74 @@ runModelCases context = withKirokuStore context \store -> do
   let knob key = fromIntegral (knobInt context.knobs (either (error . show) id (mkKnobName key))) :: Int
       cases = knob "model.cases"
       branches = knob "model.branches"
-  results <- forM [0 .. cases - 1] \caseIndex -> do
-    let name = "model-" <> Text.pack (show caseIndex)
-        uuid ordinal = let EventId value = eventIdFor context.seed caseIndex ordinal in value
-        first = uuid 1
-        commands = take branches $ case caseIndex `mod` 4 of
-          0 -> [Model.CmdAppend name (ExactVersion (StreamVersion 1)) [uuid 2], Model.CmdAppend name (ExactVersion (StreamVersion 1)) [uuid 3], Model.CmdAppend name (ExactVersion (StreamVersion 1)) [uuid 4]]
-          1 -> [Model.CmdSoftDelete name, Model.CmdAppend name (ExactVersion (StreamVersion 1)) [uuid 2], Model.CmdReadForward name 0 5]
-          2 -> [Model.CmdUndelete name, Model.CmdAppend name StreamExists [uuid 2], Model.CmdGetStream name]
-          _ -> [Model.CmdReadForward name 0 5, Model.CmdAppend name AnyVersion [uuid 2], Model.CmdGetStream name]
-        initial = Model.Model Map.empty
-        (modelAfterSeed, expectedSeed) = Model.stepModel initial (Model.CmdAppend name NoStream [first])
-    seeded <- executeModelCommand store (Model.CmdAppend name NoStream [first])
-    gate <- newEmptyMVar
-    slots <- forM commands \command -> do
-      slot <- newEmptyMVar
-      _ <- forkIO do
-        readMVar gate
-        started <- getMonotonicTimeNSec
-        attempted <- try @SomeException (executeModelCommand store command)
-        ended <- getMonotonicTimeNSec
-        putMVar slot (Observed command (either (const Nothing) id attempted) started ended)
-      pure slot
-    putMVar gate ()
-    observations <- traverse takeMVar slots
-    let allowed ordering =
-          all (\(leftIndex, left) -> all (\(rightIndex, right) -> left.ended >= right.started || leftIndex < rightIndex) (zip [0 :: Int ..] ordering)) (zip [0 :: Int ..] ordering)
-        explains ordering = snd (foldl step (modelAfterSeed, True) ordering)
-          where
-            step (model, valid) observation =
-              let (next, predicted) = Model.stepModel model observation.command
-               in (next, valid && observation.outcome == Just predicted)
-        linearizable = any (\ordering -> allowed ordering && explains ordering) (permutations observations)
-    pure (seeded == Just expectedSeed, linearizable, observations)
+      runCase caseIndex nonce selected = do
+        let name stream = "model-" <> Text.pack (show caseIndex) <> "-" <> Text.pack (show nonce) <> "-s" <> Text.pack (show stream)
+            uuid stream ordinal = let EventId value = eventIdFor context.seed (caseIndex * 100 + nonce * 10 + stream) ordinal in value
+            prefix = [Model.CmdAppend (name stream) NoStream [uuid stream 1] | stream <- [0 .. 5]]
+            allCommands = take branches $ case caseIndex `mod` 4 of
+              0 -> [Model.CmdAppend (name 0) (ExactVersion (StreamVersion 1)) [uuid 0 2], Model.CmdAppend (name 0) (ExactVersion (StreamVersion 1)) [uuid 0 3], Model.CmdAppend (name 0) (ExactVersion (StreamVersion 1)) [uuid 0 4]]
+              1 -> [Model.CmdSoftDelete (name 1), Model.CmdAppend (name 1) (ExactVersion (StreamVersion 1)) [uuid 1 2], Model.CmdReadForward (name 1) 0 5]
+              2 -> [Model.CmdUndelete (name 2), Model.CmdAppend (name 2) StreamExists [uuid 2 2], Model.CmdGetStream (name 2)]
+              _ -> [Model.CmdReadForward (name 3) 0 5, Model.CmdAppend (name 4) AnyVersion [uuid 4 2], Model.CmdGetStream (name 5)]
+            commands = [command | (index, command) <- zip [0 :: Int ..] allCommands, index `elem` selected]
+            seedStep (model, expected) command = let (next, outcome) = Model.stepModel model command in (next, expected <> [Just outcome])
+            (modelAfterSeed, expectedSeed) = foldl seedStep (Model.Model Map.empty, []) prefix
+        seeded <- traverse (executeModelCommand store) prefix
+        gate <- newEmptyMVar
+        slots <- forM commands \command -> do
+          slot <- newEmptyMVar
+          _ <- forkIO do
+            readMVar gate
+            started <- getMonotonicTimeNSec
+            attempted <- try @SomeException (executeModelCommand store command)
+            ended <- getMonotonicTimeNSec
+            putMVar slot (Observed command (either (const Nothing) id attempted) started ended)
+          pure slot
+        putMVar gate ()
+        observations <- traverse takeMVar slots
+        let allowed ordering =
+              all (\(leftIndex, left) -> all (\(rightIndex, right) -> left.ended >= right.started || leftIndex < rightIndex) (zip [0 :: Int ..] ordering)) (zip [0 :: Int ..] ordering)
+            explains ordering = snd (foldl step (modelAfterSeed, True) ordering)
+              where
+                step (model, valid) observation =
+                  let (next, predicted) = Model.stepModel model observation.command
+                   in (next, valid && observation.outcome == Just predicted)
+            linearizable = any (\ordering -> allowed ordering && explains ordering) (permutations observations)
+        pure (seeded == expectedSeed, linearizable, observations)
+      candidates = filter (\selected -> all (< branches) selected) [[0], [1], [2], [0, 1], [0, 2], [1, 2]]
+      shrinkFailure _ [] = pure Nothing
+      shrinkFailure index ((nonce, selected) : rest) = do
+        result@(seeded, valid, _) <- runCase index nonce selected
+        if seeded && not valid then pure (Just (selected, result)) else shrinkFailure index rest
+  results <- forM [0 .. cases - 1] \caseIndex -> runCase caseIndex 0 [0 .. branches - 1]
   let failedCases = [index | (index, (seeded, valid, _)) <- zip [0 :: Int ..] results, not (seeded && valid)]
-      firstFailure = do
-        index <- find (`elem` failedCases) [0 .. cases - 1]
-        let (_, _, rows) = results !! index
-        pure (object ["case" .= index, "commands" .= fmap (show . (.command)) rows, "observed" .= fmap (show . (.outcome)) rows])
       observedConflicts = length [() | (_, _, rows) <- results, row <- rows, row.outcome == Just (Model.Rejected Model.WrongVersion)]
       cells =
         [ ("all-prefixes-created", all (\(seeded, _, _) -> seeded) results),
           ("all-cases-linearizable", null failedCases),
           ("version-conflicts-observed", observedConflicts > 0)
         ]
+  shrunk <- case failedCases of
+    [] -> pure Nothing
+    index : _ -> shrinkFailure index (zip [1 ..] candidates)
+  let firstFailure = case failedCases of
+        [] -> Nothing
+        index : _ ->
+          let (_, _, original) = results !! index
+              (selected, rows) = case shrunk of
+                Just (path, (_, _, values)) -> (path, values)
+                Nothing -> ([0 .. branches - 1], original)
+           in Just (object ["case" .= index, "selectedBranches" .= selected, "commands" .= fmap (show . (.command)) rows, "observed" .= fmap (show . (.outcome)) rows])
   putSummary context Measurements "model-based-occ" (object ["seed" .= context.seed, "cases" .= cases, "branches" .= branches, "failedCases" .= take 20 failedCases, "firstFailure" .= firstFailure, "versionConflicts" .= observedConflicts])
+  case (failedCases, firstFailure) of
+    (index : _, Just counterexample) -> do
+      checkedAt <- getCurrentTime
+      let selected = maybe [0 .. branches - 1] fst shrunk
+          command = "kenshou run " <> renderScenarioId context.scenario <> " --seed " <> Text.pack (show (unSeed context.seed))
+          verdict = Verdict "model-based-occ-counterexample" "all-cases-linearizable" Contract Violated Nothing "A concurrent history is not explained by the stream model." (Map.fromList [("cases", fromIntegral cases), ("firstFailedCase", fromIntegral index)]) (object ["selectedBranches" .= selected]) [counterexample] False [] (Just (Replay (fromIntegral (unSeed context.seed)) branches selected command)) checkedAt 0
+      _ <- writeVerdict (context.outDir </> "verdicts") (RunInfo context.runId context.scenario) verdict
+      pure ()
+    _ -> pure ()
   recordCells context "model-based-occ" [] cells
 
 executeModelCommand :: KirokuStore -> Model.Cmd -> IO (Maybe Model.Outcome)

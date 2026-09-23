@@ -14,6 +14,7 @@ module Kenshou.Check.Process
     awaitMark,
     signalChild,
     killChild,
+    terminateChild,
     restartChild,
     stopGracefully,
     withRestartLoop,
@@ -187,6 +188,11 @@ signalChild supervisor child signal = do
 killChild :: Supervisor -> Child -> IO ()
 killChild supervisor child = do
   signalChild supervisor child Kill
+  void (waitExit child)
+
+terminateChild :: Supervisor -> Child -> IO ()
+terminateChild supervisor child = do
+  signalChild supervisor child Term
   void (waitExit child)
 
 restartChild :: Supervisor -> Child -> IO Child
