@@ -96,3 +96,8 @@ window. The measurement health gates can mark a local run inconclusive or an
 infrastructure failure when the load driver is saturated. A 15-second local
 run with two writers and `load.think-time-us=10000` passed its three ledger
 checks; paired trials on the target cell are still required for comparisons.
+`hydration-cost` prepares a selected stream length with `snapshot.policy=never`
+or `every-100` and a selected `command.page-size`. Its timed close command
+is rejected after hydration, keeping the stream length fixed across samples.
+The final ledger check confirms that measurement added no events. Both policy
+arms passed local 15-second runs at length 100.
