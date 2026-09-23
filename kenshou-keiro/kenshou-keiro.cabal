@@ -39,6 +39,7 @@ library
   hs-source-dirs: src
   exposed-modules:
     Kenshou.Suite.Keiro
+    Kenshou.Suite.Keiro.Command.Concurrency
     Kenshou.Suite.Keiro.Command.Correctness
     Kenshou.Suite.Keiro.Fixture.Account
     Kenshou.Suite.Keiro.Fixture.Bonus
@@ -53,6 +54,7 @@ library
 
   build-depends:
     aeson,
+    async,
     base,
     bytestring,
     containers,

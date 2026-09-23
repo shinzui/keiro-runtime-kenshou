@@ -1,4 +1,4 @@
-module Kenshou.Suite.Keiro.Command.Correctness (scenarios) where
+module Kenshou.Suite.Keiro.Command.Correctness (scenarios, recordCells) where
 
 import Control.Monad (foldM, when)
 import Data.Aeson (Value (..), object, toJSON, (.=))

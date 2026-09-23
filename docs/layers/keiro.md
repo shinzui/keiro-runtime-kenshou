@@ -22,3 +22,11 @@ verdicts: `log-is-well-formed`, `model-equals-log`,
 The fixture also defines a bonus event stream and a transfer process manager
 with deterministic target commands. Their scenario coverage is being added
 under `docs/plans/12-cover-the-keiro-command-processor-process-managers-and-routers.md`.
+
+The registered command scenarios also cover duplicate event identifiers,
+optimistic retry and exhaustion, controlled SQL rollback, and hydration over
+stream lengths and page sizes. `keiro/snapshot/correctness/policy-matrix`
+checks the persisted snapshot version and register values for all five
+policies. Two concurrency scenarios check simultaneous submission of one
+identifier and sustained writes to one hot stream. The scenario IDs and
+their knobs are available through `cabal run kenshou -- list --layer keiro`.
