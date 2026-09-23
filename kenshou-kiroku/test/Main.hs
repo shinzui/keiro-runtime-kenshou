@@ -17,7 +17,7 @@ main = hspec do
     it "registers unique kiroku correctness scenarios" do
       let scenarios = bundle.scenarios
           names = fmap (renderScenarioId . (.id)) scenarios
-      length scenarios `shouldBe` 16
+      length scenarios `shouldBe` 17
       length (nub names) `shouldBe` length names
       mapM_ (\scenario -> scenario.id.layer `shouldBe` Kiroku) scenarios
       mapM_ (\scenario -> scenario.id.kind `shouldBe` Correctness) scenarios

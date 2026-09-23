@@ -41,6 +41,7 @@ library
     Kenshou.Suite.Kiroku.Correctness.ConsumerGroup
     Kenshou.Suite.Kiroku.Correctness.DeadLetter
     Kenshou.Suite.Kiroku.Correctness.Lifecycle
+    Kenshou.Suite.Kiroku.Correctness.Metrics
     Kenshou.Suite.Kiroku.Correctness.Notifier
     Kenshou.Suite.Kiroku.Correctness.Overflow
     Kenshou.Suite.Kiroku.Correctness.Read
@@ -53,20 +54,27 @@ library
   build-depends:
     aeson >=2.2 && <2.3,
     base >=4.21 && <4.22,
+    bytestring >=0.12 && <0.13,
     containers >=0.7 && <0.8,
     effectful >=2.6 && <2.7,
     filepath,
     hasql >=1.10 && <1.11,
     hasql-pool >=1.4 && <1.5,
     hasql-transaction >=1.0 && <2,
+    http-client >=0.7 && <0.8,
+    http-types >=0.12 && <0.13,
     kenshou-check,
     kenshou-core,
+    kenshou-telemetry,
+    kiroku-metrics ==0.1.0.8,
     kiroku-store ==0.8.0.1,
+    stm >=2.5 && <2.6,
     streamly-core >=0.3 && <0.4,
     text >=2.1 && <2.2,
     time >=1.12 && <1.15,
     uuid >=1.3 && <1.4,
     vector >=0.13 && <0.14,
+    websockets >=0.13 && <0.14,
 
 test-suite kenshou-kiroku-test
   import: warnings
