@@ -2,7 +2,7 @@ module Kenshou.Measure.Load.Closed (runClosed) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async
-import Control.Exception (SomeException, try)
+import Control.Exception (SomeAsyncException, SomeException, fromException, throwIO, try)
 import Control.Monad (forM, when)
 import Data.IORef
 import Data.Word (Word64)
@@ -65,9 +65,10 @@ runClosed measurement config operation = do
           atomicModifyIORef' offered (\value -> (value + 1, ()))
           result <- try (operation.run workerId sequenceNumber)
           ended <- nowNs
-          let opResult = case result of
-                Left (_ :: SomeException) -> OpFailed (ErrorCause "exception")
-                Right value -> value
+          opResult <- case result of
+            Left err | Just (_ :: SomeAsyncException) <- fromException err -> throwIO err
+            Left (_ :: SomeException) -> pure (OpFailed (ErrorCause "exception"))
+            Right value -> pure value
           recordOp workerRecorder intended intended ended opResult
           atomicModifyIORef' completed (\value -> (value + 1, ()))
           case opResult of OpFailed _ -> atomicModifyIORef' failed (\value -> (value + 1, ())); OpOk _ -> pure ()

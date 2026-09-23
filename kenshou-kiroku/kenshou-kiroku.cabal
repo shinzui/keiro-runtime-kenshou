@@ -41,12 +41,14 @@ library
     Kenshou.Suite.Kiroku.Bench.Ladder
     Kenshou.Suite.Kiroku.Bench.Read
     Kenshou.Suite.Kiroku.Bench.Subscription
+    Kenshou.Suite.Kiroku.Bench.Telemetry
     Kenshou.Suite.Kiroku.Bench.Transaction
     Kenshou.Suite.Kiroku.Concurrency.Append
     Kenshou.Suite.Kiroku.Concurrency.ConsumerGroup
     Kenshou.Suite.Kiroku.Concurrency.Fault
     Kenshou.Suite.Kiroku.Concurrency.KnownDefects
     Kenshou.Suite.Kiroku.Concurrency.Subscription
+    Kenshou.Suite.Kiroku.Concurrency.Telemetry
     Kenshou.Suite.Kiroku.Correctness.Append
     Kenshou.Suite.Kiroku.Correctness.ConsumerGroup
     Kenshou.Suite.Kiroku.Correctness.DeadLetter
@@ -67,12 +69,18 @@ library
     Kenshou.Suite.Kiroku.Fixture.Workload
     Kenshou.Suite.Kiroku.Knobs
     Kenshou.Suite.Kiroku.Roles
+    Kenshou.Suite.Kiroku.Soak.AppendSubscribe
+    Kenshou.Suite.Kiroku.Soak.Common
+    Kenshou.Suite.Kiroku.Soak.DeadLetter
+    Kenshou.Suite.Kiroku.Soak.Growth
+    Kenshou.Suite.Kiroku.Soak.Retention
 
   build-depends:
     aeson >=2.2 && <2.3,
     base >=4.21 && <4.22,
     bytestring >=0.12 && <0.13,
     containers >=0.7 && <0.8,
+    directory,
     effectful >=2.6 && <2.7,
     filepath,
     hasql >=1.10 && <1.11,
@@ -83,6 +91,7 @@ library
     http-types >=0.12 && <0.13,
     kenshou-check,
     kenshou-core,
+    kenshou-diagnose,
     kenshou-measure,
     kenshou-telemetry,
     kiroku-metrics ==0.1.0.8,

@@ -22,7 +22,7 @@ import Kenshou.Suite.Kiroku.Fixture.Workload (eventIdFor)
 import Kiroku.Store hiding (id)
 
 roles :: [WorkerRole]
-roles = [WorkerRole appenderRoleName "Races expected-version appends from a separate process." runAppender, WorkerRole readerRoleName "Tails the global event stream from a separate process." runReader, WorkerRole subscriberRoleName "Collects group delivery in a separate process." runSubscriber, WorkerRole fanoutRoleName "Runs several subscriptions on one publisher." runFanout, WorkerRole txAppenderRoleName "Holds the global append lock inside a transaction continuation." runTxAppender]
+roles = [WorkerRole appenderRoleName "Races expected-version appends from a separate process." runAppender, WorkerRole readerRoleName "Tails the global event stream from a separate process." runReader, WorkerRole subscriberRoleName "Collects group delivery in a separate process." runSubscriber, WorkerRole fanoutRoleName "Runs several subscriptions on one publisher." runFanout, WorkerRole poisonRoleName "Retries and dead-letters poison events through process crashes." runPoisonSubscriber, WorkerRole txAppenderRoleName "Holds the global append lock inside a transaction continuation." runTxAppender]
 
 appenderRoleName :: RoleName
 appenderRoleName = either (error . show) id (mkRoleName "kiroku/appender")
@@ -35,6 +35,9 @@ subscriberRoleName = either (error . show) id (mkRoleName "kiroku/subscriber")
 
 fanoutRoleName :: RoleName
 fanoutRoleName = either (error . show) id (mkRoleName "kiroku/fanout")
+
+poisonRoleName :: RoleName
+poisonRoleName = either (error . show) id (mkRoleName "kiroku/poison-subscriber")
 
 txAppenderRoleName :: RoleName
 txAppenderRoleName = either (error . show) id (mkRoleName "kiroku/tx-appender")
@@ -83,7 +86,7 @@ runSubscriber context = case (context.init.postgres, parseMaybe parseSubscriberA
     emitted <- newIORef (0 :: Int)
     let handler row = do
           let GlobalPosition position = row.globalPosition
-          atomicModifyIORef' delivered (\positions -> (position : positions, ()))
+          if args.compactDeliveries then pure () else atomicModifyIORef' delivered (\positions -> (position : positions, ()))
           if args.emitDeliveries
             then do
               sequenceNumber <- atomicModifyIORef' emitted (\count -> (count + 1, count))
@@ -121,6 +124,19 @@ parseSubscriberArgs = withObject "subscriber arguments" \value -> do
   requestedBatchSize <- maybe 100 id <$> value .:? "batchSize"
   handlerDelayMicros <- maybe 0 id <$> value .:? "handlerDelayMicros"
   pure (SubscriberArgs name ((,) <$> member <*> size) guardEnabled emitDeliveries compactDeliveries targetName requestedBatchSize handlerDelayMicros)
+
+runPoisonSubscriber :: RoleContext -> IO ()
+runPoisonSubscriber context = case context.init.postgres of
+  Nothing -> context.send (WrkError "poison subscriber requires PostgreSQL")
+  Just postgres -> withStore (defaultConnectionSettings postgres.connectionString) \store -> do
+    let handler row = pure $ if row.eventType == EventType "SoakPoison" then Retry (RetryDelay 0.001) else Continue
+        config = (defaultSubscriptionConfig (SubscriptionName "soak-dead-letter") AllStreams handler) {retryPolicy = RetryPolicy 3}
+        loop =
+          context.receive >>= \case
+            Just (CtlStop _) -> pure ()
+            Just _ -> loop
+            Nothing -> pure ()
+    withSubscription store config \_ -> context.send WrkReady >> loop
 
 runFanout :: RoleContext -> IO ()
 runFanout context = case (context.init.postgres, parseMaybe parseArgs context.init.args) of
