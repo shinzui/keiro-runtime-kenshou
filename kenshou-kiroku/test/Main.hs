@@ -3,6 +3,7 @@ module Main (main) where
 import Data.Aeson (decode, encode)
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.List (nub)
+import Data.Map.Strict qualified as Map
 import Kenshou.Core.Bundle (LayerBundle (..), mkRegistry)
 import Kenshou.Core.Dimension (MetricsArm (..), TracingArm (..))
 import Kenshou.Core.Id (Kind (..), Layer (..), ScenarioId (..), mkSeed, parseRunId, renderScenarioId)
@@ -10,11 +11,12 @@ import Kenshou.Core.Knob (RawKnob (..), mkKnobName, resolveKnobs)
 import Kenshou.Core.Scenario (Scenario (..))
 import Kenshou.Suite.Kiroku (bundle)
 import Kenshou.Suite.Kiroku.Fixture.Facts (CheckpointSample (..), Delivered (..), KirokuFact (..), Produced (..))
+import Kenshou.Suite.Kiroku.Fixture.Model (Cmd (..), Model (..), Outcome (..), StoreErrorTag (..), stepModel)
 import Kenshou.Suite.Kiroku.Fixture.Store (StoreOptions (..), storeOptionsFromValues)
 import Kenshou.Suite.Kiroku.Fixture.Telemetry (HandlerArm (..), handlerArm)
 import Kenshou.Suite.Kiroku.Fixture.Workload (IdPolicy (..), RunTag (..), eventIdFor, mkEvents, payloadOf, streamNameFor)
 import Kenshou.Suite.Kiroku.Knobs (storeKnobs)
-import Kiroku.Store (EventData (..), EventId (..))
+import Kiroku.Store (EventData (..), EventId (..), ExpectedVersion (..), StreamVersion (..))
 import Test.Hspec
 
 main :: IO ()
@@ -67,15 +69,44 @@ main = hspec do
               CheckpointFact (CheckpointSample "subscription" 1 7 300)
             ]
       map (decode . encode) facts `shouldBe` map Just facts
+  describe "pure stream model" do
+    it "preserves OCC and soft-delete semantics" do
+      let seed = either (error . show) id (mkSeed 42)
+          EventId first = eventIdFor seed 0 1
+          EventId second = eventIdFor seed 0 2
+          empty = Model Map.empty
+          (created, creation) = stepModel empty (CmdAppend "model" NoStream [first])
+          (unchanged, wrong) = stepModel created (CmdAppend "model" (ExactVersion (StreamVersion 0)) [second])
+          (deleted, deletion) = stepModel created (CmdSoftDelete "model")
+          (_, hidden) = stepModel deleted (CmdReadForward "model" 0 10)
+          (_, refused) = stepModel deleted (CmdAppend "model" AnyVersion [second])
+          (restored, restoration) = stepModel deleted (CmdUndelete "model")
+          (_, visible) = stepModel restored (CmdReadForward "model" 0 10)
+      creation `shouldBe` Appended 1
+      wrong `shouldBe` Rejected WrongVersion
+      unchanged `shouldBe` created
+      deletion `shouldBe` Done True
+      hidden `shouldBe` Events []
+      refused `shouldBe` Rejected NotFound
+      restoration `shouldBe` Done True
+      visible `shouldBe` Events [first]
+    it "rejects duplicate identifiers without changing either stream" do
+      let seed = either (error . show) id (mkSeed 42)
+          EventId identifier = eventIdFor seed 0 1
+          empty = Model Map.empty
+          (created, _) = stepModel empty (CmdAppend "first" NoStream [identifier])
+          (unchanged, response) = stepModel created (CmdAppend "second" NoStream [identifier])
+      response `shouldBe` Rejected DuplicateId
+      unchanged `shouldBe` created
   describe "kiroku bundle" do
     it "registers unique kiroku scenarios" do
       let scenarios = bundle.scenarios
           names = fmap (renderScenarioId . (.id)) scenarios
-      length scenarios `shouldBe` 24
+      length scenarios `shouldBe` 25
       length (nub names) `shouldBe` length names
       mapM_ (\scenario -> scenario.id.layer `shouldBe` Kiroku) scenarios
       length [scenario | scenario <- scenarios, scenario.id.kind == Correctness] `shouldBe` 19
-      length [scenario | scenario <- scenarios, scenario.id.kind == Concurrency] `shouldBe` 5
+      length [scenario | scenario <- scenarios, scenario.id.kind == Concurrency] `shouldBe` 6
     it "passes the registry's structural validation" do
       case mkRegistry [bundle] of
         Right _ -> pure ()

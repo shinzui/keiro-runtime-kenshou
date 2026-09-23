@@ -51,7 +51,7 @@ Milestone 1 — kiroku correctness scenarios.
 Milestone 2 — kiroku concurrency, crash and known-defect scenarios.
 
 - [ ] Worker roles `kiroku.appender`, `kiroku.subscriber`, `kiroku.tx-appender` and `kiroku.reader` registered in the bundle and driven through the correctness toolkit's process control. The appender role is registered and runs in two or four child processes; the other three remain.
-- [ ] Pure stream model `Kenshou.Suite.Kiroku.Fixture.Model` with unit tests; `kiroku/append/concurrency/model-based-occ`.
+- [ ] Pure stream model `Kenshou.Suite.Kiroku.Fixture.Model` with unit tests; `kiroku/append/concurrency/model-based-occ` passed 200 three-branch cases on PostgreSQL 17 and 18. The scenario enumerates legal orderings of concurrent calls and recorded 146 expected version conflicts in the PostgreSQL 18 default run. The planned command shrinking and shared correctness-toolkit state-machine abstraction remain.
 - [ ] Append concurrency scenarios: `expected-version-race` passed a full 60-second PostgreSQL 18 durable run (61,693 winners and 431,851 expected conflicts with zero worker errors), a reduced PostgreSQL 17 run and a four-process variant. `idempotent-duplicates` passed its default 500 ten-event batches with four processes on both PostgreSQL versions, with exactly 5,000 committed events and 1,500 expected loser results on PostgreSQL 18. `all-order-under-contention` and `sigkill-mid-append` remain.
 - [ ] Subscription and consumer-group crash scenarios: `sigkill-redelivery-window`, `multi-process-members`, `duplicate-member-claim`.
 - [ ] Fault scenarios: `listen-kill-and-notify-loss`, `postgres-restart`, `network-partition`, `all-lock-hold`.

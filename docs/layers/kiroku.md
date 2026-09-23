@@ -42,6 +42,7 @@ The shared SQL oracle reads the migrated `kiroku` tables through a separate pool
 | --- | --- |
 | `kiroku/append/concurrency/expected-version-race` | Two or four worker processes race 8 to 32 writers over 1 to 16 precreated streams. Exactly one writer wins each expected version, all other writers report a version conflict, and a durable stream read has versions 1 through the final head. The default steady phase is 60 seconds and requires durable PostgreSQL. |
 | `kiroku/append/concurrency/idempotent-duplicates` | Four processes submit identical caller-ID batches behind each request round, first with `AnyVersion`, then `ExactVersion`. One append wins each of 500 default batches, each identifier occurs once, and the final version is 5,000. Both PostgreSQL versions passed; PostgreSQL 18 recorded 750 duplicate errors and 750 wrong-version errors. |
+| `kiroku/append/concurrency/model-based-occ` | Two or three concurrent calls per case exercise exact and any-version appends, stream reads, get, soft delete and undelete. A pure stream model checks every ordering consistent with observed call times. The default 200 cases passed on PostgreSQL 17 and 18, with 146 expected version conflicts on PostgreSQL 18. Knobs: `model.cases` (1 to 1,000, default 200) and `model.branches` (2 to 3, default 3). |
 
 ## Known defects
 

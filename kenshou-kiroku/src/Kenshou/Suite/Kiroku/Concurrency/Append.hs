@@ -1,16 +1,23 @@
 module Kenshou.Suite.Kiroku.Concurrency.Append (scenarios) where
 
+import Control.Concurrent (forkIO)
+import Control.Concurrent.MVar (newEmptyMVar, putMVar, readMVar, takeMVar)
+import Control.Exception (SomeException, try)
 import Control.Monad (forM, forM_, (<=<))
 import Data.Aeson (Value, object, withObject, (.:), (.=))
 import Data.Aeson.Types (Parser, parseMaybe)
+import Data.List (find, permutations)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
+import Data.Maybe (isJust)
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time.Clock (addUTCTime, getCurrentTime)
 import Data.UUID qualified as UUID
 import Data.Vector qualified as Vector
+import Data.Word (Word64)
+import GHC.Clock (getMonotonicTimeNSec)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
@@ -21,6 +28,7 @@ import Kenshou.Core.Role (ControlMessage (..), WorkerMessage (..))
 import Kenshou.Core.Role.Spawn (WorkerHandle (..), withWorker)
 import Kenshou.Core.Scenario
 import Kenshou.Suite.Kiroku.Correctness.Append (recordCells)
+import Kenshou.Suite.Kiroku.Fixture.Model qualified as Model
 import Kenshou.Suite.Kiroku.Fixture.Oracle qualified as Oracle
 import Kenshou.Suite.Kiroku.Fixture.Store (withKirokuStore)
 import Kenshou.Suite.Kiroku.Fixture.Workload (eventIdFor)
@@ -29,7 +37,103 @@ import Kenshou.Suite.Kiroku.Roles (appenderRoleName)
 import Kiroku.Store hiding (id, withKirokuStore)
 
 scenarios :: [Scenario]
-scenarios = [expectedVersionRace, idempotentDuplicates]
+scenarios = [expectedVersionRace, idempotentDuplicates, modelBasedOcc]
+
+modelBasedOcc :: Scenario
+modelBasedOcc =
+  expectedVersionRace
+    { id = either (error . show) id (parseScenarioId "kiroku/append/concurrency/model-based-occ"),
+      summary = "Checks concurrent append, read, and lifecycle calls against a pure stream model.",
+      knobs = storeKnobs <> [intKnob "model.cases" 200 1 1000, intKnob "model.branches" 3 2 3],
+      phases = PhasePlan 0 0 0,
+      run = runModelCases
+    }
+
+data Observed = Observed
+  { command :: Model.Cmd,
+    outcome :: Maybe Model.Outcome,
+    started :: Word64,
+    ended :: Word64
+  }
+
+runModelCases :: RunContext -> IO ScenarioReport
+runModelCases context = withKirokuStore context \store -> do
+  let knob key = fromIntegral (knobInt context.knobs (either (error . show) id (mkKnobName key))) :: Int
+      cases = knob "model.cases"
+      branches = knob "model.branches"
+  results <- forM [0 .. cases - 1] \caseIndex -> do
+    let name = "model-" <> Text.pack (show caseIndex)
+        uuid ordinal = let EventId value = eventIdFor context.seed caseIndex ordinal in value
+        first = uuid 1
+        commands = take branches $ case caseIndex `mod` 4 of
+          0 -> [Model.CmdAppend name (ExactVersion (StreamVersion 1)) [uuid 2], Model.CmdAppend name (ExactVersion (StreamVersion 1)) [uuid 3], Model.CmdAppend name (ExactVersion (StreamVersion 1)) [uuid 4]]
+          1 -> [Model.CmdSoftDelete name, Model.CmdAppend name (ExactVersion (StreamVersion 1)) [uuid 2], Model.CmdReadForward name 0 5]
+          2 -> [Model.CmdUndelete name, Model.CmdAppend name StreamExists [uuid 2], Model.CmdGetStream name]
+          _ -> [Model.CmdReadForward name 0 5, Model.CmdAppend name AnyVersion [uuid 2], Model.CmdGetStream name]
+        initial = Model.Model Map.empty
+        (modelAfterSeed, expectedSeed) = Model.stepModel initial (Model.CmdAppend name NoStream [first])
+    seeded <- executeModelCommand store (Model.CmdAppend name NoStream [first])
+    gate <- newEmptyMVar
+    slots <- forM commands \command -> do
+      slot <- newEmptyMVar
+      _ <- forkIO do
+        readMVar gate
+        started <- getMonotonicTimeNSec
+        attempted <- try @SomeException (executeModelCommand store command)
+        ended <- getMonotonicTimeNSec
+        putMVar slot (Observed command (either (const Nothing) id attempted) started ended)
+      pure slot
+    putMVar gate ()
+    observations <- traverse takeMVar slots
+    let allowed ordering =
+          all (\(leftIndex, left) -> all (\(rightIndex, right) -> left.ended >= right.started || leftIndex < rightIndex) (zip [0 :: Int ..] ordering)) (zip [0 :: Int ..] ordering)
+        explains ordering = snd (foldl step (modelAfterSeed, True) ordering)
+          where
+            step (model, valid) observation =
+              let (next, predicted) = Model.stepModel model observation.command
+               in (next, valid && observation.outcome == Just predicted)
+        linearizable = any (\ordering -> allowed ordering && explains ordering) (permutations observations)
+    pure (seeded == Just expectedSeed, linearizable, observations)
+  let failedCases = [index | (index, (seeded, valid, _)) <- zip [0 :: Int ..] results, not (seeded && valid)]
+      firstFailure = do
+        index <- find (`elem` failedCases) [0 .. cases - 1]
+        let (_, _, rows) = results !! index
+        pure (object ["case" .= index, "commands" .= fmap (show . (.command)) rows, "observed" .= fmap (show . (.outcome)) rows])
+      observedConflicts = length [() | (_, _, rows) <- results, row <- rows, row.outcome == Just (Model.Rejected Model.WrongVersion)]
+      cells =
+        [ ("all-prefixes-created", all (\(seeded, _, _) -> seeded) results),
+          ("all-cases-linearizable", null failedCases),
+          ("version-conflicts-observed", observedConflicts > 0)
+        ]
+  putSummary context Measurements "model-based-occ" (object ["seed" .= context.seed, "cases" .= cases, "branches" .= branches, "failedCases" .= take 20 failedCases, "firstFailure" .= firstFailure, "versionConflicts" .= observedConflicts])
+  recordCells context "model-based-occ" [] cells
+
+executeModelCommand :: KirokuStore -> Model.Cmd -> IO (Maybe Model.Outcome)
+executeModelCommand store = \case
+  Model.CmdAppend name expected identifiers -> do
+    let events = [EventData (Just (EventId uuid)) (EventType "Model") (object []) Nothing Nothing Nothing | uuid <- identifiers]
+    result <- runStoreIO store (appendToStream (StreamName name) expected events)
+    pure case result of
+      Right value -> Just (Model.Appended (fromIntegral (case value.streamVersion of StreamVersion version -> version)))
+      Left (WrongExpectedVersion _ _ _) -> Just (Model.Rejected Model.WrongVersion)
+      Left (StreamAlreadyExists _) -> Just (Model.Rejected Model.AlreadyExists)
+      Left (StreamNotFound _) -> Just (Model.Rejected Model.NotFound)
+      Left (DuplicateEvent _) -> Just (Model.Rejected Model.DuplicateId)
+      Left _ -> Nothing
+  Model.CmdGetStream name -> do
+    result <- runStoreIO store (getStream (StreamName name))
+    pure case result of
+      Right stream -> Just (Model.StreamIs ((\value -> (fromIntegral (case value.version of StreamVersion version -> version), isJust value.deletedAt)) <$> stream))
+      Left _ -> Nothing
+  Model.CmdSoftDelete name -> do
+    result <- runStoreIO store (softDeleteStream (StreamName name))
+    pure (Model.Done . isJust <$> either (const Nothing) Just result)
+  Model.CmdUndelete name -> do
+    result <- runStoreIO store (undeleteStream (StreamName name))
+    pure (Model.Done . isJust <$> either (const Nothing) Just result)
+  Model.CmdReadForward name cursor limit -> do
+    result <- runStoreIO store (readStreamForward (StreamName name) (StreamVersion (fromIntegral cursor)) (fromIntegral limit))
+    pure (Model.Events . fmap (\row -> case row.eventId of EventId uuid -> uuid) . Vector.toList <$> either (const Nothing) Just result)
 
 idempotentDuplicates :: Scenario
 idempotentDuplicates =

@@ -52,6 +52,7 @@ library
     Kenshou.Suite.Kiroku.Correctness.Subscription
     Kenshou.Suite.Kiroku.Correctness.Transaction
     Kenshou.Suite.Kiroku.Fixture.Facts
+    Kenshou.Suite.Kiroku.Fixture.Model
     Kenshou.Suite.Kiroku.Fixture.Oracle
     Kenshou.Suite.Kiroku.Fixture.Store
     Kenshou.Suite.Kiroku.Fixture.Telemetry
@@ -95,6 +96,7 @@ test-suite kenshou-kiroku-test
     aeson >=2.2 && <2.3,
     base >=4.21 && <4.22,
     bytestring >=0.12 && <0.13,
+    containers >=0.7 && <0.8,
     hspec >=2.11 && <2.12,
     kenshou-core,
     kenshou-kiroku,
