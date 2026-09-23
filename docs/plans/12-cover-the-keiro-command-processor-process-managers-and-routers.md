@@ -61,7 +61,7 @@ Milestone 2 — Command processor scenarios with snapshots and projections
 
 Milestone 3 — Process manager scenarios
 
-- [ ] Correctness with the list adapter: `deterministic-ids-redelivery` passes for 50 transfers and three deliveries each; its unstable-name sabotage arm fails its verdict as intended. `policy-matrix`, `transient-classification`, `order-insensitive-join`, and `timers-commit-with-manager-append` remain.
+- [ ] Correctness with the list adapter: `deterministic-ids-redelivery` passes for 50 transfers and three deliveries each; its unstable-name sabotage arm fails its verdict as intended. `timers-commit-with-manager-append` passes with an unchanged deadline after redelivery and a rejected second debit. `policy-matrix`, `transient-classification`, and `order-insensitive-join` remain.
 - [ ] Reactions: `reaction-schedule-modes` and the known-defect scenario `reaction-no-advance-receipt`.
 - [ ] Real bridge: `retry-budget-dead-letter` including dead-letter replay.
 - [ ] Multi-process: `sigkill-crash-windows`, `random-kill-exactly-once`, `topologies`.
@@ -69,7 +69,7 @@ Milestone 3 — Process manager scenarios
 
 Milestone 4 — Router scenarios
 
-- [ ] `fanout-exactly-once`, `stable-union-under-drift`, `per-target-independent-commits`.
+- [ ] `fanout-exactly-once` passes at fanout 16 with reordered recipients, repeated recipients, and three deliveries; its unstable-name sabotage arm fails as intended. `stable-union-under-drift` and `per-target-independent-commits` remain.
 - [ ] `declarative-selection-policies` (the full empty-policy by failure-policy matrix, limit, overflow, conflict).
 - [ ] `dead-letter-identity-under-reordered-redelivery` (probe; file upstream if it fails).
 - [ ] `sigkill-mid-fanout` with worker processes.

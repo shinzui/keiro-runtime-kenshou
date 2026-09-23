@@ -5,11 +5,14 @@ import Data.IORef (newIORef, readIORef)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
+import Data.UUID qualified as UUID
 import Data.Vector qualified as Vector
 import Hasql.Connection qualified as Connection
 import Hasql.Connection.Settings qualified as Settings
-import Keiro.Command (CommandResult (..), RunCommandOptions (..), defaultRunCommandOptions, runCommand)
-import Keiro.ProcessManager (defaultWorkerOptions, deterministicCommandId, runProcessManagerWorkerWith)
+import Keiro.Command (CommandError (..), CommandResult (..), RunCommandOptions (..), defaultRunCommandOptions, runCommand)
+import Keiro.ProcessManager (defaultWorkerOptions, deterministicCommandId, runProcessManagerOnce, runProcessManagerWorkerWith)
+import Keiro.Timer (TimerId (..))
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
@@ -29,11 +32,68 @@ import Kenshou.Suite.Keiro.Fixture.Transfer
 import Kenshou.Suite.Keiro.Fixture.Workload qualified as Workload
 import Kiroku.Store (defaultConnectionSettings)
 import Kiroku.Store.Read (readCategory)
-import Kiroku.Store.Types (CategoryName (..), GlobalPosition (..))
+import Kiroku.Store.Types (CategoryName (..), GlobalPosition (..), RecordedEvent (..))
 import Shibuya.Core.Ack (AckDecision (..))
 
 scenarios :: [Scenario]
-scenarios = [deterministicIdsRedelivery]
+scenarios = [deterministicIdsRedelivery, timersCommitWithManagerAppend]
+
+timersCommitWithManagerAppend :: Scenario
+timersCommitWithManagerAppend =
+  deterministicIdsRedelivery
+    { id = either (error . show) id (parseScenarioId "keiro/process-manager/correctness/timers-commit-with-manager-append"),
+      summary = "Checks timer writes commit with the manager event and rejected replay cannot move the timer.",
+      knobs = [],
+      run = runTimerAtomicity
+    }
+
+runTimerAtomicity :: RunContext -> IO ScenarioReport
+runTimerAtomicity context =
+  withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture -> do
+    let KeiroRunner runFixture = fixture.runner
+        accountEvents = accountEventStream SnapNever
+        source = AccountId "timer-source"
+        destination = AccountId "timer-destination"
+        transfer = TransferId "timer-transfer"
+        deadline = 4102444800 :: Int
+        manager = transferManager accountEvents (const [])
+        submit account command = runFixture (runCommand defaultRunCommandOptions accountEvents (accountStream account) command)
+        debit due = DebitTransfer (DebitTransferData source transfer destination 2 due)
+        accepted = \case Right (Right result) -> result.eventsAppended == 1; _ -> False
+    openedSource <- submit source (OpenAccount (OpenAccountData source 10))
+    openedDestination <- submit destination (OpenAccount (OpenAccountData destination 0))
+    firstDebit <- submit source (debit deadline)
+    initialEvents <- runFixture (readCategory (CategoryName "account") (GlobalPosition 0) 20) >>= either (fail . show) pure
+    firstRecorded <- case [recorded | recorded <- Vector.toList initialEvents, case decodeTransferSignal recorded of Just (_, SignalDebited _) -> True; _ -> False] of
+      [recorded] -> pure recorded
+      other -> fail ("expected one debited input, observed " <> show (length other))
+    firstSignal <- maybe (fail "first debit did not decode") (pure . snd) (decodeTransferSignal firstRecorded)
+    firstReaction <- runFixture (runProcessManagerOnce defaultRunCommandOptions manager firstRecorded firstSignal)
+    redelivery <- runFixture (runProcessManagerOnce defaultRunCommandOptions manager firstRecorded firstSignal)
+    secondDebit <- submit source (debit (deadline + 600))
+    laterEvents <- runFixture (readCategory (CategoryName "account") (GlobalPosition 0) 30) >>= either (fail . show) pure
+    secondRecorded <- case [recorded | recorded <- Vector.toList laterEvents, recorded.eventId /= firstRecorded.eventId, case decodeTransferSignal recorded of Just (_, SignalDebited _) -> True; _ -> False] of
+      [recorded] -> pure recorded
+      other -> fail ("expected one second debited input, observed " <> show (length other))
+    secondSignal <- maybe (fail "second debit did not decode") (pure . snd) (decodeTransferSignal secondRecorded)
+    rejected <- runFixture (runProcessManagerOnce defaultRunCommandOptions manager secondRecorded secondSignal)
+    acquired <- Connection.acquire (Settings.connectionString (requirePostgres context).connectionString <> Settings.applicationName "kenshou-keiro-timer-oracle")
+    connection <- either (fail . show) pure acquired
+    timers <- Oracle.readTimers connection
+    sagaRows <- Oracle.readCategoryLog connection "pm:transferSaga"
+    accountRows <- Oracle.readCategoryLog connection "account"
+    Connection.release connection
+    let TimerId uuid = transferTimeoutTimerId transfer
+        cells =
+          [ ("source-setup", all accepted [openedSource, openedDestination, firstDebit, secondDebit]),
+            ("first-reaction-accepted", case firstReaction of Right (Right _) -> True; _ -> False),
+            ("redelivery-idempotent", case redelivery of Right (Right _) -> True; _ -> False),
+            ("second-debit-rejected", case rejected of Right (Left CommandRejected) -> True; _ -> False),
+            ("timer-committed-once", case timers of [timer] -> timer.timerId == UUID.toText uuid && timer.processManagerName == transferManagerName && timer.correlationId == "timer-transfer" && timer.status == "scheduled" && timer.fireAt == posixSecondsToUTCTime (fromIntegral deadline); _ -> False),
+            ("manager-event-once", length sagaRows == 1),
+            ("target-effects-once", length accountRows == 6)
+          ]
+    recordCells context cells
 
 knobName :: Text -> KnobName
 knobName = either (error . show) id . mkKnobName

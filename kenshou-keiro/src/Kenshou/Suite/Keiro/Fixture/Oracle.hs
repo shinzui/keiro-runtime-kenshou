@@ -1,8 +1,10 @@
 module Kenshou.Suite.Keiro.Fixture.Oracle
   ( LoggedEvent (..),
+    TimerRow (..),
     readCategoryLog,
     readBalanceTable,
     readSnapshots,
+    readTimers,
     modelFromLog,
     logWellFormed,
   )
@@ -14,6 +16,7 @@ import Data.List (group, sort)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Data.Time (UTCTime)
 import Data.UUID qualified as UUID
 import Hasql.Connection qualified as Connection
 import Hasql.Decoders qualified as Decoders
@@ -35,6 +38,27 @@ data LoggedEvent = LoggedEvent
     payload :: !Value
   }
   deriving stock (Eq, Show)
+
+data TimerRow = TimerRow
+  { timerId :: !Text,
+    processManagerName :: !Text,
+    correlationId :: !Text,
+    fireAt :: !UTCTime,
+    status :: !Text
+  }
+  deriving stock (Eq, Show)
+
+readTimers :: Connection.Connection -> IO [TimerRow]
+readTimers connection = do
+  rows <- Connection.use connection (Session.statement () statement) >>= either (fail . show) pure
+  pure [TimerRow identifier manager correlation due state | (identifier, manager, correlation, due, state) <- rows]
+  where
+    statement =
+      Statement.preparable
+        "SELECT timer_id::text, process_manager_name, correlation_id, fire_at, status FROM keiro.keiro_timers ORDER BY timer_id"
+        Encoders.noParams
+        (Decoders.rowList ((,,,,) <$> text <*> text <*> text <*> Decoders.column (Decoders.nonNullable Decoders.timestamptz) <*> text))
+    text = Decoders.column (Decoders.nonNullable Decoders.text)
 
 readCategoryLog :: Connection.Connection -> Text -> IO [LoggedEvent]
 readCategoryLog connection category = do

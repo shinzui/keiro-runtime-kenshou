@@ -5,6 +5,7 @@ import Kenshou.Core.Id (Layer (Keiro))
 import Kenshou.Suite.Keiro.Command.Concurrency qualified as Concurrency
 import Kenshou.Suite.Keiro.Command.Correctness qualified as Correctness
 import Kenshou.Suite.Keiro.ProcessManager.Correctness qualified as PMCorrectness
+import Kenshou.Suite.Keiro.Router.Correctness qualified as RouterCorrectness
 
 bundle :: LayerBundle
-bundle = LayerBundle Keiro (Correctness.scenarios <> Concurrency.scenarios <> PMCorrectness.scenarios) []
+bundle = LayerBundle Keiro (Correctness.scenarios <> Concurrency.scenarios <> PMCorrectness.scenarios <> RouterCorrectness.scenarios) []
