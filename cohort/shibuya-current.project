@@ -1,0 +1,21 @@
+-- Isolated current Shibuya release lane. The full runtime cohort still pins
+-- keiro-pgmq 0.17.0.0, whose shibuya-core bound excludes 0.10.0.0.
+-- Cabal resolves package paths from the working directory at the repo root.
+packages:
+  kenshou-core/kenshou-core.cabal,
+  kenshou-shibuya/kenshou-shibuya.cabal
+
+with-compiler: ghc-9.12.4
+tests: True
+test-show-details: direct
+
+extra-packages:
+  shibuya-metrics,
+  shibuya-pgmq-adapter,
+  shibuya-kiroku-adapter
+
+constraints:
+  shibuya-core ==0.10.0.0,
+  shibuya-metrics ==0.10.0.0,
+  shibuya-pgmq-adapter ==0.16.1.0,
+  shibuya-kiroku-adapter ==0.5.1.3

@@ -1,5 +1,6 @@
--- RELEASED COHORT: what a service resolves from Hackage today.
--- Descriptor: cohort/released.json. Verified by dry-run on 2026-09-20.
+-- HISTORICAL RELEASED COHORT: the Hackage runtime baseline verified on 2026-09-20.
+-- Current shibuya-core is 0.10.0.0; use cohort/shibuya-current.project for
+-- the isolated current Shibuya release lane. Descriptor: cohort/released.json.
 index-state: 2026-09-20T13:44:47Z
 
 -- Keep every cohort package in plan.json even before a local package imports it.

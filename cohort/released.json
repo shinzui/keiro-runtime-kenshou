@@ -1,7 +1,7 @@
 {
   "schema": "kenshou.cohort/v1",
   "name": "released",
-  "description": "What a service resolves from Hackage today.",
+  "description": "Historical Hackage runtime baseline verified on 2026-09-20.",
   "verifiedAt": "2026-09-20",
   "compiler": "ghc-9.12.4",
   "indexState": "2026-09-20T13:44:47Z",
