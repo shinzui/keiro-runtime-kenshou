@@ -1,7 +1,9 @@
 module Kenshou.Suite.Shibuya.Concurrency.CoreRunner (scenarios) where
 
 import Control.Concurrent (threadDelay)
+import Control.Concurrent.Async (mapConcurrently)
 import Control.Concurrent.STM (TVar, atomically, check, newTVarIO, readTVar, writeTVar)
+import Control.Exception (SomeException, try)
 import Data.Aeson (object, (.=))
 import Data.ByteString.Char8 qualified as ByteString
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef)
@@ -17,10 +19,10 @@ import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
 import Kenshou.Suite.Shibuya.Cohort (knownOnReleasedCore, rev)
 import Kenshou.Suite.Shibuya.Fixture.Handlers (HandlerScript (..), HandlerStats (..), defaultHandlerScript, handlerStats, newHandlerProbe, scriptedHandler)
-import Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter (BrokerStats (..), brokerStats, closeInput, defaultSyntheticConfig, newSyntheticBroker, publish, syntheticAdapter)
+import Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter (BrokerStats (..), ShutdownBehaviour (..), SyntheticConfig (..), brokerStats, closeInput, defaultSyntheticConfig, newSyntheticBroker, publish, syntheticAdapter)
 import Kenshou.Suite.Shibuya.Knobs (coreKnobs, parseConcurrency, parseOrdering)
 import Shibuya.Adapter (Adapter (..))
-import Shibuya.App (AppConfig (..), QueueProcessor (..), defaultAppConfig, mkProcessor, runApp, stopApp, waitApp)
+import Shibuya.App (AppConfig (..), QueueProcessor (..), defaultAppConfig, defaultShutdownConfig, mkProcessor, runApp, stopApp, stopAppGracefully, waitApp)
 import Shibuya.Core.Ack (AckDecision (..), HaltReason (..))
 import Shibuya.Core.AckHandle (AckHandle (..))
 import Shibuya.Core.Ingested (mkIngested)
@@ -32,7 +34,58 @@ import Streamly.Data.Stream qualified as Stream
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [haltWakesIdleIntake, leasedButUnfinalizedUpperBound]
+scenarios = [haltWakesIdleIntake, leasedButUnfinalizedUpperBound, adapterShutdownFailure]
+
+adapterShutdownFailure :: Scenario
+adapterShutdownFailure =
+  Scenario
+    { id = either (error . Text.unpack) id (parseScenarioId "shibuya/core-runner/concurrency/adapter-shutdown-failure-does-not-skip-siblings"),
+      revision = 1,
+      summary = "A throwing adapter shutdown still shuts down sibling adapters and reports the exception to every stopper.",
+      tier = TierSmoke,
+      placement = PlaceEither,
+      knobs = [],
+      dimensions = noDimensions,
+      phases = zeroPhases,
+      requires = noEnvironment,
+      knownDefect = knownOnReleasedCore (rev 3 "sibling-shutdown-skipped"),
+      run = runAdapterShutdownFailure
+    }
+
+runAdapterShutdownFailure :: RunContext -> IO ScenarioReport
+runAdapterShutdownFailure context = do
+  failing <- newSyntheticBroker defaultSyntheticConfig {shutdownBehaviour = ShutdownThrows "scripted shutdown fault"}
+  siblingA <- newSyntheticBroker defaultSyntheticConfig
+  siblingB <- newSyntheticBroker defaultSyntheticConfig
+  let brokers = [failing, siblingA, siblingB]
+  result <- timeout 5000000 $ runEff $ runTracingNoop $ do
+    let processors =
+          zipWith
+            (\number broker -> (ProcessorId ("shutdown-" <> Text.pack (show number)), mkProcessor (syntheticAdapter broker) (\_ -> pure AckOk)))
+            [1 :: Int ..]
+            brokers
+    started <- runApp defaultAppConfig processors
+    case started of
+      Left err -> error (show err)
+      Right handle -> withEffToIO (ConcUnlift Persistent Unlimited) $ \runInIO -> liftIO $ do
+        answers <- mapConcurrently (\_ -> try @SomeException (runInIO (stopAppGracefully defaultShutdownConfig handle))) [1 .. 8 :: Int]
+        before <- mapM brokerStats brokers
+        threadDelay 1000000
+        after <- mapM brokerStats brokers
+        pure (answers, before, after)
+  case result of
+    Nothing -> pure $ failedWith ["shutdown-timeout"] "concurrent shutdown calls exceeded five seconds"
+    Just (answers, before, after) -> do
+      let thrown = length [() | Left err <- answers, "scripted shutdown fault" `Text.isInfixOf` Text.pack (show err)]
+          calls = map (.shutdownCalls) after
+          stablePulls = and $ zipWith (\x y -> x.sourcePulls == y.sourcePulls) before after
+          failures =
+            ["shutdown-exception-not-broadcast" | thrown /= 8]
+              <> ["sibling-shutdown-skipped" | any (< 1) calls]
+              <> ["source-kept-pulling" | not stablePulls]
+      putSummary context Verdicts "adapter-shutdown-failure" $
+        object ["exceptionCallers" .= thrown, "shutdownCalls" .= calls, "sourcePullsStopped" .= stablePulls]
+      pure $ if null failures then passed else failedWith failures (Text.intercalate "; " failures)
 
 leasedButUnfinalizedUpperBound :: Scenario
 leasedButUnfinalizedUpperBound =

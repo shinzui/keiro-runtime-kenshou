@@ -17,6 +17,11 @@ provenance:
       at: 2026-09-23T13:35:35Z
       mode: "implement"
       note: "Started implementation and verified harness prerequisites"
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-23T17:13:47Z
+      mode: "implement"
+      note: "Added concurrent adapter shutdown failure scenario and matrix tags"
 ---
 
 # Cover shibuya core and its PGMQ and kiroku adapters
@@ -44,12 +49,13 @@ Milestone 1 — shibuya core lifecycle, ordering, batching and metrics-truthfuln
 - [x] (2026-09-23 13:56Z) Finish `Kenshou.Suite.Shibuya.Knobs`: common specifications and all five parsers are present, with example and generated round-trip tests.
 - [ ] Complete `Kenshou.Suite.Shibuya.Matrix`: thirteen boundaries and five cases enumerate sixty-five cells; the eight registered scenarios have tested tags, while the remaining scenario tags, justified exclusions, and complete sixty-five-cell coverage assertion remain.
 - [ ] Implement `Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter`, `.Handlers`, `.App`, `.RestartLoop` with unit tests. The synthetic broker covers lease expiry, retry redelivery, stale finalization, scripted finalizer faults, throwing or blocking shutdowns, and a one-shot source fault followed by adapter replacement. `RestartLoop` waits for `waitApp`, stops the old application, applies a bounded backoff, and rebuilds processors until its restart limit or stop request. `Handlers` provides scripted decisions and delays, a gate, per-delivery start/end facts, and active/high-water counts, including cancellation cleanup. Its seeded-delay convenience function, the telemetry/metrics app helper, and the broker's ledger writer remain (20 package tests pass).
-- [ ] Implement the `core-runner` scenarios (fifteen) and the `shibuya-core-worker` and `shibuya-gc-probe` worker roles. Seven scenarios exist: invalid configuration, duplicate processor IDs, idle-intake halt, finite-source conservation, nonpositive concurrency, explicit restart after source failure, and a measured unfinalized-lease bound. The other eight and both roles remain.
+- [ ] Implement the `core-runner` scenarios (fifteen) and the `shibuya-core-worker` and `shibuya-gc-probe` worker roles. Eight scenarios exist: invalid configuration, duplicate processor IDs, idle-intake halt, finite-source conservation, nonpositive concurrency, explicit restart after source failure, a measured unfinalized-lease bound, and concurrent adapter shutdown failure. The other seven and both roles remain.
 - [ ] Implement the `core-ordering` scenarios (four). The policy matrix now checks all seven valid ordering/concurrency pairs with 16 uniform partition keys; the model, hot-key, and worker-failure scenarios remain.
 - [ ] Implement the `core-batch` correctness and concurrency scenarios (two).
 - [ ] Implement the `metrics` scenarios (eight) including the free-port allocation for `startMetricsServer`.
 - [x] (2026-09-23 13:42Z) Register the initial `bundle` in `kenshou-cli`; `kenshou list --layer shibuya` displays the two implemented scenarios.
-- [ ] Expand the registered bundle to all twenty-nine Milestone 1 scenarios and their roles; eight are registered now.
+- [ ] Expand the registered bundle to all twenty-nine Milestone 1 scenarios and their roles; nine are registered now.
+- [x] (2026-09-23 17:16Z) Add the concurrent adapter shutdown failure scenario and its matrix tags. The package's 20 tests pass; the released run reproduces a nonblocking known defect, the pinned head run passes, and the active cohort is restored to released.
 - [ ] Run every Milestone 1 scenario on the released cohort and on the head cohort; record the observed outcome of each cohort-sensitive scenario in Surprises & Discoveries.
 - [x] (2026-09-23 16:12Z) Re-run `nix develop -c cabal test kenshou-shibuya-test` after the ordering addition (20 examples, 0 failures) and `nix develop -c just cohort-check` on the restored released cohort; both passed and the working tree is clean.
 
@@ -92,6 +98,7 @@ Milestone 4 — shibuya benchmarks, soak and telemetry arms.
 - A broker source fault is now one-shot, so a replacement adapter can resume the same queue after the first application has stopped. The failed-processor scenario observed no automatic restart for five seconds, then finalized all 200 messages after an explicit application restart on both cohorts: `runs/01a0cefd-2ff4-754e-9744-4be706afc5ea/run-result.json` (released) and `runs/01a0cefd-e19d-7065-a4b0-6bc16af6ae76/run-result.json` (head).
 - With 1,000 published messages, inbox size 100 and `async:4` handlers blocked on a gate, the broker measured 105 leased but unfinalized messages against the implementation bound of 114; after opening the gate all 1,000 were finalized. Released-cohort evidence: `runs/01a0cf05-0613-7078-a258-3169943ec976/run-result.json`.
 - The ordering policy matrix passed all seven valid policy pairs on released and pinned head in `runs/01a0cf08-d088-7295-a9f2-a63cefd1bb67/run-result.json` and `runs/01a0cf09-726b-713d-b861-a0b91b22ff6e/run-result.json`. The unfinalized-lease bound also passed on head in `runs/01a0cf09-a436-738b-8897-e48842e8c035/run-result.json`.
+- The concurrent shutdown failure run `runs/01a0cf42-ee54-7550-8915-1d58145162eb/run-result.json` observed the released core deliver the scripted exception to all eight stop callers but call `shutdown` eight times on the throwing adapter and zero times on either sibling. It is `knownDefect.status=reproduced`, `blocking=false`. The pinned head run `runs/01a0cf43-8916-75c6-ad09-d1286f4704ff/run-result.json` passed. An initial run had `different-failure` because its expected-failure token named the review rather than the scenario's failure key; this was corrected before the cited runs.
 
 
 ## Decision Log
@@ -584,3 +591,5 @@ Revision note (2026-09-23): Added the bounded idle-intake halt scenario and reco
 Revision note (2026-09-23): Completed shared knob parsing and generated parser checks, and introduced the lifecycle matrix vocabulary with honest tags for the three executable scenarios. Full matrix accounting remains an open Milestone 1 requirement.
 
 Revision note (2026-09-23): Added the synthetic broker, scripted handler and restart fixtures, then exercised conservation, invalid concurrency, source failure, lease bounds, and all valid ordering policy pairs. Eight scenarios are registered and the released and pinned-head results cited above are reproducible; database adapters, metrics, worker roles, benchmarks, soaks, and full matrix accounting remain open.
+
+Revision note (2026-09-23): Added a concurrent shutdown fault scenario that observes all eight callers and all three adapter shutdowns, plus its matrix tags. The released core skips both siblings as the upstream review predicted; the package tests pass. Seven core-runner scenarios and the later milestones remain open.
