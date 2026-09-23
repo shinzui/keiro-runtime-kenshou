@@ -42,6 +42,7 @@ library
     Kenshou.Suite.Kiroku.Correctness.DeadLetter
     Kenshou.Suite.Kiroku.Correctness.Lifecycle
     Kenshou.Suite.Kiroku.Correctness.Notifier
+    Kenshou.Suite.Kiroku.Correctness.Overflow
     Kenshou.Suite.Kiroku.Correctness.Read
     Kenshou.Suite.Kiroku.Correctness.Retention
     Kenshou.Suite.Kiroku.Correctness.Subscription
