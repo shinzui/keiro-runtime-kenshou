@@ -23,6 +23,7 @@ import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue 
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario
 import Kenshou.Suite.Kiroku.Correctness.Append (recordCells)
+import Kenshou.Suite.Kiroku.Fixture.Oracle qualified as Oracle
 import Kenshou.Suite.Kiroku.Fixture.Store (withKirokuStore)
 import Kenshou.Suite.Kiroku.Knobs (storeKnobs)
 import Kiroku.Store hiding (id, withKirokuStore)
@@ -84,6 +85,8 @@ runCoverage context = withKirokuStore context \store -> do
   counts <- withMembers refs (awaitDelivered refs)
   observed <- forM refs \(member, ref) -> (member,) . reverse <$> readIORef ref
   slotsResult <- runStoreIO store (runTransaction (Tx.statement size partitionSlotsStatement))
+  oracleSlots <- Oracle.partitionSlots store.pool size
+  oracleCheckpoints <- Oracle.checkpoints store.pool
   inventory <- runStoreIO store subscriptionCheckpointInventory
   let rows = concatMap snd observed
       positions = fmap (.globalPosition) rows
@@ -106,8 +109,10 @@ runCoverage context = withKirokuStore context \store -> do
           ("union-covers-global-events", sort positions == [GlobalPosition value | value <- [1 .. 10000]]),
           ("member-positions-increase", all (\(_, memberRows) -> let ps = fmap (.globalPosition) memberRows in ps == sort ps) observed),
           ("partition-slot-agreement", Map.size slots == 500 && assigned),
+          ("oracle-partition-slots", oracleSlots == slots),
           ("per-stream-local-order", Map.size perStream == 500 && all (\versions -> versions == [StreamVersion value | value <- [1 .. 20]]) (Map.elems perStream)),
           ("checkpoint-row-per-member", sort checkpoints == [0 .. size - 1]),
+          ("oracle-checkpoints", sort [member | (checkpointName, member, _) <- oracleCheckpoints, checkpointName == "cg-coverage"] == [0 .. size - 1]),
           ("invalid-size-rejected", case invalidZero of Left _ -> True; _ -> False),
           ("invalid-upper-member-rejected", case invalidHigh of Left _ -> True; _ -> False),
           ("invalid-negative-member-rejected", case invalidNegative of Left _ -> True; _ -> False)

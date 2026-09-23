@@ -52,6 +52,7 @@ library
     Kenshou.Suite.Kiroku.Correctness.Subscription
     Kenshou.Suite.Kiroku.Correctness.Transaction
     Kenshou.Suite.Kiroku.Fixture.Facts
+    Kenshou.Suite.Kiroku.Fixture.Oracle
     Kenshou.Suite.Kiroku.Fixture.Store
     Kenshou.Suite.Kiroku.Fixture.Telemetry
     Kenshou.Suite.Kiroku.Fixture.Workload

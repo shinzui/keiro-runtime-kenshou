@@ -19,6 +19,7 @@ import Kenshou.Core.Role (ControlMessage (..), WorkerMessage (..))
 import Kenshou.Core.Role.Spawn (WorkerHandle (..), withWorker)
 import Kenshou.Core.Scenario
 import Kenshou.Suite.Kiroku.Correctness.Append (recordCells)
+import Kenshou.Suite.Kiroku.Fixture.Oracle qualified as Oracle
 import Kenshou.Suite.Kiroku.Fixture.Store (withKirokuStore)
 import Kenshou.Suite.Kiroku.Knobs (storeKnobs)
 import Kenshou.Suite.Kiroku.Roles (appenderRoleName)
@@ -64,6 +65,7 @@ runRace context = withKirokuStore context \store -> do
     then pure (failedWith ["invalid-worker-count"] "writer count must be divisible by process count")
     else do
       seeded <- forM [0 .. streams - 1] \index -> runStoreIO store (appendToStream (streamName index) NoStream [event])
+      deadlocksBefore <- Oracle.deadlockCount store.pool
       withWorkers processes [] \workers -> do
         ready <- traverse (\worker -> worker.receive 10000) workers
         forM_ workers (\worker -> worker.send CtlStart)
@@ -93,6 +95,7 @@ runRace context = withKirokuStore context \store -> do
           info <- runStoreIO store (getStream name)
           rows <- runStoreIO store (readStreamForward name (StreamVersion 0) (fromIntegral (expectedVersion + 1)))
           pure (info, rows, expectedVersion)
+        deadlocksAfter <- Oracle.deadlockCount store.pool
         let audit (info, rows, version) =
               case (info, rows) of
                 (Right (Just streamInfo), Right events) -> streamInfo.version == StreamVersion (fromIntegral version) && fmap (.streamVersion) (Vector.toList events) == fmap (StreamVersion . fromIntegral) [1 .. version]
@@ -104,7 +107,7 @@ runRace context = withKirokuStore context \store -> do
                 ("no-unexpected-worker-errors", faults == 0),
                 ("durable-versions-exact", all audit audits && sum (fmap (\(_, _, version) -> version - 1) audits) == wins)
               ]
-        putSummary context Measurements "expected-version-race" (object ["rounds" .= rounds, "writers" .= writers, "processes" .= processes, "wins" .= wins, "conflicts" .= losses, "unexpectedErrors" .= faults])
+        putSummary context Measurements "expected-version-race" (object ["rounds" .= rounds, "writers" .= writers, "processes" .= processes, "wins" .= wins, "conflicts" .= losses, "unexpectedErrors" .= faults, "databaseDeadlocksBefore" .= deadlocksBefore, "databaseDeadlocksAfter" .= deadlocksAfter])
         recordCells context "expected-version-race" [] cells
   where
     withWorkers count accumulated action

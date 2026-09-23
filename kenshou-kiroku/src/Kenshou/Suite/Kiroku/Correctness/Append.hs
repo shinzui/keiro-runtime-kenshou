@@ -24,6 +24,7 @@ import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobInt, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario
+import Kenshou.Suite.Kiroku.Fixture.Oracle qualified as Oracle
 import Kenshou.Suite.Kiroku.Fixture.Store (withKirokuStore)
 import Kenshou.Suite.Kiroku.Knobs (storeKnobs)
 import Kiroku.Store hiding (id, withKirokuStore)
@@ -188,6 +189,9 @@ runOrderAndGaps context = withKirokuStore context \store -> do
   beforeBackward <- readAllPaged store False
   headBefore <- runStoreIO store visibleGlobalHeadPosition
   countsBefore <- runStoreIO store (runTransaction (Tx.statement () threeCountsStatement))
+  oracleCountsBefore <- Oracle.threeCounts store.pool
+  oracleGapsBefore <- Oracle.gapReport store.pool
+  oracleAuditBefore <- Oracle.streamAudit store.pool
   inventoryBefore <- runStoreIO store subscriptionCheckpointInventory
   let streamIds = Map.fromList [(i, result.streamId) | (i, _, result) <- results]
       deletedIds = [streamIds Map.! i | i <- [0 .. 4]]
@@ -205,10 +209,13 @@ runOrderAndGaps context = withKirokuStore context \store -> do
   afterBackward <- readAllPaged store False
   headAfter <- runStoreIO store visibleGlobalHeadPosition
   countsAfter <- runStoreIO store (runTransaction (Tx.statement () threeCountsStatement))
+  oracleCountsAfter <- Oracle.threeCounts store.pool
+  oracleGapsAfter <- Oracle.gapReport store.pool
   inventoryAfter <- runStoreIO store subscriptionCheckpointInventory
   let positions = fmap (.globalPosition) before
       appendPositions = [result.globalPosition | (_, _, result) <- results]
       afterGaps = missingPositions maxPosition after
+      oracleMissing report = concatMap (\range -> [range.first .. range.last]) report.missingRanges
       cells =
         [ ("append-result-versions", and [result.streamVersion == StreamVersion (fromIntegral expectedVersion) | (_, expectedVersion, result) <- results]),
           ("append-results-strict-order", appendPositions == sort (nub appendPositions)),
@@ -225,13 +232,18 @@ runOrderAndGaps context = withKirokuStore context \store -> do
           ("visible-head-after", case headAfter of Right value -> value <= GlobalPosition maxPosition; _ -> False),
           ("inventory-head-bounds-visible-before", case (headBefore, inventoryBefore) of (Right visible, Right inventory) -> visible <= inventory.storePosition; _ -> False),
           ("inventory-head-bounds-visible-after", case (headAfter, inventoryAfter) of (Right visible, Right inventory) -> visible <= inventory.storePosition; _ -> False),
-          ("three-counts-before", countsBefore == Right (fromIntegral eventCount, fromIntegral (2 * eventCount), fromIntegral eventCount)),
-          ("three-counts-after", countsAfter == Right (fromIntegral (length after), fromIntegral (2 * length after), fromIntegral eventCount)),
+          ("three-counts-before", countsBefore == Right (fromIntegral eventCount, fromIntegral eventCount, fromIntegral eventCount)),
+          ("three-counts-after", countsAfter == Right (fromIntegral (length after), fromIntegral (length after), fromIntegral eventCount)),
+          ("oracle-counts-before", oracleCountsBefore == (fromIntegral eventCount, fromIntegral eventCount, fromIntegral eventCount)),
+          ("oracle-counts-after", oracleCountsAfter == (fromIntegral (length after), fromIntegral (length after), fromIntegral eventCount)),
+          ("oracle-stream-audit-before", null oracleAuditBefore),
+          ("oracle-gap-report-before", null (oracleMissing oracleGapsBefore) && oracleGapsBefore.rowCount == fromIntegral eventCount),
+          ("oracle-gap-report-after", oracleMissing oracleGapsAfter == deletedPositions && oracleGapsAfter.rowCount == fromIntegral (length after)),
           ("before-gapless", null beforeGaps),
           ("after-gaps-match-deletes", afterGaps == deletedPositions)
         ]
   putSummary context Verdicts "gap-report" (object ["beforeMissingPositions" .= beforeGaps, "afterMissingPositions" .= afterGaps, "deletedPositions" .= deletedPositions, "countsBefore" .= show countsBefore, "countsAfter" .= show countsAfter])
-  recordCells context "all-order-and-gaps" ["before-gapless", "after-gaps-match-deletes", "three-counts-before", "three-counts-after"] cells
+  recordCells context "all-order-and-gaps" ["before-gapless", "after-gaps-match-deletes"] cells
 
 threeCountsStatement :: Statement.Statement () (Int64, Int64, Int64)
 threeCountsStatement =

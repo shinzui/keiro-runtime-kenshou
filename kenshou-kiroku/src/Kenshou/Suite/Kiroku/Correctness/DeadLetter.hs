@@ -19,6 +19,7 @@ import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue 
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario
 import Kenshou.Suite.Kiroku.Correctness.Append (recordCells)
+import Kenshou.Suite.Kiroku.Fixture.Oracle qualified as Oracle
 import Kenshou.Suite.Kiroku.Fixture.Store (withKirokuStore)
 import Kenshou.Suite.Kiroku.Knobs (storeKnobs)
 import Kiroku.Store hiding (id, withKirokuStore)
@@ -73,6 +74,7 @@ runDeadLetters context = withKirokuStore context \store -> do
   caughtUp <- withSubscription store ((defaultSubscriptionConfig name AllStreams (handler deliveredRef)) {retryPolicy = RetryPolicy maxAttempts}) \_ -> awaitHead
   delivered <- reverse <$> readIORef deliveredRef
   letters <- runStoreIO store (runTransaction (Tx.statement () deadLettersStatement))
+  oracleLetters <- Oracle.deadLetters store.pool "dead-letter-subscription"
   inventory <- runStoreIO store subscriptionCheckpointInventory
   let expectedDeliveries = [GlobalPosition value | value <- [1 .. 100], value /= 10, value /= 20]
       ordinary = filter (`notElem` [GlobalPosition 10, GlobalPosition 20]) delivered
@@ -83,6 +85,7 @@ runDeadLetters context = withKirokuStore context \store -> do
           ("retry-delivery-count", length (filter (== GlobalPosition 10) delivered) == maxAttempts),
           ("explicit-poison-delivered-once", length (filter (== GlobalPosition 20) delivered) == 1),
           ("dead-letter-rows-exact", letters == Right [(10, fromIntegral maxAttempts, "max_attempts_exceeded"), (20, 1, "poison")]),
+          ("oracle-dead-letters", fmap (\row -> (row.position, row.attempts)) oracleLetters == [(10, fromIntegral maxAttempts), (20, 1)]),
           ( "checkpoint-durable-at-head",
             case inventory of
               Right snapshot -> [row.checkpointPosition | row <- Vector.toList snapshot.checkpoints, row.subscriptionName == name] == [GlobalPosition 100]

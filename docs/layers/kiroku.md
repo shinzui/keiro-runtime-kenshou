@@ -34,6 +34,8 @@ All eighteen accept `kiroku.pool-size` (1 to 64, default 10), `kiroku.statement-
 
 The change-aware planner should map `kiroku/append/**` and the other store components to `kiroku-store` and `kiroku-store-migrations`, `kiroku/metrics/**` to `kiroku-metrics`, and `kiroku/otel/**` to `kiroku-otel`. Both component families have correctness scenarios; their benchmark and concurrency scenarios remain planned.
 
+The shared SQL oracle reads the migrated `kiroku` tables through a separate pool query, pages the `$all` log by stream version, and reports gaps against its durable head. It also audits stream versions and reads the frozen checkpoint view, dead letters, partition slots and PostgreSQL deadlock counter. The append, dead-letter, consumer-group and process-race scenarios exercise those queries against the API observations.
+
 ## Concurrency coverage
 
 | Scenario | Contract checked |
