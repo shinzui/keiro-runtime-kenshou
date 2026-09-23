@@ -11,6 +11,7 @@ import Data.Time (getCurrentTime)
 import Effectful (liftIO)
 import Keiro.Command (RunCommandOptions (..), defaultRunCommandOptions)
 import Keiro.ProcessManager (RejectedCommandPolicy (..), WorkerOptions (..), defaultWorkerOptions, runProcessManagerWorkerWith)
+import Keiro.Projection (AsyncApplyOutcome (..))
 import Keiro.Router (runRouterWorkerWith)
 import Kenshou.Core.Id (unSeed)
 import Kenshou.Core.Role (ControlMessage (..), PostgresConnInfo (..), RoleContext (..), RoleName, WorkerInit (..), WorkerMessage (..), WorkerRole (..), mkRoleName)
@@ -193,11 +194,11 @@ routerWorker context = case parseMaybe parseDispatcherArgs context.init.args of
           Left issue -> context.send (WrkError (Text.pack (show issue)))
           Right () -> context.send (WrkDone Nothing)
 
-data ProjectionArgs = ProjectionArgs {batchSize :: !Int, skipDedup :: !Bool}
+data ProjectionArgs = ProjectionArgs {batchSize :: !Int, skipDedup :: !Bool, parkAfterApply :: !Bool}
 
 parseProjectionArgs :: Value -> Parser ProjectionArgs
 parseProjectionArgs = withObject "keiro projection worker" \value ->
-  ProjectionArgs <$> value .:? "batchSize" .!= 100 <*> value .:? "skipDedup" .!= False
+  ProjectionArgs <$> value .:? "batchSize" .!= 100 <*> value .:? "skipDedup" .!= False <*> value .:? "parkAfterApply" .!= False
 
 projectionWorker :: RoleContext -> IO ()
 projectionWorker context = case parseMaybe parseProjectionArgs context.init.args of
@@ -209,5 +210,12 @@ projectionWorker context = case parseMaybe parseProjectionArgs context.init.args
       then pure ()
       else withFixtureEnv (defaultConnectionSettings postgres.connectionString) \fixture -> do
         let sabotage = if args.skipDedup then SkipDedup else NoProjectionSabotage
-        runAccountActivityWorker fixture.store (fromIntegral args.batchSize) sabotage \recorded outcome ->
+        runAccountActivityWorker fixture.store (fromIntegral args.batchSize) sabotage \recorded outcome -> do
           context.send (WrkFacts [object ["eventId" .= show recorded.eventId, "outcome" .= show outcome]])
+          case outcome of
+            AsyncDuplicate -> context.send (WrkCustom "projection-duplicate" (object ["eventId" .= show recorded.eventId]))
+            AsyncApplied -> context.send (WrkCustom "projection-applied" (object ["eventId" .= show recorded.eventId]))
+            AsyncFenced -> pure ()
+          if args.parkAfterApply && outcome == AsyncApplied
+            then parkForever context "after-projection-apply"
+            else pure ()

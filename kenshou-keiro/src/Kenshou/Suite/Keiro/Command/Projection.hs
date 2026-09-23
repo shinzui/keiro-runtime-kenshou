@@ -1,5 +1,8 @@
 module Kenshou.Suite.Keiro.Command.Projection (scenarios) where
 
+import Control.Concurrent (threadDelay)
+import Control.Concurrent.STM (atomically)
+import Data.Aeson (object, (.=))
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
 import Data.Time (addUTCTime)
@@ -9,13 +12,17 @@ import Hasql.Connection.Settings qualified as Settings
 import Keiro.Command (CommandResult (..), defaultRunCommandOptions, runCommand)
 import Keiro.Projection (AsyncApplyOutcome (..), applyAsyncProjection, pruneAsyncProjectionDedupBefore)
 import Keiro.ReadModel.Schema (markLive, markRebuilding)
+import Kenshou.Check.Process (ProgressSnapshot (..), awaitMark, awaitReady, childPid, killChild, progress, roleProcess, sendCommand, spawn, withSupervisor)
+import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (parseScenarioId)
+import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), knobText, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
-import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..))
+import Kenshou.Core.Role (ControlMessage (..))
+import Kenshou.Core.Scenario (CohortScope (..), KnownDefect (..), Placement (..), Scenario (..), ScenarioReport, Tier (..))
 import Kenshou.Suite.Keiro.Command.Correctness (recordCells)
 import Kenshou.Suite.Keiro.Fixture.Account
 import Kenshou.Suite.Keiro.Fixture.Domain
@@ -25,9 +32,84 @@ import Kenshou.Suite.Keiro.Fixture.Runtime
 import Kiroku.Store (defaultConnectionSettings, runTransaction)
 import Kiroku.Store.Read (readCategory)
 import Kiroku.Store.Types (CategoryName (..), GlobalPosition (..), RecordedEvent (..))
+import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [asyncDedupAndFence]
+scenarios = [asyncDedupAndFence, asyncAtLeastOnceUnderKill, asyncApplyCheckpointAtomic]
+
+asyncAtLeastOnceUnderKill :: Scenario
+asyncAtLeastOnceUnderKill =
+  asyncDedupAndFence
+    { id = either (error . show) id (parseScenarioId "keiro/projection/concurrency/async-at-least-once-under-kill"),
+      summary = "Kills a projection worker after apply and checks deduplication on restart.",
+      tier = TierStandard,
+      knobs = [KnobSpec (either (error . show) id (mkKnobName "projection.sabotage")) "Disable deduplication on restart" KnobText (VText "none") (OneOf (VText "none" :| [VText "skip-dedup"])) []],
+      dimensions =
+        DimensionSupport
+          { tracing = Supported (Support (TracingOff :| []) TracingOff),
+            metrics = Supported (Support (MetricsOff :| []) MetricsOff),
+            pgDurability = Supported (Support (PgDurable :| []) PgDurable),
+            pgVersion = Supported (Support (Pg18 :| []) Pg18)
+          },
+      run = runAsyncCrash False
+    }
+
+asyncApplyCheckpointAtomic :: Scenario
+asyncApplyCheckpointAtomic =
+  asyncAtLeastOnceUnderKill
+    { id = either (error . show) id (parseScenarioId "keiro/projection/concurrency/async-apply-checkpoint-atomic"),
+      summary = "Checks the stronger atomic apply and checkpoint property.",
+      knobs = [],
+      knownDefect = Just (KnownDefect "mori://shinzui/keiro/okf/improvement-requests/concepts/IR-10" "Async apply and subscription checkpoint are separate" ["no-redelivery-after-apply"] AllCohorts),
+      run = runAsyncCrash True
+    }
+
+runAsyncCrash :: Bool -> RunContext -> IO ScenarioReport
+runAsyncCrash atomicContract context =
+  withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture ->
+    withCheck context \check -> withSupervisor check \supervisor -> do
+      let KeiroRunner runFixture = fixture.runner
+          account = AccountId "projection-crash"
+          accountEvents = accountEventStream SnapNever
+          sabotage = if atomicContract then False else knobText context.knobs (either (error . show) id (mkKnobName "projection.sabotage")) == "skip-dedup"
+          accepted = \case Right (Right result) -> result.eventsAppended == 1; _ -> False
+      _ <- runFixture ensureFixtureReadModels >>= either (fail . show) pure
+      opened <- runFixture (runCommand defaultRunCommandOptions accountEvents (accountStream account) (OpenAccount (OpenAccountData account 5)))
+      deposited <- runFixture (runCommand defaultRunCommandOptions accountEvents (accountStream account) (Deposit (DepositData account 1 "after-crash")))
+      armedSpec <- roleProcess check "keiro/projection-worker" 0 (object ["batchSize" .= (100 :: Int), "parkAfterApply" .= True])
+      armed <- spawn supervisor armedSpec
+      awaitReady armed 10000
+      sendCommand armed CtlStart
+      awaitMark armed "parked" 30000
+      acquired <- Connection.acquire (Settings.connectionString (requirePostgres context).connectionString <> Settings.applicationName "kenshou-keiro-projection-crash-oracle")
+      connection <- either (fail . show) pure acquired
+      before <- Oracle.readActivityTable connection
+      killChild supervisor armed
+      resumedSpec <- roleProcess check "keiro/projection-worker" 1 (object ["batchSize" .= (100 :: Int), "skipDedup" .= sabotage])
+      resumed <- spawn supervisor resumedSpec
+      awaitReady resumed 10000
+      sendCommand resumed CtlStart
+      completed <- timeout 90000000 (awaitActivity connection account (if sabotage then 3 else 2))
+      after <- Oracle.readActivityTable connection
+      observed <- atomically (progress resumed)
+      Connection.release connection
+      killChild supervisor resumed
+      let redelivered = Map.member "projection-duplicate" observed.marks
+          baseCells =
+            [ ("source-setup", accepted opened && accepted deposited),
+              ("applied-before-kill", Map.lookup account before == Just (1, 5)),
+              ("killed-and-restarted", childPid armed /= childPid resumed && completed == Just True),
+              ("activity-equals-log", Map.lookup account after == Just (2, 6)),
+              ("redelivery-deduplicated", redelivered)
+            ]
+          cells = if atomicContract then baseCells <> [("no-redelivery-after-apply", not redelivered)] else baseCells
+      recordCells context cells
+  where
+    awaitActivity connection account expected = do
+      rows <- Oracle.readActivityTable connection
+      if maybe False ((>= expected) . fst) (Map.lookup account rows)
+        then pure True
+        else threadDelay 100000 >> awaitActivity connection account expected
 
 asyncDedupAndFence :: Scenario
 asyncDedupAndFence =

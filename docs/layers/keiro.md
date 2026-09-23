@@ -52,4 +52,8 @@ correctness scenarios check fanout under redelivery and selection drift, indepen
 target commits with a durable dead letter, and the declarative selection
 policy matrix. A reordered redelivery probe checks that dead-letter rows still
 identify their rejected targets. The asynchronous projection scenario checks deduplication,
-rebuild fencing, and the documented effect of pruning deduplication rows.
+rebuild fencing, and the documented effect of pruning deduplication rows. A
+projection worker crash after apply checks that redelivery is deduplicated;
+the `skip-dedup` arm fails. The stronger apply/checkpoint atomicity run
+reproduces the known defect at
+`mori://shinzui/keiro/okf/improvement-requests/concepts/IR-10`.
