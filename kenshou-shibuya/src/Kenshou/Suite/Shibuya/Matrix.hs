@@ -62,8 +62,10 @@ renderLifecycleCase RepeatedStop = "repeatedStop"
 -- Only cells actually exercised by an executable scenario belong here.
 cellsOf :: ScenarioId -> [Cell]
 cellsOf scenario = case renderScenarioId scenario of
+  "shibuya/core-runner/correctness/every-delivery-is-finalized-exactly-once" -> [(Dispatch, Normal), (Finalization, Normal), (IngestionBackpressure, Normal)]
   "shibuya/core-runner/correctness/invalid-config-rejected-before-effects" -> [(StartupRegistration, Normal), (StartupRegistration, SynchronousException)]
   "shibuya/core-runner/correctness/duplicate-processor-ids-are-rejected" -> [(StartupRegistration, SynchronousException)]
+  "shibuya/core-runner/correctness/nonpositive-concurrency-is-rejected" -> [(Dispatch, SynchronousException)]
   "shibuya/core-runner/concurrency/halt-wakes-idle-intake" -> [(Dispatch, Timeout)]
   _ -> []
 

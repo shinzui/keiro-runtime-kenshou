@@ -42,14 +42,14 @@ Milestone 1 — shibuya core lifecycle, ordering, batching and metrics-truthfuln
 - [x] (2026-09-23 13:42Z) Implement the `Kenshou.Suite.Shibuya.Cohort` capability probe and review references; linked-core unit checks pass on the released cohort.
 - [x] (2026-09-23 13:48Z) Cross-check the capability probe against the resolved head cohort and run the unit checks there; the pinned head build and four package tests pass.
 - [x] (2026-09-23 13:56Z) Finish `Kenshou.Suite.Shibuya.Knobs`: common specifications and all five parsers are present, with example and generated round-trip tests.
-- [ ] Complete `Kenshou.Suite.Shibuya.Matrix`: thirteen boundaries and five cases enumerate sixty-five cells; the three registered scenarios have tested tags, while the remaining scenario tags, justified exclusions, and complete sixty-five-cell coverage assertion remain.
+- [ ] Complete `Kenshou.Suite.Shibuya.Matrix`: thirteen boundaries and five cases enumerate sixty-five cells; the five registered scenarios have tested tags, while the remaining scenario tags, justified exclusions, and complete sixty-five-cell coverage assertion remain.
 - [ ] Implement `Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter`, `.Handlers`, `.App`, `.RestartLoop` with unit tests. The synthetic broker now covers lease expiry, retry redelivery, stale finalization, scripted finalizer faults, and throwing or blocking shutdowns (16 package tests pass); handler, app, and restart helpers remain.
-- [ ] Implement the `core-runner` scenarios (fifteen) and the `shibuya-core-worker` and `shibuya-gc-probe` worker roles. Three scenarios exist: invalid configuration, duplicate processor IDs, and idle-intake halt. The other twelve and both roles remain.
+- [ ] Implement the `core-runner` scenarios (fifteen) and the `shibuya-core-worker` and `shibuya-gc-probe` worker roles. Five scenarios exist: invalid configuration, duplicate processor IDs, idle-intake halt, finite-source conservation, and nonpositive concurrency. The other ten and both roles remain.
 - [ ] Implement the `core-ordering` scenarios (four).
 - [ ] Implement the `core-batch` correctness and concurrency scenarios (two).
 - [ ] Implement the `metrics` scenarios (eight) including the free-port allocation for `startMetricsServer`.
 - [x] (2026-09-23 13:42Z) Register the initial `bundle` in `kenshou-cli`; `kenshou list --layer shibuya` displays the two implemented scenarios.
-- [ ] Expand the registered bundle to all twenty-nine Milestone 1 scenarios and their roles; three are registered now.
+- [ ] Expand the registered bundle to all twenty-nine Milestone 1 scenarios and their roles; five are registered now.
 - [ ] Run every Milestone 1 scenario on the released cohort and on the head cohort; record the observed outcome of each cohort-sensitive scenario in Surprises & Discoveries.
 
 Milestone 2 — PGMQ adapter scenarios.
@@ -85,6 +85,8 @@ Milestone 4 — shibuya benchmarks, soak and telemetry arms.
 - The local upstream shibuya checkout now declares `shibuya-core` 0.10.0.0, while both checked-in cohorts still pin 0.9.0.3; the PGMQ and kiroku adapter checkouts similarly declare 0.16.1.0 and 0.5.1.3 versus cohort pins 0.16.0.0 and 0.5.1.2. The implementation targets the checked-in cohort contract and must test both pins explicitly. The plan's claim that the upstream head has the same package version was true of its pinned head commit, not the checkout's current tip.
 - The released-core duplicate-ID scenario reproduced REV-3-F2: `runApp` accepted duplicate IDs and pulled a source. The run result `runs/01a0ce7f-e937-746a-a328-322fbf03641b/run-result.json` records `knownDefect.status = reproduced` and `blocking = false`. The invalid-configuration scenario passed on the same cohort.
 - The first idle-intake halt probe returned promptly in `async:4` on both cohorts despite the released-core REV-4-F1 finding. It confirmed the source reached its idle wait, but the handler returned at nearly the same instant. Holding the handler for 100 ms after intake became idle allowed the concurrent reader to block: released run `runs/01a0ce88-b274-730f-96fb-4f1885a978a1/run-result.json` has `waitAppCompleted=false`, `idleSourceReached=true`, `finalized=1`, `cleanupCompleted=true`, `knownDefect.status=reproduced`, `blocking=false`; pinned head run `runs/01a0ce89-5800-7116-b189-6ce02ca8bcb3/run-result.json` passes with no known-defect annotation. The extra wait is a fixture scheduling gate, not part of the measured wait deadline.
+- The synthetic broker's 20 ms lease can expire repeatedly while a first handler sleeps for 100 ms. Its lease unit test therefore checks conservation, at least one stale-finalization rejection, and consistency between redeliveries and expiry events rather than assuming exactly one redelivery.
+- The nonpositive-concurrency scenario reproduced released-core REV-6-F1 with `async:0`, `async:-1`, and `ahead:0` in `runs/01a0cef6-3380-73e2-8d50-b7d23e92f7b0/run-result.json` (`blocking=false`), while the pinned head passed in `runs/01a0cef5-4e99-7258-a77c-42e7158a15f7/run-result.json`. The finite-source conservation scenario, including ten scripted handler exceptions that cause retries, passed on both cohorts (`runs/01a0cef7-82f6-72a4-90b6-2aed25657d1b/run-result.json` and `runs/01a0cef8-0f4b-764f-b5cb-51e781f737e8/run-result.json`).
 
 
 ## Decision Log
