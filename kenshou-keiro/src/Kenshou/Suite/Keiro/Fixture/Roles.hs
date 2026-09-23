@@ -23,7 +23,7 @@ import Kenshou.Suite.Keiro.Fixture.Runtime
 import Kenshou.Suite.Keiro.Fixture.Transfer
 import Kenshou.Suite.Keiro.Fixture.Workload qualified as Workload
 import Kiroku.Store (defaultConnectionSettings)
-import Kiroku.Store.Subscription.Types (SubscriptionName (..))
+import Kiroku.Store.Subscription.Types (ConsumerGroup (..), SubscriptionName (..))
 import Kiroku.Store.Types (RecordedEvent (..))
 
 roles :: [WorkerRole]
@@ -119,7 +119,9 @@ data DispatcherArgs = DispatcherArgs
     parkBeforeAck :: !Bool,
     reverseRecipients :: !Bool,
     rejectedDeadLetter :: !Bool,
-    reportAcks :: !Bool
+    reportAcks :: !Bool,
+    groupMember :: !(Maybe Int),
+    groupSize :: !(Maybe Int)
   }
 
 parseDispatcherArgs :: Value -> Parser DispatcherArgs
@@ -131,6 +133,8 @@ parseDispatcherArgs = withObject "keiro dispatcher" \value ->
     <*> value .:? "reverseRecipients" .!= False
     <*> value .:? "rejectedDeadLetter" .!= False
     <*> value .:? "reportAcks" .!= False
+    <*> value .:? "groupMember"
+    <*> value .:? "groupSize"
 
 parkForever :: RoleContext -> Text -> IO ()
 parkForever context point = do
@@ -161,7 +165,8 @@ processManagerWorker context = case parseMaybe parseDispatcherArgs context.init.
         options <- dispatchOptions context args
         let KeiroRunner runFixture = fixture.runner
         result <- runFixture do
-          adapter <- kirokuBridge fixture.store (sagaAdapterConfig (SubscriptionName args.subscription) Nothing)
+          let group = ConsumerGroup <$> (fromIntegral <$> args.groupMember) <*> (fromIntegral <$> args.groupSize)
+          adapter <- kirokuBridge fixture.store (sagaAdapterConfig (SubscriptionName args.subscription) group)
           let observed =
                 interposeAck
                   ( \_ decision -> do

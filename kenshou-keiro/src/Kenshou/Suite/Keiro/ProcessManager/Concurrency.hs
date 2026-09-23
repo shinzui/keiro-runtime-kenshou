@@ -3,20 +3,23 @@ module Kenshou.Suite.Keiro.ProcessManager.Concurrency (scenarios) where
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM (atomically)
 import Data.Aeson (object, (.=))
+import Data.Foldable (traverse_)
+import Data.List (nub, sort)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
+import Data.Text qualified as Text
 import Hasql.Connection qualified as Connection
 import Hasql.Connection.Settings qualified as Settings
 import Keiro.Command (CommandResult (..), defaultRunCommandOptions, runCommand)
 import Kenshou.Check.Process (ProgressSnapshot (..), awaitMark, awaitReady, childPid, killChild, progress, roleProcess, sendCommand, spawn, withSupervisor)
 import Kenshou.Check.Scenario (withCheck)
-import Kenshou.Core.Context (RunContext (..), requirePostgres)
+import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary, requirePostgres)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (parseScenarioId)
-import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), knobText, mkKnobName)
+import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), knobInt, knobText, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Role (ControlMessage (..))
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..))
@@ -30,7 +33,83 @@ import Kiroku.Store.Types (EventType (..))
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [sigkillCrashWindows]
+scenarios = [sigkillCrashWindows, topologies]
+
+topologies :: Scenario
+topologies =
+  sigkillCrashWindows
+    { id = either (error . show) id (parseScenarioId "keiro/process-manager/concurrency/topologies"),
+      summary = "Checks duplicate subscribers and consumer-group workers converge on one effect per transfer.",
+      knobs =
+        [ KnobSpec (either (error . show) id (mkKnobName "pm.topology")) "Worker subscription layout" KnobText (VText "duplicate-subscribers") (OneOf (VText "duplicate-subscribers" :| [VText "consumer-group"])) [],
+          KnobSpec (either (error . show) id (mkKnobName "pm.processes")) "Workers in the layout" KnobInt (VInt 2) (IntRange 2 4) []
+        ],
+      run = runTopology
+    }
+
+runTopology :: RunContext -> IO ScenarioReport
+runTopology context =
+  withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture ->
+    withCheck context \check -> withSupervisor check \supervisor -> do
+      let KeiroRunner runFixture = fixture.runner
+          topology = knobText context.knobs (either (error . show) id (mkKnobName "pm.topology"))
+          processCount = fromIntegral (knobInt context.knobs (either (error . show) id (mkKnobName "pm.processes"))) :: Int
+          transferCount = 10 :: Int
+          accountEvents = accountEventStream SnapNever
+          source index = AccountId ("topology-source-" <> Text.pack (show index))
+          destination index = AccountId ("topology-destination-" <> Text.pack (show index))
+          transfer index = TransferId ("topology-transfer-" <> Text.pack (show index))
+          submit account command = runFixture (runCommand defaultRunCommandOptions accountEvents (accountStream account) command)
+          accepted = \case Right (Right result) -> result.eventsAppended == 1; _ -> False
+          subscription = "kenshou-keiro-topologies" :: Text
+      seeded <-
+        traverse
+          ( \index -> do
+              openedSource <- submit (source index) (OpenAccount (OpenAccountData (source index) 10))
+              openedDestination <- submit (destination index) (OpenAccount (OpenAccountData (destination index) 0))
+              let announce = submit (source index) (AnnounceTransfer (AnnounceTransferData (source index) (transfer index)))
+                  debit = submit (source index) (DebitTransfer (DebitTransferData (source index) (transfer index) (destination index) 2 4102444800))
+              legs <- if even index then sequence [announce, debit] else sequence [debit, announce]
+              pure (openedSource : openedDestination : legs)
+          )
+          [0 .. transferCount - 1]
+      children <-
+        traverse
+          ( \index -> do
+              let args = object (["subscription" .= subscription] <> if topology == "consumer-group" then ["groupMember" .= index, "groupSize" .= processCount] else [])
+              spec <- roleProcess check "keiro/pm-worker" index args
+              spawn supervisor spec
+          )
+          [0 .. processCount - 1]
+      traverse_ (\child -> awaitReady child 10000 >> sendCommand child CtlStart) children
+      acquired <- Connection.acquire (Settings.connectionString (requirePostgres context).connectionString <> Settings.applicationName "kenshou-keiro-topology-oracle")
+      connection <- either (fail . show) pure acquired
+      completed <- timeout 90000000 (awaitTopology connection transferCount)
+      sagaRows <- Oracle.readCategoryLog connection "pm:transferSaga"
+      accountRows <- Oracle.readCategoryLog connection "account"
+      Connection.release connection
+      let firstSagaEvents = [row.eventType | row <- sagaRows, row.streamVersion == 1]
+          sagaStreams = Map.fromListWith (<>) [(row.streamName, [row.eventType]) | row <- sagaRows]
+          joined = Map.size sagaStreams == transferCount && all (\types -> sort types == sort [EventType "AnnounceObserved", EventType "DebitObserved"]) (Map.elems sagaStreams)
+          credits = [row | row <- accountRows, row.eventType == EventType "TransferCredited"]
+          confirmations = [row | row <- accountRows, row.eventType == EventType "TransferConfirmed"]
+          cells =
+            [ ("source-setup", all accepted (concat seeded)),
+              ("workers-distinct", length (nub (map childPid children)) == processCount),
+              ("both-input-orders", EventType "AnnounceObserved" `elem` firstSagaEvents && EventType "DebitObserved" `elem` firstSagaEvents),
+              ("all-sagas-joined", completed == Just True && joined),
+              ("exactly-once-target-effects", length credits == transferCount && length confirmations == transferCount),
+              ("logs-well-formed", Oracle.logWellFormed accountRows && Oracle.logWellFormed sagaRows)
+            ]
+      putSummary context Measurements "topologies" (object ["topology" .= topology, "workers" .= processCount, "transfers" .= transferCount, "announceFirstFraction" .= (fromIntegral (length (filter (== EventType "AnnounceObserved") firstSagaEvents)) / fromIntegral transferCount :: Double)])
+      recordCells context cells
+  where
+    awaitTopology connection transferCount = do
+      sagaRows <- Oracle.readCategoryLog connection "pm:transferSaga"
+      accountRows <- Oracle.readCategoryLog connection "account"
+      if length sagaRows == transferCount * 2 && length [() | row <- accountRows, row.eventType == EventType "TransferCredited"] == transferCount && length [() | row <- accountRows, row.eventType == EventType "TransferConfirmed"] == transferCount
+        then pure True
+        else threadDelay 100000 >> awaitTopology connection transferCount
 
 sigkillCrashWindows :: Scenario
 sigkillCrashWindows =
