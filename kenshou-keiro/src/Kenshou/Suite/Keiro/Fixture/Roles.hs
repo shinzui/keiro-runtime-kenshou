@@ -58,7 +58,9 @@ data WriterArgs = WriterArgs
     accounts :: !Int,
     clientRetryBudget :: !Int,
     parkAfterIndex :: !(Maybe Int),
-    inlineProjectionSleep :: !Bool
+    inlineProjectionSleep :: !Bool,
+    seedVerifySampleRate :: !Int,
+    postSubmissionDelayMicros :: !Int
   }
 
 parseWriterArgs :: Value -> Parser WriterArgs
@@ -72,6 +74,8 @@ parseWriterArgs = withObject "keiro command writer" \value ->
     <*> value .:? "clientRetryBudget" .!= 5
     <*> value .:? "parkAfterIndex"
     <*> value .:? "inlineProjectionSleep" .!= False
+    <*> value .:? "seedVerifySampleRate" .!= 1000
+    <*> value .:? "postSubmissionDelayMicros" .!= 0
 
 commandWriter :: RoleContext -> IO ()
 commandWriter context = case parseMaybe parseWriterArgs context.init.args of
@@ -92,7 +96,8 @@ commandWriter context = case parseMaybe parseWriterArgs context.init.args of
                   Left (_, bonusCommand) -> submitBonusCommand fixture defaultRunCommandOptions eventId bonusCommand
                   Right (_, accountCommand) ->
                     let runnerKind = if args.inlineProjectionSleep then RunnerWithProjections [accountBalanceProjection, parkingProjection] else RunnerPlain
-                     in submitAccountCommand fixture eventStream runnerKind defaultRunCommandOptions args.clientRetryBudget eventId accountCommand
+                     in submitAccountCommand fixture eventStream runnerKind defaultRunCommandOptions {seedVerifySampleRate = args.seedVerifySampleRate} args.clientRetryBudget eventId accountCommand
+              threadDelay args.postSubmissionDelayMicros
               if any isFailure outcomes
                 then context.send (WrkError ("command writer operation failed at index " <> Text.pack (show operation.index)))
                 else do

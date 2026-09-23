@@ -6,6 +6,7 @@ import Control.Concurrent.STM (atomically)
 import Control.Monad (replicateM)
 import Data.Aeson (object, withObject, (.:), (.=))
 import Data.Aeson.Types (parseMaybe)
+import Data.ByteString qualified as ByteString
 import Data.Foldable (traverse_)
 import Data.IORef (atomicModifyIORef', newIORef)
 import Data.List (findIndex, nub)
@@ -17,6 +18,10 @@ import Data.Time (addUTCTime, getCurrentTime)
 import GHC.Clock (getMonotonicTimeNSec)
 import Hasql.Connection qualified as Connection
 import Hasql.Connection.Settings qualified as Settings
+import Hasql.Decoders qualified as Decoders
+import Hasql.Encoders qualified as Encoders
+import Hasql.Session qualified as Session
+import Hasql.Statement qualified as Statement
 import Hedgehog (Gen, forAll)
 import Hedgehog qualified
 import Hedgehog.Gen qualified as Gen
@@ -46,9 +51,70 @@ import Kenshou.Suite.Keiro.Fixture.Workload qualified as Workload
 import Kiroku.Store (defaultConnectionSettings)
 import Kiroku.Store.Error (StoreError (..))
 import Kiroku.Store.Types (StreamVersion (..))
+import System.FilePath ((</>))
 
 scenarios :: [Scenario]
-scenarios = [identicalCommandsOneBatch, hotStreamContention, sigkillIdempotentResubmission, modelBasedParallelCommands]
+scenarios = [identicalCommandsOneBatch, hotStreamContention, sigkillIdempotentResubmission, modelBasedParallelCommands, seedDivergenceDetection]
+
+seedDivergenceDetection :: Scenario
+seedDivergenceDetection =
+  identicalCommandsOneBatch
+    { id = either (error . show) id (parseScenarioId "keiro/snapshot/correctness/seed-divergence-detection"),
+      summary = "Checks sampled snapshot seed verification reports a corrupt seed without rejecting the command.",
+      knobs = [KnobSpec (knobName "snapshot.seed-verify-sample-rate") "Verify one in N snapshot seeds" KnobInt (VInt 1) (IntRange 0 1) []],
+      run = runSeedDivergence
+    }
+
+runSeedDivergence :: RunContext -> IO ScenarioReport
+runSeedDivergence context =
+  withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture ->
+    withCheck context \check -> withSupervisor check \supervisor -> do
+      let KeiroRunner runFixture = fixture.runner
+          seed = unSeed context.seed
+          account = AccountId "0"
+          accountEvents = accountEventStream (SnapEvery 1)
+          workload = take 100 (Workload.workerOps seed Workload.defaultWorkloadSpec {Workload.accounts = 1} 0 1)
+          isDepositOp operation = case operation.action of Workload.ActDeposit {} -> True; _ -> False
+          rate = fromIntegral (knobInt context.knobs (knobName "snapshot.seed-verify-sample-rate")) :: Int
+      startIndex <- maybe (fail "no deposit in first 100 seeded operations") pure (findIndex isDepositOp workload)
+      let operation = workload !! startIndex
+          eventId = Workload.opEventId seed operation 0
+          args = object ["worker" .= (0 :: Int), "workers" .= (1 :: Int), "startIndex" .= startIndex, "count" .= (1 :: Int), "accounts" .= (1 :: Int), "seedVerifySampleRate" .= rate, "postSubmissionDelayMicros" .= (1000000 :: Int)]
+      opened <- runFixture (runCommand defaultRunCommandOptions accountEvents (accountStream account) (OpenAccount (OpenAccountData account 10000)))
+      acquired <- Connection.acquire (Settings.connectionString (requirePostgres context).connectionString <> Settings.applicationName "kenshou-keiro-seed-divergence-oracle")
+      connection <- either (fail . show) pure acquired
+      before <- Oracle.readSnapshots connection
+      _ <- Connection.use connection (Session.statement () corruptSnapshot) >>= either (fail . show) pure
+      corrupted <- Oracle.readSnapshots connection
+      spec <- roleProcess check "keiro/command-writer" 0 args
+      child <- spawn supervisor spec
+      awaitReady child 10000
+      sendCommand child CtlStart
+      awaitMark child "submission" 30000
+      reported <- atomically (progress child)
+      after <- Oracle.readCategoryLog connection "account"
+      Connection.release connection
+      stderr <- ByteString.readFile (context.outDir </> "logs" </> "keiro-command-writer-0.0.stderr.log")
+      let snapshotKey = accountStreamName account
+          outcome = do
+            payload <- Map.lookup "submission" reported.marks
+            parseMaybe (withObject "submission" (.: "outcomes")) payload :: Maybe [Text]
+          hasMarker = "keiro.snapshot.seed.divergence" `ByteString.isInfixOf` stderr
+          cells =
+            [ ("snapshot-created", case (opened, Map.lookup snapshotKey before) of (Right (Right result), Just (1, _)) -> result.eventsAppended == 1; _ -> False),
+              ("snapshot-corrupted", Map.lookup snapshotKey before /= Map.lookup snapshotKey corrupted),
+              ("command-succeeds", case outcome of Just [value] -> "SubmitAppended" `Text.isPrefixOf` value; _ -> False),
+              ("sampling-diagnostic", hasMarker == (rate == 1)),
+              ("durable-append", length [() | row <- after, row.eventId == eventId] == 1 && Oracle.logWellFormed after)
+            ]
+      recordCells context cells
+
+corruptSnapshot :: Statement.Statement () ()
+corruptSnapshot =
+  Statement.preparable
+    "UPDATE keiro.keiro_snapshots sn SET state = jsonb_set(sn.state, '{registers,balance}', '999999'::jsonb) FROM kiroku.streams s WHERE s.stream_id = sn.stream_id AND s.stream_name = 'account-0'"
+    Encoders.noParams
+    Decoders.noResult
 
 data ModelObservation = ModelAccepted !Int | ModelRejected | ModelNoOp
   deriving stock (Eq, Show)
