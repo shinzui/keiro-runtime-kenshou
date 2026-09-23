@@ -136,6 +136,7 @@ parkingProjection =
     { name = "kenshou-parking-projection",
       apply = \event _ -> case event of
         Deposited d | d.memo == "workload" || d.memo == "kenshou:park" -> Tx.sql "SELECT pg_sleep(30)"
+        TransferCredited {} -> Tx.sql "SELECT pg_sleep(30)"
         _ -> pure ()
     }
 

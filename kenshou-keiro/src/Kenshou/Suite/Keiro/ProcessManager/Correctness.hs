@@ -1,10 +1,11 @@
 module Kenshou.Suite.Keiro.ProcessManager.Correctness (scenarios) where
 
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async (async, cancel)
+import Control.Concurrent.Async (async, cancel, wait)
 import Control.Monad (forM, forM_)
 import Data.Aeson (object)
 import Data.IORef (modifyIORef', newIORef, readIORef)
+import Data.Int (Int32)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -37,10 +38,12 @@ import Kenshou.Suite.Keiro.Fixture.Bridge
 import Kenshou.Suite.Keiro.Fixture.Domain
 import Kenshou.Suite.Keiro.Fixture.Model qualified as Model
 import Kenshou.Suite.Keiro.Fixture.Oracle qualified as Oracle
+import Kenshou.Suite.Keiro.Fixture.Projection (parkingProjection)
 import Kenshou.Suite.Keiro.Fixture.Runtime
 import Kenshou.Suite.Keiro.Fixture.Transfer
 import Kenshou.Suite.Keiro.Fixture.Workload qualified as Workload
 import Kiroku.Store (appendToStream, defaultConnectionSettings)
+import Kiroku.Store.Error (StoreError (..))
 import Kiroku.Store.Read (readCategory)
 import Kiroku.Store.Subscription.Types (EventTypeFilter (..), RetryPolicy (..), SubscriptionConfigM (..), SubscriptionName (..), SubscriptionResult (..), SubscriptionTarget (..), defaultSubscriptionConfig)
 import Kiroku.Store.Types (CategoryName (..), EventType (..), ExpectedVersion (..), GlobalPosition (..), RecordedEvent (..), StreamName (..))
@@ -215,7 +218,54 @@ runTransientClassification context =
             _ -> False
           expected = decision && (caseName == "decode" || hookCount >= 2)
       pure (caseName, all accepted setup && closed && malformed && expected)
-    recordCells context results
+    let source = AccountId "transient-backend-source"
+        destination = AccountId "transient-backend-destination"
+        transfer = TransferId "transient-backend-transfer"
+    setup <- sequence [submit source (OpenAccount (OpenAccountData source 2)), submit destination (OpenAccount (OpenAccountData destination 0)), submit source (DebitTransfer (DebitTransferData source transfer destination 2 4102444800))]
+    batch <- runFixture (readCategory (CategoryName "account") (GlobalPosition 0) 1000) >>= either (fail . show) pure
+    debit <- case [recorded | recorded <- Vector.toList batch, Just (_, SignalDebited d) <- [decodeTransferSignal recorded], d.transferId == transfer] of
+      [recorded] -> pure recorded
+      other -> fail ("expected one backend classification debit, observed " <> show (length other))
+    acknowledgements <- newIORef []
+    let adapter = listAdapter "transient-backend" acknowledgements [(debit, Nothing)]
+        options = defaultWorkerOptions {transientRetryDelay = RetryDelay 5}
+    worker <- async (runFixture (runProcessManagerWorkerWith options defaultRunCommandOptions (transferManager accountEvents (const [parkingProjection])) adapter decodeTransferSignal))
+    acquired <- Connection.acquire (Settings.connectionString (requirePostgres context).connectionString <> Settings.applicationName "kenshou-keiro-backend-classification-oracle")
+    connection <- either (fail . show) pure acquired
+    sleeper <- timeout 10000000 (awaitSleeper connection)
+    terminated <- case sleeper of
+      Nothing -> pure False
+      Just pid -> Connection.use connection (Session.statement pid terminateBackend) >>= either (fail . show) pure
+    finished <- timeout 10000000 (wait worker)
+    if finished == Nothing then cancel worker else pure ()
+    backendAcks <- readIORef acknowledgements
+    accountRows <- Oracle.readCategoryLog connection "account"
+    Connection.release connection
+    let conflictTarget = AccountId "transient-direct-credit"
+    directOpened <- submit conflictTarget (OpenAccount (OpenAccountData conflictTarget 0))
+    let directInject = do
+          _ <- submit conflictTarget (Deposit (DepositData conflictTarget 1 "foreign"))
+          pure ()
+        directOptions = defaultRunCommandOptions {retryLimit = 1, beforeAppend = directInject}
+    directCredit <- runFixture (runCommand directOptions accountEvents (accountStream conflictTarget) (CreditTransfer (CreditTransferData conflictTarget (TransferId "transient-direct-transfer") source 2)))
+    let backendRetry = case backendAcks of [ack] -> ack.decision == AckRetry (RetryDelay 5); _ -> False
+        backendUncommitted = null [() | row <- accountRows, row.streamName == accountStreamName destination, row.eventType == EventType "TransferCredited"]
+        exhausted = case directCredit of Right (Left (RetryExhausted 2 WrongExpectedVersion {})) -> True; _ -> False
+    recordCells context (results <> [("backend-connection-lost", all accepted setup && terminated && finished /= Nothing && backendRetry && backendUncommitted), ("credit-retry-exhausted", accepted directOpened && exhausted)])
+  where
+    sleeperStatement =
+      Statement.unpreparable
+        "SELECT pid FROM pg_stat_activity WHERE state = 'active' AND query LIKE '%pg_sleep(30)%' AND pid <> pg_backend_pid() ORDER BY pid LIMIT 1"
+        Encoders.noParams
+        (Decoders.rowMaybe (Decoders.column (Decoders.nonNullable Decoders.int4)))
+    terminateBackend =
+      Statement.unpreparable
+        "SELECT pg_terminate_backend($1::int4)"
+        (Encoders.param (Encoders.nonNullable Encoders.int4))
+        (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.bool)))
+    awaitSleeper connection = do
+      found <- Connection.use connection (Session.statement () sleeperStatement) >>= either (fail . show) pure
+      maybe (threadDelay 100000 >> awaitSleeper connection) pure (found :: Maybe Int32)
 
 policyMatrix :: Scenario
 policyMatrix =
