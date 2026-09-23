@@ -1,4 +1,4 @@
-module Kenshou.Suite.Kiroku.Roles (roles, appenderRoleName, readerRoleName) where
+module Kenshou.Suite.Kiroku.Roles (roles, appenderRoleName, readerRoleName, subscriberRoleName) where
 
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
@@ -6,6 +6,8 @@ import Control.Exception (SomeException, try)
 import Control.Monad (forM_, replicateM)
 import Data.Aeson (Value, object, withObject, (.:), (.=))
 import Data.Aeson.Types (Parser, parseMaybe)
+import Data.IORef (atomicModifyIORef', newIORef, readIORef)
+import Data.Int (Int32, Int64)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.UUID qualified as UUID
@@ -15,13 +17,42 @@ import Kenshou.Suite.Kiroku.Fixture.Workload (eventIdFor)
 import Kiroku.Store hiding (id)
 
 roles :: [WorkerRole]
-roles = [WorkerRole appenderRoleName "Races expected-version appends from a separate process." runAppender, WorkerRole readerRoleName "Tails the global event stream from a separate process." runReader]
+roles = [WorkerRole appenderRoleName "Races expected-version appends from a separate process." runAppender, WorkerRole readerRoleName "Tails the global event stream from a separate process." runReader, WorkerRole subscriberRoleName "Collects group delivery in a separate process." runSubscriber]
 
 appenderRoleName :: RoleName
 appenderRoleName = either (error . show) id (mkRoleName "kiroku/appender")
 
 readerRoleName :: RoleName
 readerRoleName = either (error . show) id (mkRoleName "kiroku/reader")
+
+subscriberRoleName :: RoleName
+subscriberRoleName = either (error . show) id (mkRoleName "kiroku/subscriber")
+
+runSubscriber :: RoleContext -> IO ()
+runSubscriber context = case (context.init.postgres, parseMaybe parseSubscriberArgs context.init.args) of
+  (Nothing, _) -> context.send (WrkError "subscriber requires PostgreSQL")
+  (_, Nothing) -> context.send (WrkError "invalid subscriber arguments")
+  (Just postgres, Just (name, member, size, guardEnabled)) -> withStore (defaultConnectionSettings postgres.connectionString) \store -> do
+    delivered <- newIORef ([] :: [Int64])
+    let handler row = do
+          let GlobalPosition position = row.globalPosition
+          atomicModifyIORef' delivered (\positions -> (position : positions, ()))
+          pure Continue
+        config = (defaultSubscriptionConfig (SubscriptionName name) AllStreams handler) {consumerGroup = Just (ConsumerGroup member size), consumerGroupGuard = guardEnabled}
+        loop =
+          context.receive >>= \case
+            Just CtlStart -> loop
+            Just (CtlCustom "snapshot" _) -> do
+              positions <- reverse <$> readIORef delivered
+              context.send (WrkCustom "snapshot" (object ["positions" .= positions]))
+              loop
+            Just (CtlStop _) -> pure ()
+            Just _ -> loop
+            Nothing -> pure ()
+    withSubscription store config \_ -> context.send WrkReady >> loop
+
+parseSubscriberArgs :: Value -> Parser (Text, Int32, Int32, Bool)
+parseSubscriberArgs = withObject "subscriber arguments" \value -> (,,,) <$> value .: "name" <*> value .: "member" <*> value .: "size" <*> value .: "guard"
 
 runReader :: RoleContext -> IO ()
 runReader context = case context.init.postgres of

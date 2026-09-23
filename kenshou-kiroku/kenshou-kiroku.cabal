@@ -39,6 +39,7 @@ library
     Kenshou.Suite.Kiroku
     Kenshou.Suite.Kiroku.Bench.Append
     Kenshou.Suite.Kiroku.Concurrency.Append
+    Kenshou.Suite.Kiroku.Concurrency.ConsumerGroup
     Kenshou.Suite.Kiroku.Concurrency.KnownDefects
     Kenshou.Suite.Kiroku.Correctness.Append
     Kenshou.Suite.Kiroku.Correctness.ConsumerGroup
