@@ -41,6 +41,7 @@ library
     Kenshou.Suite.Keiro
     Kenshou.Suite.Keiro.Command.Concurrency
     Kenshou.Suite.Keiro.Command.Correctness
+    Kenshou.Suite.Keiro.Command.Projection
     Kenshou.Suite.Keiro.Fixture.Account
     Kenshou.Suite.Keiro.Fixture.Bonus
     Kenshou.Suite.Keiro.Fixture.Bridge

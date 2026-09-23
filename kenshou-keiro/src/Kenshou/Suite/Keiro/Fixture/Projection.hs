@@ -2,6 +2,8 @@ module Kenshou.Suite.Keiro.Fixture.Projection
   ( fixtureSchema,
     ensureFixtureReadModels,
     accountBalanceProjection,
+    accountActivityProjection,
+    accountActivityReadModelName,
   )
 where
 
@@ -12,8 +14,11 @@ import Hasql.Decoders qualified as Decoders
 import Hasql.Encoders qualified as Encoders
 import Hasql.Statement qualified as Statement
 import Hasql.Transaction qualified as Tx
+import Keiro.Codec (Codec (..))
 import Keiro.Connection (ensureProjectionSchema)
-import Keiro.Projection (InlineProjection (..))
+import Keiro.Projection (AsyncProjection (..), InlineProjection (..))
+import Keiro.ReadModel.Schema (registerReadModel)
+import Kenshou.Suite.Keiro.Fixture.Account (accountCodec)
 import Kenshou.Suite.Keiro.Fixture.Domain
 import Kiroku.Store (Store, runTransaction)
 import Kiroku.Store.Types (GlobalPosition (..), RecordedEvent (..), StreamVersion (..))
@@ -33,6 +38,44 @@ ensureFixtureReadModels = do
   runTransaction $
     Tx.sql
       "CREATE TABLE IF NOT EXISTS kenshou_keiro.account_directory (account_id text PRIMARY KEY, segment text NOT NULL)"
+  _ <- registerReadModel accountActivityReadModelName 1 "v1"
+  pure ()
+
+accountActivityReadModelName :: Text
+accountActivityReadModelName = "kenshou-account-activity"
+
+accountActivityProjection :: AsyncProjection
+accountActivityProjection =
+  AsyncProjection
+    { name = "kenshou-account-activity",
+      readModelName = accountActivityReadModelName,
+      subscriptionName = "kenshou-account-activity",
+      idempotencyKey = (.eventId),
+      applyRecorded = \recorded ->
+        case accountCodec.decode recorded.eventType recorded.payload of
+          Left _ -> Tx.sql "SELECT 1/0"
+          Right event ->
+            let AccountId accountId = eventAccountId event
+                delta = case event of
+                  AccountOpened d -> d.openingBalance
+                  Deposited d -> d.amount
+                  Withdrawn d -> negate d.amount
+                  TransferDebited d -> negate d.amount
+                  TransferAnnounced {} -> 0
+                  TransferCredited d -> d.amount
+                  TransferConfirmed {} -> 0
+                  BonusCredited d -> d.amount
+                  AccountClosed {} -> 0
+                GlobalPosition position = recorded.globalPosition
+             in Tx.statement (object ["accountId" .= accountId, "delta" .= delta, "position" .= position]) activityStatement
+    }
+
+activityStatement :: Statement.Statement Value ()
+activityStatement =
+  Statement.preparable
+    "INSERT INTO kenshou_keiro.account_activity (account_id, events_applied, net_amount, last_global_position) SELECT x->>'accountId', 1, (x->>'delta')::bigint, (x->>'position')::bigint FROM (SELECT $1::jsonb AS x) input ON CONFLICT (account_id) DO UPDATE SET events_applied = kenshou_keiro.account_activity.events_applied + 1, net_amount = kenshou_keiro.account_activity.net_amount + EXCLUDED.net_amount, last_global_position = EXCLUDED.last_global_position"
+    (Encoders.param (Encoders.nonNullable Encoders.jsonb))
+    Decoders.noResult
 
 accountBalanceProjection :: InlineProjection AccountEvent
 accountBalanceProjection =

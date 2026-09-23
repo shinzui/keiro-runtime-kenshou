@@ -17,7 +17,21 @@ import Keiro.Codec (Codec (..))
 import Keiro.EventStream (EventStream (..), SnapshotPolicy (..))
 import Keiro.EventStream.Validate (ValidatedEventStream, mkEventStreamOrThrow)
 import Keiro.ProcessManager (PMCommand (..))
-import Keiro.Router (Router (..))
+import Keiro.Router (DeclarativeRouter (..), Router (..))
+import Keiro.Router.Selection
+  ( EmptySelectionPolicy,
+    PartialDispatchPolicy (..),
+    RedeliveryPolicy (..),
+    RouterSelectionContract (..),
+    RouterSelectionFailure,
+    SelectionDedupe (..),
+    SelectionFailurePolicy,
+    SelectionFingerprint (..),
+    SelectionIdentity (..),
+    SelectionOrder (..),
+    mkRecipientLimit,
+    mkSelectionVersion,
+  )
 import Keiro.Stream (Stream)
 import Keiro.Stream qualified as Stream
 import Kenshou.Suite.Keiro.Fixture.Account
@@ -25,6 +39,7 @@ import Kenshou.Suite.Keiro.Fixture.Domain
 import Kenshou.Suite.Keiro.Fixture.Projection (accountBalanceProjection)
 import Kiroku.Store (Store, runTransaction)
 import Kiroku.Store.Types (EventType (..), RecordedEvent (..))
+import Numeric.Natural (Natural)
 
 type BonusPhi = HsPred BonusRegs BonusCommand
 
@@ -76,6 +91,8 @@ bonusStream (BonusId bonusId) = Stream.entityStream (Stream.categoryUnsafe "bonu
 
 type BonusRouter es = Router BonusDeclaredData AccountPhi AccountRegs AccountState AccountCommand AccountEvent es
 
+type DeclarativeBonusRouter es = DeclarativeRouter BonusDeclaredData AccountPhi AccountRegs AccountState AccountCommand AccountEvent es
+
 bonusRouterName :: Text.Text
 bonusRouterName = "bonusRouter"
 
@@ -89,6 +106,35 @@ bonusRouterWith routerName accountEvents recipients =
     { name = routerName,
       key = \bonus -> let BonusId bonusId = bonus.bonusId in bonusId,
       resolve = \bonus -> bonusCommands bonus <$> recipients bonus,
+      targetEventStream = accountEvents,
+      targetProjections = const [accountBalanceProjection]
+    }
+
+bonusSelectionContract :: EmptySelectionPolicy -> SelectionFailurePolicy -> Natural -> Either RouterSelectionFailure RouterSelectionContract
+bonusSelectionContract empty failure maxRecipients = do
+  recipientLimit <- mkRecipientLimit maxRecipients
+  selectionVersion <- mkSelectionVersion 1
+  pure
+    RouterSelectionContract
+      { identity = SelectionIdentity "kenshou-bonus-selection",
+        version = selectionVersion,
+        fingerprint = SelectionFingerprint "kenshou-bonus-selection-v1",
+        limit = recipientLimit,
+        order = OrderByTargetStream,
+        dedupe = DedupeByTargetStream,
+        emptyPolicy = empty,
+        failurePolicy = failure,
+        redeliveryPolicy = StableUnion,
+        partialPolicy = RetainSuccesses
+      }
+
+declarativeBonusRouterWith :: ValidatedAccountEventStream -> RouterSelectionContract -> (BonusDeclaredData -> Eff es (Either RouterSelectionFailure [PMCommand AccountCommand])) -> DeclarativeBonusRouter es
+declarativeBonusRouterWith accountEvents contract selector =
+  DeclarativeRouter
+    { name = bonusRouterName <> "Declarative",
+      key = \bonus -> let BonusId bonusId = bonus.bonusId in bonusId,
+      selectionContract = contract,
+      select = selector,
       targetEventStream = accountEvents,
       targetProjections = const [accountBalanceProjection]
     }

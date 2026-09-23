@@ -4,6 +4,7 @@ module Kenshou.Suite.Keiro.Fixture.Oracle
     DispatchDeadLetter (..),
     readCategoryLog,
     readBalanceTable,
+    readActivityTable,
     readSnapshots,
     readTimers,
     readDispatchDeadLetters,
@@ -105,6 +106,17 @@ readBalanceTable connection = do
         (Decoders.rowList ((,,,) <$> text <*> int8 <*> int8 <*> int8))
     text = Decoders.column (Decoders.nonNullable Decoders.text)
     int8 = Decoders.column (Decoders.nonNullable Decoders.int8)
+
+readActivityTable :: Connection.Connection -> IO (Map.Map AccountId (Int64, Int64))
+readActivityTable connection = do
+  rows <- Connection.use connection (Session.statement () statement) >>= either (fail . show) pure
+  pure (Map.fromList [(AccountId accountId, (eventsApplied, netAmount)) | (accountId, eventsApplied, netAmount) <- rows])
+  where
+    statement =
+      Statement.preparable
+        "SELECT account_id, events_applied, net_amount FROM kenshou_keiro.account_activity ORDER BY account_id"
+        Encoders.noParams
+        (Decoders.rowList ((,,) <$> Decoders.column (Decoders.nonNullable Decoders.text) <*> Decoders.column (Decoders.nonNullable Decoders.int8) <*> Decoders.column (Decoders.nonNullable Decoders.int8)))
 
 readSnapshots :: Connection.Connection -> IO (Map.Map StreamName (Int64, Value))
 readSnapshots connection = do

@@ -45,7 +45,7 @@ Milestone 1 — The keiro fixture domain
 - [ ] Create `kenshou-keiro/kenshou-keiro.cabal` with the library and the `kenshou-keiro-test` suite. The package and suite build; remaining: add the Milestone 1 fixture modules and dependencies.
 - [x] (2026-09-23T19:40:00Z) Write `Kenshou.Suite.Keiro.Fixture.Domain` and `.Fixture.Account`; prove `mkEventStream` accepts the account transducer for every snapshot policy variant. `cabal test kenshou-keiro-test` passes the four policy constructors.
 - [ ] Write `.Fixture.Transfer` (saga, strict variant, reactive variant) and `.Fixture.Bonus` (plain and declarative router). The saga, strict variant, bonus stream, and plain router compile; reactive and declarative variants remain.
-- [ ] Write `.Fixture.Projection`, `.Fixture.Runtime`, `.Fixture.Bridge`. The inline projection, store runner, and list adapter compile; asynchronous projection, complete runtime wrapper, and durable bridges remain.
+- [ ] Write `.Fixture.Projection`, `.Fixture.Runtime`, `.Fixture.Bridge`. Inline and additive async projections, the store runner, and the list adapter compile. The async worker, complete runtime wrapper, and durable bridges remain.
 - [ ] Write `.Fixture.Workload`, `.Fixture.Model`, `.Fixture.Oracle`, `.Fixture.Roles`. Workload, Model, and the account-log and balance SQL oracles are present; remaining oracle readers and Roles remain.
 - [ ] Unit tests: codec round trip, model agrees with the keiki transducer, workload determinism, expected identifiers, list adapter acknowledgement log. Seven unit examples pass, including the acknowledgement log and setup/worker identifier separation; exact UUID assertions remain.
 - [x] (2026-09-23T19:57:00Z) Add `Kenshou.Suite.Keiro.bundle`, the scenario `keiro/command/correctness/fixture-roundtrip`, and the three-line registration in `kenshou-cli`. The scenario passed with both 20 and 500 generated operations.
@@ -56,7 +56,7 @@ Milestone 2 — Command processor scenarios with snapshots and projections
 - [x] (2026-09-23T20:14:00Z) Command correctness: `occ-retry-and-exhaustion`, `idempotent-event-ids`, `hydration-paging`, and `controlled-rollback` pass, including retry exhaustion and the idempotency sabotage arm. The full paging matrix passed over 30 combinations and checked the independent durable log.
 - [ ] Command concurrency: `identical-commands-one-batch` passes with 16 simultaneous clients; `hot-stream-contention` passes with eight writers for 30 seconds. Multi-process support for the first, `model-based-parallel-commands`, and `sigkill-idempotent-resubmission` remain.
 - [ ] Snapshot correctness: `policy-matrix` passes for all five policies with durable snapshot row checks; `truncation-covering-snapshot` passes with covered, gapped, cleared, and uncovered streams. `seed-divergence-detection` remains.
-- [ ] Projection scenarios: `async-dedup-and-fence`, `inline-atomicity-under-kill`, `async-at-least-once-under-kill`, and the known-defect scenario `async-apply-checkpoint-atomic`.
+- [ ] Projection scenarios: `async-dedup-and-fence` passes applied, duplicate, fenced, and post-prune outcomes with SQL table checks. `inline-atomicity-under-kill`, `async-at-least-once-under-kill`, and the known-defect scenario `async-apply-checkpoint-atomic` remain.
 - [ ] Non-vacuity check with `command.sabotage=omit-event-ids` and `projection.sabotage=skip-dedup`.
 
 Milestone 3 — Process manager scenarios
@@ -69,8 +69,8 @@ Milestone 3 — Process manager scenarios
 
 Milestone 4 — Router scenarios
 
-- [ ] `fanout-exactly-once` passes at fanout 16 with reordered recipients, repeated recipients, and three deliveries; its unstable-name sabotage arm fails as intended. `per-target-independent-commits` passes with seven credits and one durable dispatch dead letter. `stable-union-under-drift` remains.
-- [ ] `declarative-selection-policies` (the full empty-policy by failure-policy matrix, limit, overflow, conflict).
+- [x] (2026-09-23T20:58:00Z) Router fanout: `fanout-exactly-once` passes at fanout 16 with reordered and repeated recipients and three deliveries; its unstable-name sabotage arm fails. `per-target-independent-commits` passes with seven credits and one durable dispatch dead letter. `stable-union-under-drift` passes after an injected conflict and changed selection.
+- [x] (2026-09-23T20:58:00Z) `declarative-selection-policies` passes the full 4×3 empty/failure policy matrix with query, conflict, overflow, and equal-duplicate cases; only equal duplicates dispatch.
 - [ ] `dead-letter-identity-under-reordered-redelivery` (probe; file upstream if it fails).
 - [ ] `sigkill-mid-fanout` with worker processes.
 
