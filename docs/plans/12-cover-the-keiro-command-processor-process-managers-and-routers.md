@@ -44,7 +44,7 @@ Milestone 1 — The keiro fixture domain
 - [x] (2026-09-23T19:31:59Z) Verify the hard dependencies are complete (kernel, measurement, correctness, diagnostics, telemetry) using the checks in Concrete Steps. `nix develop --command cabal build all` succeeded; both required self-tests passed; the released cohort contains the stated keiro, keiki, kiroku and shibuya versions.
 - [ ] Create `kenshou-keiro/kenshou-keiro.cabal` with the library and the `kenshou-keiro-test` suite. The package and suite build; remaining: add the Milestone 1 fixture modules and dependencies.
 - [x] (2026-09-23T19:40:00Z) Write `Kenshou.Suite.Keiro.Fixture.Domain` and `.Fixture.Account`; prove `mkEventStream` accepts the account transducer for every snapshot policy variant. `cabal test kenshou-keiro-test` passes the four policy constructors.
-- [ ] Write `.Fixture.Transfer` (saga, strict variant, reactive variant) and `.Fixture.Bonus` (plain and declarative router). The saga, strict variant, bonus stream, and plain router compile; reactive and declarative variants remain.
+- [x] (2026-09-23T21:10:00Z) Write `.Fixture.Transfer` (saga, strict variant, reactive variant) and `.Fixture.Bonus` (plain and declarative router). All variants compile and are exercised by registered scenarios.
 - [ ] Write `.Fixture.Projection`, `.Fixture.Runtime`, `.Fixture.Bridge`. Inline and additive async projections, the subscription worker, store runner, list adapter, production Kiroku bridge, and configurable ack-stream bridge compile. End-to-end bridge runs and the complete telemetry runtime wrapper remain.
 - [ ] Write `.Fixture.Workload`, `.Fixture.Model`, `.Fixture.Oracle`, `.Fixture.Roles`. Workload, Model, account-log, balance, activity, snapshots, timers, and dispatch dead-letter SQL readers are present. All four role entry points compile and are registered; end-to-end process-control validation and further oracle readers remain.
 - [ ] Unit tests: codec round trip, model agrees with the keiki transducer, workload determinism, expected identifiers, list adapter acknowledgement log. Seven unit examples pass, including the acknowledgement log and setup/worker identifier separation; exact UUID assertions remain.
@@ -62,7 +62,7 @@ Milestone 2 — Command processor scenarios with snapshots and projections
 Milestone 3 — Process manager scenarios
 
 - [ ] Correctness with the list adapter: `deterministic-ids-redelivery` passes for 50 transfers and three deliveries each; its unstable-name sabotage arm fails its verdict as intended. `timers-commit-with-manager-append` passes with an unchanged deadline after redelivery and a rejected second debit. `order-insensitive-join` passes with both input orders and strict halt/dead-letter policies. `policy-matrix` and `transient-classification` remain.
-- [ ] Reactions: `reaction-schedule-modes` and the known-defect scenario `reaction-no-advance-receipt`.
+- [x] (2026-09-23T21:10:00Z) Reactions: `reaction-schedule-modes` passes both input orders, cancellation, and accepted redelivery. `reaction-no-advance-receipt` reproduces its sole expected failure `no-advance-at-most-once`; the harness marks it nonblocking against `mori://shinzui/keiro/okf/adrs/concepts/ADR-41`.
 - [ ] Real bridge: `retry-budget-dead-letter` including dead-letter replay.
 - [ ] Multi-process: `sigkill-crash-windows`, `random-kill-exactly-once`, `topologies`.
 - [x] (2026-09-23T20:34:00Z) Non-vacuity check with `pm.sabotage=unstable-manager-name` fails the durable-effect verdict as intended.

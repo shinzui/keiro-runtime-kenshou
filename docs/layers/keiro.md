@@ -32,7 +32,12 @@ identifier and sustained writes to one hot stream. The scenario IDs and
 their knobs are available through `cabal run kenshou -- list --layer keiro`.
 
 The process manager scenarios check stable manager and target identities under
-redelivery, timer persistence, and both orders of transfer inputs. The router
+redelivery, timer persistence, and both orders of transfer inputs. The reactive
+manager scenario checks insert-only timeout scheduling, reminder rearming,
+cancellation, and duplicate delivery. The `reaction-no-advance-receipt` run
+reproduces the documented missing durable receipt for a `NoAdvance` input;
+the harness reports it as a nonblocking known defect tied to
+`mori://shinzui/keiro/okf/adrs/concepts/ADR-41`. The router
 scenarios check fanout under redelivery and selection drift, independent
 target commits with a durable dead letter, and the declarative selection
 policy matrix. The asynchronous projection scenario checks deduplication,

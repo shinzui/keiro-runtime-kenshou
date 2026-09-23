@@ -3,14 +3,19 @@ module Kenshou.Suite.Keiro.Fixture.Transfer
     SagaPhi,
     TransferSagaEventStream,
     TransferManager,
+    ReactionSignal (..),
+    TransferReaction,
     transferManagerName,
     transferManager,
     strictTransferManager,
     renamedTransferManager,
+    transferReaction,
     transferSagaStream,
     transferSignalTypes,
     decodeTransferSignal,
+    decodeReactionSignal,
     transferTimeoutTimerId,
+    transferReminderTimerId,
   )
 where
 
@@ -25,13 +30,16 @@ import Data.Text qualified as Text
 import Data.Text.Encoding qualified as Text
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import Data.UUID.V5 qualified as UUID.V5
+import Data.Void (Void)
 import Keiki.Builder qualified as B
 import Keiki.Core (HsPred, RegFile (..), SymTransducer)
 import Keiki.Generics.TH (deriveAggregate)
 import Keiro.Codec (Codec (..))
+import Keiro.Command (DomainCommandHandler (..), SilentDomainDecision (..))
 import Keiro.EventStream (EventStream (..), SnapshotPolicy (..))
 import Keiro.EventStream.Validate (ValidatedEventStream, mkEventStreamOrThrow)
 import Keiro.ProcessManager (PMCommand (..), ProcessManager (..), ProcessManagerAction (..))
+import Keiro.ProcessManager.Reaction (FollowUp (..), ReactionPlan (..), ReactiveProcessManager (..), ScheduleMode (..))
 import Keiro.Projection (InlineProjection)
 import Keiro.Stream (Stream)
 import Keiro.Stream qualified as Stream
@@ -41,6 +49,9 @@ import Kenshou.Suite.Keiro.Fixture.Domain
 import Kiroku.Store.Types (EventType (..), RecordedEvent (..))
 
 data TransferSignal = SignalDebited !TransferDebitedData | SignalAnnounced !TransferAnnouncedData
+  deriving stock (Eq, Show)
+
+data ReactionSignal = ReactDebited !TransferDebitedData | ReactAnnounced !TransferAnnouncedData | ReactCredited !TransferCreditedData
   deriving stock (Eq, Show)
 
 type SagaPhi = HsPred TransferSagaRegs TransferSagaCommand
@@ -62,6 +73,22 @@ type TransferManager =
     AccountState
     AccountCommand
     AccountEvent
+
+type TransferReaction =
+  ReactiveProcessManager
+    ReactionSignal
+    SagaPhi
+    TransferSagaRegs
+    TransferSagaState
+    TransferSagaCommand
+    TransferSagaEvent
+    AccountPhi
+    AccountRegs
+    AccountState
+    AccountCommand
+    AccountEvent
+    Void
+    ()
 
 $(deriveAggregate ''TransferSagaCommand ''TransferSagaRegs ''TransferSagaEvent)
 
@@ -151,6 +178,42 @@ renamedTransferManager :: Text -> ValidatedAccountEventStream -> TransferManager
 renamedTransferManager managerName accountEvents =
   namedManager managerName True accountEvents (const [])
 
+transferReaction :: ValidatedAccountEventStream -> TransferReaction
+transferReaction accountEvents =
+  ReactiveProcessManager
+    { name = "transferReaction",
+      correlate = \case
+        ReactDebited d -> correlation d.transferId
+        ReactAnnounced d -> correlation d.transferId
+        ReactCredited d -> correlation d.transferId,
+      sagaHandler = DomainCommandHandler {eventStream = sagaEventStream True, classifySilent = const (SilentNoOp ())},
+      streamFor = Stream.entityStream (Stream.categoryUnsafe "pm:transferReaction"),
+      targetEventStream = accountEvents,
+      targetProjections = const [],
+      react = \case
+        ReactDebited d ->
+          let credit = PMCommand (accountCommandStream d.destination) (CreditTransfer (CreditTransferData d.destination d.transferId d.accountId d.amount))
+              confirm = PMCommand (accountCommandStream d.accountId) (ConfirmTransfer (ConfirmTransferData d.accountId d.transferId))
+           in AdvanceReaction
+                { command = ObserveDebit (ObserveDebitData d.transferId d.accountId d.destination d.amount d.deadlineEpochSeconds),
+                  followUps = [FollowSchedule Rearm (reminder d.transferId (d.deadlineEpochSeconds - 60))],
+                  onAccepted = [FollowDispatch credit, FollowDispatch confirm, FollowSchedule Once (timeout d.transferId d.deadlineEpochSeconds)]
+                }
+        ReactAnnounced d ->
+          AdvanceReaction
+            { command = ObserveAnnounce (ObserveAnnounceData d.transferId d.accountId),
+              followUps = [FollowSchedule Rearm (reminder d.transferId 4102444740)],
+              onAccepted = [FollowSchedule Once (timeout d.transferId 4102444800)]
+            }
+        ReactCredited d -> NoAdvance [FollowCancel (transferTimeoutTimerId d.transferId)]
+    }
+  where
+    correlation (TransferId value) = value
+    timeout :: TransferId -> Int -> TimerRequest
+    timeout transfer due = TimerRequest (transferTimeoutTimerId transfer) "transferReaction" (correlation transfer) (posixSecondsToUTCTime (fromIntegral due)) (toJSON transfer)
+    reminder :: TransferId -> Int -> TimerRequest
+    reminder transfer due = TimerRequest (transferReminderTimerId transfer) "transferReaction" (correlation transfer) (posixSecondsToUTCTime (fromIntegral due)) (toJSON transfer)
+
 namedManager :: Text -> Bool -> ValidatedAccountEventStream -> (Stream AccountCommand -> [InlineProjection AccountEvent]) -> TransferManager
 namedManager managerName allowAnnounceFirst accountEvents projections =
   ProcessManager
@@ -203,6 +266,18 @@ decodeTransferSignal recorded =
     Right (TransferAnnounced d) -> Just (recorded, SignalAnnounced d)
     _ -> Nothing
 
+decodeReactionSignal :: RecordedEvent -> Maybe (RecordedEvent, ReactionSignal)
+decodeReactionSignal recorded =
+  case accountCodec.decode recorded.eventType recorded.payload of
+    Right (TransferDebited d) -> Just (recorded, ReactDebited d)
+    Right (TransferAnnounced d) -> Just (recorded, ReactAnnounced d)
+    Right (TransferCredited d) -> Just (recorded, ReactCredited d)
+    _ -> Nothing
+
 transferTimeoutTimerId :: TransferId -> TimerId
 transferTimeoutTimerId (TransferId transfer) =
   TimerId (UUID.V5.generateNamed UUID.V5.namespaceURL (ByteString.unpack (Text.encodeUtf8 ("kenshou:transfer-timeout:" <> transfer))))
+
+transferReminderTimerId :: TransferId -> TimerId
+transferReminderTimerId (TransferId transfer) =
+  TimerId (UUID.V5.generateNamed UUID.V5.namespaceURL (ByteString.unpack (Text.encodeUtf8 ("kenshou:transfer-reminder:" <> transfer))))

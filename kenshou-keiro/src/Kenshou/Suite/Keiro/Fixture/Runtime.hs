@@ -24,6 +24,7 @@ import Kiroku.Store (ConnectionSettings, KirokuStore, Store, withStore)
 import Kiroku.Store.Effect (runStoreResource)
 import Kiroku.Store.Effect.Resource (KirokuStoreResource, runKirokuStoreWith)
 import Kiroku.Store.Error (StoreError (..))
+import Kiroku.Store.Read (eventExistsInStream)
 import Kiroku.Store.Types (EventId, StreamVersion)
 
 type KeiroEff = Eff '[Store, Error StoreError, KirokuStoreResource, IOE]
@@ -68,20 +69,25 @@ submitAccountCommand fixture accountEvents runnerKind options clientBudget event
       RunnerWithSql -> fmap (fmap fst) (runCommandWithSql withId accountEvents target command (\_ -> pure ()))
       RunnerWithProjections projections -> runCommandWithProjections withId accountEvents target command projections
     attempt remaining = do
-      outcome <- runFixture execute
-      case outcome of
+      existing <- runFixture (eventExistsInStream (Stream.streamName target) eventId)
+      case existing of
         Left storeError -> pure (SubmitFailed (StoreFailed storeError))
-        Right (Right result)
-          | result.eventsAppended == 0 -> pure SubmitNoOp
-          | otherwise -> pure (SubmitAppended result.streamVersion)
-        Right (Left CommandRejected) -> pure SubmitRejected
-        Right (Left commandError) -> do
-          confirmed <- runFixture (confirmBenignDuplicate (Stream.streamName target) eventId commandError)
-          case confirmed of
-            Right True -> pure SubmitDuplicate
-            _
-              | remaining > 0 && retryable commandError -> attempt (remaining - 1)
-              | otherwise -> pure (SubmitFailed commandError)
+        Right True -> pure SubmitDuplicate
+        Right False -> do
+          outcome <- runFixture execute
+          case outcome of
+            Left storeError -> pure (SubmitFailed (StoreFailed storeError))
+            Right (Right result)
+              | result.eventsAppended == 0 -> pure SubmitNoOp
+              | otherwise -> pure (SubmitAppended result.streamVersion)
+            Right (Left CommandRejected) -> pure SubmitRejected
+            Right (Left commandError) -> do
+              confirmed <- runFixture (confirmBenignDuplicate (Stream.streamName target) eventId commandError)
+              case confirmed of
+                Right True -> pure SubmitDuplicate
+                _
+                  | remaining > 0 && retryable commandError -> attempt (remaining - 1)
+                  | otherwise -> pure (SubmitFailed commandError)
     retryable = \case
       RetryExhausted {} -> True
       StoreFailed (TransientTransactionFailure {}) -> True
@@ -92,11 +98,17 @@ submitBonusCommand fixture options eventId command = do
   let bonusId = case command of DeclareBonus d -> d.bonusId
       target = bonusStream bonusId
       KeiroRunner runFixture = fixture.runner
-  outcome <- runFixture (runCommand options {eventIds = [eventId]} bonusEventStream target command)
-  pure case outcome of
-    Left storeError -> SubmitFailed (StoreFailed storeError)
-    Right (Right result)
-      | result.eventsAppended == 0 -> SubmitNoOp
-      | otherwise -> SubmitAppended result.streamVersion
-    Right (Left CommandRejected) -> SubmitRejected
-    Right (Left commandError) -> SubmitFailed commandError
+  existing <- runFixture (eventExistsInStream (Stream.streamName target) eventId)
+  case existing of
+    Left storeError -> pure (SubmitFailed (StoreFailed storeError))
+    Right True -> pure SubmitDuplicate
+    Right False -> do
+      outcome <- runFixture (runCommand options {eventIds = [eventId]} bonusEventStream target command)
+      pure case outcome of
+        Left storeError -> SubmitFailed (StoreFailed storeError)
+        Right (Right result)
+          | result.eventsAppended == 0 -> SubmitNoOp
+          | otherwise -> SubmitAppended result.streamVersion
+        Right (Left (StoreFailed (DuplicateEvent _))) -> SubmitDuplicate
+        Right (Left CommandRejected) -> SubmitRejected
+        Right (Left commandError) -> SubmitFailed commandError

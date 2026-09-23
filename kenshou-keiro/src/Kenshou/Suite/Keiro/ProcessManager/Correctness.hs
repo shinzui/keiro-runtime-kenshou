@@ -12,7 +12,8 @@ import Hasql.Connection qualified as Connection
 import Hasql.Connection.Settings qualified as Settings
 import Keiro.Command (CommandError (..), CommandResult (..), RunCommandOptions (..), defaultRunCommandOptions, runCommand)
 import Keiro.ProcessManager (RejectedCommandPolicy (..), WorkerOptions (..), defaultWorkerOptions, deterministicCommandId, runProcessManagerOnce, runProcessManagerWorkerWith)
-import Keiro.Timer (TimerId (..))
+import Keiro.ProcessManager.Reaction (ReactionStateResult (..), ReactionTimerEffects (..), ReactiveProcessManagerResult (..), runReactiveProcessManagerOnce)
+import Keiro.Timer (TimerId (..), cancelTimer)
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
@@ -20,7 +21,7 @@ import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (parseScenarioId, unSeed)
 import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobInt, knobText, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
-import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..))
+import Kenshou.Core.Scenario (CohortScope (..), KnownDefect (..), Placement (..), Scenario (..), ScenarioReport, Tier (..))
 import Kenshou.Suite.Keiro.Command.Correctness (recordCells)
 import Kenshou.Suite.Keiro.Fixture.Account
 import Kenshou.Suite.Keiro.Fixture.Bridge
@@ -36,7 +37,153 @@ import Kiroku.Store.Types (CategoryName (..), GlobalPosition (..), RecordedEvent
 import Shibuya.Core.Ack (AckDecision (..))
 
 scenarios :: [Scenario]
-scenarios = [deterministicIdsRedelivery, timersCommitWithManagerAppend, orderInsensitiveJoin]
+scenarios = [deterministicIdsRedelivery, timersCommitWithManagerAppend, orderInsensitiveJoin, reactionScheduleModes, reactionNoAdvanceReceipt]
+
+reactionNoAdvanceReceipt :: Scenario
+reactionNoAdvanceReceipt =
+  deterministicIdsRedelivery
+    { id = either (error . show) id (parseScenarioId "keiro/process-manager/correctness/reaction-no-advance-receipt"),
+      summary = "Checks a NoAdvance input has a durable receipt across redelivery.",
+      knobs = [],
+      knownDefect = Just (KnownDefect "mori://shinzui/keiro/okf/adrs/concepts/ADR-41" "NoAdvance timer effects have no durable receipt" ["no-advance-at-most-once"] AllCohorts),
+      run = runReactionNoAdvanceReceipt
+    }
+
+runReactionNoAdvanceReceipt :: RunContext -> IO ScenarioReport
+runReactionNoAdvanceReceipt context =
+  withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture -> do
+    let KeiroRunner runFixture = fixture.runner
+        accountEvents = accountEventStream SnapNever
+        manager = transferReaction accountEvents
+        source = AccountId "receipt-source"
+        destination = AccountId "receipt-destination"
+        transfer = TransferId "receipt-transfer"
+        submit account command = runFixture (runCommand defaultRunCommandOptions accountEvents (accountStream account) command)
+        accepted = \case Right (Right result) -> result.eventsAppended == 1; _ -> False
+    openedSource <- submit source (OpenAccount (OpenAccountData source 10))
+    openedDestination <- submit destination (OpenAccount (OpenAccountData destination 0))
+    debited <- submit source (DebitTransfer (DebitTransferData source transfer destination 2 4102444600))
+    credited <- submit destination (CreditTransfer (CreditTransferData destination transfer source 2))
+    sourceBatch <- runFixture (readCategory (CategoryName "account") (GlobalPosition 0) 10) >>= either (fail . show) pure
+    let decoded = [pair | recorded <- Vector.toList sourceBatch, Just pair <- [decodeReactionSignal recorded]]
+        findInput predicate = case [pair | pair@(_, signal) <- decoded, predicate signal] of
+          [pair] -> pure pair
+          other -> fail ("expected one matching reaction input, observed " <> show (length other))
+        deliver pair = runFixture (runReactiveProcessManagerOnce defaultRunCommandOptions manager (fst pair) (snd pair)) >>= either (fail . show) pure
+    creditInput <- findInput \case ReactCredited d -> d.transferId == transfer; _ -> False
+    debitInput <- findInput \case ReactDebited d -> d.transferId == transfer; _ -> False
+    firstCredit <- deliver creditInput
+    debitReaction <- deliver debitInput
+    repeatedCredit <- deliver creditInput
+    acquired <- Connection.acquire (Settings.connectionString (requirePostgres context).connectionString <> Settings.applicationName "kenshou-keiro-receipt-oracle")
+    connection <- either (fail . show) pure acquired
+    timers <- Oracle.readTimers connection
+    sagaRows <- Oracle.readCategoryLog connection "pm:transferReaction"
+    Connection.release connection
+    let TimerId uuid = transferTimeoutTimerId transfer
+        receiptAtMostOnce = case [row | row <- timers, row.timerId == UUID.toText uuid] of
+          [row] -> row.status == "scheduled"
+          _ -> False
+        cells =
+          [ ("source-setup", all accepted [openedSource, openedDestination, debited, credited] && length decoded == 2),
+            ( "credit-no-advance",
+              case (firstCredit, repeatedCredit) of
+                (Right first, Right repeated) -> case (first.managerResult, repeated.managerResult) of (ReactionNotAdvanced, ReactionNotAdvanced) -> True; _ -> False
+                _ -> False
+            ),
+            ( "debit-accepted",
+              case debitReaction of
+                Right result -> case result.managerResult of ReactionEvaluated _ -> length sagaRows == 1; _ -> False
+                Left _ -> False
+            ),
+            ("no-advance-at-most-once", receiptAtMostOnce)
+          ]
+    recordCells context cells
+
+reactionScheduleModes :: Scenario
+reactionScheduleModes =
+  deterministicIdsRedelivery
+    { id = either (error . show) id (parseScenarioId "keiro/process-manager/correctness/reaction-schedule-modes"),
+      summary = "Checks Once, Rearm, cancellation, and duplicate reaction timer effects.",
+      knobs = [],
+      run = runReactionScheduleModes
+    }
+
+runReactionScheduleModes :: RunContext -> IO ScenarioReport
+runReactionScheduleModes context =
+  withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture -> do
+    let KeiroRunner runFixture = fixture.runner
+        accountEvents = accountEventStream SnapNever
+        manager = transferReaction accountEvents
+        source :: Int -> AccountId
+        source i = AccountId ("reaction-source-" <> Text.pack (show i))
+        destination :: Int -> AccountId
+        destination i = AccountId ("reaction-destination-" <> Text.pack (show i))
+        transfer :: Int -> TransferId
+        transfer i = TransferId ("reaction-" <> Text.pack (show i))
+        debitDeadline = 4102444600 :: Int
+        announceDeadline = 4102444800 :: Int
+        submit account command = runFixture (runCommand defaultRunCommandOptions accountEvents (accountStream account) command)
+        accepted = \case Right (Right result) -> result.eventsAppended == 1; _ -> False
+    setup <- forM [0 :: Int .. 2] \i -> do
+      openedSource <- submit (source i) (OpenAccount (OpenAccountData (source i) 10))
+      openedDestination <- submit (destination i) (OpenAccount (OpenAccountData (destination i) 0))
+      debited <- submit (source i) (DebitTransfer (DebitTransferData (source i) (transfer i) (destination i) 2 debitDeadline))
+      announced <- submit (destination i) (AnnounceTransfer (AnnounceTransferData (destination i) (transfer i)))
+      pure (all accepted [openedSource, openedDestination, debited, announced])
+    sourceBatch <- runFixture (readCategory (CategoryName "account") (GlobalPosition 0) 30) >>= either (fail . show) pure
+    let decoded = [pair | recorded <- Vector.toList sourceBatch, Just pair <- [decodeReactionSignal recorded]]
+        lookupInput i isDebit =
+          case [ pair
+               | pair@(_, signal) <- decoded,
+                 case signal of
+                   ReactDebited d -> isDebit && d.transferId == transfer i
+                   ReactAnnounced d -> not isDebit && d.transferId == transfer i
+                   ReactCredited _ -> False
+               ] of
+            [pair] -> pure pair
+            other -> fail ("expected one reaction source input, observed " <> show (length other))
+        deliver pair = runFixture (runReactiveProcessManagerOnce defaultRunCommandOptions manager (fst pair) (snd pair)) >>= either (fail . show) pure
+        effect result = case result of Right value -> Just value; Left _ -> Nothing
+        duplicate result = case effect result of
+          Just value -> case value.managerResult of
+            ReactionDuplicate _ -> value.timerEffects.statementsCommitted == 0 && value.timerEffects.onceInserted == 0
+            _ -> False
+          _ -> False
+        inserted result = case effect result of Just value -> value.timerEffects.onceInserted; _ -> -1
+    inputs <- forM [0 :: Int .. 2] \i -> (,) <$> lookupInput i True <*> lookupInput i False
+    ((debit0, announce0) : (debit1, announce1) : (debit2, announce2) : _) <- pure inputs
+    first0 <- deliver debit0
+    second0 <- deliver announce0
+    first1 <- deliver announce1
+    second1 <- deliver debit1
+    first2 <- deliver debit2
+    cancelled <- runFixture (cancelTimer (transferReminderTimerId (transfer 2))) >>= either (fail . show) pure
+    second2 <- deliver announce2
+    redelivered <- traverse deliver [debit0, announce0, announce1, debit1, debit2, announce2]
+    acquired <- Connection.acquire (Settings.connectionString (requirePostgres context).connectionString <> Settings.applicationName "kenshou-keiro-reaction-oracle")
+    connection <- either (fail . show) pure acquired
+    timers <- Oracle.readTimers connection
+    sagaRows <- Oracle.readCategoryLog connection "pm:transferReaction"
+    accountRows <- Oracle.readCategoryLog connection "account"
+    Connection.release connection
+    let timerAt i timerId =
+          let TimerId uuid = timerId (transfer i)
+           in case [row | row <- timers, row.timerId == UUID.toText uuid] of [row] -> Just row; _ -> Nothing
+        due i timerId expected status = case timerAt i timerId of
+          Just row -> row.fireAt == posixSecondsToUTCTime (fromIntegral expected) && row.status == status && row.processManagerName == "transferReaction"
+          _ -> False
+        cells =
+          [ ("source-setup", and setup && length decoded == 6),
+            ("once-inserted-only-first", all ((== 1) . inserted) [first0, first1, first2] && all ((== 0) . inserted) [second0, second1, second2]),
+            ("timeout-first-wins", due 0 transferTimeoutTimerId debitDeadline "scheduled" && due 1 transferTimeoutTimerId announceDeadline "scheduled"),
+            ("reminder-rearmed", due 0 transferReminderTimerId 4102444740 "scheduled" && due 1 transferReminderTimerId (debitDeadline - 60) "scheduled"),
+            ("cancelled-reminder-stays-cancelled", cancelled && due 2 transferReminderTimerId (debitDeadline - 60) "cancelled"),
+            ("redelivery-skips-timer-sql", all duplicate redelivered),
+            ("saga-and-target-effects-unique", length sagaRows == 6 && length accountRows == 18 && Oracle.logWellFormed sagaRows && Oracle.logWellFormed accountRows),
+            ("six-timer-rows", length timers == 6)
+          ]
+    recordCells context cells
 
 orderInsensitiveJoin :: Scenario
 orderInsensitiveJoin =
