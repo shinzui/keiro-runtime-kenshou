@@ -48,5 +48,6 @@ The router's `sigkill-mid-fanout` scenario checks a partial durable fanout
 before killing the worker and exact recovery after restart. The router
 correctness scenarios check fanout under redelivery and selection drift, independent
 target commits with a durable dead letter, and the declarative selection
-policy matrix. The asynchronous projection scenario checks deduplication,
+policy matrix. A reordered redelivery probe checks that dead-letter rows still
+identify their rejected targets. The asynchronous projection scenario checks deduplication,
 rebuild fencing, and the documented effect of pruning deduplication rows.

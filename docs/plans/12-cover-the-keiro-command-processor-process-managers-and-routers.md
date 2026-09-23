@@ -71,7 +71,7 @@ Milestone 4 — Router scenarios
 
 - [x] (2026-09-23T20:58:00Z) Router fanout: `fanout-exactly-once` passes at fanout 16 with reordered and repeated recipients and three deliveries; its unstable-name sabotage arm fails. `per-target-independent-commits` passes with seven credits and one durable dispatch dead letter. `stable-union-under-drift` passes after an injected conflict and changed selection.
 - [x] (2026-09-23T20:58:00Z) `declarative-selection-policies` passes the full 4×3 empty/failure policy matrix with query, conflict, overflow, and equal-duplicate cases; only equal duplicates dispatch.
-- [ ] `dead-letter-identity-under-reordered-redelivery` (probe; file upstream if it fails).
+- [x] (2026-09-23T21:28:00Z) `dead-letter-identity-under-reordered-redelivery` passes. A worker parked before acknowledgement after two rejected targets, was killed, and a replacement acknowledged the same source after reversing recipient order; each closed target retained exactly one correctly named dead letter. No upstream defect was found by this probe.
 - [x] (2026-09-23T21:25:00Z) `sigkill-mid-fanout` passes with a real router worker at 32 recipients/k = 16 and 5 recipients/k = 2. The SQL oracle observes exactly k bonus credits before SIGKILL and one per recipient after an unarmed worker resumes the same subscription.
 
 Milestone 5 — Write-side benchmarks, soak and telemetry arms

@@ -10,7 +10,7 @@ import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
 import Effectful (liftIO)
 import Keiro.Command (RunCommandOptions (..), defaultRunCommandOptions)
-import Keiro.ProcessManager (defaultWorkerOptions, runProcessManagerWorkerWith)
+import Keiro.ProcessManager (RejectedCommandPolicy (..), WorkerOptions (..), defaultWorkerOptions, runProcessManagerWorkerWith)
 import Keiro.Router (runRouterWorkerWith)
 import Kenshou.Core.Id (unSeed)
 import Kenshou.Core.Role (ControlMessage (..), PostgresConnInfo (..), RoleContext (..), RoleName, WorkerInit (..), WorkerMessage (..), WorkerRole (..), mkRoleName)
@@ -100,7 +100,10 @@ commandWriter context = case parseMaybe parseWriterArgs context.init.args of
 data DispatcherArgs = DispatcherArgs
   { subscription :: !Text,
     parkBeforeAppend :: !(Maybe Int),
-    parkBeforeAck :: !Bool
+    parkBeforeAck :: !Bool,
+    reverseRecipients :: !Bool,
+    rejectedDeadLetter :: !Bool,
+    reportAcks :: !Bool
   }
 
 parseDispatcherArgs :: Value -> Parser DispatcherArgs
@@ -109,6 +112,9 @@ parseDispatcherArgs = withObject "keiro dispatcher" \value ->
     <$> value .: "subscription"
     <*> value .:? "parkBeforeAppend"
     <*> value .:? "parkBeforeAck" .!= False
+    <*> value .:? "reverseRecipients" .!= False
+    <*> value .:? "rejectedDeadLetter" .!= False
+    <*> value .:? "reportAcks" .!= False
 
 parkForever :: RoleContext -> Text -> IO ()
 parkForever context point = do
@@ -141,9 +147,12 @@ processManagerWorker context = case parseMaybe parseDispatcherArgs context.init.
         result <- runFixture do
           adapter <- kirokuBridge fixture.store (sagaAdapterConfig (SubscriptionName args.subscription) Nothing)
           let observed =
-                if args.parkBeforeAck
-                  then interposeAck (\_ _ -> liftIO (parkForever context "before-ack")) adapter
-                  else adapter
+                interposeAck
+                  ( \_ decision -> do
+                      if args.reportAcks then liftIO (context.send (WrkCustom "acknowledged" (object ["decision" .= show decision]))) else pure ()
+                      if args.parkBeforeAck then liftIO (parkForever context "before-ack") else pure ()
+                  )
+                  adapter
           runProcessManagerWorkerWith defaultWorkerOptions options (transferManager (accountEventStream SnapNever) (const [])) observed decodeTransferSignal
         case result of
           Left issue -> context.send (WrkError (Text.pack (show issue)))
@@ -163,10 +172,17 @@ routerWorker context = case parseMaybe parseDispatcherArgs context.init.args of
         result <- runFixture do
           adapter <- kirokuBridge fixture.store (bonusAdapterConfig (SubscriptionName args.subscription))
           let observed =
-                if args.parkBeforeAck
-                  then interposeAck (\_ _ -> liftIO (parkForever context "before-ack")) adapter
-                  else adapter
-          runRouterWorkerWith defaultWorkerOptions options (bonusRouterWith bonusRouterName (accountEventStream SnapNever) directoryRecipients) observed decodeBonusDeclared
+                interposeAck
+                  ( \_ decision -> do
+                      if args.reportAcks then liftIO (context.send (WrkCustom "acknowledged" (object ["decision" .= show decision]))) else pure ()
+                      if args.parkBeforeAck then liftIO (parkForever context "before-ack") else pure ()
+                  )
+                  adapter
+              recipients bonus = do
+                selected <- directoryRecipients bonus
+                pure (if args.reverseRecipients then reverse selected else selected)
+              workerOptions = defaultWorkerOptions {rejectedCommandPolicy = if args.rejectedDeadLetter then RejectedDeadLetter else RejectedHalt}
+          runRouterWorkerWith workerOptions options (bonusRouterWith bonusRouterName (accountEventStream SnapNever) recipients) observed decodeBonusDeclared
         case result of
           Left issue -> context.send (WrkError (Text.pack (show issue)))
           Right () -> context.send (WrkDone Nothing)
