@@ -4,28 +4,94 @@ import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 import Control.Exception (finally, fromException)
 import Control.Monad (forM, unless)
-import Data.Aeson (object)
-import Data.IORef (modifyIORef', newIORef, readIORef)
+import Data.Aeson (object, (.=))
+import Data.IORef (atomicModifyIORef', modifyIORef', newIORef, readIORef)
+import Data.Int (Int64)
 import Data.List (sort)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Set qualified as Set
 import Data.Text qualified as Text
+import Data.Time.Clock (addUTCTime, getCurrentTime)
 import Data.Vector qualified as Vector
-import Kenshou.Core.Context (RunContext (..))
+import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), knobInt, knobText, mkKnobName)
-import Kenshou.Core.Phase (zeroPhases)
+import Kenshou.Core.Phase (PhasePlan (..), zeroPhases)
 import Kenshou.Core.Scenario
 import Kenshou.Suite.Kiroku.Correctness.Append (recordCells)
-import Kenshou.Suite.Kiroku.Fixture.Store (withKirokuStore)
+import Kenshou.Suite.Kiroku.Fixture.Store (withKirokuStore, withKirokuStoreWithTap)
 import Kenshou.Suite.Kiroku.Knobs (storeKnobs)
 import Kiroku.Store hiding (id, withKirokuStore)
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [checkpointPolicies, filtersAdvanceCheckpoint, catchupLiveHandoff]
+scenarios = [checkpointPolicies, filtersAdvanceCheckpoint, catchupLiveHandoff, categoryIdleNoSpin]
+
+categoryIdleNoSpin :: Scenario
+categoryIdleNoSpin =
+  checkpointPolicies
+    { id = either (error . show) id (parseScenarioId "kiroku/subscription/correctness/category-idle-no-spin"),
+      summary = "Checks that an idle category worker avoids repeated live database fetches under unrelated writes.",
+      tier = TierStandard,
+      phases = PhasePlan 0 90 0,
+      run = runCategoryIdle
+    }
+
+runCategoryIdle :: RunContext -> IO ScenarioReport
+runCategoryIdle context = do
+  categoryFetches <- newIORef (0 :: Int)
+  groupFetches <- newIORef (0 :: Int)
+  let idleName = SubscriptionName "idle-category"
+      groupName = SubscriptionName "idle-group"
+      tap event = case event of
+        KirokuEventSubscriptionFetched name _ _
+          | name == idleName -> atomicModifyIORef' categoryFetches (\count -> (count + 1, ()))
+          | name == groupName -> atomicModifyIORef' groupFetches (\count -> (count + 1, ()))
+        _ -> pure ()
+  withKirokuStoreWithTap context (Just tap) \store -> do
+    let target = Category (CategoryName "idle")
+        handler _ = pure Continue
+        categoryConfig = defaultSubscriptionConfig idleName target handler
+        groupConfig = (defaultSubscriptionConfig groupName target handler) {consumerGroup = Just (ConsumerGroup 0 1)}
+        stream = StreamName "other-events"
+        event = EventData Nothing (EventType "Other") (object []) Nothing Nothing Nothing
+        awaitLive handle = timeout 10000000 loop
+          where
+            loop = do
+              state <- handle.currentState
+              case state of
+                Just value | stateName value == "live" -> pure True
+                _ -> threadDelay 10000 >> loop
+        produce deadline count = do
+          now <- getCurrentTime
+          if now >= deadline
+            then pure count
+            else do
+              result <- runStoreIO store (appendToStream stream AnyVersion (replicate 10 event))
+              case result of
+                Right _ -> threadDelay 18000 >> produce deadline (count + 10)
+                Left err -> fail ("idle workload append failed: " <> show err)
+    withSubscription store categoryConfig \categoryHandle ->
+      withSubscription store groupConfig \groupHandle -> do
+        categoryLive <- awaitLive categoryHandle
+        groupLive <- awaitLive groupHandle
+        start <- getCurrentTime
+        let seconds = context.phases.steadySeconds
+        produced <- produce (addUTCTime (realToFrac seconds) start) (0 :: Int64)
+        idleCalls <- readIORef categoryFetches
+        groupCalls <- readIORef groupFetches
+        let limit = floor (seconds / 30) + 2
+            rate = if seconds <= 0 then 0 else fromIntegral produced / seconds
+            cells =
+              [ ("both-workers-live", categoryLive == Just True && groupLive == Just True),
+                ("other-category-fed", produced > 0),
+                ("other-category-rate", rate >= 450),
+                ("idle-category-fetch-bound", idleCalls <= limit)
+              ]
+        putSummary context Measurements "idle-category" (object ["steadySeconds" .= seconds, "producedEvents" .= produced, "eventsPerSecond" .= rate, "categoryFetches" .= idleCalls, "groupFetches" .= groupCalls, "categoryFetchLimit" .= limit])
+        recordCells context "category-idle-no-spin" ["idle-category-fetch-bound"] cells
 
 catchupLiveHandoff :: Scenario
 catchupLiveHandoff =
