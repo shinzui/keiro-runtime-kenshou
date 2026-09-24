@@ -2,6 +2,7 @@ module Kenshou.Suite.Keiro.Fixture.Roles (roles) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (withAsync)
+import Control.Exception (bracket)
 import Control.Monad (forM, forever)
 import Data.Aeson (Value, object, withObject, (.!=), (.:), (.:?), (.=))
 import Data.Aeson.Types (Parser, parseMaybe)
@@ -9,7 +10,9 @@ import Data.IORef (atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
+import Data.Time.Clock.POSIX (getPOSIXTime)
 import Effectful (liftIO)
+import GHC.Clock (getMonotonicTimeNSec)
 import Keiro.Command (RunCommandOptions (..), defaultRunCommandOptions)
 import Keiro.ProcessManager (PMCommandResult (..), ProcessManagerResult (..), RejectedCommandPolicy (..), WorkerOptions (..), defaultWorkerOptions, runProcessManagerOnce, runProcessManagerWorkerWith)
 import Keiro.Projection (AsyncApplyOutcome (..))
@@ -17,6 +20,9 @@ import Keiro.Router (runRouterWorkerWith)
 import Keiro.Subscription.Shard.Worker (RetryDelay (..), ShardAck (..), ShardDelivery (..), ShardedWorkerOptions (..), defaultShardedWorkerOptions, runShardedSubscriptionGroupAck)
 import Kenshou.Core.Id (unSeed)
 import Kenshou.Core.Role (ControlMessage (..), PostgresConnInfo (..), RoleContext (..), RoleName, WorkerInit (..), WorkerMessage (..), WorkerRole (..), mkRoleName)
+import Kenshou.Measure.Sampler.Csv (CsvWriter, appendCsv, closeCsv, openCsv)
+import Kenshou.Measure.Sampler.Process qualified as ProcessSample
+import Kenshou.Measure.Sampler.Rts (closeRtsSampler, openRtsSampler, sampleRts)
 import Kenshou.Suite.Keiro.Fixture.Account
 import Kenshou.Suite.Keiro.Fixture.Bonus
 import Kenshou.Suite.Keiro.Fixture.Bridge
@@ -27,6 +33,8 @@ import Kenshou.Suite.Keiro.Fixture.Workload qualified as Workload
 import Kiroku.Store (defaultConnectionSettings)
 import Kiroku.Store.Subscription.Types (ConsumerGroup (..), SubscriptionName (..), SubscriptionTarget (..))
 import Kiroku.Store.Types (CategoryName (..), RecordedEvent (..))
+import System.Directory (createDirectoryIfMissing)
+import System.FilePath ((</>))
 
 roles :: [WorkerRole]
 roles =
@@ -53,6 +61,36 @@ withPostgres context action = case context.init.postgres of
   Nothing -> context.send (WrkError "Keiro worker requires PostgreSQL")
   Just postgres -> action postgres
 
+withRoleSampler :: RoleContext -> Bool -> IO value -> IO value
+withRoleSampler _ False action = action
+withRoleSampler context True action = bracket open close \(rts, process, start) -> withAsync (sampleLoop rts process start) (const action)
+  where
+    label = Text.unpack (Text.replace "/" "-" context.init.instanceName)
+    directory = context.init.outDir </> "series" </> "children" </> label
+    open = do
+      createDirectoryIfMissing True directory
+      rts <- openRtsSampler (directory </> "rts.csv")
+      process <- ProcessSample.openProcessSampler (directory </> "proc.csv")
+      start <- getMonotonicTimeNSec
+      pure (rts, process, start)
+    close (rts, process, _) = do
+      maybe (pure ()) closeRtsSampler rts
+      ProcessSample.closeProcessSampler process
+    sampleLoop rts process start = forever do
+      now <- getMonotonicTimeNSec
+      wall <- getPOSIXTime
+      let prefix = [Text.pack (show (now - start)), Text.pack (show (round (wall * 1000) :: Integer)), "steady"]
+      maybe (pure ()) (\sampler -> sampleRts sampler prefix) rts
+      ProcessSample.sampleProcess process prefix
+      threadDelay 1000000
+
+withLatencyCsv :: RoleContext -> Bool -> (Maybe CsvWriter -> IO value) -> IO value
+withLatencyCsv _ False action = action Nothing
+withLatencyCsv context True action =
+  let label = Text.unpack (Text.replace "/" "-" context.init.instanceName)
+      path = context.init.outDir </> "series" </> "children" </> label </> "latency.csv"
+   in bracket (openCsv path ["t_mono_ns", "duration_ns", "operation"]) closeCsv (action . Just)
+
 data WriterArgs = WriterArgs
   { worker :: !Int,
     workers :: !Int,
@@ -65,7 +103,8 @@ data WriterArgs = WriterArgs
     inlineProjection :: !Bool,
     seedVerifySampleRate :: !Int,
     postSubmissionDelayMicros :: !Int,
-    reportEvery :: !Int
+    reportEvery :: !Int,
+    sampleProcess :: !Bool
   }
 
 parseWriterArgs :: Value -> Parser WriterArgs
@@ -83,6 +122,7 @@ parseWriterArgs = withObject "keiro command writer" \value ->
     <*> value .:? "seedVerifySampleRate" .!= 1000
     <*> value .:? "postSubmissionDelayMicros" .!= 0
     <*> value .:? "reportEvery" .!= 1
+    <*> value .:? "sampleProcess" .!= False
 
 commandWriter :: RoleContext -> IO ()
 commandWriter context = case parseMaybe parseWriterArgs context.init.args of
@@ -92,7 +132,7 @@ commandWriter context = case parseMaybe parseWriterArgs context.init.args of
     started <- awaitStart context
     if not started
       then pure ()
-      else withFixtureEnv (defaultConnectionSettings postgres.connectionString) \fixture -> do
+      else withRoleSampler context args.sampleProcess $ withLatencyCsv context args.sampleProcess \latency -> withFixtureEnv (defaultConnectionSettings postgres.connectionString) \fixture -> do
         stopRequested <- newIORef False
         let receiveStop =
               context.receive >>= \case
@@ -108,12 +148,15 @@ commandWriter context = case parseMaybe parseWriterArgs context.init.args of
               if stopping
                 then context.send (WrkDone (Just ("completed=" <> Text.pack (show completed))))
                 else do
+                  startedAt <- getMonotonicTimeNSec
                   outcomes <- forM (Workload.opCommands (unSeed context.init.seed) operation) \(choice, eventId) ->
                     case choice of
                       Left (_, bonusCommand) -> submitBonusCommand fixture defaultRunCommandOptions eventId bonusCommand
                       Right (_, accountCommand) ->
                         let runnerKind = if args.inlineProjectionSleep then RunnerWithProjections [accountBalanceProjection, parkingProjection] else if args.inlineProjection then RunnerWithProjections [accountBalanceProjection] else RunnerPlain
                          in submitAccountCommand fixture eventStream runnerKind defaultRunCommandOptions {seedVerifySampleRate = args.seedVerifySampleRate} args.clientRetryBudget eventId accountCommand
+                  endedAt <- getMonotonicTimeNSec
+                  maybe (pure ()) (\writer -> appendCsv writer [Text.pack (show endedAt), Text.pack (show (endedAt - startedAt)), Text.pack (show operation.index)]) latency
                   threadDelay args.postSubmissionDelayMicros
                   if any isFailure outcomes
                     then context.send (WrkError ("command writer operation failed at index " <> Text.pack (show operation.index)))
@@ -140,6 +183,7 @@ data DispatcherArgs = DispatcherArgs
     reverseRecipients :: !Bool,
     rejectedDeadLetter :: !Bool,
     inlineProjection :: !Bool,
+    sampleProcess :: !Bool,
     reportAcks :: !Bool,
     groupMember :: !(Maybe Int),
     groupSize :: !(Maybe Int)
@@ -154,6 +198,7 @@ parseDispatcherArgs = withObject "keiro dispatcher" \value ->
     <*> value .:? "reverseRecipients" .!= False
     <*> value .:? "rejectedDeadLetter" .!= False
     <*> value .:? "inlineProjection" .!= False
+    <*> value .:? "sampleProcess" .!= False
     <*> value .:? "reportAcks" .!= False
     <*> value .:? "groupMember"
     <*> value .:? "groupSize"
@@ -183,7 +228,7 @@ processManagerWorker context = case parseMaybe parseDispatcherArgs context.init.
     started <- awaitStart context
     if not started
       then pure ()
-      else withFixtureEnv (defaultConnectionSettings postgres.connectionString) \fixture -> do
+      else withRoleSampler context args.sampleProcess $ withFixtureEnv (defaultConnectionSettings postgres.connectionString) \fixture -> do
         options <- dispatchOptions context args
         let KeiroRunner runFixture = fixture.runner
         result <- runFixture do
@@ -209,7 +254,7 @@ processManagerShardedWorker context = case parseMaybe parseDispatcherArgs contex
     started <- awaitStart context
     if not started
       then pure ()
-      else withFixtureEnv (defaultConnectionSettings postgres.connectionString) \fixture -> do
+      else withRoleSampler context args.sampleProcess $ withFixtureEnv (defaultConnectionSettings postgres.connectionString) \fixture -> do
         let KeiroRunner runFixture = fixture.runner
             manager = transferManager (accountEventStream SnapNever) (const [])
             options = (defaultShardedWorkerOptions (Category (CategoryName "account")) 8) {renewInterval = 0.2, leaseTtl = 2}
@@ -233,7 +278,7 @@ routerWorker context = case parseMaybe parseDispatcherArgs context.init.args of
     started <- awaitStart context
     if not started
       then pure ()
-      else withFixtureEnv (defaultConnectionSettings postgres.connectionString) \fixture -> do
+      else withRoleSampler context args.sampleProcess $ withFixtureEnv (defaultConnectionSettings postgres.connectionString) \fixture -> do
         options <- dispatchOptions context args
         let KeiroRunner runFixture = fixture.runner
         result <- runFixture do
@@ -254,11 +299,11 @@ routerWorker context = case parseMaybe parseDispatcherArgs context.init.args of
           Left issue -> context.send (WrkError (Text.pack (show issue)))
           Right () -> context.send (WrkDone Nothing)
 
-data ProjectionArgs = ProjectionArgs {batchSize :: !Int, skipDedup :: !Bool, parkAfterApply :: !Bool}
+data ProjectionArgs = ProjectionArgs {batchSize :: !Int, skipDedup :: !Bool, parkAfterApply :: !Bool, sampleProcess :: !Bool}
 
 parseProjectionArgs :: Value -> Parser ProjectionArgs
 parseProjectionArgs = withObject "keiro projection worker" \value ->
-  ProjectionArgs <$> value .:? "batchSize" .!= 100 <*> value .:? "skipDedup" .!= False <*> value .:? "parkAfterApply" .!= False
+  ProjectionArgs <$> value .:? "batchSize" .!= 100 <*> value .:? "skipDedup" .!= False <*> value .:? "parkAfterApply" .!= False <*> value .:? "sampleProcess" .!= False
 
 projectionWorker :: RoleContext -> IO ()
 projectionWorker context = case parseMaybe parseProjectionArgs context.init.args of
@@ -268,7 +313,7 @@ projectionWorker context = case parseMaybe parseProjectionArgs context.init.args
     started <- awaitStart context
     if not started
       then pure ()
-      else withFixtureEnv (defaultConnectionSettings postgres.connectionString) \fixture -> do
+      else withRoleSampler context args.sampleProcess $ withFixtureEnv (defaultConnectionSettings postgres.connectionString) \fixture -> do
         let sabotage = if args.skipDedup then SkipDedup else NoProjectionSabotage
         duplicates <- newIORef (0 :: Int)
         runAccountActivityWorker fixture.store (fromIntegral args.batchSize) sabotage \recorded outcome -> do

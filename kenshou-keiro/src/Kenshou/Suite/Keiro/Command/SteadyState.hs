@@ -1,13 +1,19 @@
 module Kenshou.Suite.Keiro.Command.SteadyState (scenarios) where
 
 import Control.Concurrent (threadDelay)
+import Control.Concurrent.Async (poll, withAsync)
 import Control.Concurrent.STM (atomically)
-import Control.Monad (forM)
-import Data.Aeson (object, (.=))
+import Control.Exception (throwIO)
+import Control.Monad (forM, forever)
+import Data.Aeson (encode, object, (.=))
+import Data.ByteString.Lazy qualified as LazyByteString
 import Data.Int (Int64)
+import Data.List (foldl')
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
 import Data.Text qualified as Text
+import Data.Time (addUTCTime, getCurrentTime)
+import Data.Vector qualified as Vector
 import Hasql.Connection qualified as Connection
 import Hasql.Connection.Settings qualified as Settings
 import Hasql.Decoders qualified as Decoders
@@ -15,34 +21,38 @@ import Hasql.Encoders qualified as Encoders
 import Hasql.Session qualified as Session
 import Hasql.Statement qualified as Statement
 import Keiro.Command (CommandResult (..), defaultRunCommandOptions)
-import Keiro.Projection (runCommandWithProjections)
+import Keiro.Projection (countAsyncProjectionDedupForBefore, pruneAsyncProjectionDedupForBefore, runCommandWithProjections)
 import Kenshou.Check.Process (ProgressSnapshot (..), awaitReady, childPid, killChild, progress, roleProcess, sendCommand, spawn, stopGracefully, withSupervisor)
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary, requirePostgres)
+import Kenshou.Core.Context qualified as Core
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
-import Kenshou.Core.Id (Kind (..), parseScenarioId)
+import Kenshou.Core.Id (Kind (..), parseScenarioId, renderRunId, unSeed)
 import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobInt, mkKnobName)
 import Kenshou.Core.Outcome (Outcome (..), worstOutcome)
 import Kenshou.Core.Phase (PhasePlan (..))
 import Kenshou.Core.Role (ControlMessage (..), WorkerMessage (..))
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport (..), Tier (..), failedWith)
-import Kenshou.Diagnose.Leak (LeakReport (..), LeakSpec (..), defaultLeakSpec, judgeLeaks, leakOutcome)
+import Kenshou.Diagnose.Leak (LeakReport (..), LeakSpec (..), ProbeReport (..), ProbeSpec (..), analyseSeriesDirectory, defaultLeakSpec, judgeLeaks, leakOutcome)
+import Kenshou.Diagnose.Series (SeriesBinding (..), readBinding)
 import Kenshou.Measure.Knobs (measureKnobs)
 import Kenshou.Measure.Load (ClosedConfig (..), LoadModel (..), Operation (..), runLoad)
 import Kenshou.Measure.Recorder (OpName (..), OpResult (..))
 import Kenshou.Measure.Session (measureConfigFromKnobs, phasePlanFromCore, withMeasurement)
+import Kenshou.Measure.Stats (exactQuantile)
 import Kenshou.Suite.Keiro.Command.Correctness (recordCells)
 import Kenshou.Suite.Keiro.Fixture.Account
 import Kenshou.Suite.Keiro.Fixture.Domain
 import Kenshou.Suite.Keiro.Fixture.Model qualified as Model
 import Kenshou.Suite.Keiro.Fixture.Oracle qualified as Oracle
-import Kenshou.Suite.Keiro.Fixture.Projection (accountBalanceProjection, ensureFixtureReadModels)
+import Kenshou.Suite.Keiro.Fixture.Projection (accountActivityReadModelName, accountBalanceProjection, ensureFixtureReadModels)
 import Kenshou.Suite.Keiro.Fixture.Runtime
 import Kiroku.Store (defaultConnectionSettings)
 import Kiroku.Store.Types (EventType (..))
 import System.Exit (ExitCode (..))
+import System.FilePath ((</>))
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
@@ -61,7 +71,9 @@ steadyState reduced =
           <> [ intKnob "soak.duration-minutes" (if reduced then 20 else 240) 1 1440,
                intKnob "command.rate-per-second" 200 1 2000,
                intKnob "command.accounts" 100 4 1000,
-               intKnob "router.fanout" 4 1 100
+               intKnob "router.fanout" 4 1 100,
+               intKnob "projection.prune-interval-seconds" 300 0 3600,
+               intKnob "projection.dedup-retention-seconds" 3600 600 86400
              ],
       dimensions =
         DimensionSupport
@@ -86,8 +98,14 @@ runSteadyState context = case measureConfigFromKnobs context (phasePlanFromCore 
             accounts = fromIntegral (knobInt context.knobs (knobName "command.accounts")) :: Int
             fanout = fromIntegral (knobInt context.knobs (knobName "router.fanout")) :: Int
             rate = fromIntegral (knobInt context.knobs (knobName "command.rate-per-second")) :: Int
+            pruneInterval = fromIntegral (knobInt context.knobs (knobName "projection.prune-interval-seconds")) :: Int
+            retention = fromIntegral (knobInt context.knobs (knobName "projection.dedup-retention-seconds")) :: Int
             account index = AccountId (Text.pack (show index))
             accountEvents = accountEventStream (SnapEvery 100)
+            cutoff = addUTCTime (negate (fromIntegral retention)) <$> getCurrentTime
+            pruneAt before =
+              runFixture (pruneAsyncProjectionDedupForBefore accountActivityReadModelName before) >>= either (fail . show) pure
+            pruneLoop = forever $ threadDelay (pruneInterval * 1000000) >> cutoff >>= pruneAt >> pure ()
         _ <- runFixture ensureFixtureReadModels >>= either (fail . show) pure
         seeded <- forM [0 .. accounts - 1] \index -> do
           let current = account index
@@ -96,27 +114,30 @@ runSteadyState context = case measureConfigFromKnobs context (phasePlanFromCore 
         connection <- either (fail . show) pure acquired
         _ <- forM [0 .. fanout - 1] \index -> Connection.use connection (Session.statement (Text.pack (show index)) directoryInsert) >>= either (fail . show) pure
         let dispatcher role index subscription extra = do
-              spec <- roleProcess check role index (object (["subscription" .= (subscription :: Text.Text)] <> extra))
+              spec <- roleProcess check role index (object (["subscription" .= (subscription :: Text.Text), "sampleProcess" .= True] <> extra))
               child <- spawn supervisor spec
               awaitReady child 10000
               sendCommand child CtlStart
               pure child
         manager <- dispatcher "keiro/pm-worker" 0 "kenshou-keiro-steady-pm" ["inlineProjection" .= True]
         router <- dispatcher "keiro/router-worker" 0 "kenshou-keiro-steady-router" []
-        projectionSpec <- roleProcess check "keiro/projection-worker" 0 (object ["batchSize" .= (100 :: Int)])
+        projectionSpec <- roleProcess check "keiro/projection-worker" 0 (object ["batchSize" .= (100 :: Int), "sampleProcess" .= True])
         projection <- spawn supervisor projectionSpec
         awaitReady projection 10000
         sendCommand projection CtlStart
         writers <- forM [0, 1 :: Int] \index -> do
           let delay = max 1 (2000000 `div` rate)
-              args = object ["worker" .= index, "workers" .= (2 :: Int), "count" .= (100000000 :: Int), "accounts" .= accounts, "inlineProjection" .= True, "reportEvery" .= (1000 :: Int), "postSubmissionDelayMicros" .= delay]
+              args = object ["worker" .= index, "workers" .= (2 :: Int), "count" .= (100000000 :: Int), "accounts" .= accounts, "inlineProjection" .= True, "reportEvery" .= (1000 :: Int), "postSubmissionDelayMicros" .= delay, "sampleProcess" .= True]
           spec <- roleProcess check "keiro/command-writer" index args
           child <- spawn supervisor spec
           awaitReady child 10000
           sendCommand child CtlStart
           pure child
-        (_, _) <- withMeasurement context config \measurement ->
-          runLoad measurement (ClosedLoop (ClosedConfig 1 10000000 0)) (Operation (OpName "soak-heartbeat") (\_ _ -> pure (OpOk 1)))
+        (_, _) <- withAsync (if pruneInterval == 0 then pure () else pruneLoop) \pruner -> do
+          measured <- withMeasurement context config \measurement ->
+            runLoad measurement (ClosedLoop (ClosedConfig 1 10000000 0)) (Operation (OpName "soak-heartbeat") (\_ _ -> pure (OpOk 1)))
+          poll pruner >>= maybe (pure ()) (either throwIO (const (pure ())))
+          pure measured
         writerExits <- traverse (\child -> stopGracefully supervisor child 30000) writers
         quiescent <- timeout 120000000 (awaitQuiescence connection fanout)
         accountRows <- Oracle.readCategoryLog connection "account"
@@ -127,9 +148,22 @@ runSteadyState context = case measureConfigFromKnobs context (phasePlanFromCore 
         deadLetters <- Oracle.readDispatchDeadLetters connection
         subscriptionDeadLetters <- Connection.use connection (Session.statement () subscriptionLetterCount) >>= either (fail . show) pure
         snapshotCounts <- Connection.use connection (Session.statement () snapshotCount) >>= either (fail . show) pure
+        dedupCutoff <- cutoff
+        pruned <- if pruneInterval == 0 then pure 0 else pruneAt dedupCutoff
+        oldDedup <-
+          if pruneInterval == 0
+            then pure 0
+            else do
+              runFixture (countAsyncProjectionDedupForBefore accountActivityReadModelName dedupCutoff) >>= either (fail . show) pure
+        dedupCount <- Connection.use connection (Session.statement () projectionDedupCount) >>= either (fail . show) pure
         Connection.release connection
         mapM_ (killChild supervisor) [manager, router, projection]
         writerStates <- traverse (atomically . progress) writers
+        latencySamples <- fmap concat $ forM [0, 1 :: Int] \index -> do
+          let relative = "children/keiro-command-writer-" <> show index <> "/latency.csv"
+          result <- readBinding (context.outDir </> "series" </> relative) (SeriesBinding relative "t_mono_ns" "duration_ns" Map.empty)
+          Vector.toList <$> either (fail . show) pure result
+        let (earlyP99, lateP99, earlyCount, lateCount, latencyVerdict) = compareLatencyDeciles latencySamples
         let count kind rows = length [() | row <- rows, row.eventType == EventType kind]
             transfers = count "TransferDebited" accountRows
             bonuses = length bonusRows
@@ -142,7 +176,19 @@ runSteadyState context = case measureConfigFromKnobs context (phasePlanFromCore 
             duration = fromIntegral minutes * 60 :: Double
             leakSpec = defaultLeakSpec {warmupCutSeconds = 0, minDurationSeconds = max 30 (duration * 0.7), minPoints = 10, envelopeWindowSeconds = max 2 (min 30 (duration / 40))}
         leak <- judgeLeaks context leakSpec
-        putSummary context Measurements "write-side-steady" (object ["accounts" .= accounts, "fanout" .= fanout, "transfers" .= transfers, "bonuses" .= bonuses, "accountEvents" .= length accountRows, "leakVerdict" .= show leak.verdict, "coverageStatus" .= ("partial: child process leak probes and projection pruning pending" :: Text.Text)])
+        childLeaks <- forM [("keiro/command-writer", 0 :: Int), ("keiro/command-writer", 1), ("keiro/pm-worker", 0), ("keiro/router-worker", 0), ("keiro/projection-worker", 0)] \(role, index) -> do
+          let label = Text.unpack (Text.replace "/" "-" role) <> "-" <> show index
+              appName = "kenshou-" <> Text.take 8 (renderRunId context.runId) <> "-" <> role <> "-" <> Text.pack (show index)
+          let prefix = "children" </> label
+              childSpec = childLeakSpec prefix appName leakSpec
+          report <- analyseSeriesDirectory context.outDir childSpec (unSeed context.seed)
+          let named = nameLeakReport (Text.pack label) report
+              relative = "diagnosis/leak-" <> label <> ".json"
+          path <- Core.artifactPath context Core.DiagnosisDir ("leak-" <> label <> ".json")
+          LazyByteString.writeFile path (encode named)
+          Core.declareMediaType context relative "application/json"
+          pure (label, named)
+        putSummary context Measurements "write-side-steady" (object ["accounts" .= accounts, "fanout" .= fanout, "transfers" .= transfers, "bonuses" .= bonuses, "accountEvents" .= length accountRows, "prunedDedupRowsFinal" .= pruned, "oldDedupRows" .= oldDedup, "dedupRows" .= dedupCount, "commandLatency" .= object ["firstDecileP99Ns" .= earlyP99, "lastDecileP99Ns" .= lateP99, "firstDecileSamples" .= earlyCount, "lastDecileSamples" .= lateCount, "verdict" .= show latencyVerdict], "leakVerdict" .= show leak.verdict, "childLeakVerdicts" .= [(label, show report.verdict) | (label, report) <- childLeaks], "coverageStatus" .= ("partial: periodic kills and full telemetry arms pending" :: Text.Text)])
         base <-
           recordCells
             context
@@ -153,9 +199,10 @@ runSteadyState context = case measureConfigFromKnobs context (phasePlanFromCore 
               ("async-activity", activityMatches),
               ("no-dead-letters", null deadLetters && subscriptionDeadLetters == 0),
               ("bounded-snapshots", fst snapshotCounts <= fromIntegral accounts && fst snapshotCounts == snd snapshotCounts),
+              ("dedup-retention", pruneInterval == 0 || oldDedup == 0),
               ("logs-well-formed", Oracle.logWellFormed accountRows && Oracle.logWellFormed bonusRows && Oracle.logWellFormed sagaRows)
             ]
-        pure (base {outcome = worstOutcome (base.outcome :| [leakOutcome leak, Inconclusive])})
+        pure (base {outcome = worstOutcome (base.outcome :| ((leakOutcome leak : latencyVerdict : fmap (leakOutcome . snd) childLeaks) <> [Inconclusive]))})
   where
     minutes = fromIntegral (knobInt context.knobs (knobName "soak.duration-minutes")) :: Int
     awaitQuiescence connection fanout = do
@@ -167,6 +214,37 @@ runSteadyState context = case measureConfigFromKnobs context (phasePlanFromCore 
           transfers = count "TransferDebited"
           ready = count "TransferAnnounced" == transfers && count "TransferCredited" == transfers && count "TransferConfirmed" == transfers && count "BonusCredited" == length bonusRows * fanout && length sagaRows == 2 * transfers && sum [applied | (applied, _) <- Map.elems activity] == fromIntegral (length accountRows)
       if ready then pure True else threadDelay 2000000 >> awaitQuiescence connection fanout
+
+childLeakSpec :: FilePath -> Text.Text -> LeakSpec -> LeakSpec
+childLeakSpec prefix appName (LeakSpec probes warmup points duration envelope resamples confidence) =
+  LeakSpec
+    [ probe {binding = if probe.name == "pg.connections" then probe.binding {filters = Map.insert "application_name" appName probe.binding.filters} else probe.binding {file = prefix </> probe.binding.file}}
+    | probe <- probes,
+      probe.name `elem` ["heap.live-bytes", "process.native-bytes", "haskell.threads", "os.threads", "os.fds", "pg.connections"]
+    ]
+    warmup
+    points
+    duration
+    envelope
+    resamples
+    confidence
+
+nameLeakReport :: Text.Text -> LeakReport -> LeakReport
+nameLeakReport label (LeakReport verdict window seed policy probes) =
+  LeakReport verdict window seed policy [probe {process = label} | probe <- probes]
+
+compareLatencyDeciles :: [(Double, Double)] -> (Maybe Double, Maybe Double, Int, Int, Outcome)
+compareLatencyDeciles [] = (Nothing, Nothing, 0, 0, Inconclusive)
+compareLatencyDeciles samples@((firstTime, _) : rest) =
+  let start = foldl' (\value (time, _) -> min value time) firstTime rest
+      end = foldl' (\value (time, _) -> max value time) firstTime rest
+      width = (end - start) / 10
+      early = [latency | (time, latency) <- samples, time <= start + width]
+      late = [latency | (time, latency) <- samples, time >= end - width]
+      firstP99 = exactQuantile 0.99 early
+      lastP99 = exactQuantile 0.99 late
+      verdict = if length early < 100 || length late < 100 then Inconclusive else if lastP99 <= firstP99 * 1.2 then Passed else Inconclusive
+   in (Just firstP99, Just lastP99, length early, length late, verdict)
 
 directoryInsert :: Statement.Statement Text.Text ()
 directoryInsert =
@@ -188,6 +266,13 @@ snapshotCount =
     "SELECT count(*), count(DISTINCT stream_id) FROM keiro.keiro_snapshots"
     Encoders.noParams
     (Decoders.singleRow ((,) <$> Decoders.column (Decoders.nonNullable Decoders.int8) <*> Decoders.column (Decoders.nonNullable Decoders.int8)))
+
+projectionDedupCount :: Statement.Statement () Int64
+projectionDedupCount =
+  Statement.preparable
+    "SELECT count(*) FROM keiro.keiro_projection_dedup WHERE projection_name = 'kenshou-account-activity'"
+    Encoders.noParams
+    (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
 
 intKnob :: Text.Text -> Int -> Int -> Int -> KnobSpec
 intKnob key def low high = KnobSpec (knobName key) key KnobInt (VInt (fromIntegral def)) (IntRange (fromIntegral low) (fromIntegral high)) []

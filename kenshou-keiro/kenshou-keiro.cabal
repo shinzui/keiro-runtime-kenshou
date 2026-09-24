@@ -70,6 +70,7 @@ library
     base,
     bytestring,
     containers,
+    directory,
     effectful,
     filepath,
     hasql,

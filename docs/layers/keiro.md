@@ -162,7 +162,16 @@ tell whether growth persists.
 process-manager, router, and activity-projection workers. It stops writers at
 an operation boundary, waits for dispatch and projection to catch up, then
 checks account and saga logs, inline balances, async activity, dead letters,
-and snapshot row bounds. A one-minute four-account, one-recipient local probe
-passed all eight SQL checks over 835 account events. Its outcome remains
-inconclusive while child-process leak probes, projection pruning, optional
-kills, and longer runs are pending.
+snapshot row bounds, and projection dedup retention. Every child writes its
+own RTS and process series and receives a separate leak diagnosis, including
+connections selected by its PostgreSQL application name. The pruning interval
+defaults to five minutes, and dedup keys are retained for one hour by default.
+The retention knob must exceed the expected redelivery horizon. A one-minute
+four-account, one-recipient local probe
+passed all nine SQL checks over 865 account events with pruning invoked every
+second and no old dedup rows. All five child leak verdicts were inconclusive
+because the probe was too short. A follow-up one-minute probe passed nine SQL
+checks over 868 account events and wrote both writer latency series and
+application-specific connection probes. Its first and last tenth had 64 and
+63 latency samples, below the minimum for a decided drift comparison.
+Periodic kills, telemetry arms, and longer runs remain pending.

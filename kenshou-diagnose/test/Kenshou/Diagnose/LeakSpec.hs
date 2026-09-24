@@ -3,6 +3,7 @@ module Kenshou.Diagnose.LeakSpec (spec) where
 import Data.ByteString.Lazy.Char8 qualified as LazyByteString
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
+import Data.Text.IO qualified as Text
 import Data.Vector qualified as Vector
 import Kenshou.Core.Context (RunContext (..))
 import Kenshou.Core.Id (parseScenarioId)
@@ -10,6 +11,9 @@ import Kenshou.Diagnose.Document
 import Kenshou.Diagnose.Leak
 import Kenshou.Diagnose.Leak.MajorGcProbe (withMajorGcProbe)
 import Kenshou.Diagnose.Series
+import System.Directory (createDirectoryIfMissing)
+import System.FilePath ((</>))
+import System.IO.Temp (withSystemTempDirectory)
 import Test.Hspec
 
 spec :: Spec
@@ -67,6 +71,24 @@ spec = describe "Kenshou.Diagnose.Leak" do
         heap.binding.valueColumn `shouldBe` "live_bytes_last_gc"
         heap.binding.filters `shouldBe` Map.singleton "phase" "steady"
       other -> expectationFailure ("expected one heap probe, got " <> show other)
+
+  it "sums connection states for one application at each sample time" do
+    withSystemTempDirectory "kenshou-connections" \directory -> do
+      createDirectoryIfMissing True (directory </> "series")
+      Text.writeFile
+        (directory </> "series/pg-activity.csv")
+        "t_mono_ns,phase,application_name,connections\n0,steady,worker,1\n0,steady,worker,2\n0,steady,other,9\n2000000000,steady,worker,1\n2000000000,steady,worker,2\n4000000000,steady,worker,1\n4000000000,steady,worker,2\n"
+      case [probe | probe <- defaultLeakSpec.probes, probe.name == "pg.connections"] of
+        [connectionProbe] -> do
+          let selected = connectionProbe {binding = connectionProbe.binding {filters = Map.insert "application_name" "worker" connectionProbe.binding.filters}}
+              policy = LeakSpec [selected] 0 2 0 1 200 0.95
+          report <- analyseSeriesDirectory directory policy 42
+          case report.probes of
+            [result] -> do
+              result.first `shouldBe` Just 3
+              result.last `shouldBe` Just 3
+            other -> expectationFailure ("expected one connection report, got " <> show other)
+        other -> expectationFailure ("expected one connection probe, got " <> show other)
 
 testProbe :: ProbeSpec
 testProbe = ProbeSpec "test" "count" (SeriesBinding "synthetic.csv" "seconds" "value" Map.empty) WindowMin Bounded 3600 1 0 Nothing

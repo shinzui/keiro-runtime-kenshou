@@ -10,6 +10,7 @@ module Kenshou.Diagnose.Leak
     loadLeakPolicy,
     judgeLeaks,
     analyseRunDirectory,
+    analyseSeriesDirectory,
     majorGcSamples,
     judgeSeries,
     leakOutcome,
@@ -34,7 +35,7 @@ import Kenshou.Diagnose.Series
 import Kenshou.Diagnose.Series.Catalog
 import Kenshou.Diagnose.Stats
 import System.Directory (doesFileExist)
-import System.FilePath ((</>))
+import System.FilePath (takeDirectory, (</>))
 
 data LeakVerdict = LeakSuspected | Stable | InsufficientData
   deriving stock (Eq, Ord, Show)
@@ -153,6 +154,9 @@ analyseRunDirectory runDirectory spec seed = do
     then pure (Left (InvalidRunDirectory runDirectory "run-result.json is missing"))
     else Right <$> analyse runDirectory spec seed (pure Nothing)
 
+analyseSeriesDirectory :: FilePath -> LeakSpec -> Word64 -> IO LeakReport
+analyseSeriesDirectory runDirectory spec seed = analyse runDirectory spec seed (pure Nothing)
+
 analyse :: FilePath -> LeakSpec -> Word64 -> IO (Maybe (Double, Double)) -> IO LeakReport
 analyse runDirectory spec seed getWindow = do
   reports <- catMaybes <$> traverse (analyseProbe runDirectory spec seed) spec.probes
@@ -170,7 +174,7 @@ analyseProbe runDirectory spec seed probe = do
     if probe.name == "heap.live-bytes"
       then heapSeries runDirectory probe
       else do
-        result <- if probe.name == "process.native-bytes" then nativeSeries runDirectory probe else ordinarySeries runDirectory probe
+        result <- if probe.name == "process.native-bytes" then nativeSeries runDirectory probe else if probe.name == "pg.connections" then connectionSeries runDirectory probe else ordinarySeries runDirectory probe
         pure (result, False)
   pure $ Just case series of
     Left err -> emptyReport probe (Text.pack (show err))
@@ -204,11 +208,16 @@ ordinarySeries runDirectory probe =
       path = runDirectory </> "series" </> binding.file
    in readBinding path binding
 
+connectionSeries :: FilePath -> ProbeSpec -> IO (Either DiagnoseError (Vector (Double, Double)))
+connectionSeries runDirectory probe =
+  fmap (Vector.fromList . Map.toAscList . Map.fromListWith (+) . Vector.toList) <$> ordinarySeries runDirectory probe
+
 nativeSeries :: FilePath -> ProbeSpec -> IO (Either DiagnoseError (Vector (Double, Double)))
 nativeSeries runDirectory probe = do
   rss <- ordinarySeries runDirectory probe
   let memBinding = fromMaybe (error "runtime mem binding missing") (Map.lookup "runtime.mem-in-use-bytes" defaultCatalog)
-  mem <- readBinding (runDirectory </> "series" </> memBinding.file) memBinding
+  let childBinding = memBinding {file = takeDirectory probe.binding.file </> memBinding.file}
+  mem <- readBinding (runDirectory </> "series" </> childBinding.file) childBinding
   pure ((Vector.zipWith difference) <$> rss <*> mem)
   where
     difference (time, resident) (_, inUse) = (time, max 0 (resident - inUse))
