@@ -559,10 +559,11 @@ that killing the process or its backend leaves only the opening event before
 the peers run. One peer appends the deposit marker, the others and a restarted
 consumer see duplicates, and `keiro_inbox` stays empty.
 `gc-vs-insert-race` is registered with the documented inbox GC limitation.
-The current staged proxy runs delete the old receipt and observe a second
-handler effect, but the consumer leaves a replacement receipt. The strict
-schedule guard therefore reports these runs as inconclusive while the
-insert-versus-lookup gap is investigated.
+The proxy now establishes its connection before adding latency and holds a
+delayed response when switched to `Stall`. The durable run deleted the old
+receipt, observed a second handler effect, and retained a replacement receipt
+with a later timestamp. A separate `gc-reset-reprocess` verdict records that
+fact. The strict insert-versus-lookup schedule guard remains inconclusive.
 
 ## Job queue
 

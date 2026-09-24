@@ -118,7 +118,11 @@ pump mode source destination = do
 awaitMode mode chunk =
   readTVarIO mode >>= \case
     Forward -> pure ()
-    Latency millis -> threadDelay (millis * 1000)
+    Latency millis -> do
+      threadDelay (millis * 1000)
+      atomically do
+        current <- readTVar mode
+        check (current /= Stall)
     Throttle bytesPerSecond -> threadDelay (max 1 (ByteString.length chunk * 1000000 `div` max 1 bytesPerSecond))
     Stall -> atomically do current <- readTVar mode; check (current /= Stall)
     Blackhole -> pure ()

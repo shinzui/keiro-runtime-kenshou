@@ -2,6 +2,7 @@ module Kenshou.Suite.Keiro.Inbox.Concurrency (scenarios) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (wait, withAsync)
+import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 import Control.Concurrent.STM (atomically)
 import Data.Aeson (object, withObject, (.:), (.=))
 import Data.Aeson.Types (parseMaybe)
@@ -76,7 +77,8 @@ runGcVsInsertRace context =
     seedRows <- runFixture (listInbox source) >>= either (fail . show) pure
     seedBackends <- listBackends postgres
     withTcpProxy endpoint \proxy -> do
-      setProxyMode proxy (Latency 250)
+      ready <- newEmptyMVar
+      start <- newEmptyMVar
       let connection = proxiedConnectionString postgres proxy <> " application_name=kenshou_inbox_gc_race"
           awaitInsert = do
             backends <- listBackends postgres
@@ -86,10 +88,15 @@ runGcVsInsertRace context =
       withAsync
         ( withFixtureEnv (defaultConnectionSettings connection) \proxyFixture -> do
             let KeiroRunner runProxy = proxyFixture.runner
+            _ <- runProxy (listOutbox source) >>= either (fail . show) pure
+            putMVar ready ()
+            takeMVar start
             runProxy (runInboxTransaction Nothing PreferIntegrationMessageId event Nothing handler)
         )
         \consumer -> do
-          observed <- maybe False id <$> timeout 15000000 awaitInsert
+          prepared <- maybe False (const True) <$> timeout 15000000 (takeMVar ready)
+          if prepared then setProxyMode proxy (Latency 1000) >> putMVar start () else pure ()
+          observed <- if prepared then maybe False id <$> timeout 15000000 awaitInsert else pure False
           beforeGcRows <- runFixture (listInbox source) >>= either (fail . show) pure
           deleted <-
             if observed
@@ -103,9 +110,14 @@ runGcVsInsertRace context =
           second <- wait consumer >>= either (fail . show) pure
           rows <- runFixture (listInbox source) >>= either (fail . show) pure
           effects <- runFixture (KirokuTransaction.runTransaction (Tx.statement () effectReadStatement)) >>= either (fail . show) pure
-          let schedule = first == Right (InboxProcessed ()) && observed && deleted == 1 && second == Right (InboxProcessed ()) && null rows
+          let recreated = case (seedRows, rows) of
+                ([seed], [replacement]) -> replacement.receivedAt > seed.receivedAt
+                _ -> False
+              resetObserved = first == Right (InboxProcessed ()) && observed && deleted == 1 && second == Right (InboxProcessed ()) && recreated && length effects == 2
+              schedule = first == Right (InboxProcessed ()) && observed && deleted == 1 && second == Right (InboxProcessed ()) && null rows
               cells =
                 [ ("schedule-realised", Contract, schedule),
+                  ("gc-reset-reprocess", Implementation, resetObserved),
                   ("effectively-once", Implementation, length effects == 1),
                   ("at-least-once", Contract, not (null effects))
                 ]
