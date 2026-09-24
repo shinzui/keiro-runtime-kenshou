@@ -471,9 +471,12 @@ deliveries each report processed but roll back; a nontransactional sequence
 confirms that the handler ran twice, while no inbox row or effect remains. With
 `inbox.failure-mode=sql-error`, division by zero returns Keiro's
 `UnexpectedServerError` classification and leaves no completed row or effect.
-`batch-fast-path-and-fallback` checks
-that a clean batch shares one transaction and a throwing delivery falls back
-to per-message processing without duplicating other effects.
+`batch-fast-path-and-fallback` checks that a clean batch shares one transaction
+and a throwing delivery falls back to per-message processing without
+duplicating other effects. With `inbox.failure-mode=condemn`, the batch rolls
+back, the poison handler runs again in the fallback, its reported processed
+receipt leaves no row, and the other deliveries commit one effect each. Both
+arms passed with durable PostgreSQL.
 The `race-one-key` no-kill arm starts four real consumer processes against a
 slow transactional handler. Its durable run observed one processed delivery,
 three duplicates, one completed inbox row, and one protected effect.
