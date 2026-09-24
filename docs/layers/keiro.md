@@ -273,6 +273,9 @@ storage both passed with one effect per key under redelivery.
 ceiling and retention of failed rows. `batch-fast-path-and-fallback` checks
 that a clean batch shares one transaction and a throwing delivery falls back
 to per-message processing without duplicating other effects.
+The `race-one-key` no-kill arm starts four real consumer processes against a
+slow transactional handler. Its durable run observed one processed delivery,
+three duplicates, one completed inbox row, and one protected effect.
 
 ## Job queue
 

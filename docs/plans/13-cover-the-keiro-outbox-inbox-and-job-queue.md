@@ -52,8 +52,8 @@ Milestone 2 — Inbox scenarios.
 
 - [ ] Implement `Kenshou.Suite.Keiro.Inbox.Effects` (harness-owned effect table and invocation sequence), `.Delivery`, `.Knobs`, `.Roles`, `.Oracle` with unit tests.
 - [ ] Implement the four inbox correctness scenarios: envelope round trip passed; the initial message-ID/table-backed arms of the matrix passed with both persistence modes; the default exception arm of poison accounting passed; the clean and throwing-handler arms of batch intake passed. Other policy, delegated, condemnation, and SQL-error arms remain.
-- [ ] Implement the two inbox concurrency scenarios (race on one key with optional kill of the winner; staged GC-versus-insert race).
-- [ ] Splice `Kenshou.Suite.Keiro.Inbox.scenarios` and `.roles` into the bundle; run all inbox scenarios; record outcomes.
+- [ ] Implement the two inbox concurrency scenarios: the four-process no-kill arm of `race-one-key` passed; winner-kill, delegated, and GC-versus-insert arms remain.
+- [ ] Splice `Kenshou.Suite.Keiro.Inbox.scenarios` and `.roles` into the bundle; both lists are wired and all currently implemented inbox scenarios have passed durable runs. Complete the remaining arms and rerun.
 
 Milestone 3 — Job queue scenarios.
 
@@ -94,6 +94,7 @@ Milestone 4 — Messaging benchmarks, soak and telemetry arms.
 - The four-process publisher arm passed at 2,000 rows in `01a0d191-2bab-7250-b036-0929cfc66bf6` and at its 20,000-row default in `01a0d191-8636-75b7-a79d-eb8c1e3a0a43`. Each row had one broker record and one attempt; per-key order held. The scenario records each publisher's broker count, but does not yet read callback start/end facts to independently establish non-overlapping ownership intervals.
 - `docs/layers/keiro.md` now has Outbox, Inbox and Job queue sections describing the implemented probes, durable checks, and current CLI selectors. The sections require another pass when the remaining planned scenarios and telemetry arms are implemented.
 - Initial `job-outcome-semantics` arms passed in `01a0d194-e4c1-71b0-bf34-d6459848537e`. Direct queue and DLQ reads confirmed Done deletes the row, explicit Retry delays redelivery and increments the handler's attempt, delayed enqueue waits before first delivery, and Dead moves the row to a DLQ with a `poison_pill` reason.
+- The first inbox process race passed in `01a0d197-aabb-745f-80ef-6a332bcbb12a`. Four consumers started against one key with a one-second transactional handler; exactly one reported `processed`, three reported `duplicate`, and SQL contained one completed inbox row and one effect.
 
 
 ## Decision Log

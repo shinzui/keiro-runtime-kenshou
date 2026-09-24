@@ -1,4 +1,4 @@
-module Kenshou.Suite.Keiro.Inbox.Correctness (scenarios) where
+module Kenshou.Suite.Keiro.Inbox.Correctness (scenarios, ensureEffectTable, effectReadStatement, effectInsertStatement) where
 
 import Data.ByteString qualified as ByteString
 import Data.Int (Int64)

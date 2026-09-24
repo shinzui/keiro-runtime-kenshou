@@ -57,7 +57,9 @@ library
     Kenshou.Suite.Keiro.Fixture.Transfer
     Kenshou.Suite.Keiro.Fixture.Workload
     Kenshou.Suite.Keiro.Inbox
+    Kenshou.Suite.Keiro.Inbox.Concurrency
     Kenshou.Suite.Keiro.Inbox.Correctness
+    Kenshou.Suite.Keiro.Inbox.Roles
     Kenshou.Suite.Keiro.Messaging.Verdict
     Kenshou.Suite.Keiro.Outbox
     Kenshou.Suite.Keiro.Outbox.Broker
