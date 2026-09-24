@@ -4,6 +4,7 @@ import Kenshou.Core.Role (WorkerRole)
 import Kenshou.Core.Scenario (Scenario)
 import Kenshou.Suite.Keiro.Workflow.AwakeableSmoke qualified as AwakeableSmoke
 import Kenshou.Suite.Keiro.Workflow.ChildSmoke qualified as ChildSmoke
+import Kenshou.Suite.Keiro.Workflow.CrashBackoff qualified as CrashBackoff
 import Kenshou.Suite.Keiro.Workflow.CrashSmoke qualified as CrashSmoke
 import Kenshou.Suite.Keiro.Workflow.DirectRace qualified as DirectRace
 import Kenshou.Suite.Keiro.Workflow.ExactDiscovery qualified as ExactDiscovery
@@ -16,7 +17,7 @@ import Kenshou.Suite.Keiro.Workflow.SleepSmoke qualified as SleepSmoke
 import Kenshou.Suite.Keiro.Workflow.StepBoundary qualified as StepBoundary
 
 scenarios :: [Scenario]
-scenarios = LinearSmoke.scenarios <> CrashSmoke.scenarios <> DirectRace.scenarios <> ResumeRace.scenarios <> StepBoundary.scenarios <> SleepSmoke.scenarios <> AwakeableSmoke.scenarios <> RotationSmoke.scenarios <> ExactDiscovery.scenarios <> PatchSmoke.scenarios <> ChildSmoke.scenarios
+scenarios = LinearSmoke.scenarios <> CrashSmoke.scenarios <> CrashBackoff.scenarios <> DirectRace.scenarios <> ResumeRace.scenarios <> StepBoundary.scenarios <> SleepSmoke.scenarios <> AwakeableSmoke.scenarios <> RotationSmoke.scenarios <> ExactDiscovery.scenarios <> PatchSmoke.scenarios <> ChildSmoke.scenarios
 
 roles :: [WorkerRole]
 roles = Roles.roles

@@ -159,6 +159,11 @@ per worker completed with one journal entry and one effect per step.
 flushed step effects and a third during a step pause. Replacement workers
 complete the cohort; the default 100-instance durable run recorded three
 crash-bounded duplicate effects, exact journals, and no retry attempts.
+`keiro/workflow/concurrency/crash-backoff-and-max-attempts` runs a flaky step
+through its retry ceiling, checks the 2, 4, and 8 second spacing at four
+attempts, observes a quiet failed instance for sixteen seconds, then
+resurrects it and completes it with a repaired worker. The failure event
+remains in the journal.
 
 The registered command scenarios also cover duplicate event identifiers,
 optimistic retry and exhaustion, controlled SQL rollback, and hydration over

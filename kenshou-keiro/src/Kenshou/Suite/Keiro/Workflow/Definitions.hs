@@ -29,6 +29,9 @@ module Kenshou.Suite.Keiro.Workflow.Definitions
     rotatedParentWorkflow,
     discoveryParentName,
     discoveryParentWorkflow,
+    flakyName,
+    flakyWorkflow,
+    flakyRegistry,
   )
 where
 
@@ -234,3 +237,16 @@ discoveryParentWorkflow sink wid = do
   let childId = WorkflowId (unWorkflowId wid <> "-child")
   handle <- spawnChild sleeperName childId (sleeperWorkflowWithDelay sink True 60 childId)
   awaitChild handle
+
+flakyName :: WorkflowName
+flakyName = either (error . show) id (mkWorkflowName "kenshouFlaky")
+
+flakyWorkflow :: (IOE :> es) => EffectSink -> Bool -> WorkflowId -> Eff (Workflow : es) Int
+flakyWorkflow sink repaired wid = step (StepName "boom") do
+  liftIO $ sink.recordEffect (EffectFact "flaky" (unWorkflowId wid <> "/0/boom") "workflow" (object []))
+  if repaired
+    then pure 42
+    else liftIO (throwIO (userError "deliberate flaky step failure"))
+
+flakyRegistry :: EffectSink -> Bool -> WorkflowRegistry '[Store, Error StoreError, IOE]
+flakyRegistry sink repaired = Map.singleton flakyName (WorkflowDef (flakyWorkflow sink repaired))
