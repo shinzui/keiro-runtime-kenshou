@@ -1,10 +1,12 @@
 module Kenshou.Suite.Keiro.Queue.Correctness (scenarios) where
 
+import Control.Concurrent (threadDelay)
 import Control.Exception (try)
 import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.Int (Int64)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text (Text)
+import Data.Text qualified as Text
 import Effectful (liftIO)
 import Hasql.Decoders qualified as Decoders
 import Hasql.Encoders qualified as Encoders
@@ -12,7 +14,7 @@ import Hasql.Pool qualified as Pool
 import Hasql.Session qualified as Session
 import Hasql.Statement qualified as Statement
 import Keiro.PGMQ.Codec (aesonJobCodec)
-import Keiro.PGMQ.Job (Job (..), JobConsumptionConfigError (..), JobOrdering (..), JobOutcome (..), JobPolling (..), JobTuning (..), JobTuningConfigError (..), RetryDelay (..), RetryPolicy (..), defaultJobTuning, defaultRetryPolicy, enqueue, ensureJobQueue, runJobOnceWithContext, withOrdering)
+import Keiro.PGMQ.Job (Job (..), JobConsumptionConfigError (..), JobContext (..), JobOrdering (..), JobOutcome (..), JobPolling (..), JobTuning (..), JobTuningConfigError (..), RetryDelay (..), RetryPolicy (..), defaultJobTuning, defaultRetryPolicy, enqueue, enqueueWithDelay, ensureJobQueue, runJobOnceWithContext, withOrdering)
 import Keiro.PGMQ.Runtime (JobRuntime (..), QueueRef (..), queueRef, runJobEff, withJobRuntime)
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
@@ -26,7 +28,69 @@ import Kenshou.Suite.Keiro.Outbox.Workload (sourceName)
 import Pgmq.Types (queueNameToText)
 
 scenarios :: [Scenario]
-scenarios = [consumptionConfigRejections, maxRetriesBeforeHandler]
+scenarios = [consumptionConfigRejections, maxRetriesBeforeHandler, jobOutcomeSemantics]
+
+jobOutcomeSemantics :: Scenario
+jobOutcomeSemantics =
+  consumptionConfigRejections
+    { id = either (error . show) id (parseScenarioId "keiro/queue/correctness/job-outcome-semantics"),
+      summary = "Checks done, explicit retry, delayed delivery, and terminal dead-letter outcomes.",
+      tier = TierStandard,
+      run = runJobOutcomeSemantics
+    }
+
+runJobOutcomeSemantics :: RunContext -> IO ScenarioReport
+runJobOutcomeSemantics context =
+  withJobRuntime (requirePostgres context).connectionString Nothing \runtime -> do
+    attempts <- newIORef ([] :: [Maybe Word])
+    let makeJob name = Job name (queueRef (sourceName context name)) (aesonJobCodec @Text) Unordered defaultRetryPolicy
+        doneJob = makeJob "done"
+        retryJob = makeJob "retry"
+        deadJob = makeJob "dead"
+        delayJob = makeJob "delay"
+        doneHandler _ _ = pure Done
+        retryHandler jobContext _ = do
+          liftIO $ atomicModifyIORef' attempts (\seen -> (seen <> [jobContext.attempt], ()))
+          pure $ if jobContext.attempt == Just 0 then Retry (RetryDelay 1) else Done
+        deadHandler _ _ = pure (Dead "bad-work")
+        runOne target handler = runJobEff runtime (runJobOnceWithContext defaultJobTuning 1 target handler) >>= either (fail . show) pure
+        queueCount target = do
+          let table = "pgmq.q_" <> queueNameToText target.jobQueue.physicalName
+              statement = Statement.preparable ("SELECT count(*) FROM " <> table) Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
+          Pool.use runtime.runtimePool (Session.statement () statement) >>= either (fail . show) pure
+        deadLetter target = do
+          let table = "pgmq.q_" <> queueNameToText target.jobQueue.dlqName
+              statement = Statement.preparable ("SELECT count(*), coalesce(max(message->>'dead_letter_reason'),'')::text FROM " <> table) Encoders.noParams (Decoders.singleRow ((,) <$> Decoders.column (Decoders.nonNullable Decoders.int8) <*> Decoders.column (Decoders.nonNullable Decoders.text)))
+          Pool.use runtime.runtimePool (Session.statement () statement) >>= either (fail . show) pure
+    setup <- runJobEff runtime do
+      ensureJobQueue doneJob
+      ensureJobQueue retryJob
+      ensureJobQueue deadJob
+      ensureJobQueue delayJob
+      _ <- enqueue doneJob ("done" :: Text)
+      _ <- enqueue retryJob ("retry" :: Text)
+      _ <- enqueue deadJob ("dead" :: Text)
+      enqueueWithDelay delayJob 1 ("delayed" :: Text)
+    _ <- either (fail . show) pure setup
+    done <- runOne doneJob doneHandler
+    doneDepth <- queueCount doneJob
+    retried <- runOne retryJob retryHandler
+    beforeRetry <- runOne retryJob retryHandler
+    beforeDelay <- runOne delayJob doneHandler
+    threadDelay 1200000
+    afterRetry <- runOne retryJob retryHandler
+    afterDelay <- runOne delayJob doneHandler
+    observedAttempts <- readIORef attempts
+    dead <- runOne deadJob deadHandler
+    deadDepth <- queueCount deadJob
+    deadLettered <- deadLetter deadJob
+    recordCells
+      context
+      [ ("done-deletes", done == 1 && doneDepth == (0 :: Int64)),
+        ("retry-delay-and-attempt", retried == 1 && beforeRetry == 0 && afterRetry == 1 && observedAttempts == [Just 0, Just 1]),
+        ("enqueue-delay", beforeDelay == 0 && afterDelay == 1),
+        ("dead-letter", dead == 1 && deadDepth == (0 :: Int64) && fst deadLettered == (1 :: Int64) && Text.isPrefixOf "poison_pill" (snd deadLettered))
+      ]
 
 maxRetriesBeforeHandler :: Scenario
 maxRetriesBeforeHandler =

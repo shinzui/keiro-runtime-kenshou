@@ -59,7 +59,7 @@ Milestone 3 — Job queue scenarios.
 
 - [ ] Add `keiro-pgmq`, `pgmq-core`, `pgmq-effectful`, `shibuya-core`, `shibuya-pgmq-adapter` (and `shibuya-metrics` for the `serve` arm) to the cabal file; the first queue smoke run confirmed the migrated database includes the PGMQ component. `shibuya-metrics` remains.
 - [ ] Implement `Kenshou.Suite.Keiro.Queue.Jobs` (scripted fixture job), `.Runtime`, `.Knobs`, `.Roles`, `.Oracle` with unit tests.
-- [ ] Implement the three queue correctness scenarios: `consumption-config-rejections` passed with a queued row and a direct `read_ct = 0` oracle; `max-retries-before-handler` passed with three handler calls, a fourth-read DLQ wrapper and the zero-ceiling arm. Job outcome semantics remain.
+- [ ] Implement the three queue correctness scenarios: `consumption-config-rejections` passed with a queued row and a direct `read_ct = 0` oracle; `max-retries-before-handler` passed with three handler calls, a fourth-read DLQ wrapper and the zero-ceiling arm; initial `job-outcome-semantics` arms for Done, explicit retry, delayed enqueue and Dead passed. Its remaining worker, malformed/future payload, batch, group, default retry, and thrown-handler arms remain.
 - [ ] Implement the eight queue concurrency and crash scenarios, including the transient-polling-error scenario that replaces keiro's pending test.
 - [ ] Splice `Kenshou.Suite.Keiro.Queue.scenarios` and `.roles` into the bundle; run all queue scenarios; record outcomes.
 
@@ -93,6 +93,7 @@ Milestone 4 — Messaging benchmarks, soak and telemetry arms.
 - The repeated after-append crash arm passed at 32 rows and three kills in `01a0d18e-abf1-7387-b6a9-14177f45550f`, then at its 2,000-row default with 20 keys and three kills in `01a0d18f-117a-7149-9aa8-3c6a5da4939d`. The first kill held maintenance for three stale-row timeouts; later kills reclaimed their 32-row batches after each timeout. The final oracle checked all 2,000 sent rows, bounded duplicate records, and first-record per-key order.
 - The four-process publisher arm passed at 2,000 rows in `01a0d191-2bab-7250-b036-0929cfc66bf6` and at its 20,000-row default in `01a0d191-8636-75b7-a79d-eb8c1e3a0a43`. Each row had one broker record and one attempt; per-key order held. The scenario records each publisher's broker count, but does not yet read callback start/end facts to independently establish non-overlapping ownership intervals.
 - `docs/layers/keiro.md` now has Outbox, Inbox and Job queue sections describing the implemented probes, durable checks, and current CLI selectors. The sections require another pass when the remaining planned scenarios and telemetry arms are implemented.
+- Initial `job-outcome-semantics` arms passed in `01a0d194-e4c1-71b0-bf34-d6459848537e`. Direct queue and DLQ reads confirmed Done deletes the row, explicit Retry delays redelivery and increments the handler's attempt, delayed enqueue waits before first delivery, and Dead moves the row to a DLQ with a `poison_pill` reason.
 
 
 ## Decision Log
