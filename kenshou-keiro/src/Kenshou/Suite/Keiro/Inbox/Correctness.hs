@@ -6,12 +6,14 @@ import Data.Int (Int64)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
 import Data.Text qualified as Text
+import Data.Text.Encoding qualified as TextEncoding
 import Data.Time (getCurrentTime)
+import Data.UUID qualified as UUID
 import Hasql.Decoders qualified as Decoders
 import Hasql.Encoders qualified as Encoders
 import Hasql.Statement qualified as Statement
 import Hasql.Transaction qualified as Tx
-import Keiro.Inbox (InboxDedupePolicy (..), InboxPersistence (..), InboxResult (..), InboxRow (..), InboxStatus (..), garbageCollectCompleted, listInbox, runInboxTransactionBatch, runInboxTransactionWith, runInboxTransactionWithRetries)
+import Keiro.Inbox (InboxDedupePolicy (..), InboxError (..), InboxPersistence (..), InboxResult (..), InboxRow (..), InboxStatus (..), KafkaDeliveryRef (..), garbageCollectCompleted, listInbox, runInboxTransactionBatch, runInboxTransactionWith, runInboxTransactionWithRetries)
 import Keiro.Inbox.Kafka (KafkaDecodeError (..), KafkaInboundRecord (..), integrationEventFromKafka)
 import Keiro.Integration.Event (IntegrationEvent (..), headerContentType, headerDestination, headerEventType, headerMessageId, headerSchemaVersion, headerSource)
 import Keiro.Outbox (OutboxPublishOptions (..), OutboxRow (..), defaultPublishOptions, listOutbox, publishClaimedOutbox)
@@ -30,6 +32,7 @@ import Kenshou.Suite.Keiro.Outbox.Broker qualified as Broker
 import Kenshou.Suite.Keiro.Outbox.Workload (enqueueInline, sourceName)
 import Kiroku.Store (defaultConnectionSettings)
 import Kiroku.Store.Transaction qualified as KirokuTransaction
+import Kiroku.Store.Types (EventId (..))
 
 scenarios :: [Scenario]
 scenarios = [envelopeRoundTrip, poisonAccounting, effectivelyOnceMatrix, batchFastPathAndFallback]
@@ -96,7 +99,10 @@ effectivelyOnceMatrix =
     { id = either (error . show) id (parseScenarioId "keiro/inbox/correctness/effectively-once-matrix"),
       summary = "Checks message identity deduplication and persisted envelope shape under redelivery.",
       tier = TierStandard,
-      knobs = [KnobSpec (knobName "inbox.persistence") "Successful inbox row envelope storage" KnobText (VText "full-envelope") (OneOf (VText "full-envelope" :| [VText "dedupe-only"])) [VText "dedupe-only"]],
+      knobs =
+        [ KnobSpec (knobName "inbox.persistence") "Successful inbox row envelope storage" KnobText (VText "full-envelope") (OneOf (VText "full-envelope" :| [VText "dedupe-only"])) [VText "dedupe-only"],
+          KnobSpec (knobName "inbox.dedupe-policy") "Inbox dedupe identity" KnobText (VText "message-id") (OneOf (VText "message-id" :| [VText "source-event", VText "kafka-delivery", VText "custom"])) [VText "source-event", VText "kafka-delivery", VText "custom"]
+        ],
       run = runEffectivelyOnceMatrix
     }
 
@@ -109,24 +115,47 @@ runEffectivelyOnceMatrix context =
     let KeiroRunner runFixture = fixture.runner
         source = sourceName context "matrix"
         persistence = if knobText context.knobs (knobName "inbox.persistence") == "dedupe-only" then PersistDedupeOnly else PersistFullEnvelope
+        policyName = knobText context.knobs (knobName "inbox.dedupe-policy")
+        policy event = case policyName of
+          "source-event" -> PreferSourceEventIdentity
+          "kafka-delivery" -> KafkaDeliveryIdentity
+          "custom" -> CustomDedupeKey (TextEncoding.decodeUtf8 event.payloadBytes)
+          _ -> PreferIntegrationMessageId
         entries = [(Text.pack (show i), Just "key", i) | i <- [1 .. 16 :: Int]]
         handler event = Tx.statement event.messageId effectInsertStatement
-        intake event = runFixture (runInboxTransactionWith Nothing persistence PreferIntegrationMessageId event Nothing handler) >>= either (fail . show) pure
+        intake event deliveryRef = runFixture (runInboxTransactionWith Nothing persistence (policy event) event deliveryRef handler) >>= either (fail . show) pure
+        ref :: Int -> KafkaDeliveryRef
+        ref index = KafkaDeliveryRef "kenshou.matrix" 0 (fromIntegral index)
     ensureEffectTable fixture
     enqueueInline fixture source entries
-    events <- map (.event) <$> (runFixture (listOutbox source) >>= either (fail . show) pure)
-    first <- traverse intake events
-    second <- traverse intake events
+    original <- map (.event) <$> (runFixture (listOutbox source) >>= either (fail . show) pure)
+    let events = zipWith (\index event -> event {sourceEventId = Just (EventId (UUID.fromWords 0 0 0 (fromIntegral index)))}) [1 .. 16 :: Int] original
+        republish = [event {messageId = event.messageId <> "-republished"} | event <- events]
+    firstEvent <- case events of
+      event : _ -> pure event
+      [] -> fail "matrix fixture produced no events"
+    let malformed = case policyName of
+          "source-event" -> firstEvent {sourceEventId = Nothing, sourceGlobalPosition = Nothing, messageId = "malformed"}
+          "custom" -> firstEvent {payloadBytes = ByteString.empty, messageId = "malformed"}
+          _ -> firstEvent {messageId = ""}
+    first <- traverse (\(index, event) -> intake event (Just (ref index))) (zip [1 .. 16 :: Int] events)
+    second <- traverse (\(index, event) -> intake event (Just (ref index))) (zip [1 .. 16 :: Int] events)
+    republished <- traverse (\(index, event) -> intake event (Just (ref (index + 16)))) (zip [1 .. 16 :: Int] republish)
+    missing <- intake malformed (if policyName == "kafka-delivery" then Nothing else Just (ref 100))
     rows <- runFixture (listInbox source) >>= either (fail . show) pure
     effects <- runFixture (KirokuTransaction.runTransaction (Tx.statement () effectReadStatement)) >>= either (fail . show) pure
     let eventIds = map (.messageId) events
-        rowIds = map (.dedupeKey) rows
+        doubled = policyName == "message-id" || policyName == "kafka-delivery"
+        expectedEffects = if doubled then 32 else 16
+        processed = \case Right (InboxProcessed _) -> True; _ -> False
         cells =
-          [ ("first-delivery-processed", length first == 16 && all (\case Right (InboxProcessed _) -> True; _ -> False) first),
+          [ ("first-delivery-processed", length first == 16 && all processed first),
             ("redelivery-duplicate", length second == 16 && all (== Right InboxDuplicate) second),
-            ("one-effect-per-key", length effects == 16 && all (\messageId -> length (filter (== messageId) effects) == 1) eventIds),
-            ("one-completed-row-per-key", length rows == 16 && all ((== InboxCompleted) . (.status)) rows && all (`elem` rowIds) eventIds),
-            ("persistence-shape", all (\row -> if persistence == PersistDedupeOnly then ByteString.null row.event.payloadBytes else not (ByteString.null row.event.payloadBytes)) rows)
+            ("republish-policy", length republished == 16 && all (if doubled then processed else (== Right InboxDuplicate)) republished),
+            ("effect-count-by-policy", length effects == expectedEffects && all (\messageId -> length (filter (== messageId) effects) == 1) eventIds),
+            ("one-completed-row-per-key", length rows == expectedEffects && all ((== InboxCompleted) . (.status)) rows),
+            ("missing-policy-field-fails-closed", case missing of Left (DedupePolicyUnsatisfied _) -> True; _ -> False),
+            ("persistence-shape", all (\row -> if persistence == PersistDedupeOnly then ByteString.null row.event.payloadBytes && row.event.attributes == Nothing && row.event.traceContext == Nothing && row.event.schemaReference == Nothing else not (ByteString.null row.event.payloadBytes) && row.event.attributes /= Nothing) rows)
           ]
     recordCells context cells
 

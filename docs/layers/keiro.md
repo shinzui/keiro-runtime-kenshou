@@ -461,10 +461,16 @@ expected because suppression ends when GC removes a sent row.
 
 `keiro/inbox/correctness/envelope-round-trip` passes outbox records through
 the synthetic broker and Keiro's inbox decoder. It checks the reconstructed
-integration events and all six required headers. The current
-`effectively-once-matrix` arm uses the message-ID dedupe policy and a SQL
-effect table without a uniqueness constraint; full-envelope and dedupe-only
-storage both passed with one effect per key under redelivery.
+integration events and all six required headers. The table-backed
+`effectively-once-matrix` now passes all eight combinations of message-ID,
+source-event, Kafka-delivery, and custom business-key dedupe with full-envelope
+or dedupe-only persistence. It redelivers each of 16 messages at the same
+offset, then republishes it with a new message ID and offset. The republish
+produces 32 total effects under message-ID and Kafka-delivery identity, and 16
+under source-event and custom identity. A missing field required by each
+policy fails without a receipt. Dedupe-only rows have empty payloads and no
+attributes; full-envelope rows retain both. The effect table has no uniqueness
+constraint, so the inbox receipt enforces the one-effect result.
 `poison-accounting` verifies the default exception path's three-attempt
 ceiling and retention of failed rows. With `inbox.failure-mode=condemn`, two
 deliveries each report processed but roll back; a nontransactional sequence
