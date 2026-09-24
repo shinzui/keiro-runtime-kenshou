@@ -21,9 +21,9 @@ roleName = either (error . Text.unpack) id . mkRoleName
 publisher :: RoleContext -> IO ()
 publisher context = case context.init.postgres of
   Nothing -> context.send (WrkError "outbox publisher requires PostgreSQL")
-  Just postgres -> case parseMaybe (withObject "publisher args" (\value -> value .:? "parkAfterAppend" .!= False)) context.init.args of
+  Just postgres -> case parseMaybe (withObject "publisher args" (\value -> (,) <$> (value .:? "parkAfterAppend" .!= False) <*> (value .:? "loop" .!= False))) context.init.args of
     Nothing -> context.send (WrkError "invalid outbox publisher arguments")
-    Just parkAfterAppend -> do
+    Just (parkAfterAppend, loop) -> do
       context.send WrkReady
       context.receive >>= \case
         Just CtlStart -> withFixtureEnv (defaultConnectionSettings postgres.connectionString) \fixture -> Broker.withTableBroker postgres.connectionString \broker -> do
@@ -34,8 +34,12 @@ publisher context = case context.init.postgres of
                 if parkAfterAppend then forever (threadDelay 1000000) else pure ()
               callback = Broker.publishScripted broker model (const Broker.Succeed) hooks context.init.instanceName
               options = defaultPublishOptions {batchSize = 32, backoff = ConstantBackoff 0}
-          result <- runFixture (publishClaimedOutbox callback options Nothing)
-          case result of
-            Left err -> context.send (WrkError (Text.pack (show err)))
-            Right summary -> context.send (WrkCustom "finished" (object ["published" .= summary.published]))
+              drive published = do
+                result <- runFixture (publishClaimedOutbox callback options Nothing)
+                case result of
+                  Left err -> context.send (WrkError (Text.pack (show err)))
+                  Right summary
+                    | loop && summary.claimed > 0 -> drive (published + summary.published)
+                    | otherwise -> context.send (WrkCustom "finished" (object ["published" .= (published + summary.published)]))
+          drive 0
         _ -> pure ()

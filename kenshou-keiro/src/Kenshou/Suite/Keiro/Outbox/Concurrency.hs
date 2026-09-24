@@ -29,7 +29,50 @@ import Kiroku.Store (defaultConnectionSettings)
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [crashBetweenPublishAndMark]
+scenarios = [crashBetweenPublishAndMark, multiProcessPublishers]
+
+multiProcessPublishers :: Scenario
+multiProcessPublishers =
+  crashBetweenPublishAndMark
+    { id = either (error . show) id (parseScenarioId "keiro/outbox/concurrency/multi-process-publishers"),
+      summary = "Checks four live publisher processes claim disjoint rows and preserve key order.",
+      knobs =
+        [ KnobSpec (knobName "outbox.rows") "Number of integration events" KnobInt (VInt 20000) (IntRange 32 20000) [],
+          KnobSpec (knobName "outbox.key-cardinality") "Number of partition keys" KnobInt (VInt 200) (IntRange 1 200) []
+        ],
+      run = runMultiProcessPublishers
+    }
+
+runMultiProcessPublishers :: RunContext -> IO ScenarioReport
+runMultiProcessPublishers context =
+  withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture ->
+    Broker.withTableBroker (requirePostgres context).connectionString \broker ->
+      withCheck context \check -> withSupervisor check \supervisor -> do
+        let KeiroRunner runFixture = fixture.runner
+            source = sourceName context "multi-publisher"
+            rowCount = fromIntegral (knobInt context.knobs (knobName "outbox.rows"))
+            keyCardinality = fromIntegral (knobInt context.knobs (knobName "outbox.key-cardinality"))
+            entries = [(Text.pack (show index), Just ("key-" <> Text.pack (show (index `mod` keyCardinality))), index) | index <- [1 .. rowCount :: Int]]
+        enqueueInline fixture source entries
+        children <- traverse (\index -> roleProcess check "keiro/outbox-publisher" index (object ["loop" .= True]) >>= spawn supervisor) [0 .. 3 :: Int]
+        mapM_ (\child -> awaitReady child 10000) children
+        mapM_ (\child -> sendCommand child CtlStart) children
+        mapM_ (\child -> awaitMark child "finished" 300000) children
+        rows <- runFixture (listOutbox source) >>= either (fail . show) pure
+        records <- Broker.readBroker broker
+        let messageIds = [value | record <- records, (name, value) <- record.headers, name == TextEncoding.encodeUtf8 headerMessageId]
+            counts = Map.fromListWith (+) [(messageId, 1 :: Int) | messageId <- messageIds]
+            expectedIds = map (TextEncoding.encodeUtf8 . (.messageId) . (.event)) rows
+            expectedOrder = Map.fromList [(TextEncoding.encodeUtf8 messageId, (key, index)) | (messageId, Just key, index) <- entries]
+            observedOrder = [pair | messageId <- messageIds, Just pair <- [Map.lookup messageId expectedOrder]]
+            publisherCounts = Map.fromListWith (+) [(record.publisher, 1 :: Int) | record <- records]
+            cells =
+              [ ("no-loss", length rows == rowCount && all ((== OutboxSent) . (.status)) rows && all (`Map.member` counts) expectedIds),
+                ("disjoint-ownership", length records == rowCount && all (== 1) (Map.elems counts) && all ((== 1) . (.attemptCount)) rows),
+                ("per-key-order", length observedOrder == rowCount && Oracle.perKeyOrder observedOrder)
+              ]
+            evidence = Map.fromList [("enqueued", fromIntegral rowCount), ("brokerRecords", fromIntegral (length records)), ("publishers", 4)]
+        recordMessagingCells context evidence (object ["publisherCounts" .= publisherCounts]) cells
 
 crashBetweenPublishAndMark :: Scenario
 crashBetweenPublishAndMark =
