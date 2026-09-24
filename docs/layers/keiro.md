@@ -155,6 +155,10 @@ instances without a crash.
 and starts multiple resume processes. A durable run with 100 instances, four
 workers, four store connections per process, and sixteen concurrent advances
 per worker completed with one journal entry and one effect per step.
+`keiro/workflow/concurrency/sigkill-step-boundary` kills two workers after
+flushed step effects and a third during a step pause. Replacement workers
+complete the cohort; the default 100-instance durable run recorded three
+crash-bounded duplicate effects, exact journals, and no retry attempts.
 
 The registered command scenarios also cover duplicate event identifiers,
 optimistic retry and exhaustion, controlled SQL rollback, and hydration over
