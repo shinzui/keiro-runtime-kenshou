@@ -487,6 +487,9 @@ deliveries each report processed but roll back; a nontransactional sequence
 confirms that the handler ran twice, while no inbox row or effect remains. With
 `inbox.failure-mode=sql-error`, division by zero returns Keiro's
 `UnexpectedServerError` classification and leaves no completed row or effect.
+With `inbox.idempotence=delegated`, the caller-owned retry context stops an
+attempt above the ceiling before invoking the handler; the ceiling attempt
+runs it, and neither creates an inbox row.
 `batch-fast-path-and-fallback` checks that a clean batch shares one transaction
 and a throwing delivery falls back to per-message processing without
 duplicating other effects. With `inbox.failure-mode=condemn`, the batch rolls

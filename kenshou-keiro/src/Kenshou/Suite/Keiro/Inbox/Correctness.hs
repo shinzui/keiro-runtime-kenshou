@@ -2,6 +2,7 @@ module Kenshou.Suite.Keiro.Inbox.Correctness (scenarios, ensureEffectTable, effe
 
 import Data.Aeson (object, (.=))
 import Data.ByteString qualified as ByteString
+import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.Int (Int64)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
@@ -10,12 +11,13 @@ import Data.Text.Encoding qualified as TextEncoding
 import Data.Time (getCurrentTime)
 import Data.UUID qualified as UUID
 import Data.Vector qualified as Vector
+import Effectful (liftIO)
 import Hasql.Decoders qualified as Decoders
 import Hasql.Encoders qualified as Encoders
 import Hasql.Statement qualified as Statement
 import Hasql.Transaction qualified as Tx
 import Keiro.Command (CommandError (..), CommandResult (..), defaultRunCommandOptions, runCommand)
-import Keiro.Inbox (InboxDedupePolicy (..), InboxError (..), InboxPersistence (..), InboxResult (..), InboxRow (..), InboxStatus (..), KafkaDeliveryRef (..), dedupeKeyFor, garbageCollectCompleted, listInbox, runInboxDelegated, runInboxTransactionBatch, runInboxTransactionWith, runInboxTransactionWithRetries)
+import Keiro.Inbox (DelegatedOutcome (..), InboxDedupePolicy (..), InboxError (..), InboxPersistence (..), InboxResult (..), InboxRow (..), InboxStatus (..), KafkaDeliveryRef (..), dedupeKeyFor, garbageCollectCompleted, listInbox, mkDelegatedRetryContext, runInboxDelegated, runInboxDelegatedWithRetries, runInboxTransactionBatch, runInboxTransactionWith, runInboxTransactionWithRetries)
 import Keiro.Inbox.Delegated (DelegatedCommandError (..), delegatedCommand, delegatedEventId)
 import Keiro.Inbox.Kafka (KafkaDecodeError (..), KafkaInboundRecord (..), integrationEventFromKafka)
 import Keiro.Integration.Event (IntegrationEvent (..), headerContentType, headerDestination, headerEventType, headerMessageId, headerSchemaVersion, headerSource)
@@ -262,17 +264,51 @@ poisonAccounting =
   envelopeRoundTrip
     { id = either (error . show) id (parseScenarioId "keiro/inbox/correctness/poison-accounting"),
       summary = "Checks retry ceiling, failure receipt retention, and recovery after two failed attempts.",
-      knobs = [KnobSpec (knobName "inbox.failure-mode") "Inbox handler failure mode" KnobText (VText "pure-exception") (OneOf (VText "pure-exception" :| [VText "sql-error", VText "condemn"])) [VText "sql-error", VText "condemn"]],
+      knobs =
+        [ KnobSpec (knobName "inbox.failure-mode") "Inbox handler failure mode" KnobText (VText "pure-exception") (OneOf (VText "pure-exception" :| [VText "sql-error", VText "condemn"])) [VText "sql-error", VText "condemn"],
+          KnobSpec (knobName "inbox.idempotence") "Inbox receipt owner" KnobText (VText "inbox-table") (OneOf (VText "inbox-table" :| [VText "delegated"])) [VText "delegated"]
+        ],
       run = runPoisonAccounting
     }
 
 runPoisonAccounting :: RunContext -> IO ScenarioReport
 runPoisonAccounting context =
   withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture ->
-    case knobText context.knobs (knobName "inbox.failure-mode") of
-      "sql-error" -> runPoisonSpecial context fixture "sql-error"
-      "condemn" -> runPoisonSpecial context fixture "condemn"
+    case (knobText context.knobs (knobName "inbox.idempotence"), knobText context.knobs (knobName "inbox.failure-mode")) of
+      ("delegated", _) -> runPoisonDelegated context fixture
+      (_, "sql-error") -> runPoisonSpecial context fixture "sql-error"
+      (_, "condemn") -> runPoisonSpecial context fixture "condemn"
       _ -> runPoisonException context fixture
+
+runPoisonDelegated :: RunContext -> FixtureEnv -> IO ScenarioReport
+runPoisonDelegated context fixture = do
+  let KeiroRunner runFixture = fixture.runner
+      source = sourceName context "delegated-poison"
+  enqueueInline fixture source [("poison", Just "key", 1)]
+  events <- map (.event) <$> (runFixture (listOutbox source) >>= either (fail . show) pure)
+  event <- case events of
+    [one] -> pure one
+    _ -> fail "delegated poison fixture did not contain exactly one event"
+  calls <- newIORef (0 :: Int)
+  let intake attempt = do
+        retryContext <- either (fail . Text.unpack) pure (mkDelegatedRetryContext 3 attempt)
+        runFixture
+          ( runInboxDelegatedWithRetries Nothing retryContext PreferIntegrationMessageId event Nothing \_ _ -> do
+              liftIO (modifyIORef' calls (+ 1))
+              pure (DelegatedFresh ())
+          )
+          >>= either (fail . show) pure
+  aboveCeiling <- intake 4
+  callsAfterCeiling <- readIORef calls
+  withinCeiling <- intake 3
+  callsAfterAttempt <- readIORef calls
+  rows <- runFixture (listInbox source) >>= either (fail . show) pure
+  recordCells
+    context
+    [ ("delegated-ceiling-stops-handler", aboveCeiling == Right (InboxPreviouslyFailed Nothing) && callsAfterCeiling == 0),
+      ("delegated-within-ceiling-runs-handler", withinCeiling == Right (InboxProcessed ()) && callsAfterAttempt == 1),
+      ("delegated-retry-has-no-inbox-row", null rows)
+    ]
 
 runPoisonException :: RunContext -> FixtureEnv -> IO ScenarioReport
 runPoisonException context fixture = do

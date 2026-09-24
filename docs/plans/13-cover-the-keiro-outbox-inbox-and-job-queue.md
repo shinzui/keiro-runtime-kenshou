@@ -57,7 +57,7 @@ Milestone 1 — Outbox scenarios (includes the shared messaging support used by 
 Milestone 2 — Inbox scenarios.
 
 - [ ] Implement `Kenshou.Suite.Keiro.Inbox.Effects` (harness-owned effect table and invocation sequence), `.Delivery`, `.Knobs`, `.Roles`, `.Oracle` with unit tests.
-- [ ] Implement the four inbox correctness scenarios: envelope round trip passed; all eight table-backed dedupe-policy and persistence arms of the matrix passed on durable PostgreSQL, including republish and missing-field checks; the default exception, condemn, and SQL-error arms of poison accounting passed; the clean, throwing-handler, and condemning-handler arms of batch intake passed. Delegated intake and deeper persistence oracles remain.
+- [ ] Implement the four inbox correctness scenarios: envelope round trip passed; all eight table-backed dedupe-policy and persistence arms of the matrix passed on durable PostgreSQL, including republish and missing-field checks; all four delegated dedupe-policy arms passed with stream receipts and typed refusal cases. The default exception, condemn, SQL-error, and delegated retry-ceiling arms of poison accounting passed; the clean, throwing-handler, and condemning-handler arms of batch intake passed. Delegated batch and deeper persistence oracles remain.
 - [ ] Implement the two inbox concurrency scenarios: the four-process no-kill, `SIGKILL`, and backend-only winner arms of `race-one-key` passed; both fault arms now require a fresh consumer to report duplicate after recovery. Delegated intake and GC-versus-insert remain.
 - [ ] Splice `Kenshou.Suite.Keiro.Inbox.scenarios` and `.roles` into the bundle; both lists are wired and all currently implemented inbox scenarios have passed durable runs. Complete the remaining arms and rerun.
 
@@ -499,6 +499,10 @@ checks first delivery, redelivery and republish effects, and verifies that
 zero-event and rejected commands return typed failures without changing the
 stream. The default delegated arm passed again after those refusal checks in
 run `01a0d4a0-4b53-7042-8b4b-6dcd78dcbdb5`.
+The delegated poison-accounting arm passed on durable PostgreSQL in run
+`01a0d4a3-57ee-72ee-bf9c-04ed15875f53`: an attempt above the caller-owned
+ceiling did not invoke the handler, while the ceiling attempt did; no inbox
+row was written.
 
 The inbox race now includes backend-only termination with a visible connection error, one peer winner, and a fresh redelivery classified duplicate. Durable run `01a0d498-893d-75dc-8e4c-62666a139fd5` passed; the SIGKILL arm passed again in `01a0d498-b9a1-75b0-a5ad-cf8188565639`.
 
