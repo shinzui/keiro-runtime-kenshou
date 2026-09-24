@@ -313,6 +313,11 @@ to the DLQ even though the retry policy delay is 60 seconds. The long-poll arm
 currently consumes an extra read attempt without a matching handler delivery;
 the failing verdicts are tracked at `mori://shinzui/keiro/issues/5`.
 
+`lease-extension` runs two continuous workers with a six-second handler and a
+two-second base visibility timeout. The current worker-path arm observes two
+effects when the handler leaves the lease alone and one effect when it extends
+the lease by ten seconds before work.
+
 `write-side-steady-state` starts two command-writer processes and durable
 process-manager, router, and activity-projection workers. It stops writers at
 an operation boundary, waits for dispatch and projection to catch up, then

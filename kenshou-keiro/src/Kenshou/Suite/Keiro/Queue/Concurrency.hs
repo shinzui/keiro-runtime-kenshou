@@ -38,7 +38,60 @@ import System.Timeout (timeout)
 import Text.Read (readMaybe)
 
 scenarios :: [Scenario]
-scenarios = [workersSurviveTransientPollingError, crashRedeliveryCadence]
+scenarios = [workersSurviveTransientPollingError, crashRedeliveryCadence, leaseExtension]
+
+leaseExtension :: Scenario
+leaseExtension =
+  workersSurviveTransientPollingError
+    { id = either (error . show) id (parseScenarioId "keiro/queue/concurrency/lease-extension"),
+      summary = "Checks that extending a live job lease prevents a second worker from handling it.",
+      knownDefect = Nothing,
+      run = runLeaseExtension
+    }
+
+runLeaseExtension :: RunContext -> IO ScenarioReport
+runLeaseExtension context =
+  withJobRuntime (requirePostgres context).connectionString Nothing \runtime ->
+    withCheck context \check -> withSupervisor check \supervisor -> do
+      let makeJob name = Job "queue-poll-probe" (queueRef (sourceName context name)) (aesonJobCodec @Text) Unordered defaultRetryPolicy
+          unextended = makeJob "unextended"
+          extended = makeJob "extended"
+          countEffects payload = do
+            let statement = Statement.preparable "SELECT count(*) FROM kenshou_fx.queue_effects WHERE payload = $1" (Encoders.param (Encoders.nonNullable Encoders.text)) (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
+            Pool.use runtime.runtimePool (Session.statement payload statement) >>= either (fail . show) pure
+          awaitEffects payload expected = do
+            count <- countEffects payload
+            if count >= expected then pure True else threadDelay 100000 >> awaitEffects payload expected
+          startWorker index job extend = do
+            spec <- roleProcess check "keiro/queue-worker" index (object ["queue" .= job.jobQueue.logicalName, "mode" .= ("lease" :: Text), "extend" .= extend])
+            child <- spawn supervisor spec
+            awaitReady child 10000
+            sendCommand child CtlStart
+            awaitMark child "running" 30000
+            pure child
+          runArm index job extend payload expected = do
+            first <- startWorker index job extend
+            second <- startWorker (index + 1) job extend
+            sent <- runJobEff runtime (enqueue job payload)
+            _ <- either (fail . show) pure sent
+            observed <- maybe False id <$> timeout 20000000 (awaitEffects payload expected)
+            threadDelay 2000000
+            count <- countEffects payload
+            killChild supervisor first
+            killChild supervisor second
+            pure (observed, count)
+      Pool.use runtime.runtimePool (Session.script "CREATE SCHEMA IF NOT EXISTS kenshou_fx; CREATE TABLE IF NOT EXISTS kenshou_fx.queue_effects (payload text NOT NULL)") >>= either (fail . show) pure
+      setup <- runJobEff runtime (ensureJobQueue unextended >> ensureJobQueue extended)
+      _ <- either (fail . show) pure setup
+      (duplicateObserved, unextendedCount) <- runArm 0 unextended False "unextended" 2
+      (singleObserved, extendedCount) <- runArm 2 extended True "extended" 1
+      recordMessagingCells
+        context
+        (Map.fromList [("unextendedEffects", unextendedCount), ("extendedEffects", extendedCount)])
+        (object [])
+        [ ("unextended-lease-expires", duplicateObserved && unextendedCount >= 2),
+          ("extension-prevents-duplicate", singleObserved && extendedCount == 1)
+        ]
 
 crashRedeliveryCadence :: Scenario
 crashRedeliveryCadence =

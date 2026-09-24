@@ -1,5 +1,7 @@
 module Kenshou.Suite.Keiro.Queue.Roles (roles) where
 
+import Control.Concurrent (threadDelay)
+import Control.Monad (when)
 import Data.Aeson (object, withObject, (.:), (.:?), (.=))
 import Data.Aeson.Types (parseMaybe)
 import Data.IORef (atomicModifyIORef', newIORef)
@@ -30,18 +32,23 @@ effectInsertStatement = Statement.preparable "INSERT INTO kenshou_fx.queue_effec
 worker :: RoleContext -> IO ()
 worker context = case context.init.postgres of
   Nothing -> context.send (WrkError "queue worker requires PostgreSQL")
-  Just postgres -> case parseMaybe (withObject "queue worker args" (\o -> (,,) <$> o .: "queue" <*> o .:? "mode" <*> o .:? "polling")) context.init.args of
+  Just postgres -> case parseMaybe (withObject "queue worker args" (\o -> (,,,) <$> o .: "queue" <*> o .:? "mode" <*> o .:? "polling" <*> o .:? "extend")) context.init.args of
     Nothing -> context.send (WrkError "invalid queue worker arguments")
-    Just (queue, mode, pollingMode) -> do
+    Just (queue, mode, pollingMode, extend) -> do
       context.send WrkReady
       context.receive >>= \case
         Just CtlStart -> withJobRuntime postgres.connectionString Nothing \runtime -> do
           counter <- newIORef (0 :: Int)
           let holding = mode == Just ("hold" :: Text)
+              leasing = mode == Just ("lease" :: Text)
               policy = if holding then RetryPolicy 3 (RetryDelay 60) True else defaultRetryPolicy
-              tuning = if holding then defaultJobTuning {visibilityTimeout = 3, polling = if pollingMode == Just ("long-poll" :: Text) then LongPoll 5 100 else PollEvery 1} else defaultJobTuning
+              tuning
+                | holding = defaultJobTuning {visibilityTimeout = 3, polling = if pollingMode == Just ("long-poll" :: Text) then LongPoll 5 100 else PollEvery 1}
+                | leasing = defaultJobTuning {visibilityTimeout = 2, polling = PollEvery 0.2}
+                | otherwise = defaultJobTuning
               job = Job "queue-poll-probe" (queueRef queue) (aesonJobCodec @Text) Unordered policy
               handler jobContext payload = do
+                when (leasing && extend == Just True) (jobContext.extendLease 10)
                 liftIO do
                   if holding
                     then do
@@ -50,6 +57,10 @@ worker context = case context.init.postgres of
                       _ <- context.receive
                       pure ()
                     else do
+                      when leasing do
+                        now <- getCurrentTime
+                        context.send (WrkCustom "delivery" (object ["attempt" .= jobContext.attempt, "payload" .= payload, "at" .= show now]))
+                        threadDelay 6000000
                       result <- Pool.use runtime.runtimePool (Session.statement payload effectInsertStatement)
                       either (fail . show) pure result
                       count <- atomicModifyIORef' counter (\value -> (value + 1, value + 1))
