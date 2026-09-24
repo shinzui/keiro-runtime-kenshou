@@ -4,9 +4,11 @@ import Control.Concurrent (threadDelay)
 import Control.Monad (forever)
 import Data.Aeson (object, withObject, (.!=), (.:?), (.=))
 import Data.Aeson.Types (parseMaybe)
+import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Keiro.Outbox (BackoffSchedule (..), OutboxPublishOptions (..), OutboxPublishSummary (..), defaultPublishOptions, publishClaimedOutbox)
+import Data.Time (getCurrentTime)
+import Keiro.Outbox (BackoffSchedule (..), OutboxPublishOptions (..), OutboxPublishSummary (..), OutboxRow (..), defaultPublishOptions, publishClaimedOutbox)
 import Kenshou.Core.Role (ControlMessage (..), PostgresConnInfo (..), RoleContext (..), RoleName, WorkerInit (..), WorkerMessage (..), WorkerRole (..), mkRoleName)
 import Kenshou.Suite.Keiro.Fixture.Runtime (FixtureEnv (..), KeiroRunner (..), withFixtureEnv)
 import Kenshou.Suite.Keiro.Outbox.Broker qualified as Broker
@@ -27,15 +29,22 @@ publisher context = case context.init.postgres of
       context.send WrkReady
       context.receive >>= \case
         Just CtlStart -> withFixtureEnv (defaultConnectionSettings postgres.connectionString) \fixture -> Broker.withTableBroker postgres.connectionString \broker -> do
+          batchNumber <- newIORef (0 :: Int)
           let KeiroRunner runFixture = fixture.runner
               model = Broker.BrokerModel 0 0 4
               hooks =
                 Broker.PublishHook
                   ( \rows -> do
+                      number <- atomicModifyIORef' batchNumber (\n -> (n + 1, n + 1))
+                      at <- getCurrentTime
+                      context.send (WrkCustom "callback-start" (object ["batch" .= number, "at" .= at, "rowIds" .= map (show . (.outboxId)) rows]))
                       context.send (WrkCustom "batch-claimed" (object ["rows" .= length rows]))
                       if parkBeforeAppend then forever (threadDelay 1000000) else pure ()
                   )
                   ( \rows -> do
+                      number <- readIORef batchNumber
+                      at <- getCurrentTime
+                      context.send (WrkCustom "callback-end" (object ["batch" .= number, "at" .= at, "rowIds" .= map (show . (.outboxId)) rows]))
                       context.send (WrkCustom "broker-appended" (object ["rows" .= length rows]))
                       if parkAfterAppend then awaitContinue else pure ()
                   )

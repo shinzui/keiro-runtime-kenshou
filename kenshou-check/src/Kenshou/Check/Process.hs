@@ -21,6 +21,7 @@ module Kenshou.Check.Process
     crashWindows,
     childPid,
     childProc,
+    readChildMessages,
     sweepOrphans,
   )
 where
@@ -237,6 +238,13 @@ childPid = (.pid)
 
 childProc :: Child -> ProcId
 childProc child = child.spec.proc
+
+-- The control log retains every mark, including repeated marks that the
+-- progress snapshot replaces with the latest payload.
+readChildMessages :: Child -> IO [WorkerMessage]
+readChildMessages child = do
+  contents <- ByteString.readFile child.controlLog
+  pure [message | line <- ByteString.lines contents, Right message <- [eitherDecodeStrict' line]]
 
 sweepOrphans :: FilePath -> IO [CPid]
 sweepOrphans path = do

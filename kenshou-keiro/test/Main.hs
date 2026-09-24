@@ -228,6 +228,9 @@ main = hspec do
     it "rejects a duplicate outside every recorded crash window" do
       OutboxOracle.boundedDuplicates (Map.singleton ("in-flight" :: Text) 1) ["in-flight", "in-flight", "outside", "outside"] `shouldBe` False
       OutboxOracle.boundedDuplicates (Map.singleton ("in-flight" :: Text) 1) ["in-flight", "in-flight", "outside"] `shouldBe` True
+    it "rejects overlapping callback intervals for one row" do
+      OutboxOracle.disjointIntervals [(0 :: Int, 4, ["row" :: Text]), (3, 5, ["row"])] `shouldBe` False
+      OutboxOracle.disjointIntervals [(0 :: Int, 4, ["row" :: Text]), (4, 5, ["row"])] `shouldBe` True
   describe "Outbox knobs" do
     it "decodes the default publisher options through Keiro validation" do
       case resolveKnobs OutboxKnobs.outboxKnobs [] of

@@ -4,8 +4,9 @@ import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (wait, withAsync)
 import Control.Concurrent.STM (atomically, putTMVar)
 import Control.Exception (bracket, finally)
-import Data.Aeson (Value (..), object, (.=))
+import Data.Aeson (Value (..), object, withObject, (.:), (.=))
 import Data.Aeson qualified as Aeson
+import Data.Aeson.Types (parseMaybe)
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.Int (Int32)
 import Data.List (sort)
@@ -14,7 +15,7 @@ import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
-import Data.Time (addUTCTime, getCurrentTime)
+import Data.Time (UTCTime, addUTCTime, getCurrentTime)
 import Data.UUID qualified as UUID
 import Hasql.Decoders qualified as Decoders
 import Hasql.Encoders qualified as Encoders
@@ -26,7 +27,7 @@ import Keiro.Integration.Event (IntegrationContentType (..), IntegrationEvent (.
 import Keiro.Outbox (BackoffSchedule (..), IntegrationEventDraft (..), IntegrationProducer (..), OutboxMaintenanceOptions (..), OutboxMaintenanceSummary (..), OutboxPublishOptions (..), OutboxPublishSummary (..), OutboxRow (..), OutboxStatus (..), ProducerEnqueueOutcome (..), ProducerIdentity (..), countOutboxBacklog, defaultPublishOptions, enqueueIntegrationEventTx, enqueueProducerEventTx, freshOutboxId, listOutbox, mkIntegrationProducer, outboxMaintenancePass, publishClaimedOutbox)
 import Kenshou.Check.Fault (Fault (..), FaultHandle (..))
 import Kenshou.Check.Fault.Postgres (Backend (..), BackendSelector (..), LockTarget (..), holdLock, listBackends, terminateOneBackend)
-import Kenshou.Check.Process (awaitMark, awaitReady, childPid, killChild, roleProcess, sendCommand, spawn, withSupervisor)
+import Kenshou.Check.Process (awaitMark, awaitReady, childPid, killChild, readChildMessages, roleProcess, sendCommand, spawn, withSupervisor)
 import Kenshou.Check.Process qualified as Process
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Check.Verdict (InvariantClass (..))
@@ -37,7 +38,7 @@ import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobBool, knobInt, knobText, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
-import Kenshou.Core.Role (ControlMessage (..))
+import Kenshou.Core.Role (ControlMessage (..), WorkerMessage (..))
 import Kenshou.Core.Scenario (CohortScope (..), KnownDefect (..), Placement (..), Scenario (..), ScenarioReport, Tier (..), inconclusiveBecause)
 import Kenshou.Suite.Keiro.Fixture.Account (AccountSnapshotPolicy (..), accountCodec, accountEventStream)
 import Kenshou.Suite.Keiro.Fixture.Domain (AccountCommand (..), AccountEvent, AccountId (..), DepositData (..), OpenAccountData (..))
@@ -349,6 +350,7 @@ runMultiProcessPublishers context =
         mapM_ (\child -> awaitReady child 10000) children
         mapM_ (\child -> sendCommand child CtlStart) children
         mapM_ (\child -> awaitMark child "finished" 300000) children
+        histories <- traverse readChildMessages children
         rows <- runFixture (listOutbox source) >>= either (fail . show) pure
         records <- Broker.readBroker broker
         let messageIds = [value | record <- records, (name, value) <- record.headers, name == TextEncoding.encodeUtf8 headerMessageId]
@@ -359,15 +361,35 @@ runMultiProcessPublishers context =
             publisherCounts = Map.fromListWith (+) [(record.publisher, 1 :: Int) | record <- records]
             partitionOffsets = Map.fromListWith (<>) [((record.topic, record.partition), [record.offset]) | record <- records]
             contiguousOffsets = all (\offsets -> sort offsets == [0 .. fromIntegral (length offsets - 1)]) (Map.elems partitionOffsets)
+            intervals = callbackIntervals histories
+            claimedIds = [show row.outboxId | row <- rows]
+            intervalCoverage = length intervals > 0 && sort (concatMap (\(_, _, _, ids) -> ids) intervals) == sort claimedIds
+            ownership = intervalCoverage && Oracle.disjointIntervals [(startAt, endAt, ids) | (startAt, endAt, _, ids) <- intervals]
             cells =
               [ ("no-loss", length rows == rowCount && all ((== OutboxSent) . (.status)) rows && all (`Map.member` counts) expectedIds),
-                ("disjoint-ownership", length records == rowCount && all (== 1) (Map.elems counts) && all ((== 1) . (.attemptCount)) rows),
+                ("disjoint-ownership", ownership && length records == rowCount && all (== 1) (Map.elems counts) && all ((== 1) . (.attemptCount)) rows),
                 ("publisher-participation", Map.size publisherCounts >= 2),
                 ("per-key-order", length observedOrder == rowCount && Oracle.perKeyOrder observedOrder),
                 ("broker-partition-offsets", length records == rowCount && contiguousOffsets)
               ]
             evidence = Map.fromList [("enqueued", fromIntegral rowCount), ("brokerRecords", fromIntegral (length records)), ("publishers", 4)]
-        recordMessagingCells context evidence (object ["publisherCounts" .= publisherCounts]) cells
+        recordMessagingCells context evidence (object ["publisherCounts" .= publisherCounts, "callbackIntervals" .= length intervals, "intervalCoverage" .= intervalCoverage]) cells
+
+-- A repeated custom mark is retained in each child's control log. Pair marks
+-- by child and batch number, and reject missing or mismatched end marks.
+callbackIntervals :: [[WorkerMessage]] -> [(UTCTime, UTCTime, Int, [String])]
+callbackIntervals histories =
+  [ (startAt, endAt, childIndex, rowIds)
+  | (childIndex, messages) <- zip [0 :: Int ..] histories,
+    let ends = Map.fromList [(batch, (at, ids)) | WrkCustom "callback-end" payload <- messages, Just (batch, at, ids) <- [decodeMark payload]],
+    WrkCustom "callback-start" payload <- messages,
+    Just (batch, startAt, rowIds) <- [decodeMark payload],
+    Just (endAt, endIds) <- [Map.lookup batch ends],
+    rowIds == endIds
+  ]
+  where
+    decodeMark :: Value -> Maybe (Int, UTCTime, [String])
+    decodeMark = parseMaybe (withObject "callback mark" (\value -> (,,) <$> value .: "batch" <*> value .: "at" <*> value .: "rowIds"))
 
 crashBetweenPublishAndMark :: Scenario
 crashBetweenPublishAndMark =

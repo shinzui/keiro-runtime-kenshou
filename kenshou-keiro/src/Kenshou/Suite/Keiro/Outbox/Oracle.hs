@@ -1,9 +1,11 @@
 module Kenshou.Suite.Keiro.Outbox.Oracle
   ( perKeyOrder,
     boundedDuplicates,
+    disjointIntervals,
   )
 where
 
+import Data.List (sortOn)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 
@@ -26,3 +28,15 @@ boundedDuplicates crashWindows messages =
   where
     counts = Map.fromListWith (+) [(message, 1 :: Int) | message <- messages]
     withinBudget (message, observed) = observed <= 1 + Map.findWithDefault 0 message crashWindows
+
+-- Each row must have non-overlapping callback intervals. Coverage is checked
+-- separately against the rows the scenario actually enqueued.
+disjointIntervals :: (Ord row, Ord time) => [(time, time, [row])] -> Bool
+disjointIntervals intervals =
+  all (\(startAt, endAt, _) -> startAt <= endAt) intervals
+    && all noOverlap (Map.elems byRow)
+  where
+    byRow = Map.fromListWith (<>) [(row, [(startAt, endAt)]) | (startAt, endAt, rows) <- intervals, row <- rows]
+    noOverlap rows = and (zipWith (\(_, previousEnd) (nextStart, _) -> previousEnd <= nextStart) ordered (drop 1 ordered))
+      where
+        ordered = sortOn fst rows

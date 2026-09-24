@@ -27,6 +27,11 @@ provenance:
       at: 2026-09-24T18:53:18Z
       mode: "implement"
       note: "Strengthened outbox terminal-state broker and metadata verdicts"
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-24T19:22:49Z
+      mode: "implement"
+      note: "Verified disjoint outbox publisher ownership from callback intervals"
 ---
 
 # Cover the keiro outbox, inbox and job queue
@@ -57,9 +62,10 @@ Milestone 1 — Outbox scenarios (includes the shared messaging support used by 
 - [ ] Finish the five outbox correctness scenarios: all five are registered and have passed durable PostgreSQL runs; `terminal-state-matrix` passed at its 2,000-row default and all eight ordering/backoff combinations at 200 rows. `per-key-order-serialized` passed all three policies at its 5,000-row default. `failure-skips-successors` passes per-key, per-source, and stop-the-line arms. `publisher-misbehaviour` checks terminal rejection under those three policies and now proves an identical producer replay leaves a rejected row and backlog unchanged after maintenance and GC. `producer-identity` asserts the literal ADR-42 frozen vector. Deeper attempt/backoff and producer-path oracles remain.
 - [x] (2026-09-24 18:54 UTC) Strengthen `terminal-state-matrix` with one-broker-record-per-sent-row, rejection-metadata, and poison-attempt-ceiling verdicts. `nix develop -c cabal build kenshou-keiro` passed, and the durable 200-row regression passed in `runs/01a0d4c4-2801-751b-8a8a-0efb45f77b89`; all three new verdicts held. Attempt/backoff timing and producer-path oracles remain.
 - [x] (2026-09-24 19:06 UTC) Rerun the strengthened `terminal-state-matrix` at its 2,000-row default on durable PostgreSQL; all verdicts held in `runs/01a0d4ce-902f-7255-a0e5-c38985c6e946`.
-- [ ] Implement the six outbox concurrency and crash scenarios: `crash-between-publish-and-mark` passes the `after-broker-append` arm with its planned 2,000-row backlog, 20 keys, and three real `SIGKILL` events; the `after-claim` one-kill arm with zero broker duplicates; the after-claim exhaustion arm with 32 dead rows and 32 successors sent; and a 32-row `backend-kill-during-mark` arm with the finalization backend terminated under a table lock. `multi-process-publishers` passes with four processes and the planned 20,000-row backlog; its strengthened 2,000-row rerun requires and observes two publishers contributing records, and checks per-partition offsets. The inline arm of `concurrent-inline-enqueue-order` reproduces DOC-16 with a realised schedule, no loss, and the scoped `per-key-order` failure. Its direct `enqueueProducerEventTx` control and ack-coupled subscription control pass all three verdicts. `producer-identity-race-with-gc` passed with four replayers, 128 source events, 192 GC deletions, and 106 stable-identity republications. Subscription crash replay and callback-interval ownership facts remain.
-- [x] (2026-09-24 19:12 UTC) Register `zombie-publisher-finalization` and run all three outcomes on durable PostgreSQL. Each run realised the maintenance/reclaim schedule and reproduced a stale finalization: `failed` left a successful P2 publish as `failed`, `dead` left it `dead`, and `succeeded` allowed P1 to mark P2's claim `sent`. Filed upstream `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-5`, added scoped `KnownDefect` coverage, and reran all three arms with exit 0 and `knownDefect.status=reproduced`. Subscription crash replay and callback-interval ownership facts remain.
+- [ ] Implement the six outbox concurrency and crash scenarios: `crash-between-publish-and-mark` passes the `after-broker-append` arm with its planned 2,000-row backlog, 20 keys, and three real `SIGKILL` events; the `after-claim` one-kill arm with zero broker duplicates; the after-claim exhaustion arm with 32 dead rows and 32 successors sent; and a 32-row `backend-kill-during-mark` arm with the finalization backend terminated under a table lock. `multi-process-publishers` passes with four processes and the planned 20,000-row backlog; its strengthened 2,000-row rerun requires and observes two publishers contributing records, and checks per-partition offsets and callback interval ownership. The inline arm of `concurrent-inline-enqueue-order` reproduces DOC-16 with a realised schedule, no loss, and the scoped `per-key-order` failure. Its direct `enqueueProducerEventTx` control and ack-coupled subscription control pass all three verdicts. `producer-identity-race-with-gc` passed with four replayers, 128 source events, 192 GC deletions, and 106 stable-identity republications. Subscription crash replay remains.
+- [x] (2026-09-24 19:12 UTC) Register `zombie-publisher-finalization` and run all three outcomes on durable PostgreSQL. Each run realised the maintenance/reclaim schedule and reproduced a stale finalization: `failed` left a successful P2 publish as `failed`, `dead` left it `dead`, and `succeeded` allowed P1 to mark P2's claim `sent`. Filed upstream `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-5`, added scoped `KnownDefect` coverage, and reran all three arms with exit 0 and `knownDefect.status=reproduced`. Subscription crash replay remains.
 - [x] (2026-09-24 19:13 UTC) Run `nix develop -c cabal test kenshou-keiro-test` after the zombie scenario and role changes: 35 examples passed with zero failures.
+- [x] (2026-09-24 19:22 UTC) Strengthen `multi-process-publishers` with callback start/end marks per claimed row and reject overlapping ownership intervals or incomplete interval coverage. The 2,000-row durable run passed in `runs/01a0d4dd-4973-75ed-8de1-29264806b6ad`: 63 callback intervals covered all rows, four publishers participated, and `disjoint-ownership` held. `nix develop -c cabal test kenshou-keiro-test` passed 36 examples, including a doctored interval-overlap oracle. The remaining outbox concurrency arms are still open.
 - [x] (2026-09-24 03:35 UTC) Export `Kenshou.Suite.Keiro.Outbox.scenarios` and `.roles` and splice them into the bundle module created by `docs/plans/12-…`.
 - [ ] Run every outbox scenario locally with `pg.durability=durable`; record outcomes and any upstream finding; file upstream reports for unexpected failures and attach `KnownDefect` references.
 
@@ -92,6 +98,8 @@ Milestone 4 — Messaging benchmarks, soak and telemetry arms.
 
 
 ## Surprises & Discoveries
+
+- The existing `disjoint-ownership` check could pass without comparing ownership times: one broker record and one attempt per row do not prove that callback intervals never overlap. The strengthened 2,000-row durable run recorded 63 complete intervals spanning every row, with contributions from all four publishers; the verdict held in `01a0d4dd-4973-75ed-8de1-29264806b6ad`.
 
 - The zombie scenario confirmed the unverified claim-fencing concern. In `01a0d4d0-d80e-73df-a678-185c7d8bd738`, P1's stale failed outcome changed P2's active claim to `failed` after P2 had appended its broker record; in `01a0d4d2-4640-7008-9a09-e46104d73de9`, the stale outcome made it `dead`. The `succeeded` control also let P1 finalize P2's claim. `Keiro.Outbox.Schema` finalization statements test only `outbox_id` and `status = 'publishing'`, with no claim generation. The upstream report is `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-5`.
 - A worker Dead DLQ wrapper includes `"original_headers": null` for an untraced job, while `readDlq` decodes that field as `Nothing`. The initial new `worker-dead-wrapper` verdict failed in `runs/01a0d4cb-a54c-73d9-8471-fb92ba8a728b` because it expected decoded headers to be present. A diagnostic rerun showed the raw wrapper and the corrected oracle passed in `runs/01a0d4cd-1ba2-7100-a84a-17c48e0a619d`.
@@ -514,6 +522,8 @@ Consumers of this plan: `docs/plans/15-verify-the-assembled-runtime-end-to-end-a
 
 
 ## Revision note — 2026-09-24
+
+The four-publisher outbox oracle now reads every callback start and end mark from each worker's retained control log, checks that each row belongs to exactly one complete interval, and checks intervals for the same row do not overlap. The 2,000-row durable run passed with 63 intervals and four participating publishers; the package's 36 unit examples also passed. This replaces the earlier count-only interpretation of `disjoint-ownership`.
 
 The delegated inbox matrix now passes all four dedupe policies on durable
 PostgreSQL. It uses deterministic account-stream event IDs as receipts,
