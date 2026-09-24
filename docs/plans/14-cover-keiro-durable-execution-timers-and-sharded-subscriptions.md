@@ -79,7 +79,7 @@ Milestone 2 — Timer scenarios
 - [x] (2026-09-24) Extended `sigkill-between-fire-and-mark` with a seeded random-delay arm. Three worker processes are killed during a 50-timer workload, a replacement completes the population, and the oracle checks every row fired, raw fire counts bounded by persisted attempts, and one deterministic business event per timer. Both PostgreSQL durability modes passed.
 - [x] (2026-09-24) Added `keiro/timer/concurrency/foreground-resume-tokens` and `keiro/timer-resume-claimer`. Four processes race for one dead row. Both PostgreSQL modes passed checks for one claimant, one added attempt, successful renewal, refusal of four guarded lifecycle operations, expiry recovery by an ordinary pass with stuck requeue disabled, retained reason and attempts, no due claim, and rejection of a former owner's late completion.
 - [x] (2026-09-24) Added `keiro/timer/concurrency/slow-fire-double-fires`. The first worker pauses six seconds after its business append; a second worker requeues the stale claim and completes attempt two. Both PostgreSQL durability modes passed checks for two raw fires, one business event, a fired row, and rejection of the first worker's late mark.
-- [x] (2026-09-24) The bundle includes timer scenarios and the timer worker role; `kenshou list --json` shows the five implemented timer scenarios.
+- [x] (2026-09-24) The bundle includes timer scenarios and the timer worker and foreground claimant roles; `kenshou list --json` shows all six planned timer scenarios.
 
 Milestone 3 — Sharded subscription scenarios
 
@@ -93,6 +93,7 @@ Milestone 3 — Sharded subscription scenarios
 - [ ] Add the shard concurrency and crash scenarios (six).
 - [x] (2026-09-24) Added `keiro/shard/concurrency/late-joiner-gets-no-buckets` with three real delivery workers. Four- and eight-bucket durable runs and a four-bucket fsync-off run reproduced exactly the declared `shard-late-workers-share` known defect; the first owner covered all buckets and coverage persisted after the two joiners started.
 - [x] (2026-09-24) Added `keiro/shard/concurrency/sigkill-failover-vs-graceful-relinquish`. It samples ownership after `SIGKILL` and halfway through the lease, requires transfer to a surviving worker within the calculated failover deadline, then checks immediate release on graceful stop and reownership within the renewal deadline. Four-bucket runs passed in both PostgreSQL modes; the default eight-bucket durable run passed.
+- [x] (2026-09-24) Added `keiro/shard/concurrency/coverage-after-membership-change`. A separate appender feeds account events while worker membership changes gracefully and by `SIGKILL`; 100 ms ownership samples preserve valid bucket rows, and verdict parameters report the measured recovery gaps. A 100-event, four-bucket run passed in both modes and the default 20,000-event, eight-bucket durable run passed with graceful and killed gaps of 3.54 s and 6.60 s. Per-event duplicate-window and checkpoint monotonicity checks remain.
 - [x] (2026-09-24) The bundle includes shard scenarios and the shard worker role; `kenshou list --json` shows the five implemented shard scenarios.
 
 Milestone 4 — Durable-execution benchmarks, soak and telemetry arms
@@ -701,3 +702,13 @@ fired, one business event per timer, and no more raw fires than recorded
 attempts. Waiting for each worker's first pass before signalling also makes
 its ledger header durable enough to read after a torn final fact. Both
 PostgreSQL durability modes passed.
+
+## Revision Note — 2026-09-24 (shard membership changes)
+
+The shard appender can pace events while real delivery workers start, stop
+gracefully, or die. The membership scenario samples bucket ownership every
+100 ms, checks complete recovery against the respective renewal and lease
+deadlines, and reports each measured gap in its verdict parameters. The
+default durable run delivered all 20,000 events and measured 3.54 s for
+graceful recovery and 6.60 s after `SIGKILL`. Per-event duplicate windows
+and checkpoint histories remain to be added.

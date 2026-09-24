@@ -121,6 +121,10 @@ while complete coverage persists.
 `keiro/shard/concurrency/sigkill-failover-vs-graceful-relinquish` checks lease
 retention after a killed worker, transfer by the calculated failover deadline,
 and immediate release and faster recovery after a graceful stop.
+`keiro/shard/concurrency/coverage-after-membership-change` runs a paced
+appender during those membership changes, samples ownership every 100 ms,
+and reports measured recovery gaps. The default durable run delivered all
+20,000 events; graceful and killed recovery took 3.54 s and 6.60 s.
 These correctness probes support both PostgreSQL durability modes. The remaining workflow kinds, process concurrency cases,
 subscription delivery checks, benchmarks and soaks remain in the plan's
 Progress section.

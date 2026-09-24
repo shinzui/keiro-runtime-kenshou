@@ -1,6 +1,7 @@
 module Kenshou.Suite.Keiro.Shard.Concurrency (scenarios) where
 
 import Control.Concurrent (threadDelay)
+import Control.Concurrent.STM (atomically, retry)
 import Control.Monad (forM, forM_)
 import Data.Aeson (object, (.=))
 import Data.List.NonEmpty (NonEmpty (..))
@@ -8,8 +9,12 @@ import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Time (diffUTCTime, getCurrentTime)
+import Hasql.Decoders qualified as Decoders
+import Hasql.Encoders qualified as Encoders
+import Hasql.Statement qualified as Statement
+import Hasql.Transaction qualified as Tx
 import Keiro.Subscription.Shard (ownershipSnapshotFor)
-import Kenshou.Check.Process (awaitReady, killChild, roleProcess, sendCommand, spawn, stopGracefully, withSupervisor)
+import Kenshou.Check.Process (ProgressSnapshot (..), awaitReady, killChild, progress, roleProcess, sendCommand, spawn, stopGracefully, withSupervisor)
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
@@ -18,16 +23,110 @@ import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (knobDouble, knobInt)
 import Kenshou.Core.Phase (zeroPhases)
-import Kenshou.Core.Role (ControlMessage (..))
+import Kenshou.Core.Role (ControlMessage (..), WorkerMessage (..))
 import Kenshou.Core.Scenario (CohortScope (..), KnownDefect (..), Placement (..), Scenario (..), ScenarioReport, Tier (..))
 import Kenshou.Suite.Keiro.Shard.Knobs (shardKnobName, shardKnobs)
-import Kenshou.Suite.Keiro.Shard.Oracle (ShardTiming (..), failoverDeadline, recordShardCells)
-import Kenshou.Suite.Keiro.Workflow.Fixture (durableKirokuStore, withDurableStore)
-import Kiroku.Store (defaultConnectionSettings, runStoreIO)
+import Kenshou.Suite.Keiro.Shard.Oracle (ShardTiming (..), failoverDeadline, recordShardCells, recordShardTimingCells)
+import Kenshou.Suite.Keiro.Workflow.Fixture (durableKirokuStore, ensureDurableTables, runDurable, withDurableStore)
+import Kiroku.Store (defaultConnectionSettings, runStoreIO, runTransaction)
 import Kiroku.Store.Subscription.Types (SubscriptionName (..))
+import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [lateJoinerGetsNoBuckets, sigkillFailoverVsGracefulRelinquish]
+scenarios = [lateJoinerGetsNoBuckets, sigkillFailoverVsGracefulRelinquish, coverageAfterMembershipChange]
+
+coverageAfterMembershipChange :: Scenario
+coverageAfterMembershipChange =
+  lateJoinerGetsNoBuckets
+    { id = either (error . show) id (parseScenarioId "keiro/shard/concurrency/coverage-after-membership-change"),
+      summary = "Measures bucket recovery after graceful and killed membership changes while an appender feeds the subscription.",
+      knownDefect = Nothing,
+      run = runMembershipChange
+    }
+
+runMembershipChange :: RunContext -> IO ScenarioReport
+runMembershipChange context = withCheck context \check ->
+  withDurableStore (defaultConnectionSettings (requirePostgres context).connectionString) \fixture -> do
+    ensureDurableTables fixture
+    let store = durableKirokuStore fixture
+        name = SubscriptionName "kenshouShardMembership"
+        bucketCount = fromIntegral (knobInt context.knobs (shardKnobName "shard.shard-count")) :: Int
+        eventCount = fromIntegral (knobInt context.knobs (shardKnobName "shard.events")) :: Int
+        streamCount = fromIntegral (knobInt context.knobs (shardKnobName "shard.streams")) :: Int
+        renewSeconds = realToFrac (knobDouble context.knobs (shardKnobName "shard.renew-interval-seconds"))
+        leaseSeconds = realToFrac (knobDouble context.knobs (shardKnobName "shard.lease-ttl-seconds"))
+        ownership = runStoreIO store (ownershipSnapshotFor name)
+        owners result = case result of Right rows -> Set.fromList [owner | (_, Just owner, _) <- rows]; Left _ -> Set.empty
+        valid result = case result of
+          Right rows -> length rows == bucketCount && Set.size (Set.fromList [bucket | (bucket, _, _) <- rows]) == bucketCount && all (\(bucket, _, _) -> bucket >= 0 && bucket < bucketCount) rows
+          Left _ -> False
+        covered result = valid result && Set.size (owners result) >= 1 && case result of Right rows -> all (\(_, owner, _) -> owner /= Nothing) rows; Left _ -> False
+        transferred prior current = covered current && Set.null (Set.intersection (owners prior) (owners current))
+        workerSpec index = roleProcess check "keiro/shard-worker" index (object ["subscription" .= ("kenshouShardMembership" :: Text), "shardCount" .= bucketCount, "delivery" .= True])
+        sinkCount = runDurable fixture (runTransaction (Tx.statement () sinkCountStatement))
+        waitOwnership predicate = go (0 :: Int) True
+          where
+            go attempts allValid = do
+              current <- ownership
+              let validNow = valid current
+              if predicate current
+                then pure (True, allValid && validNow)
+                else
+                  if attempts >= 200
+                    then pure (False, allValid && validNow)
+                    else threadDelay 100000 >> go (attempts + 1) (allValid && validNow)
+    (initial, gracefulGap, gracefulValid, killedGap, killedValid, appenderDone, drained) <- withSupervisor check \supervisor -> do
+      let start index = do
+            spec <- workerSpec index
+            worker <- spawn supervisor spec
+            awaitReady worker 10000
+            sendCommand worker CtlStart
+            pure worker
+      first <- start 0
+      initial <- fst <$> waitOwnership covered
+      appenderSpec <- roleProcess check "keiro/shard-appender" 0 (object ["eventCount" .= eventCount, "streamCount" .= streamCount, "idPrefix" .= ("kenshou:shard:membership:" :: Text), "streamPrefix" .= ("account-membership-" :: Text), "pauseMicros" .= (1000 :: Int)])
+      appender <- spawn supervisor appenderSpec
+      awaitReady appender 10000
+      sendCommand appender CtlStart
+      gracefulSurvivor <- start 1
+      beforeGrace <- ownership
+      _ <- stopGracefully supervisor first 5000
+      graceAt <- getCurrentTime
+      (_, gracefulValid) <- waitOwnership (transferred beforeGrace)
+      afterGrace <- ownership
+      graceDone <- getCurrentTime
+      killedSurvivor <- start 2
+      beforeKill <- ownership
+      killChild supervisor gracefulSurvivor
+      killAt <- getCurrentTime
+      (_, killedValid) <- waitOwnership (transferred beforeKill)
+      afterKill <- ownership
+      killDone <- getCurrentTime
+      appenderDone <- timeout 180000000 $ atomically do
+        state <- progress appender
+        case state.lastMessage of
+          Just (WrkDone Nothing) -> pure True
+          Just (WrkError _) -> pure False
+          _ -> retry
+      drained <- waitUntil ((== Right eventCount) <$> sinkCount) (max 160 (eventCount `div` 25))
+      _ <- stopGracefully supervisor killedSurvivor 5000
+      pure (initial, if transferred beforeGrace afterGrace then Just (diffUTCTime graceDone graceAt) else Nothing, gracefulValid, if transferred beforeKill afterKill then Just (diffUTCTime killDone killAt) else Nothing, killedValid, appenderDone == Just True, drained)
+    recordShardTimingCells
+      check
+      [ ("initial-coverage", initial, Nothing),
+        ("graceful-coverage-by-deadline", maybe False (<= fromIntegral (bucketCount + 2) * renewSeconds) gracefulGap, gracefulGap),
+        ("graceful-samples-disjoint", gracefulValid, Nothing),
+        ("killed-coverage-by-deadline", maybe False (<= failoverDeadline (ShardTiming leaseSeconds renewSeconds) bucketCount 1) killedGap, killedGap),
+        ("killed-samples-disjoint", killedValid, Nothing),
+        ("all-appended-events-delivered", appenderDone && drained, Nothing)
+      ]
+
+sinkCountStatement :: Statement.Statement () Int
+sinkCountStatement =
+  Statement.preparable
+    "SELECT count(*)::int FROM kenshou_durable.shard_sink"
+    Encoders.noParams
+    (fromIntegral <$> Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int4)))
 
 sigkillFailoverVsGracefulRelinquish :: Scenario
 sigkillFailoverVsGracefulRelinquish =

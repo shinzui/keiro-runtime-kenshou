@@ -1,5 +1,6 @@
 module Kenshou.Suite.Keiro.Shard.Roles (roles) where
 
+import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (race, wait, withAsync)
 import Control.Exception (try)
 import Control.Monad (forM_, void, when)
@@ -40,9 +41,9 @@ roles =
 shardAppender :: RoleContext -> IO ()
 shardAppender context = case context.init.postgres of
   Nothing -> context.send (WrkError "shard appender requires PostgreSQL")
-  Just postgres -> case parseMaybe (withObject "shard appender args" (\value -> (,,,) <$> value .: "eventCount" <*> value .: "streamCount" <*> value .: "idPrefix" <*> value .: "streamPrefix")) context.init.args of
+  Just postgres -> case parseMaybe (withObject "shard appender args" (\value -> (,,,,) <$> value .: "eventCount" <*> value .: "streamCount" <*> value .: "idPrefix" <*> value .: "streamPrefix" <*> value .:? "pauseMicros")) context.init.args of
     Nothing -> context.send (WrkError "invalid shard appender arguments")
-    Just (eventCount, streamCount, idPrefix, streamPrefix)
+    Just (eventCount, streamCount, idPrefix, streamPrefix, pauseMicros)
       | eventCount < 0 || streamCount <= (0 :: Int) -> context.send (WrkError "invalid shard appender counts")
       | otherwise -> do
           context.send WrkReady
@@ -54,6 +55,7 @@ shardAppender context = case context.init.postgres of
                     stream = StreamName (streamPrefix <> Text.pack (show (index `mod` streamCount)))
                 outcome <- runDurable fixture (appendToStream stream AnyVersion [event])
                 _ <- either (fail . show) pure outcome
+                maybe (pure ()) threadDelay pauseMicros
                 when (index `mod` 1000 == 999) do
                   now <- getCurrentTime
                   context.send (WrkProgress (fromIntegral (index + 1)) now)

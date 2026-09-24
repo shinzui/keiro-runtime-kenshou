@@ -4,10 +4,11 @@ module Kenshou.Suite.Keiro.Shard.Oracle
     coverageAndDisjointness,
     checkpointsMonotonic,
     recordShardCells,
+    recordShardTimingCells,
   )
 where
 
-import Data.Aeson (object)
+import Data.Aeson (object, (.=))
 import Data.Int (Int64)
 import Data.List (nub)
 import Data.Map.Strict qualified as Map
@@ -46,9 +47,12 @@ checkpointsMonotonic = snd . foldl step (Map.empty, True)
        in (Map.insert member position previous, held && maybe True (<= position) old)
 
 recordShardCells :: CheckEnv -> [(Text, Bool)] -> IO ScenarioReport
-recordShardCells check cells = do
+recordShardCells check cells = recordShardTimingCells check [(name, held, Nothing) | (name, held) <- cells]
+
+recordShardTimingCells :: CheckEnv -> [(Text, Bool, Maybe NominalDiffTime)] -> IO ScenarioReport
+recordShardTimingCells check cells = do
   now <- getCurrentTime
-  let verdict (name, held) =
+  let verdict (name, held, gap) =
         Verdict
           { checker = "shard-" <> name,
             invariant = name,
@@ -57,7 +61,7 @@ recordShardCells check cells = do
             reason = Nothing,
             summary = if held then "Shard ownership invariant held" else "Shard ownership invariant failed",
             counts = Map.singleton "snapshots" 1,
-            parameters = object [],
+            parameters = object ["gapMillis" .= fmap (\duration -> realToFrac duration * (1000 :: Double)) gap],
             counterExamples = [],
             counterExamplesTruncated = False,
             inputs = [],
