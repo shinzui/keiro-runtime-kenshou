@@ -616,6 +616,13 @@ while group zero was blocked. The source queue finished empty. Use
 `queue.groups`, `queue.jobs-per-group`, and `queue.workers` for smaller runs;
 `queue.kill-worker=false` omits the interruption.
 
+`dead-letter-window-drain-path` parks a bounded drainer inside its handler.
+A controller locks the source row, releases the
+handler, observes a committed DLQ row while the source delete waits, and
+interrupts the drainer by process or backend kill. Both durable arms retain
+the message in the source and DLQ tables. The schedule and no-loss verdicts
+hold; the duplicate-place verdict is the scoped DOC-25 known defect.
+
 `write-side-steady-state` starts two command-writer processes and durable
 process-manager, router, and activity-projection workers. It stops writers at
 an operation boundary, waits for dispatch and projection to catch up, then

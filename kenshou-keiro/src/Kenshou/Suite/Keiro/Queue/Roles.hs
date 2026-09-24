@@ -47,8 +47,8 @@ worker context = case context.init.postgres of
         Just CtlStart -> withJobRuntime postgres.connectionString Nothing \runtime -> do
           counter <- newIORef (0 :: Int)
           let holding = mode == Just ("hold" :: Text)
-              draining = mode == Just ("lease-drain" :: Text)
-              leasing = mode == Just ("lease" :: Text) || draining
+              draining = mode == Just ("lease-drain" :: Text) || mode == Just "dead-drain"
+              leasing = mode == Just ("lease" :: Text) || mode == Just "lease-drain"
               fifo = mode == Just ("fifo" :: Text)
               policy = if holding then RetryPolicy 3 (RetryDelay 60) True else defaultRetryPolicy
               tuning
@@ -68,34 +68,41 @@ worker context = case context.init.postgres of
                       _ <- context.receive
                       pure ()
                     else
-                      if fifo
+                      if mode == Just "dead-drain"
                         then do
-                          started <- Pool.use runtime.runtimePool (Session.statement payload fifoStartStatement)
-                          spanId <- either (fail . show) pure started
-                          when (payload == "0:0") (threadDelay 5000000)
-                          threadDelay 10000
-                          finished <- Pool.use runtime.runtimePool (Session.statement spanId fifoFinishStatement)
-                          either (fail . show) pure finished
-                          count <- atomicModifyIORef' counter (\value -> (value + 1, value + 1))
-                          now <- getCurrentTime
-                          context.send (WrkProgress (fromIntegral count) now)
-                        else do
-                          when (not leasing) do
-                            now <- getCurrentTime
-                            context.send (WrkCustom "delivery" (object ["attempt" .= jobContext.attempt, "headers" .= jobContext.headers, "payload" .= payload, "at" .= show now]))
-                          when leasing do
-                            now <- getCurrentTime
-                            context.send (WrkCustom "delivery" (object ["attempt" .= jobContext.attempt, "payload" .= payload, "at" .= show now]))
-                            threadDelay 6000000
-                          result <- Pool.use runtime.runtimePool (Session.statement payload effectInsertStatement)
-                          either (fail . show) pure result
-                          count <- atomicModifyIORef' counter (\value -> (value + 1, value + 1))
-                          now <- getCurrentTime
-                          context.send (WrkProgress (fromIntegral count) now)
+                          context.send (WrkCustom "delivery" (object ["payload" .= payload]))
+                          _ <- context.receive
+                          pure ()
+                        else
+                          if fifo
+                            then do
+                              started <- Pool.use runtime.runtimePool (Session.statement payload fifoStartStatement)
+                              spanId <- either (fail . show) pure started
+                              when (payload == "0:0") (threadDelay 5000000)
+                              threadDelay 10000
+                              finished <- Pool.use runtime.runtimePool (Session.statement spanId fifoFinishStatement)
+                              either (fail . show) pure finished
+                              count <- atomicModifyIORef' counter (\value -> (value + 1, value + 1))
+                              now <- getCurrentTime
+                              context.send (WrkProgress (fromIntegral count) now)
+                            else do
+                              when (not leasing) do
+                                now <- getCurrentTime
+                                context.send (WrkCustom "delivery" (object ["attempt" .= jobContext.attempt, "headers" .= jobContext.headers, "payload" .= payload, "at" .= show now]))
+                              when leasing do
+                                now <- getCurrentTime
+                                context.send (WrkCustom "delivery" (object ["attempt" .= jobContext.attempt, "payload" .= payload, "at" .= show now]))
+                                threadDelay 6000000
+                              result <- Pool.use runtime.runtimePool (Session.statement payload effectInsertStatement)
+                              either (fail . show) pure result
+                              count <- atomicModifyIORef' counter (\value -> (value + 1, value + 1))
+                              now <- getCurrentTime
+                              context.send (WrkProgress (fromIntegral count) now)
                 when (mode == Just "throw-once" && jobContext.attempt == Just 0) (liftIO (fail "fixture worker handler failure"))
                 pure $ case mode of
                   Just "retry-once" | jobContext.attempt == Just 0 -> Retry (RetryDelay 1)
                   Just "dead" -> Dead "worker-poison"
+                  Just "dead-drain" -> Dead "drain-poison"
                   _ -> Done
           result <-
             if draining

@@ -2,6 +2,7 @@ module Kenshou.Suite.Keiro.Queue.Concurrency (scenarios, fifoGroupOrder) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM (atomically)
+import Control.Exception (bracket)
 import Data.Aeson (object, withObject, (.:), (.=))
 import Data.Aeson.Types (parseMaybe)
 import Data.Int (Int64)
@@ -19,10 +20,11 @@ import Hasql.Statement qualified as Statement
 import Keiro.PGMQ.Codec (aesonJobCodec)
 import Keiro.PGMQ.Job (Job (..), JobOrdering (..), RetryDelay (..), RetryPolicy (..), defaultRetryPolicy, enqueue, enqueueBatch, enqueueToGroup, ensureJobQueue)
 import Keiro.PGMQ.Runtime (JobRuntime (..), QueueRef (..), queueRef, runJobEff, withJobRuntime)
-import Kenshou.Check.Fault (Fault (..))
-import Kenshou.Check.Fault.Postgres (Backend (..), BackendSelector (..), listBackends, terminateOneBackend)
+import Kenshou.Check.Fault (Fault (..), FaultHandle (..))
+import Kenshou.Check.Fault.Postgres (Backend (..), BackendSelector (..), LockTarget (..), holdLock, listBackends, terminateOneBackend)
 import Kenshou.Check.Process (ProgressSnapshot (..), awaitMark, awaitReady, childPid, killChild, progress, roleProcess, sendCommand, spawn, withSupervisor)
 import Kenshou.Check.Scenario (withCheck)
+import Kenshou.Check.Verdict (InvariantClass (..))
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
@@ -32,14 +34,73 @@ import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), 
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Role (ControlMessage (..))
 import Kenshou.Core.Scenario (CohortScope (..), KnownDefect (..), Placement (..), Scenario (..), ScenarioReport, Tier (..))
-import Kenshou.Suite.Keiro.Messaging.Verdict (recordMessagingCells)
+import Kenshou.Suite.Keiro.Messaging.Verdict (recordMessagingCells, recordMessagingCellsClassified)
 import Kenshou.Suite.Keiro.Outbox.Workload (sourceName)
 import Pgmq.Types (queueNameToText)
 import System.Timeout (timeout)
 import Text.Read (readMaybe)
 
 scenarios :: [Scenario]
-scenarios = [workersSurviveTransientPollingError, crashRedeliveryCadence, leaseExtension, fifoHeadsStrictOrder]
+scenarios = [workersSurviveTransientPollingError, crashRedeliveryCadence, leaseExtension, fifoHeadsStrictOrder, deadLetterWindowDrainPath]
+
+deadLetterWindowDrainPath :: Scenario
+deadLetterWindowDrainPath =
+  workersSurviveTransientPollingError
+    { id = either (error . show) id (parseScenarioId "keiro/queue/concurrency/dead-letter-window-drain-path"),
+      summary = "Pins the drain path's send-then-delete dead-letter crash window.",
+      tier = TierSmoke,
+      knobs = [KnobSpec (knobName "queue.crash-mode") "Interrupt the blocked drain delete" KnobText (VText "sigkill") (OneOf (VText "sigkill" :| [VText "backend-kill"])) [VText "backend-kill"]],
+      knownDefect = Just (KnownDefect "mori://shinzui/keiro/okf/user-documentation/concepts/DOC-25" "The bounded drain path sends to the DLQ before deleting the source row" ["exactly-one-place"] AllCohorts),
+      run = runDeadLetterWindowDrainPath
+    }
+
+runDeadLetterWindowDrainPath :: RunContext -> IO ScenarioReport
+runDeadLetterWindowDrainPath context =
+  withJobRuntime (requirePostgres context).connectionString Nothing \runtime ->
+    withCheck context \check -> withSupervisor check \supervisor -> do
+      let postgres = requirePostgres context
+          queue = sourceName context "dead-window"
+          crashMode = knobText context.knobs (knobName "queue.crash-mode")
+          job = Job "queue-poll-probe" (queueRef queue) (aesonJobCodec @Text) Unordered defaultRetryPolicy
+          mainTable = "pgmq.q_" <> queueNameToText job.jobQueue.physicalName
+          dlqTable = "pgmq.q_" <> queueNameToText job.jobQueue.dlqName
+          lockFault = holdLock postgres (RowLock "pgmq" ("q_" <> queueNameToText job.jobQueue.physicalName))
+          countRows table = do
+            let statement = Statement.preparable ("SELECT count(*) FROM " <> table) Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
+            Pool.use runtime.runtimePool (Session.statement () statement) >>= either (fail . show) pure
+          waitDlq = do
+            count <- countRows dlqTable
+            if count > 0 then pure count else threadDelay 10000 >> waitDlq
+      setup <- runJobEff runtime do
+        ensureJobQueue job
+        enqueue job ("dead-window" :: Text)
+      _ <- either (fail . show) pure setup
+      spec <- roleProcess check "keiro/queue-worker" 0 (object ["queue" .= queue, "mode" .= ("dead-drain" :: Text)])
+      child <- spawn supervisor spec
+      awaitReady child 10000
+      sendCommand child CtlStart
+      awaitMark child "running" 30000
+      awaitMark child "delivery" 10000
+      (observedDlq, mainWhileLocked) <- bracket lockFault.inject (.heal) \_ -> do
+        sendCommand child (CtlCustom "continue" (object []))
+        observed <- maybe False (> 0) <$> timeout 10000000 waitDlq
+        mainCount <- countRows mainTable
+        if crashMode == "sigkill" then killChild supervisor child else pure ()
+        backends <- listBackends postgres
+        mapM_ (\backend -> do _ <- (terminateOneBackend postgres (ByPid backend.pid)).inject; pure ()) [backend | backend <- backends, "queue-worker-0" `Text.isInfixOf` backend.applicationName]
+        if crashMode == "backend-kill" then killChild supervisor child else pure ()
+        pure (observed, mainCount)
+      mainAfter <- countRows mainTable
+      dlqAfter <- countRows dlqTable
+      let schedule = observedDlq && mainWhileLocked == 1
+      recordMessagingCellsClassified
+        context
+        (Map.fromList [("mainWhileLocked", mainWhileLocked), ("mainAfter", mainAfter), ("dlqAfter", dlqAfter)])
+        (object ["observedDlqBeforeKill" .= observedDlq, "crashMode" .= crashMode])
+        [ ("schedule-realised", Contract, schedule),
+          ("exactly-one-place", Implementation, mainAfter + dlqAfter == 1),
+          ("never-nowhere", Contract, mainAfter + dlqAfter >= 1)
+        ]
 
 fifoHeadsStrictOrder :: Scenario
 fifoHeadsStrictOrder =
