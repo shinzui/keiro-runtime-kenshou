@@ -169,6 +169,11 @@ PostgreSQL backends during an effect pause and restarts the PostgreSQL server.
 The worker survives and two other
 workers finish the cohort. The default 100-instance durable run passed exact
 journals, at-least-once effects, and zero consumed retry attempts.
+`keiro/wake/correctness/push-fallback-when-notify-dropped` runs one approval
+through a wake source that never notifies, then another through a push source
+whose `kiroku-listener` backend is terminated before the signal. At a one-second
+fallback interval, both PostgreSQL modes completed within the interval plus
+two seconds. The resume role uses Keiro's notifier for `push` mode.
 
 The registered command scenarios also cover duplicate event identifiers,
 optimistic retry and exhaustion, controlled SQL rollback, and hydration over

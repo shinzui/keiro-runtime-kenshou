@@ -16,9 +16,10 @@ import Kenshou.Suite.Keiro.Workflow.Roles qualified as Roles
 import Kenshou.Suite.Keiro.Workflow.RotationSmoke qualified as RotationSmoke
 import Kenshou.Suite.Keiro.Workflow.SleepSmoke qualified as SleepSmoke
 import Kenshou.Suite.Keiro.Workflow.StepBoundary qualified as StepBoundary
+import Kenshou.Suite.Keiro.Workflow.Wake qualified as Wake
 
 scenarios :: [Scenario]
-scenarios = LinearSmoke.scenarios <> CrashSmoke.scenarios <> CrashBackoff.scenarios <> DatabaseFaults.scenarios <> DirectRace.scenarios <> ResumeRace.scenarios <> StepBoundary.scenarios <> SleepSmoke.scenarios <> AwakeableSmoke.scenarios <> RotationSmoke.scenarios <> ExactDiscovery.scenarios <> PatchSmoke.scenarios <> ChildSmoke.scenarios
+scenarios = LinearSmoke.scenarios <> CrashSmoke.scenarios <> CrashBackoff.scenarios <> DatabaseFaults.scenarios <> DirectRace.scenarios <> ResumeRace.scenarios <> StepBoundary.scenarios <> Wake.scenarios <> SleepSmoke.scenarios <> AwakeableSmoke.scenarios <> RotationSmoke.scenarios <> ExactDiscovery.scenarios <> PatchSmoke.scenarios <> ChildSmoke.scenarios
 
 roles :: [WorkerRole]
 roles = Roles.roles

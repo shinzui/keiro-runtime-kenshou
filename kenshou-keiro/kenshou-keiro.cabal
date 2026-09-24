@@ -116,6 +116,7 @@ library
     Kenshou.Suite.Keiro.Workflow.RotationSmoke
     Kenshou.Suite.Keiro.Workflow.SleepSmoke
     Kenshou.Suite.Keiro.Workflow.StepBoundary
+    Kenshou.Suite.Keiro.Workflow.Wake
 
   build-depends:
     aeson,
