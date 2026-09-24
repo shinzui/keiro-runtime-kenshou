@@ -15,7 +15,7 @@ import Hasql.Pool qualified as Pool
 import Hasql.Session qualified as Session
 import Hasql.Statement qualified as Statement
 import Keiro.PGMQ.Codec (aesonJobCodec)
-import Keiro.PGMQ.Job (Job (..), JobContext (..), JobOrdering (..), JobOutcome (..), JobPolling (..), JobTuning (..), RetryDelay (..), RetryPolicy (..), defaultJobTuning, defaultRetryPolicy, jobProcessorWithContext, runJobWorkers)
+import Keiro.PGMQ.Job (Job (..), JobContext (..), JobOrdering (..), JobOutcome (..), JobPolling (..), JobTuning (..), RetryDelay (..), RetryPolicy (..), defaultJobTuning, defaultRetryPolicy, jobProcessorWithContext, runJobOnceWithContext, runJobWorkers)
 import Keiro.PGMQ.Runtime (JobRuntime (..), queueRef, runJobEff, withJobRuntime)
 import Kenshou.Core.Role (ControlMessage (..), PostgresConnInfo (..), RoleContext (..), RoleName, WorkerInit (..), WorkerMessage (..), WorkerRole (..), mkRoleName)
 import Shibuya.App (SupervisionStrategy (..), waitApp)
@@ -40,7 +40,8 @@ worker context = case context.init.postgres of
         Just CtlStart -> withJobRuntime postgres.connectionString Nothing \runtime -> do
           counter <- newIORef (0 :: Int)
           let holding = mode == Just ("hold" :: Text)
-              leasing = mode == Just ("lease" :: Text)
+              draining = mode == Just ("lease-drain" :: Text)
+              leasing = mode == Just ("lease" :: Text) || draining
               policy = if holding then RetryPolicy 3 (RetryDelay 60) True else defaultRetryPolicy
               tuning
                 | holding = defaultJobTuning {visibilityTimeout = 3, polling = if pollingMode == Just ("long-poll" :: Text) then LongPoll 5 100 else PollEvery 1}
@@ -70,14 +71,19 @@ worker context = case context.init.postgres of
                       now <- getCurrentTime
                       context.send (WrkProgress (fromIntegral count) now)
                 pure Done
-          result <- runJobEff runtime do
-            started <- runJobWorkers StopAllOnFailure 16 [jobProcessorWithContext tuning job handler]
-            case started of
-              Left err -> liftIO (context.send (WrkError (Text.pack (show err))))
-              Right app -> do
-                liftIO (context.send (WrkCustom "running" (object [])))
-                waitApp app
+          result <-
+            if draining
+              then do
+                context.send (WrkCustom "running" (object []))
+                runJobEff runtime (runJobOnceWithContext tuning 1 job handler >> pure ())
+              else runJobEff runtime do
+                started <- runJobWorkers StopAllOnFailure 16 [jobProcessorWithContext tuning job handler]
+                case started of
+                  Left err -> liftIO (context.send (WrkError (Text.pack (show err))))
+                  Right app -> do
+                    liftIO (context.send (WrkCustom "running" (object [])))
+                    waitApp app
           case result of
             Left err -> context.send (WrkError (Text.pack (show err)))
-            Right () -> context.send (WrkCustom "stopped" (object []))
+            Right _ -> context.send (WrkCustom "stopped" (object []))
         _ -> pure ()

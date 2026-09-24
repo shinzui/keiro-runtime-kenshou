@@ -513,7 +513,11 @@ the failing verdicts are tracked at `mori://shinzui/keiro/okf/bug-reports/concep
 `lease-extension` runs two continuous workers with a six-second handler and a
 two-second base visibility timeout. The current worker-path arm observes two
 effects when the handler leaves the lease alone and one effect when it extends
-the lease by ten seconds before work.
+the lease by ten seconds before work. Set `queue.execution-shape=drain` to
+exercise bounded `runJobOnceWithContext` calls with the same timing. Its durable
+run observed two unextended effects and one extended effect; the extended job
+was delivered once at attempt zero. The worker path also passed that attempt
+check, regardless of which worker claimed the job.
 
 `write-side-steady-state` starts two command-writer processes and durable
 process-manager, router, and activity-projection workers. It stops writers at

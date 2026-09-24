@@ -45,6 +45,7 @@ leaseExtension =
   workersSurviveTransientPollingError
     { id = either (error . show) id (parseScenarioId "keiro/queue/concurrency/lease-extension"),
       summary = "Checks that extending a live job lease prevents a second worker from handling it.",
+      knobs = [KnobSpec (knobName "queue.execution-shape") "Worker or bounded drain" KnobText (VText "worker") (OneOf (VText "worker" :| [VText "drain"])) [VText "drain"]],
       knownDefect = Nothing,
       run = runLeaseExtension
     }
@@ -54,6 +55,7 @@ runLeaseExtension context =
   withJobRuntime (requirePostgres context).connectionString Nothing \runtime ->
     withCheck context \check -> withSupervisor check \supervisor -> do
       let makeJob name = Job "queue-poll-probe" (queueRef (sourceName context name)) (aesonJobCodec @Text) Unordered defaultRetryPolicy
+          draining = knobText context.knobs (knobName "queue.execution-shape") == "drain"
           unextended = makeJob "unextended"
           extended = makeJob "extended"
           countEffects payload = do
@@ -63,34 +65,59 @@ runLeaseExtension context =
             count <- countEffects payload
             if count >= expected then pure True else threadDelay 100000 >> awaitEffects payload expected
           startWorker index job extend = do
-            spec <- roleProcess check "keiro/queue-worker" index (object ["queue" .= job.jobQueue.logicalName, "mode" .= ("lease" :: Text), "extend" .= extend])
+            spec <- roleProcess check "keiro/queue-worker" index (object ["queue" .= job.jobQueue.logicalName, "mode" .= (if draining then "lease-drain" else "lease" :: Text), "extend" .= extend])
             child <- spawn supervisor spec
             awaitReady child 10000
             sendCommand child CtlStart
             awaitMark child "running" 30000
             pure child
           runArm index job extend payload expected = do
+            if draining
+              then do
+                sent <- runJobEff runtime (enqueue job payload)
+                _ <- either (fail . show) pure sent
+                pure ()
+              else pure ()
             first <- startWorker index job extend
+            if draining
+              then do
+                awaitMark first "delivery" 10000
+                threadDelay 2500000
+              else pure ()
             second <- startWorker (index + 1) job extend
-            sent <- runJobEff runtime (enqueue job payload)
-            _ <- either (fail . show) pure sent
+            if draining
+              then pure ()
+              else do
+                sent <- runJobEff runtime (enqueue job payload)
+                _ <- either (fail . show) pure sent
+                pure ()
             observed <- maybe False id <$> timeout 20000000 (awaitEffects payload expected)
             threadDelay 2000000
             count <- countEffects payload
-            killChild supervisor first
-            killChild supervisor second
-            pure (observed, count)
+            firstSnapshot <- atomically (progress first)
+            secondSnapshot <- atomically (progress second)
+            let attempt snapshot = Map.lookup "delivery" snapshot.marks >>= parseMaybe (withObject "delivery" (.: "attempt"))
+                attempts = (attempt firstSnapshot :: Maybe Word, attempt secondSnapshot :: Maybe Word)
+            if draining
+              then do
+                awaitMark first "stopped" 10000
+                awaitMark second "stopped" 10000
+              else do
+                killChild supervisor first
+                killChild supervisor second
+            pure (observed, count, attempts)
       Pool.use runtime.runtimePool (Session.script "CREATE SCHEMA IF NOT EXISTS kenshou_fx; CREATE TABLE IF NOT EXISTS kenshou_fx.queue_effects (payload text NOT NULL)") >>= either (fail . show) pure
       setup <- runJobEff runtime (ensureJobQueue unextended >> ensureJobQueue extended)
       _ <- either (fail . show) pure setup
-      (duplicateObserved, unextendedCount) <- runArm 0 unextended False "unextended" 2
-      (singleObserved, extendedCount) <- runArm 2 extended True "extended" 1
+      (duplicateObserved, unextendedCount, unextendedAttempts) <- runArm 0 unextended False "unextended" 2
+      (singleObserved, extendedCount, extendedAttempts) <- runArm 2 extended True "extended" 1
       recordMessagingCells
         context
         (Map.fromList [("unextendedEffects", unextendedCount), ("extendedEffects", extendedCount)])
-        (object [])
+        (object ["executionShape" .= knobText context.knobs (knobName "queue.execution-shape"), "unextendedAttempts" .= unextendedAttempts, "extendedAttempts" .= extendedAttempts])
         [ ("unextended-lease-expires", duplicateObserved && unextendedCount >= 2),
-          ("extension-prevents-duplicate", singleObserved && extendedCount == 1)
+          ("extension-prevents-duplicate", singleObserved && extendedCount == 1),
+          ("extended-read-count-one", extendedAttempts == (Just 0, Nothing) || extendedAttempts == (Nothing, Just 0))
         ]
 
 crashRedeliveryCadence :: Scenario
