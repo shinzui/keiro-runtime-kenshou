@@ -88,6 +88,10 @@ A default run completed 6,000 transfers with 60 restarts and 30 confirmed
 backend terminations, passing all six durable checks. It took about 249 seconds
 on this host, so the scenario now reports effective rate and marks runs that
 miss their paced schedule as inconclusive for rate validation.
+A rate-valid full-duration run at twenty transfers per second completed 2,400
+transfers in 120.01 seconds with 29 restarts and 14 confirmed backend
+terminations. All six durable checks passed. The earlier 50/s default result
+remains rate-inconclusive on this host.
 `retry-budget-dead-letter` keeps one credit in conflict while a healthy transfer
 follows it. The production adapter dead-letters after five deliveries;
 `--set pm.source=ack-stream --set kiroku.retry-max-attempts=3` tests a
