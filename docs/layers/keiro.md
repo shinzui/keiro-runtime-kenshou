@@ -317,15 +317,14 @@ one effect, and source-row deletion.
 worker and terminates its PostgreSQL polling backend. The current released
 cohort stops after the first termination with an unexpected row-count error;
 the next batch stays queued. The scenario records contract verdicts and tracks
-the upstream finding at `mori://shinzui/keiro/issues/4` (Mori issue resolution
-is pending).
+the upstream finding at `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-3`.
 
 `crash-redelivery-cadence` kills three worker processes while their handlers
 hold the same job. With ordinary polling, deliveries occur about three seconds
 apart, attempts increase from zero through two, and the next read moves the job
 to the DLQ even though the retry policy delay is 60 seconds. The long-poll arm
 currently consumes an extra read attempt without a matching handler delivery;
-the failing verdicts are tracked at `mori://shinzui/keiro/issues/5`.
+the failing verdicts are tracked at `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-4`.
 
 `lease-extension` runs two continuous workers with a six-second handler and a
 two-second base visibility timeout. The current worker-path arm observes two

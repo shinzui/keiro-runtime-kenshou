@@ -99,7 +99,7 @@ crashRedeliveryCadence =
     { id = either (error . show) id (parseScenarioId "keiro/queue/concurrency/crash-redelivery-cadence"),
       summary = "Checks a killed handler redelivers at the visibility timeout rather than the policy retry delay.",
       knobs = [KnobSpec (knobName "queue.polling") "Job worker polling mode" KnobText (VText "poll-every") (OneOf (VText "poll-every" :| [VText "long-poll"])) [VText "long-poll"]],
-      knownDefect = Just (KnownDefect "mori://shinzui/keiro/issues/5" "Long-poll workers may consume reads without handler delivery after process death" ["visibility-cadence", "crashes-consume-attempts", "retry-ceiling-dead-letters"] AllCohorts),
+      knownDefect = Just (KnownDefect "mori://shinzui/keiro/okf/bug-reports/concepts/BUG-4" "Long-poll workers may consume reads without handler delivery after process death" ["visibility-cadence", "crashes-consume-attempts", "retry-ceiling-dead-letters"] AllCohorts),
       run = runCrashRedeliveryCadence
     }
 
@@ -208,7 +208,7 @@ workersSurviveTransientPollingError =
           },
       phases = zeroPhases,
       requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaPgmq] [] False)},
-      knownDefect = Just (KnownDefect "mori://shinzui/keiro/issues/4" "Polling backend termination can stop the worker after an unexpected row-count error" ["faults-injected", "processing-resumed", "no-loss"] AllCohorts),
+      knownDefect = Just (KnownDefect "mori://shinzui/keiro/okf/bug-reports/concepts/BUG-3" "Polling backend termination can stop the worker after an unexpected row-count error" ["faults-injected", "processing-resumed", "no-loss"] AllCohorts),
       run = runWorkersSurviveTransientPollingError
     }
 
