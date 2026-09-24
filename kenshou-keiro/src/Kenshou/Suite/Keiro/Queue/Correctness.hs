@@ -68,6 +68,7 @@ runJobOutcomeSemantics context =
         workerJob = Job "queue-poll-probe" (queueRef (sourceName context "worker-done")) (aesonJobCodec @Text) Unordered defaultRetryPolicy
         workerRetryJob = workerJob {jobQueue = queueRef (sourceName context "worker-retry")}
         workerDeadJob = workerJob {jobQueue = queueRef (sourceName context "worker-dead")}
+        workerThrowJob = workerJob {jobQueue = queueRef (sourceName context "worker-throw")}
         doneHandler _ _ = pure Done
         retryHandler jobContext _ = do
           liftIO $ atomicModifyIORef' attempts (\seen -> (seen <> [jobContext.attempt], ()))
@@ -120,6 +121,7 @@ runJobOutcomeSemantics context =
       ensureJobQueue workerJob
       ensureJobQueue workerRetryJob
       ensureJobQueue workerDeadJob
+      ensureJobQueue workerThrowJob
       _ <- enqueue doneJob ("done" :: Text)
       _ <- enqueue retryJob ("retry" :: Text)
       _ <- enqueue deadJob ("dead" :: Text)
@@ -210,7 +212,8 @@ runJobOutcomeSemantics context =
             pure (result, snapshot.count)
       retryResult <- runArm 1 workerRetryJob "retry-once" "worker-retry" 2 (const True)
       deadResult <- runArm 2 workerDeadJob "dead" "worker-dead" 1 (\(count, reason) -> count == 1 && Text.isPrefixOf "poison_pill" reason)
-      pure (retryResult, deadResult)
+      throwResult <- runArm 3 workerThrowJob "throw-once" "worker-throw" 2 (const True)
+      pure (retryResult, deadResult, throwResult)
     recordCells
       context
       [ ("done-deletes", done == 1 && doneDepth == (0 :: Int64)),
@@ -225,8 +228,9 @@ runJobOutcomeSemantics context =
         ("malformed-payload", malformedHandled == 1 && malformedDepth == 0 && fst malformedDead == 1 && Text.isPrefixOf "invalid_payload" (snd malformedDead)),
         ("future-payload-retries", futureHandled == 1 && futureEarly == 0 && futureDepth == 1 && futureFirstReadCount == 1 && futureSecond == 1 && futureSecondReadCount == 2),
         ("worker-done-and-context", fst workerDelivery && snd workerDelivery),
-        ("worker-retry", case fst workerOutcomes of (Just (effects, _), _) -> effects == 2; _ -> False),
-        ("worker-dead-letter", case snd workerOutcomes of (Just (effects, (count, reason)), _) -> effects == 1 && count == 1 && Text.isPrefixOf "poison_pill" reason; _ -> False)
+        ("worker-retry", case workerOutcomes of ((Just (effects, _), _), _, _) -> effects == 2; _ -> False),
+        ("worker-dead-letter", case workerOutcomes of (_, (Just (effects, (count, reason)), _), _) -> effects == 1 && count == 1 && Text.isPrefixOf "poison_pill" reason; _ -> False),
+        ("worker-handler-exception-redelivery", case workerOutcomes of (_, _, (Just (effects, _), _)) -> effects == 2; _ -> False)
       ]
 
 maxRetriesBeforeHandler :: Scenario

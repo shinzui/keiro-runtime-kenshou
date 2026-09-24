@@ -542,6 +542,9 @@ one effect, and source-row deletion.
 The worker Retry arm checks a second handler effect after its one-second delay
 and eventual source-row deletion. The worker Dead arm checks one handler effect,
 source-row deletion, and a poison-pill wrapper in the DLQ.
+A thrown worker handler is redelivered after the one-second visibility timeout;
+the second delivery completes, leaving two observed handler effects and no
+source row.
 
 `workers-survive-transient-polling-error` runs a continuous supervised job
 worker and terminates its PostgreSQL polling backend. The current released

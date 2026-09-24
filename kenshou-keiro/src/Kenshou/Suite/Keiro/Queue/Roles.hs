@@ -46,6 +46,7 @@ worker context = case context.init.postgres of
               tuning
                 | holding = defaultJobTuning {visibilityTimeout = 3, polling = if pollingMode == Just ("long-poll" :: Text) then LongPoll 5 100 else PollEvery 1}
                 | leasing = defaultJobTuning {visibilityTimeout = 2, polling = PollEvery 0.2}
+                | mode == Just "throw-once" = defaultJobTuning {visibilityTimeout = 1, polling = PollEvery 0.2}
                 | otherwise = defaultJobTuning
               job = Job "queue-poll-probe" (queueRef queue) (aesonJobCodec @Text) Unordered policy
               handler jobContext payload = do
@@ -70,6 +71,7 @@ worker context = case context.init.postgres of
                       count <- atomicModifyIORef' counter (\value -> (value + 1, value + 1))
                       now <- getCurrentTime
                       context.send (WrkProgress (fromIntegral count) now)
+                when (mode == Just "throw-once" && jobContext.attempt == Just 0) (liftIO (fail "fixture worker handler failure"))
                 pure $ case mode of
                   Just "retry-once" | jobContext.attempt == Just 0 -> Retry (RetryDelay 1)
                   Just "dead" -> Dead "worker-poison"
