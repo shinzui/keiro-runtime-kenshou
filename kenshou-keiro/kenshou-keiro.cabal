@@ -63,6 +63,7 @@ library
     Kenshou.Suite.Keiro.Inbox.Telemetry
     Kenshou.Suite.Keiro.Messaging.Verdict
     Kenshou.Suite.Keiro.Outbox
+    Kenshou.Suite.Keiro.Outbox.Bench
     Kenshou.Suite.Keiro.Outbox.Broker
     Kenshou.Suite.Keiro.Outbox.Concurrency
     Kenshou.Suite.Keiro.Outbox.Correctness

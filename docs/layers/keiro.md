@@ -425,6 +425,14 @@ duplicate receipt, processed and duplicate counters, the inbox backlog gauge,
 and consumer spans continuing the context saved in the outbox row. Both
 in-memory tracing with collected metrics and the fully disabled arm passed on
 durable PostgreSQL.
+The `drain-throughput` benchmark preloads rows, measures concurrent closed-loop
+publisher passes, then drains any remainder and checks one broker record and a
+sent state for every row. Its 8,000-row durable run produced histograms and
+time series with a benchmark grade. `enqueue-to-publish` drives open-loop
+enqueues while publisher loops record callback-entry latency from each event's
+`occurredAt`; a 300-per-second durable run passed with no loss and histograms
+for both enqueue and enqueue-to-publish latency. Shorter smoke runs produced
+the same artifact types but were graded exploratory for sample count.
 
 The crash scenario
 parks a publisher after the broker append, kills its process with `SIGKILL`,
