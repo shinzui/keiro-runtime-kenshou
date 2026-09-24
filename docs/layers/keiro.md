@@ -609,6 +609,9 @@ The three-block local telemetry overhead matrix completed without a failed
 child run. Served and scraped metrics, noop tracing, and SDK OTLP tracing
 passed its comparison policy; the metrics collection arm was inconclusive.
 Queue-specific Shibuya metrics are not yet connected to this benchmark.
+The `enqueue` benchmark records single, batch-10, batch-100, and, when tracing
+is active, `enqueueTraced` call latency. Its 1,100-cycle durable traced run
+passed at benchmark grade, with 123,424 accepted rows and the same queue depth.
 `consumption-config-rejections` checks invalid tuning, ordering mismatch,
 unsafe legacy FIFO batch size, and error precedence. Direct SQL confirms that
 the queued row still has `read_ct = 0` after all rejections; valid tuning then

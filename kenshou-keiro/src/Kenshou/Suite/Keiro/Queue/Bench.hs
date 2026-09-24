@@ -9,6 +9,7 @@ import Data.IORef (atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.Int (Int64)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
+import Data.Maybe (isJust)
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -20,7 +21,7 @@ import Hasql.Pool qualified as Pool
 import Hasql.Session qualified as Session
 import Hasql.Statement qualified as Statement
 import Keiro.PGMQ.Codec (aesonJobCodec)
-import Keiro.PGMQ.Job (Job (..), JobOrdering (..), JobOutcome (..), JobTuning (..), defaultJobTuning, defaultRetryPolicy, enqueue, enqueueToGroup, ensureJobQueue, runJobOnceWithContext, withOrdering)
+import Keiro.PGMQ.Job (Job (..), JobOrdering (..), JobOutcome (..), JobTuning (..), defaultJobTuning, defaultRetryPolicy, enqueue, enqueueBatch, enqueueToGroup, enqueueTraced, ensureJobQueue, runJobOnceWithContext, withOrdering)
 import Keiro.PGMQ.Runtime (JobRuntime (..), QueueRef (..), queueRef, runJobEff, withJobRuntime)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary, requirePostgres)
 import Kenshou.Core.Dimension
@@ -31,16 +32,87 @@ import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), 
 import Kenshou.Core.Phase qualified as CorePhase
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport (..), Tier (..), failedWith)
 import Kenshou.Measure.Knobs (measureKnobs)
-import Kenshou.Measure.Load (Arrival (..), LoadModel (..), LoadReport (..), OpenConfig (..), Operation (..), OverloadConfig (..), runLoad)
+import Kenshou.Measure.Load (Arrival (..), ClosedConfig (..), LoadModel (..), LoadReport (..), OpenConfig (..), Operation (..), OverloadConfig (..), runLoad)
+import Kenshou.Measure.Phase (PhasePlan (..), SteadyBound (..))
 import Kenshou.Measure.Recorder (ErrorCause (..), OpName (..), OpResult (..), newWorkerRecorder, recordOp, registerOp)
-import Kenshou.Measure.Session (measureConfigFromKnobs, measuredOutcome, measurementRecorder, phasePlanFromCore, withMeasurement)
+import Kenshou.Measure.Session (MeasureConfig (..), measureConfigFromKnobs, measuredOutcome, measurementRecorder, phasePlanFromCore, withMeasurement)
 import Kenshou.Suite.Keiro.Command.Correctness (recordCells)
 import Kenshou.Suite.Keiro.Outbox.Workload (sourceName)
 import Kenshou.Telemetry (TelemetryHandles (..), telemetryKnobs, telemetrySpecFromContext, withTelemetry)
-import Pgmq.Types (queueNameToText)
+import Pgmq.Types (MessageHeaders (..), queueNameToText)
 
 scenarios :: [Scenario]
-scenarios = [jobThroughput]
+scenarios = [jobThroughput, enqueueBenchmark]
+
+enqueueBenchmark :: Scenario
+enqueueBenchmark =
+  jobThroughput
+    { id = either (error . show) id (parseScenarioId "keiro/queue/benchmark/enqueue"),
+      summary = "Compares single, ten-row, hundred-row, and traced queue enqueue calls.",
+      knobs = telemetryKnobs <> measureKnobs Benchmark <> [intKnob "queue.iterations" 1200 1 100000],
+      run = runEnqueueBenchmark
+    }
+
+runEnqueueBenchmark :: RunContext -> IO ScenarioReport
+runEnqueueBenchmark context = case (measureConfigFromKnobs context (phasePlanFromCore (CorePhase.PhasePlan 0 1 1)), telemetrySpecFromContext context) of
+  (Left reason, _) -> pure (failedWith ["invalid-measure-config"] reason)
+  (_, Left reason) -> pure (failedWith ["invalid-telemetry-config"] reason)
+  (Right config, Right telemetrySpec) -> withTelemetry telemetrySpec \telemetry ->
+    withJobRuntime (requirePostgres context).connectionString telemetry.tracer \runtime -> do
+      let job = Job "enqueue-bench" (queueRef (sourceName context "enqueue-bench")) (aesonJobCodec @Text) Unordered defaultRetryPolicy
+          iterations = fromIntegral (knobInt context.knobs (name "queue.iterations"))
+          measuredConfig = config {defaultPhases = (config.defaultPhases) {steady = SteadyCount iterations}}
+          table = "pgmq.q_" <> queueNameToText job.jobQueue.physicalName
+          countStatement = Statement.preparable ("SELECT count(*) FROM " <> table) Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
+          queueCount = Pool.use runtime.runtimePool (Session.statement () countStatement) >>= either (fail . show) pure
+      _ <- runJobEff runtime (ensureJobQueue job) >>= either (fail . show) pure
+      ((generated, acceptedRows), report) <- withMeasurement context measuredConfig \measurement -> do
+        singleOp <- registerOp (measurementRecorder measurement) (OpName "queue.enqueue-single")
+        tenOp <- registerOp (measurementRecorder measurement) (OpName "queue.enqueue-batch-10")
+        hundredOp <- registerOp (measurementRecorder measurement) (OpName "queue.enqueue-batch-100")
+        tracedOp <- registerOp (measurementRecorder measurement) (OpName "queue.enqueue-traced")
+        singleRecorder <- newWorkerRecorder singleOp 0
+        tenRecorder <- newWorkerRecorder tenOp 0
+        hundredRecorder <- newWorkerRecorder hundredOp 0
+        tracedRecorder <- newWorkerRecorder tracedOp 0
+        accepted <- newIORef (0 :: Int)
+        let timed recorder expected action = do
+              started <- getMonotonicTimeNSec
+              result <- action
+              ended <- getMonotonicTimeNSec
+              let actual = case result of
+                    Left err -> OpFailed (ErrorCause (Text.pack (show err)))
+                    Right count | count == expected -> OpOk count
+                    Right _ -> OpFailed (ErrorCause "wrong-batch-size")
+              recordOp recorder started started ended actual
+              case actual of
+                OpOk count -> atomicModifyIORef' accepted (\total -> (total + count, ()))
+                OpFailed _ -> pure ()
+              pure (case actual of OpOk _ -> True; _ -> False)
+            cycleOnce _ sequenceNumber = do
+              let prefix = Text.pack (show sequenceNumber)
+                  payload suffix = prefix <> "-" <> suffix
+                  batchPayloads amount suffix = [payload (suffix <> "-" <> Text.pack (show index)) | index <- [1 .. amount :: Int]]
+              singleOk <- timed singleRecorder 1 (fmap (fmap (const 1)) (runJobEff runtime (enqueue job (payload "single"))))
+              tenOk <- timed tenRecorder 10 (fmap (fmap length) (runJobEff runtime (enqueueBatch job (batchPayloads 10 "ten"))))
+              hundredOk <- timed hundredRecorder 100 (fmap (fmap length) (runJobEff runtime (enqueueBatch job (batchPayloads 100 "hundred"))))
+              tracedOk <- case telemetry.tracerProvider of
+                Nothing -> pure True
+                Just provider -> timed tracedRecorder 1 (fmap (fmap (const 1)) (runJobEff runtime (enqueueTraced provider job (MessageHeaders (object [])) (payload "traced"))))
+              pure (if singleOk && tenOk && hundredOk && tracedOk then OpOk (111 + if isJust telemetry.tracerProvider then 1 else 0) else OpFailed (ErrorCause "enqueue-cycle"))
+        generated <- runLoad measurement (ClosedLoop (ClosedConfig 1 0 0)) (Operation (OpName "queue.enqueue-cycle") cycleOnce)
+        acceptedRows <- readIORef accepted
+        pure (generated, acceptedRows)
+      depth <- queueCount
+      let completed = fromIntegral generated.completed :: Int
+          perCycle = if isJust telemetry.tracerProvider then 112 else 111
+          cells =
+            [ ("enqueue-operations-completed", completed > 0 && generated.failed == 0),
+              ("no-loss", acceptedRows == completed * perCycle && depth == fromIntegral acceptedRows)
+            ]
+      putSummary context Measurements "queue-enqueue" (object ["cycles" .= completed, "tracedEnabled" .= isJust telemetry.tracerProvider, "acceptedRows" .= acceptedRows, "queueDepth" .= depth])
+      base <- recordCells context cells
+      pure (base {outcome = measuredOutcome report base.outcome})
 
 jobThroughput :: Scenario
 jobThroughput =
