@@ -57,6 +57,9 @@ worker context = case context.init.postgres of
                       _ <- context.receive
                       pure ()
                     else do
+                      when (not leasing) do
+                        now <- getCurrentTime
+                        context.send (WrkCustom "delivery" (object ["attempt" .= jobContext.attempt, "headers" .= jobContext.headers, "payload" .= payload, "at" .= show now]))
                       when leasing do
                         now <- getCurrentTime
                         context.send (WrkCustom "delivery" (object ["attempt" .= jobContext.attempt, "payload" .= payload, "at" .= show now]))

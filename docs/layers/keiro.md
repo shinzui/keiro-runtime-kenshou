@@ -298,6 +298,8 @@ a DLQ or archive, batch ID uniqueness and rows, FIFO group headers, and
 redelivery at the visibility timeout after a thrown drain handler.
 Malformed payloads move to the DLQ; future-version payloads stay queued and
 consume delivery attempts while the worker waits for a compatible version.
+The worker Done arm confirms attempt zero, an absent arbitrary-headers context,
+one effect, and source-row deletion.
 
 `workers-survive-transient-polling-error` runs a continuous supervised job
 worker and terminates its PostgreSQL polling backend. The current released

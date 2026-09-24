@@ -1,12 +1,15 @@
 module Kenshou.Suite.Keiro.Queue.Correctness (scenarios) where
 
 import Control.Concurrent (threadDelay)
+import Control.Concurrent.STM (atomically)
 import Control.Exception (try)
-import Data.Aeson (object, (.=))
+import Data.Aeson (Value, object, withObject, (.:), (.=))
+import Data.Aeson.Types (parseMaybe)
 import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.Int (Int64)
 import Data.List (nub)
 import Data.List.NonEmpty (NonEmpty (..))
+import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Effectful (liftIO)
@@ -18,16 +21,20 @@ import Hasql.Statement qualified as Statement
 import Keiro.PGMQ.Codec (JobCodec (..), JobDecodeError (..), aesonJobCodec)
 import Keiro.PGMQ.Job (Job (..), JobConsumptionConfigError (..), JobContext (..), JobOrdering (..), JobOutcome (..), JobPolling (..), JobTuning (..), JobTuningConfigError (..), RetryDelay (..), RetryPolicy (..), defaultJobTuning, defaultRetryPolicy, enqueue, enqueueBatch, enqueueToGroup, enqueueWithDelay, ensureJobQueue, runJobOnceWithContext, withOrdering)
 import Keiro.PGMQ.Runtime (JobRuntime (..), QueueRef (..), queueRef, runJobEff, withJobRuntime)
+import Kenshou.Check.Process (ProgressSnapshot (..), awaitMark, awaitReady, killChild, progress, roleProcess, sendCommand, spawn, withSupervisor)
+import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Phase (zeroPhases)
+import Kenshou.Core.Role (ControlMessage (..))
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..))
 import Kenshou.Suite.Keiro.Command.Correctness (recordCells)
 import Kenshou.Suite.Keiro.Outbox.Workload (sourceName)
 import Pgmq.Types (queueNameToText)
+import System.Timeout (timeout)
 
 scenarios :: [Scenario]
 scenarios = [consumptionConfigRejections, maxRetriesBeforeHandler, jobOutcomeSemantics]
@@ -58,6 +65,7 @@ runJobOutcomeSemantics context =
         thrownJob = makeJob "thrown"
         malformedJob = makeJob "malformed"
         futureJob = Job "future" (queueRef (sourceName context "future")) (JobCodec (const (object ["future" .= True])) (const (Left (JobPayloadFromFuture 2 1)))) Unordered defaultRetryPolicy {defaultRetryDelay = RetryDelay 1}
+        workerJob = Job "queue-poll-probe" (queueRef (sourceName context "worker-done")) (aesonJobCodec @Text) Unordered defaultRetryPolicy
         doneHandler _ _ = pure Done
         retryHandler jobContext _ = do
           liftIO $ atomicModifyIORef' attempts (\seen -> (seen <> [jobContext.attempt], ()))
@@ -104,6 +112,7 @@ runJobOutcomeSemantics context =
       ensureJobQueue thrownJob
       ensureJobQueue malformedJob
       ensureJobQueue futureJob
+      ensureJobQueue workerJob
       _ <- enqueue doneJob ("done" :: Text)
       _ <- enqueue retryJob ("retry" :: Text)
       _ <- enqueue deadJob ("dead" :: Text)
@@ -153,6 +162,25 @@ runJobOutcomeSemantics context =
     futureSecond <- runOne futureJob doneHandler
     futureSecondReadCount <- queueReadCount futureJob
     observedDefaultAttempts <- readIORef defaultAttempts
+    workerDelivery <- withCheck context \check -> withSupervisor check \supervisor -> do
+      Pool.use runtime.runtimePool (Session.script "CREATE SCHEMA IF NOT EXISTS kenshou_fx; CREATE TABLE IF NOT EXISTS kenshou_fx.queue_effects (payload text NOT NULL)") >>= either (fail . show) pure
+      spec <- roleProcess check "keiro/queue-worker" 0 (object ["queue" .= workerJob.jobQueue.logicalName])
+      child <- spawn supervisor spec
+      awaitReady child 10000
+      sendCommand child CtlStart
+      awaitMark child "running" 30000
+      sent <- runJobEff runtime (enqueue workerJob ("worker-done" :: Text))
+      _ <- either (fail . show) pure sent
+      awaitMark child "delivery" 10000
+      let waitDone = do
+            snapshot <- atomically (progress child)
+            depth <- queueCount workerJob
+            if snapshot.count >= 1 && depth == 0 then pure True else threadDelay 100000 >> waitDone
+      completed <- maybe False id <$> timeout 10000000 waitDone
+      snapshot <- atomically (progress child)
+      killChild supervisor child
+      let delivery = Map.lookup "delivery" snapshot.marks >>= parseMaybe (withObject "worker delivery" (\o -> (,) <$> o .: "attempt" <*> o .: "headers"))
+      pure (completed, delivery == Just (Just (0 :: Word), Nothing :: Maybe Value))
     recordCells
       context
       [ ("done-deletes", done == 1 && doneDepth == (0 :: Int64)),
@@ -165,7 +193,8 @@ runJobOutcomeSemantics context =
         ("group-header", groupedHeaders == 1),
         ("drain-handler-exception", thrownResult == 0 && thrownEarly == 0 && thrownDepth == 1 && thrownRedelivery == 1),
         ("malformed-payload", malformedHandled == 1 && malformedDepth == 0 && fst malformedDead == 1 && Text.isPrefixOf "invalid_payload" (snd malformedDead)),
-        ("future-payload-retries", futureHandled == 1 && futureEarly == 0 && futureDepth == 1 && futureFirstReadCount == 1 && futureSecond == 1 && futureSecondReadCount == 2)
+        ("future-payload-retries", futureHandled == 1 && futureEarly == 0 && futureDepth == 1 && futureFirstReadCount == 1 && futureSecond == 1 && futureSecondReadCount == 2),
+        ("worker-done-and-context", fst workerDelivery && snd workerDelivery)
       ]
 
 maxRetriesBeforeHandler :: Scenario
