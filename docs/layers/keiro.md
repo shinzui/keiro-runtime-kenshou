@@ -55,6 +55,8 @@ the harness reports it as a nonblocking known defect tied to
 `mori://shinzui/keiro/okf/adrs/concepts/ADR-41`. The process-manager
 `policy-matrix` run checks all nine poison and rejected-command policy
 combinations, including acknowledgement decisions and durable dead letters.
+It checks nine `keiro.dispatch.poison` counter increments with metrics
+collected and zero exports with metrics off.
 The `transient-classification` scenario checks conflicting credits, backend
 termination during a credit projection, malformed destination history, and a
 mixed rejected/transient dispatch group. It expects retry for transient groups
@@ -69,7 +71,10 @@ after a fresh worker resumes the same subscription. Select a boundary with
 follows it. The production adapter dead-letters after five deliveries;
 `--set pm.source=ack-stream --set kiroku.retry-max-attempts=3` tests a
 configurable budget. Both bridges advance to the healthy transfer, and replay
-of the dead letter appends the missing credit once.
+of the dead letter appends the missing credit once. The scenario also reads the
+durable subscription checkpoint beyond both source transfers and checks that
+Kiroku's terminal dead-letter event increments
+`keiro.subscription.deadlettered` once when metrics are collected.
 `topologies` runs two process manager roles against one subscription as
 duplicate subscribers, consumer-group members, or lease-owned shard workers.
 Ten transfers use both input

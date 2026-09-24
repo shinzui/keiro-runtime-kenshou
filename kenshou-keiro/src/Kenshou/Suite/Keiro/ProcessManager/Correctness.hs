@@ -23,6 +23,7 @@ import Keiro.Command (CommandError (..), CommandResult (..), RunCommandOptions (
 import Keiro.DeadLetter.Replay (ReplayOutcome (..), ReplayResult (..), replaySubscriptionDeadLetters)
 import Keiro.ProcessManager (PMCommandResult (..), PMStateResult (..), PoisonPolicy (..), ProcessManagerResult (..), RejectedCommandPolicy (..), WorkerOptions (..), defaultWorkerOptions, deterministicCommandId, runProcessManagerOnce, runProcessManagerWorkerWith)
 import Keiro.ProcessManager.Reaction (ReactionStateResult (..), ReactionTimerEffects (..), ReactiveProcessManagerResult (..), runReactiveProcessManagerOnce)
+import Keiro.Telemetry (KeiroMetrics, kirokuEventBridge, newKeiroMetrics)
 import Keiro.Timer (TimerId (..), cancelTimer)
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
@@ -31,7 +32,7 @@ import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (parseScenarioId, unSeed)
 import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobInt, knobText, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
-import Kenshou.Core.Scenario (CohortScope (..), KnownDefect (..), Placement (..), Scenario (..), ScenarioReport, Tier (..))
+import Kenshou.Core.Scenario (CohortScope (..), KnownDefect (..), Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith)
 import Kenshou.Suite.Keiro.Command.Correctness (recordCells)
 import Kenshou.Suite.Keiro.Fixture.Account
 import Kenshou.Suite.Keiro.Fixture.Bridge
@@ -42,7 +43,9 @@ import Kenshou.Suite.Keiro.Fixture.Projection (parkingProjection)
 import Kenshou.Suite.Keiro.Fixture.Runtime
 import Kenshou.Suite.Keiro.Fixture.Transfer
 import Kenshou.Suite.Keiro.Fixture.Workload qualified as Workload
+import Kenshou.Telemetry (TelemetryHandles (..), telemetryKnobs, telemetrySpecFromContext, withTelemetry)
 import Kiroku.Store (appendToStream, defaultConnectionSettings)
+import Kiroku.Store.Connection (ConnectionSettings, ConnectionSettingsM (..))
 import Kiroku.Store.Error (StoreError (..))
 import Kiroku.Store.Read (readCategory)
 import Kiroku.Store.Subscription.Types (EventTypeFilter (..), RetryPolicy (..), SubscriptionConfigM (..), SubscriptionName (..), SubscriptionResult (..), SubscriptionTarget (..), defaultSubscriptionConfig)
@@ -64,13 +67,29 @@ retryBudgetDeadLetter =
       knobs =
         [ KnobSpec (knobName "pm.source") "Subscription bridge" KnobText (VText "kiroku-adapter") (OneOf (VText "kiroku-adapter" :| [VText "ack-stream"])) [],
           KnobSpec (knobName "kiroku.retry-max-attempts") "Ack-stream retry budget" KnobInt (VInt 5) (IntRange 1 10) []
-        ],
+        ]
+          <> telemetryKnobs,
+      dimensions =
+        DimensionSupport
+          { tracing = Supported (Support (TracingOff :| []) TracingOff),
+            metrics = Supported (Support (MetricsOff :| [MetricsCollect]) MetricsCollect),
+            pgDurability = Supported (Support (PgDurable :| []) PgDurable),
+            pgVersion = Supported (Support (Pg18 :| []) Pg18)
+          },
       run = runRetryBudget
     }
 
 runRetryBudget :: RunContext -> IO ScenarioReport
-runRetryBudget context =
-  withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture -> do
+runRetryBudget context = case telemetrySpecFromContext context of
+  Left reason -> pure (failedWith ["invalid-telemetry-config"] reason)
+  Right telemetrySpec -> withTelemetry telemetrySpec \telemetry -> do
+    keiroMetrics <- traverse newKeiroMetrics telemetry.meter
+    let settings = (defaultConnectionSettings (requirePostgres context).connectionString) {eventHandler = Just (kirokuEventBridge keiroMetrics (const (pure ())))}
+    runRetryBudgetMeasured context telemetry keiroMetrics settings
+
+runRetryBudgetMeasured :: RunContext -> TelemetryHandles -> Maybe KeiroMetrics -> ConnectionSettings -> IO ScenarioReport
+runRetryBudgetMeasured context telemetry keiroMetrics settings =
+  withFixtureEnv settings \fixture -> do
     let KeiroRunner runFixture = fixture.runner
         accountEvents = accountEventStream SnapNever
         manager = transferManager accountEvents (const [])
@@ -95,8 +114,8 @@ runRetryBudget context =
           modifyIORef' hooks (+ 1)
           _ <- submit (destination "failed") (Deposit (DepositData (destination "failed") 1 "foreign"))
           pure ()
-        commandOptions = defaultRunCommandOptions {retryLimit = 1, beforeAppend = inject}
-        workerOptions = defaultWorkerOptions {transientRetryDelay = RetryDelay 0.2}
+        commandOptions = defaultRunCommandOptions {retryLimit = 1, beforeAppend = inject, metrics = keiroMetrics}
+        workerOptions = defaultWorkerOptions {transientRetryDelay = RetryDelay 0.2, metrics = keiroMetrics}
     ackLog <- newIORef []
     worker <-
       async
@@ -121,6 +140,7 @@ runRetryBudget context =
     cancel worker
     letters <- readDeadLetters connection
     accountRows <- Oracle.readCategoryLog connection "account"
+    checkpoint <- Connection.use connection (Session.statement () retryCheckpointStatement) >>= either (fail . show) pure
     let replay recorded = case decodeTransferSignal recorded of
           Nothing -> pure (Left "cannot decode replayed transfer")
           Just (_, signal) ->
@@ -135,15 +155,22 @@ runRetryBudget context =
     firstReplay <- runFixture (replaySubscriptionDeadLetters subscription 0 replay) >>= either (fail . show) pure
     secondReplay <- runFixture (replaySubscriptionDeadLetters subscription 0 replay) >>= either (fail . show) pure
     afterReplay <- Oracle.readCategoryLog connection "account"
+    _ <- telemetry.flushTelemetry
+    metricSums <- telemetry.readMetricSums
     Connection.release connection
     acks <- readIORef ackLog
     let failedRetries = [() | (_, _, AckRetry _) <- acks]
         healthyCredits = length [() | row <- accountRows, row.streamName == accountStreamName (destination "healthy"), row.eventType == EventType "TransferCredited"]
         failedCredits = length [() | row <- accountRows, row.streamName == accountStreamName (destination "failed"), row.eventType == EventType "TransferCredited"]
+        sourcePositions = [row.globalPosition | row <- accountRows, row.eventType == EventType "TransferDebited"]
+        checkpointAdvanced = case sourcePositions of [first, second] -> maybe False (>= max first second) checkpoint; _ -> False
+        deadLetterMetric = maybe 0 id (lookup "keiro.subscription.deadlettered" metricSums)
         cells =
           [ ("source-setup", all accepted (failedSeed <> healthySeed)),
             ("retry-budget-reached", reached == Just True && length failedRetries == attempts),
             ("dead-letter-recorded", letters == [("max_attempts_exceeded", fromIntegral attempts)]),
+            ("dead-letter-metric", deadLetterMetric == if telemetry.metricsLive then 1 else 0),
+            ("checkpoint-advanced", checkpointAdvanced),
             ("healthy-transfer-advanced", healthyCredits == 1 && failedCredits == 0 && Oracle.logWellFormed accountRows),
             ("replay-fresh-then-duplicate", map replayResult firstReplay == [ReplayedFresh] && map replayResult secondReplay == [ReplayedDuplicate]),
             ("replayed-effect-once", length [() | row <- afterReplay, row.streamName == accountStreamName (destination "failed"), row.eventType == EventType "TransferCredited"] == 1 && Oracle.logWellFormed afterReplay)
@@ -162,6 +189,11 @@ runRetryBudget context =
         "SELECT reason->>'kind', attempt_count FROM kiroku.dead_letters WHERE subscription_name = 'kenshou-keiro-retry-budget' ORDER BY global_position"
         Encoders.noParams
         (Decoders.rowList ((,) <$> Decoders.column (Decoders.nonNullable Decoders.text) <*> Decoders.column (Decoders.nonNullable Decoders.int4)))
+    retryCheckpointStatement =
+      Statement.preparable
+        "SELECT checkpoint_position FROM kiroku.subscription_checkpoints_v1 WHERE subscription_name = 'kenshou-keiro-retry-budget'"
+        Encoders.noParams
+        (Decoders.rowMaybe (Decoders.column (Decoders.nonNullable Decoders.int8)))
 
 transientClassification :: Scenario
 transientClassification =
@@ -273,12 +305,26 @@ policyMatrix =
     { id = either (error . show) id (parseScenarioId "keiro/process-manager/correctness/policy-matrix"),
       summary = "Checks all poison and rejected-command worker policy combinations.",
       tier = TierStandard,
-      knobs = [],
+      knobs = telemetryKnobs,
+      dimensions =
+        DimensionSupport
+          { tracing = Supported (Support (TracingOff :| []) TracingOff),
+            metrics = Supported (Support (MetricsOff :| [MetricsCollect]) MetricsCollect),
+            pgDurability = Supported (Support (PgDurable :| []) PgDurable),
+            pgVersion = Supported (Support (Pg18 :| []) Pg18)
+          },
       run = runPolicyMatrix
     }
 
 runPolicyMatrix :: RunContext -> IO ScenarioReport
-runPolicyMatrix context =
+runPolicyMatrix context = case telemetrySpecFromContext context of
+  Left reason -> pure (failedWith ["invalid-telemetry-config"] reason)
+  Right telemetrySpec -> withTelemetry telemetrySpec \telemetry -> do
+    keiroMetrics <- traverse newKeiroMetrics telemetry.meter
+    runPolicyMatrixMeasured context telemetry keiroMetrics
+
+runPolicyMatrixMeasured :: RunContext -> TelemetryHandles -> Maybe KeiroMetrics -> IO ScenarioReport
+runPolicyMatrixMeasured context telemetry keiroMetrics =
   withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture -> do
     let KeiroRunner runFixture = fixture.runner
         accountEvents = accountEventStream SnapNever
@@ -319,7 +365,7 @@ runPolicyMatrix context =
             "halt" -> PoisonHalt
             "skip" -> PoisonSkip (\_ -> liftIO (modifyIORef' poisonCallbacks (+ 1)))
             _ -> PoisonDeadLetter (\_ -> liftIO (modifyIORef' poisonCallbacks (+ 1)))
-          options = defaultWorkerOptions {poisonPolicy, rejectedCommandPolicy = rejectedPolicy}
+          options = defaultWorkerOptions {poisonPolicy, rejectedCommandPolicy = rejectedPolicy, metrics = keiroMetrics}
           adapter = listAdapter ("policy-" <> suffix) acknowledgements [(poisonEvent, Nothing), (rejectedEvent, Nothing), (rejectedEvent, Just 1), (normalEvent, Nothing)]
       _ <- runFixture (runProcessManagerWorkerWith options defaultRunCommandOptions manager adapter decodeTransferSignal) >>= either (fail . show) pure
       acks <- readIORef acknowledgements
@@ -352,7 +398,10 @@ runPolicyMatrix context =
           rejectionConfirmed = length [() | row <- accountRows, row.streamName == accountStreamName rejectedSource, row.eventType == EventType "TransferConfirmed"] == 1
           cellPassed = and (map accepted setup) && policyChecks && callbacks == (if poisonName == "halt" then 0 else 1) && deadLetterExpected && ownRows rejectedTransfer == 1 && ownRows normalTransfer == 1 && normalCredited && rejectionConfirmed
       pure ("policy-" <> suffix, cellPassed)
-    recordCells context cells
+    _ <- telemetry.flushTelemetry
+    metricSums <- telemetry.readMetricSums
+    let poisonCount = maybe 0 id (lookup "keiro.dispatch.poison" metricSums)
+    recordCells context (cells <> [("poison-metric", poisonCount == if telemetry.metricsLive then 9 else 0)])
 
 reactionNoAdvanceReceipt :: Scenario
 reactionNoAdvanceReceipt =
