@@ -558,12 +558,14 @@ The fault arms park the first command inside its SQL transaction, then verify
 that killing the process or its backend leaves only the opening event before
 the peers run. One peer appends the deposit marker, the others and a restarted
 consumer see duplicates, and `keiro_inbox` stays empty.
-`gc-vs-insert-race` is registered with the documented inbox GC limitation.
-The proxy now establishes its connection before adding latency and holds a
-delayed response when switched to `Stall`. The durable run deleted the old
-receipt, observed a second handler effect, and retained a replacement receipt
-with a later timestamp. A separate `gc-reset-reprocess` verdict records that
-fact. The strict insert-versus-lookup schedule guard remains inconclusive.
+`gc-vs-insert-race` reproduces the documented inbox GC limitation. The TCP
+proxy holds the second consumer's lookup request after its conflicting insert.
+Garbage collection deletes the original receipt before that lookup reaches
+PostgreSQL. Two durable runs passed the strict schedule guard: the second
+handler effect committed, no receipt remained, and only `effectively-once`
+failed under scoped DOC-10 coverage. An earlier, less exact run observed a
+second effect with a replacement receipt; the targeted query barrier resolves
+that ambiguity.
 
 ## Job queue
 

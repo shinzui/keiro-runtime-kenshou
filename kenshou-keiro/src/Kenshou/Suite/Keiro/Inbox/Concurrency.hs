@@ -20,7 +20,7 @@ import Keiro.Inbox.Delegated (delegatedEventId)
 import Keiro.Integration.Event (IntegrationEvent (..))
 import Keiro.Outbox (OutboxRow (..), listOutbox)
 import Kenshou.Check.Fault (Fault (..))
-import Kenshou.Check.Fault.Network (ProxyMode (..), proxiedConnectionString, setProxyMode, withTcpProxy)
+import Kenshou.Check.Fault.Network (armQueryBarrier, proxiedConnectionString, queryBarrierReached, releaseQueryBarrier, withTcpProxy)
 import Kenshou.Check.Fault.Postgres (Backend (..), BackendSelector (..), listBackends, terminateOneBackend)
 import Kenshou.Check.Process (ProgressSnapshot (..), awaitMark, awaitReady, killChild, progress, roleProcess, sendCommand, spawn, withSupervisor)
 import Kenshou.Check.Scenario (withCheck)
@@ -80,11 +80,6 @@ runGcVsInsertRace context =
       ready <- newEmptyMVar
       start <- newEmptyMVar
       let connection = proxiedConnectionString postgres proxy <> " application_name=kenshou_inbox_gc_race"
-          awaitInsert = do
-            backends <- listBackends postgres
-            case [backend | backend <- backends, backend.applicationName == "kenshou_inbox_gc_race", backend.state == "idle in transaction", "INSERT INTO keiro.keiro_inbox" `Text.isInfixOf` backend.query] of
-              _ : _ -> pure True
-              [] -> threadDelay 5000 >> awaitInsert
       withAsync
         ( withFixtureEnv (defaultConnectionSettings connection) \proxyFixture -> do
             let KeiroRunner runProxy = proxyFixture.runner
@@ -95,29 +90,26 @@ runGcVsInsertRace context =
         )
         \consumer -> do
           prepared <- maybe False (const True) <$> timeout 15000000 (takeMVar ready)
-          if prepared then setProxyMode proxy (Latency 1000) >> putMVar start () else pure ()
-          observed <- if prepared then maybe False id <$> timeout 15000000 awaitInsert else pure False
+          barrier <- armQueryBarrier proxy "WHERE source = $1 AND dedupe_key = $2"
+          if prepared then putMVar start () else pure ()
+          observed <- if prepared then maybe False (const True) <$> timeout 15000000 (queryBarrierReached barrier) else pure False
           beforeGcRows <- runFixture (listInbox source) >>= either (fail . show) pure
           deleted <-
             if observed
               then do
-                setProxyMode proxy Stall
                 now <- getCurrentTime
                 removed <- runFixture (garbageCollectCompleted 0 now) >>= either (fail . show) pure
-                setProxyMode proxy Forward
                 pure removed
               else pure 0
+          releaseQueryBarrier proxy barrier
           second <- wait consumer >>= either (fail . show) pure
           rows <- runFixture (listInbox source) >>= either (fail . show) pure
           effects <- runFixture (KirokuTransaction.runTransaction (Tx.statement () effectReadStatement)) >>= either (fail . show) pure
-          let recreated = case (seedRows, rows) of
-                ([seed], [replacement]) -> replacement.receivedAt > seed.receivedAt
-                _ -> False
-              resetObserved = first == Right (InboxProcessed ()) && observed && deleted == 1 && second == Right (InboxProcessed ()) && recreated && length effects == 2
+          let reprocessObserved = first == Right (InboxProcessed ()) && observed && deleted == 1 && second == Right (InboxProcessed ()) && length effects == 2
               schedule = first == Right (InboxProcessed ()) && observed && deleted == 1 && second == Right (InboxProcessed ()) && null rows
               cells =
                 [ ("schedule-realised", Contract, schedule),
-                  ("gc-reset-reprocess", Implementation, resetObserved),
+                  ("gc-reprocess-observed", Implementation, reprocessObserved),
                   ("effectively-once", Implementation, length effects == 1),
                   ("at-least-once", Contract, not (null effects))
                 ]
