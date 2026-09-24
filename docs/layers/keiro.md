@@ -165,7 +165,8 @@ attempts, observes a quiet failed instance for sixteen seconds, then
 resurrects it and completes it with a repaired worker. The failure event
 remains in the journal.
 `keiro/workflow/concurrency/database-faults` terminates a resume worker's
-PostgreSQL backends during an effect pause. The worker survives and two other
+PostgreSQL backends during an effect pause and restarts the PostgreSQL server.
+The worker survives and two other
 workers finish the cohort. The default 100-instance durable run passed exact
 journals, at-least-once effects, and zero consumed retry attempts.
 

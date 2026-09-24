@@ -2,6 +2,7 @@ module Kenshou.Suite.Keiro.Workflow.DatabaseFaults (scenarios) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM (atomically)
+import Control.Exception (bracket)
 import Control.Monad (forM, forM_)
 import Data.Aeson (object, (.=))
 import Data.List.NonEmpty (NonEmpty (..))
@@ -13,8 +14,8 @@ import Keiro.Codec (decodeRecorded)
 import Keiro.Workflow (WorkflowId (..), WorkflowJournalEvent (..), workflowJournalCodec, workflowStreamName)
 import Keiro.Workflow.Instance (WorkflowInstanceRow (..), WorkflowStatus (..), lookupInstance, upsertInstanceTx)
 import Kenshou.Check.Fact (Fact (..), FactKind (..))
-import Kenshou.Check.Fault (Fault (..), FaultHandle (..))
-import Kenshou.Check.Fault.Postgres (Backend (..), BackendSelector (..), listBackends, terminateBackends, withApplicationName)
+import Kenshou.Check.Fault (Availability (..), Fault (..), FaultHandle (..))
+import Kenshou.Check.Fault.Postgres (Backend (..), BackendSelector (..), CrashMode (..), crashPostmaster, listBackends, terminateBackends, withApplicationName)
 import Kenshou.Check.Ledger (sealLedger)
 import Kenshou.Check.Ledger.Read (discoverLedgers, foldFacts)
 import Kenshou.Check.Process (ProgressSnapshot (..), awaitMark, awaitReady, progress, roleProcess, sendCommand, spawn, stopGracefully, withSupervisor)
@@ -72,7 +73,7 @@ runDatabaseFaults context = withCheck context \check ->
           pure (all (\case Right (Just row) -> row.status == WfCompleted; _ -> False) rows)
     seeded <- traverse (\(WorkflowId wid) -> runStoreIO store (runTransaction (upsertInstanceTx wid "kenshouLinear" 0 WfRunning Nothing))) wids
     sealLedger check.ledger
-    (backendPresent, survived, recovered) <- withSupervisor check \supervisor -> do
+    (backendPresent, postmasterRecovered, survived, recovered) <- withSupervisor check \supervisor -> do
       spec <- roleProcess check "keiro/workflow-resume-worker" 0 (object ["stepDelayMicros" .= (500000 :: Int)])
       worker <- spawn supervisor (withApplicationName "kenshou-workflow-fault" spec)
       awaitReady worker 10000
@@ -82,6 +83,11 @@ runDatabaseFaults context = withCheck context \check ->
       let backendPresent = any (Text.isPrefixOf "kenshou-workflow-fault" . (.applicationName)) backends
       handle <- (terminateBackends (requirePostgres context) (ByApplicationName "kenshou-workflow-fault%")).inject
       handle.heal
+      let postmasterFault = crashPostmaster (requirePostgres context) KillPostmaster
+      available <- postmasterFault.availability
+      postmasterRecovered <- case available of
+        Unavailable _ -> pure False
+        Available -> bracket postmasterFault.inject (.heal) (\_ -> threadDelay 500000) >> pure True
       survivors <- forM [1, 2] \index -> do
         survivorSpec <- roleProcess check "keiro/workflow-resume-worker" index (object [])
         survivor <- spawn supervisor survivorSpec
@@ -93,7 +99,7 @@ runDatabaseFaults context = withCheck context \check ->
       let survived = case state.lastMessage of Just (WrkDone _) -> False; _ -> True
       _ <- stopGracefully supervisor worker 5000
       forM_ survivors (\survivor -> stopGracefully supervisor survivor 5000)
-      pure (backendPresent, survived, done)
+      pure (backendPresent, postmasterRecovered, survived, done)
     rows <- traverse (runStoreIO store . lookupInstance linearName) wids
     journals <- traverse (\wid -> runStoreIO store (readStreamForward (workflowStreamName linearName wid) (StreamVersion 0) (fromIntegral (params.steps + 2)))) wids
     ledgers <- discoverLedgers check.ledgerDirectory
@@ -114,6 +120,7 @@ runDatabaseFaults context = withCheck context \check ->
       check
       [ ("instances-seeded", length seeded == count && all (== Right ()) seeded),
         ("backend-target-present", backendPresent),
+        ("postmaster-restarted", postmasterRecovered),
         ("worker-survived-backend-kill", survived),
         ("all-instances-completed", recovered && all terminal rows),
         ("journals-exactly-once", and (zipWith journalCorrect wids journals)),
