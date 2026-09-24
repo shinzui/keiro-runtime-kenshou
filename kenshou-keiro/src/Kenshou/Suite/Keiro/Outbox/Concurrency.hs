@@ -7,8 +7,8 @@ import Data.Map.Strict qualified as Map
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
 import Keiro.Integration.Event (IntegrationEvent (..), headerMessageId)
-import Keiro.Outbox (BackoffSchedule (..), OutboxMaintenanceOptions (..), OutboxMaintenanceSummary (..), OutboxPublishOptions (..), OutboxPublishSummary (..), OutboxRow (..), OutboxStatus (..), countOutboxBacklog, defaultMaintenanceOptions, defaultPublishOptions, listOutbox, outboxMaintenancePass, publishClaimedOutbox)
-import Kenshou.Check.Process (awaitMark, awaitReady, killChild, roleProcess, sendCommand, spawn, withSupervisor)
+import Keiro.Outbox (BackoffSchedule (..), OutboxMaintenanceOptions (..), OutboxMaintenanceSummary (..), OutboxPublishOptions (..), OutboxPublishSummary (..), OutboxRow (..), OutboxStatus (..), countOutboxBacklog, defaultPublishOptions, listOutbox, outboxMaintenancePass, publishClaimedOutbox)
+import Kenshou.Check.Process (awaitMark, awaitReady, childPid, killChild, roleProcess, sendCommand, spawn, withSupervisor)
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
@@ -18,8 +18,8 @@ import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Role (ControlMessage (..))
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..))
-import Kenshou.Suite.Keiro.Command.Correctness (recordCells)
 import Kenshou.Suite.Keiro.Fixture.Runtime (FixtureEnv (..), KeiroRunner (..), withFixtureEnv)
+import Kenshou.Suite.Keiro.Messaging.Verdict (recordMessagingCells)
 import Kenshou.Suite.Keiro.Outbox.Broker qualified as Broker
 import Kenshou.Suite.Keiro.Outbox.Workload (enqueueInline, sourceName)
 import Kiroku.Store (defaultConnectionSettings)
@@ -74,7 +74,7 @@ runCrashBetweenPublishAndMark context =
         threadDelay 1500000
         stillStranded <- readRows
         preMaintenance <- runFixture (publishClaimedOutbox callback options Nothing) >>= either (fail . show) pure
-        maintenance <- runFixture (outboxMaintenancePass defaultMaintenanceOptions {publishingTimeout = 1} Nothing) >>= either (fail . show) pure
+        maintenance <- runFixture (outboxMaintenancePass (OutboxMaintenanceOptions 10 1) Nothing) >>= either (fail . show) pure
         reclaimed <- readRows
         let drain = do
               backlog <- runFixture countOutboxBacklog >>= either (fail . show) pure
@@ -97,4 +97,5 @@ runCrashBetweenPublishAndMark context =
                 ("no-loss", length rows == 32 && all ((== OutboxSent) . (.status)) rows && all (`Map.member` counts) expectedIds),
                 ("bounded-duplicates", length records == 64 && all (\messageId -> Map.lookup messageId counts == Just 2) expectedIds)
               ]
-        recordCells context cells
+            evidence = Map.fromList [("enqueued", 32), ("brokerRecords", fromIntegral (length records)), ("killedPublishers", 1), ("duplicatedMessages", fromIntegral (length [() | count <- Map.elems counts, count > 1]))]
+        recordMessagingCells context evidence (object ["killedPid" .= (fromIntegral (childPid child) :: Int)]) cells

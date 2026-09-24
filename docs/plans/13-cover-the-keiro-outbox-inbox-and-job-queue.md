@@ -89,6 +89,7 @@ Milestone 4 — Messaging benchmarks, soak and telemetry arms.
 - The PGMQ migration is available under `SchemaPgmq` in the environment. The first queue validation run passed in `01a0d182-5dea-740f-9266-42f966963458`; the stronger SQL read-count check initially hit a decoder mismatch because `read_ct` is narrower than `bigint`, and an explicit SQL cast fixed it. The full scenario passed in `01a0d184-2021-7578-bab7-766c6e1a7b12`.
 - The queue retry ceiling scenario passed in `01a0d186-b8df-704a-bfd1-51c82cee2701`. Its DLQ query checks `dead_letter_reason=max_retries_exceeded` and wrapper read counts of four and one for the three-attempt and zero-attempt policies respectively.
 - The inbox batch scenario passed in `01a0d188-bf5b-7211-9fd4-0504b828a6d8`: clean deliveries shared one PostgreSQL transaction, a repeated key stayed positional, and a throwing delivery triggered per-message fallback without double effects. The matrix still passed after adding a transaction ID to the shared effect table in `01a0d189-681c-7193-9195-552fb32500ec`.
+- The crash scenario's first implementation used the command fixture's generic verdict writer, which gave files a `keiro-fixture-` prefix and omitted crash evidence. A messaging verdict writer now emits the plan's exact verdict filenames with enqueue, broker, kill, duplicate counts and the killed PID. The durable rerun passed in `01a0d18b-be3c-7219-a804-c2fae6acf6fa`.
 
 
 ## Decision Log
