@@ -7,9 +7,9 @@ where
 import Control.Concurrent (threadDelay)
 import Control.Monad (forM_)
 import Data.Aeson (object, (.=))
-import Data.ByteString qualified as ByteString
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Data.Text.Encoding qualified as TextEncoding
 import Data.Time (getCurrentTime)
 import Keiro.Integration.Event (IntegrationContentType (..), IntegrationEvent (..))
 import Keiro.Outbox (enqueueIntegrationEventTx, freshOutboxId)
@@ -40,7 +40,7 @@ enqueueInline fixture source entries = forM_ entries \(messageId, key, sequenceN
             schemaReference = Nothing,
             sourceEventId = Nothing,
             sourceGlobalPosition = Nothing,
-            payloadBytes = ByteString.empty,
+            payloadBytes = TextEncoding.encodeUtf8 messageId,
             occurredAt = now,
             causationId = Nothing,
             correlationId = Nothing,

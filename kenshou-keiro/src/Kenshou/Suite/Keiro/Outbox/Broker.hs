@@ -9,6 +9,7 @@ module Kenshou.Suite.Keiro.Outbox.Broker
     newTableBroker,
     withTableBroker,
     readBroker,
+    toInboundRecord,
     decide,
     publishCallback,
     publishScripted,
@@ -43,6 +44,7 @@ import Hasql.Pool qualified as Pool
 import Hasql.Pool.Config qualified as PoolConfig
 import Hasql.Session qualified as Session
 import Hasql.Statement qualified as Statement
+import Keiro.Inbox.Kafka qualified as InboxKafka
 import Keiro.Integration.Event (IntegrationEvent (..))
 import Keiro.Outbox (OutboxId, OutboxRow (..), PublishOutcome (..), PublishRejection, mkPublishRejection)
 import Keiro.Outbox.Kafka (KafkaProducerRecord (..), outboxRowToKafkaRecord)
@@ -121,6 +123,18 @@ readBroker (TableBroker pool) = do
         Aeson.Error message -> fail ("invalid synthetic broker headers: " <> message)
         Aeson.Success pairs -> pure [(TextEncoding.encodeUtf8 name, TextEncoding.encodeUtf8 value) | (name, value) <- (pairs :: [(Text, Text)])]
       pure BrokerRecord {topic, partition, offset, key, payload, headers, appendedAt, publisher, attempt = fromIntegral (attempt :: Int32)}
+
+toInboundRecord :: UTCTime -> BrokerRecord -> InboxKafka.KafkaInboundRecord
+toInboundRecord receivedAt record =
+  InboxKafka.KafkaInboundRecord
+    { InboxKafka.topic = record.topic,
+      InboxKafka.partition = record.partition,
+      InboxKafka.offset = record.offset,
+      InboxKafka.key = TextEncoding.decodeUtf8 <$> record.key,
+      InboxKafka.payload = record.payload,
+      InboxKafka.headers = [(TextEncoding.decodeUtf8 name, TextEncoding.decodeUtf8 value) | (name, value) <- record.headers],
+      InboxKafka.receivedAt = receivedAt
+    }
 
 -- The decision depends on stable message identity and the attempt, never on
 -- callback interleaving or a process-local random generator.

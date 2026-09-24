@@ -51,7 +51,7 @@ Milestone 1 — Outbox scenarios (includes the shared messaging support used by 
 Milestone 2 — Inbox scenarios.
 
 - [ ] Implement `Kenshou.Suite.Keiro.Inbox.Effects` (harness-owned effect table and invocation sequence), `.Delivery`, `.Knobs`, `.Roles`, `.Oracle` with unit tests.
-- [ ] Implement the four inbox correctness scenarios (matrix, batch fast path and fallback, poison accounting, envelope round trip).
+- [ ] Implement the four inbox correctness scenarios: envelope round trip passed; the initial message-ID/table-backed arms of the matrix passed with both persistence modes; the default exception arm of poison accounting passed. Other policy, delegated, batch, and failure-mode arms remain.
 - [ ] Implement the two inbox concurrency scenarios (race on one key with optional kill of the winner; staged GC-versus-insert race).
 - [ ] Splice `Kenshou.Suite.Keiro.Inbox.scenarios` and `.roles` into the bundle; run all inbox scenarios; record outcomes.
 
@@ -84,6 +84,8 @@ Milestone 4 — Messaging benchmarks, soak and telemetry arms.
 - The 5,000-row `per-key-order-serialized` default passed on durable PostgreSQL in run `01a0d16c-bb1b-756e-a4d3-26c6e56a1a6a`.
 - The first table-broker run failed at table creation because `offset` is a PostgreSQL keyword. Renaming the column to `record_offset` fixed it; `failure-skips-successors` then passed in run `01a0d174-2602-7004-b1bf-8173e1e7cae1`.
 - The role registry requires `layer/name` identifiers, so the outbox publisher is registered as `keiro/outbox-publisher`. The first process-death run passed on durable PostgreSQL in `01a0d177-db24-754e-9fd6-30bf28bbd987`: the controller observed all 32 broker records, killed the publisher, saw 32 `publishing` rows, confirmed an ordinary publisher pass reclaimed none, then maintenance requeued them and replay produced exactly two records per message.
+- The inbox envelope round trip passed in run `01a0d17b-6554-720a-a28b-d9ddb32744bd`. The first poison accounting arm passed in `01a0d17c-a11c-76c9-b4e6-1ca06d73f2f4`.
+- The first effectively-once matrix run failed only its persistence-shape check: the shared outbox workload generated empty payloads, so full-envelope and dedupe-only were indistinguishable. Giving each probe a nonempty message-ID payload made the check meaningful. Full-envelope and dedupe-only then passed in `01a0d17e-6446-724d-925d-11f61af93d59` and `01a0d17f-3e26-7551-be30-a1eca5575c8b`. The CLI uses `--set` for a knob override, not `--knob`.
 
 
 ## Decision Log
