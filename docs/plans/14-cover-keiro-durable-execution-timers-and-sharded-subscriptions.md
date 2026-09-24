@@ -44,7 +44,8 @@ Milestone 1 — Durable workflow scenarios
 - [x] (2026-09-24 05:17Z) Added `Kenshou.Suite.Keiro.Workflow.Effects` with flushed effect and crash-arm facts, named boundaries, self-`SIGKILL` plans, and a pure crash schedule test. A child-process kill test remains to be added with crash scenarios.
 - [ ] Added the linear definition, registry entry, and pure expected-step/result model in `Workflow.Definitions`; eight definitions and their model tests remain.
 - [x] (2026-09-24 05:17Z) Registered an incremental `keiro/workflow/correctness/linear-replay-smoke` scenario. It passed against provisioned PostgreSQL and wrote seven passing verdicts for replay, effects, journal identity, and step index.
-- [ ] Add `Kenshou.Suite.Keiro.Workflow.Knobs` and `.Roles` (`keiro.workflow.resume-worker`, `keiro.workflow.driver`, `keiro.workflow.gc-worker`).
+- [x] (2026-09-24 05:31Z) Added a `keiro/workflow-resume-worker` role and incremental `keiro/workflow/concurrency/linear-self-sigkill-smoke` scenario. A durable PostgreSQL run passed seven verdicts, including one bounded duplicate after a real process self-`SIGKILL` and no consumed attempt.
+- [ ] Add `Kenshou.Suite.Keiro.Workflow.Knobs` and complete `.Roles`. A basic `keiro/workflow-resume-worker` is registered and exercised; knob plumbing, push mode, the driver, and GC worker remain. The delivered kernel requires slash-form role names.
 - [ ] Add `Kenshou.Suite.Keiro.Workflow.Oracle` (journal, effect, quiescence, stranding, backoff-ladder checkers) with unit tests on doctored inputs.
 - [ ] Add the workflow correctness scenarios (seven) and see them pass locally.
 - [ ] Add the workflow concurrency and crash scenarios (eleven) and see them pass or report their known defect.
@@ -81,6 +82,7 @@ Milestone 4 — Durable-execution benchmarks, soak and telemetry arms
 - The plan's example list filter assumes a top-level JSON array. The delivered CLI emits `kenshou.scenario-list/v1` with scenarios under `.scenarios[]`; `jq -r '.scenarios[].id'` found all required dependency identifiers on 2026-09-24.
 - The delivered worker role parser accepts `keiro/<name>` rather than `keiro.workflow.<name>`; `mkRoleName` in `kenshou-core/src/Kenshou/Core/Role.hs` enforces exactly two slash-delimited segments. The role names in this plan must be adapted before registration.
 - `Keiro.Workflow.Journal` is a hidden package module in the released cohort; the public `Keiro.Workflow` module re-exports `deterministicJournalId` and `loadStepIndex`. A direct hidden-module import failed compilation and was replaced by the public import.
+- Reading the correctness toolkit's ledger directory while `withCheck` still held the harness ledger open failed on macOS with `withBinaryFile: resource busy (file is locked)`. The crash probe seals the harness ledger before polling worker ledgers; its rerun passed with the `crash-armed` fact and both `s2` effect facts present.
 
 
 ## Decision Log

@@ -81,10 +81,12 @@ library
     Kenshou.Suite.Keiro.Router.Correctness
     Kenshou.Suite.Keiro.Telemetry
     Kenshou.Suite.Keiro.Workflow
+    Kenshou.Suite.Keiro.Workflow.CrashSmoke
     Kenshou.Suite.Keiro.Workflow.Definitions
     Kenshou.Suite.Keiro.Workflow.Effects
     Kenshou.Suite.Keiro.Workflow.Fixture
     Kenshou.Suite.Keiro.Workflow.LinearSmoke
+    Kenshou.Suite.Keiro.Workflow.Roles
 
   build-depends:
     aeson,
