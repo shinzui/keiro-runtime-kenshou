@@ -64,29 +64,39 @@ multi-run, and comparative-over-time verification.
 
 ## Status
 
-The repository builds, pins, and identifies the complete runtime cohort. Its
-bootstrap packages and cross-package link-proof are present; the layer and
-toolkit packages are added by the remaining execution plans.
+The foundations are complete. The harness kernel, the change-aware planner, and
+the measurement, correctness, diagnostics, and telemetry toolkits all work (EP-1
+to EP-7). Coverage of the individual layers (EP-8 to EP-14) is in progress and
+has already found runtime defects, which are recorded under `docs/findings/`.
+Assembled-runtime verification, leased GCP cells, and the OKF evidence bundle
+(EP-15 to EP-19) have not started. The master plan's Exec-Plan Registry
+([`docs/masterplans/1-…`](docs/masterplans/1-build-an-extensive-verification-suite-for-the-keiro-runtime.md))
+is the source of truth for plan status.
 
 ```text
 cabal.project       imports the active cohort; discovers every kenshou-* package
 cohort/             released/head solver inputs and machine-readable descriptors
-kenshou-core/       present: cohort identity; planned: shared harness kernel
-kenshou-cli/        present: CLI and whole-cohort link-proof
-kenshou-measure/    planned: measurement toolkit
-kenshou-check/      planned: correctness toolkit
-kenshou-diagnose/   planned: diagnostics toolkit
-kenshou-telemetry/  planned: telemetry toolkit
-kenshou-pgmq/       planned: isolated PGMQ coverage
-kenshou-kiroku/     planned: isolated Kiroku coverage
-kenshou-shibuya/    planned: Shibuya and PostgreSQL-backed adapter coverage
-kenshou-kafka/      planned: Kafka transport coverage and broker fixture
-kenshou-keiro/      planned: Keiro component coverage and fixture domain
-kenshou-runtime/    planned: assembled-system verification
-schemas/            versioned JSON Schemas
-suites/             planned: named run suites
-docs/adr/            durable architecture decisions
-docs/verification/  planned: methodology and operator documentation
+kenshou-core/       done: cohort identity, harness kernel, component graph, planner
+kenshou-cli/        done: `kenshou` CLI (list, plan, execute, compare, …) and link-proof
+kenshou-measure/    done: load generators, recorder, samplers, paired comparison
+kenshou-check/      done: ledgers, invariants, fault injection, process control
+kenshou-diagnose/   done: leak verdicts, stall watchdog, profiling variants
+kenshou-telemetry/  done: tracing/metrics arms and overhead measurement
+kenshou-pgmq/       in progress: isolated PGMQ coverage (leak and comparison gates open)
+kenshou-kiroku/     in progress: isolated Kiroku coverage (network-partition miss open)
+kenshou-shibuya/    in progress: Shibuya core and PGMQ/Kiroku adapter coverage
+kenshou-kafka/      in progress: private Redpanda fixture and first transport checks
+kenshou-keiro/      in progress: fixture domain; command side, outbox/inbox/queue,
+                    durable execution, timers, and sharded subscriptions
+kenshou-runtime/    planned: assembled-system end-to-end and soak verification
+schemas/            versioned JSON Schemas for specs, results, plans, and suites
+suites/             named run suites: smoke, change, nightly, weekly-soak, release
+policies/           verdict and comparison policies
+docs/adr/           durable architecture decisions
+docs/findings/      runtime defects found by the suite
+docs/guides/        operator guides: measuring, diagnosing, telemetry arms
+docs/layers/        per-layer coverage notes
+docs/planning.md    planning and executing verification runs
 ```
 
 ## Getting started
