@@ -74,6 +74,7 @@ Milestone 3 — Job queue scenarios.
 - [ ] Implement the three queue correctness scenarios: `consumption-config-rejections` passed with a queued row and a direct `read_ct = 0` oracle; `max-retries-before-handler` passed with three handler calls, a fourth-read DLQ wrapper and the zero-ceiling arm; `job-outcome-semantics` passed for Done, explicit/default retry, delayed enqueue, DLQ/archive routing, batch IDs, group headers, a thrown drain handler, malformed/future payloads, and worker Done with an absent headers context. Other worker-path outcomes remain.
 - [x] (2026-09-24 18:58 UTC) Add worker Retry and Dead arms to `job-outcome-semantics`. `nix develop -c cabal build kenshou-keiro` and the durable scenario run passed in `runs/01a0d4c7-5a07-727e-ab17-0fb6e2b56695`; both new verdicts held. Richer DLQ-wrapper oracles remain.
 - [x] (2026-09-24 18:59 UTC) Add the thrown-handler worker arm: the worker's first handler call throws after writing an effect, and the second delivery completes after a one-second visibility timeout. The durable `job-outcome-semantics` run passed in `runs/01a0d4c9-5084-72ed-803f-591d45cb094c`; `worker-handler-exception-redelivery` held.
+- [x] (2026-09-24 19:03 UTC) Decode the worker Dead DLQ wrapper and verify its original payload, source message ID, read count and headers field. The first oracle assumed decoded headers would be present and failed; the wrapper actually stores JSON null for an untraced send. The corrected verdict passed on durable PostgreSQL in `runs/01a0d4cd-1ba2-7100-a84a-17c48e0a619d`.
 - [ ] Implement the eight queue concurrency and crash scenarios: `workers-survive-transient-polling-error` is registered and reproduces a worker exit after one polling backend termination (`mori://shinzui/keiro/okf/bug-reports/concepts/BUG-3`); `crash-redelivery-cadence` passes with ordinary polling and reproduces lost read attempts under long polling (`mori://shinzui/keiro/okf/bug-reports/concepts/BUG-4`); both worker and bounded-drain `lease-extension` arms pass, with two unextended effects, one extended effect, and only one attempt-zero delivery after extension. Five other scenarios remain, along with fault modes and knobs.
 - [ ] Splice `Kenshou.Suite.Keiro.Queue.scenarios` and `.roles` into the bundle; run all queue scenarios; record outcomes.
 
@@ -89,6 +90,7 @@ Milestone 4 — Messaging benchmarks, soak and telemetry arms.
 
 ## Surprises & Discoveries
 
+- A worker Dead DLQ wrapper includes `"original_headers": null` for an untraced job, while `readDlq` decodes that field as `Nothing`. The initial new `worker-dead-wrapper` verdict failed in `runs/01a0d4cb-a54c-73d9-8471-fb92ba8a728b` because it expected decoded headers to be present. A diagnostic rerun showed the raw wrapper and the corrected oracle passed in `runs/01a0d4cd-1ba2-7100-a84a-17c48e0a619d`.
 - The table broker previously returned its global `record_offset` as the Kafka partition offset, unlike the in-process broker's per-partition offset. A transactional `(topic, partition)` counter now assigns stable offsets on append, and `multi-process-publishers` checks that every partition has `0..n-1` even with four competing processes.
 - The initial 32-row and 2,000-row multi-process reruns passed, but one publisher did all the work in each run. Passing four worker PIDs alone did not exercise concurrent claiming. A later 2,000-row rerun deliberately failed `publisher-participation`: three workers saw no claimable head while the fourth owned all twenty keys, then exited. The worker now retries idle passes for one second, with a brief pause between productive batches. The strengthened durable rerun passed in `01a0d44b-c4d9-705d-b4b7-0f2d5600f632`; two publishers appended 1,939 and 61 records, and all contract verdicts held.
 - A harness-held advisory lock made the inline ordering inversion deterministic in `01a0d450-8f91-7488-a358-a1ff743257ca`. The first transaction's `created_at` was 16:47:25.693036 UTC, the second's was 16:47:25.708822 UTC, and the broker observed `second`, then `first`. `schedule-realised` and `no-loss` held; `per-key-order` was violated with `knownDefect.status=reproduced` for `mori://shinzui/keiro/okf/user-documentation/concepts/DOC-16`.
@@ -138,6 +140,10 @@ Milestone 4 — Messaging benchmarks, soak and telemetry arms.
 
 
 ## Decision Log
+
+- Decision: For an untraced worker job, the DLQ oracle checks that the raw wrapper contains `original_headers` with JSON null and that Keiro's decoded `originalHeaders` is `Nothing`.
+  Rationale: The adapter preserves a header field even when the producer supplied none; requiring a non-null decoded value would reject a valid wrapper.
+  Date: 2026-09-24
 
 - Decision: Outbox and inbox scenarios publish to and consume from a synthetic broker owned by this plan (an in-process log for single-process scenarios and benchmarks, a harness-owned PostgreSQL table for multi-process scenarios), never the Kafka fixture of `docs/plans/11-…`.
   Rationale: Integration Point 1 of the MasterPlan forbids layer packages from importing one another, and a red keiro layer must be attributable to keiro. keiro's publisher takes a caller-supplied publish function, so a synthetic broker exercises the whole shipped code path; the real broker is exercised by `docs/plans/11-…` and `docs/plans/15-…`.
@@ -544,3 +550,5 @@ The terminal-state matrix now verifies that sent rows each yield exactly one bro
 The queue job-outcome scenario now drives `runJobWorkers` through Retry and Dead as well as Done. A durable run passed in `runs/01a0d4c7-5a07-727e-ab17-0fb6e2b56695`: Retry produced two handler effects before deletion, while Dead produced one effect and a poison-pill DLQ row. This adds worker-path evidence without changing the drain-path assertions.
 
 A further durable queue run, `runs/01a0d4c9-5084-72ed-803f-591d45cb094c`, passed the worker thrown-handler arm. The first delivery wrote an effect and threw; after the one-second visibility timeout, a second delivery completed and removed the source row. The scenario now tests Done, Retry, Dead, and a thrown handler through continuous workers.
+
+The worker Dead DLQ oracle now decodes the wrapper with Keiro's `readDlq` and checks the original payload, source message ID, read count and raw headers field. The initial expectation of non-null decoded headers was wrong for an untraced send: the wrapper stores JSON null, which decodes to `Nothing`. The corrected durable run passed in `runs/01a0d4cd-1ba2-7100-a84a-17c48e0a619d`.

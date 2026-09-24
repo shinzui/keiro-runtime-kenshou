@@ -3,7 +3,8 @@ module Kenshou.Suite.Keiro.Queue.Correctness (scenarios) where
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM (atomically)
 import Control.Exception (try)
-import Data.Aeson (Value, object, withObject, (.:), (.=))
+import Data.Aeson (Value (..), object, withObject, (.:), (.=))
+import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Aeson.Types (parseMaybe)
 import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.Int (Int64)
@@ -19,6 +20,7 @@ import Hasql.Pool qualified as Pool
 import Hasql.Session qualified as Session
 import Hasql.Statement qualified as Statement
 import Keiro.PGMQ.Codec (JobCodec (..), JobDecodeError (..), aesonJobCodec)
+import Keiro.PGMQ.Dlq (DlqEntry (..), readDlq)
 import Keiro.PGMQ.Job (Job (..), JobConsumptionConfigError (..), JobContext (..), JobOrdering (..), JobOutcome (..), JobPolling (..), JobTuning (..), JobTuningConfigError (..), RetryDelay (..), RetryPolicy (..), defaultJobTuning, defaultRetryPolicy, enqueue, enqueueBatch, enqueueToGroup, enqueueWithDelay, ensureJobQueue, runJobOnceWithContext, withOrdering)
 import Keiro.PGMQ.Runtime (JobRuntime (..), QueueRef (..), queueRef, runJobEff, withJobRuntime)
 import Kenshou.Check.Process (ProgressSnapshot (..), awaitMark, awaitReady, killChild, progress, roleProcess, sendCommand, spawn, withSupervisor)
@@ -214,6 +216,7 @@ runJobOutcomeSemantics context =
       deadResult <- runArm 2 workerDeadJob "dead" "worker-dead" 1 (\(count, reason) -> count == 1 && Text.isPrefixOf "poison_pill" reason)
       throwResult <- runArm 3 workerThrowJob "throw-once" "worker-throw" 2 (const True)
       pure (retryResult, deadResult, throwResult)
+    workerDlq <- runJobEff runtime (readDlq workerDeadJob 1) >>= either (fail . show) pure
     recordCells
       context
       [ ("done-deletes", done == 1 && doneDepth == (0 :: Int64)),
@@ -230,6 +233,7 @@ runJobOutcomeSemantics context =
         ("worker-done-and-context", fst workerDelivery && snd workerDelivery),
         ("worker-retry", case workerOutcomes of ((Just (effects, _), _), _, _) -> effects == 2; _ -> False),
         ("worker-dead-letter", case workerOutcomes of (_, (Just (effects, (count, reason)), _), _) -> effects == 1 && count == 1 && Text.isPrefixOf "poison_pill" reason; _ -> False),
+        ("worker-dead-wrapper", case workerDlq of [entry] -> entry.originalPayload == Right "worker-dead" && entry.originalMessageId /= Nothing && entry.readCount == Just 1 && entry.originalHeaders == Nothing && (case entry.rawBody of Object body -> KeyMap.member "original_headers" body; _ -> False); _ -> False),
         ("worker-handler-exception-redelivery", case workerOutcomes of (_, _, (Just (effects, _), _)) -> effects == 2; _ -> False)
       ]
 
