@@ -81,11 +81,12 @@ Milestone 2 — Timer scenarios
 
 Milestone 3 — Sharded subscription scenarios
 
-- [ ] Complete `.Roles` delivery and `.Oracle` database checks. `Shard.Knobs` now maps the planned settings through `mkShardedWorkerOptions`, with valid defaults and an invalid lease interval covered by unit tests. Pure coverage/disjointness, deadline arithmetic and checkpoint monotonicity checkers have doctored-input tests. The `keiro/shard-worker` validates the resolved options before its existing shard-count startup path, but its subscription delivery loop remains.
+- [ ] Complete `.Roles` and `.Oracle` for all planned handler, failover and checkpoint cases. `Shard.Knobs` maps the settings through `mkShardedWorkerOptions`; the role now runs the acknowledgement-aware delivery loop on demand, records flushed delivery facts and upserts `shard_sink`, and cancels the loop on control stop so leases are relinquished. The existing pure oracle checkers have doctored-input tests. Delivery variants, appender role and cross-process oracles remain.
 - [x] (2026-09-24 05:33Z) Registered an incremental `keiro/shard/correctness/lease-coverage-smoke` scenario. Runs under both PostgreSQL durability modes passed five verdicts for one-bucket-per-pass ownership, complete coverage, relinquish and immediate transfer.
 - [x] (2026-09-24 13:43Z) Added `keiro/shard/correctness/shard-count-mismatch`, exercising the same `ensureShards` startup path as a worker. Both PostgreSQL durability modes reproduced two contract failures: extra rows remained after a larger misconfigured caller, and a fresh correct caller failed. The scenario exits zero as a reported known defect with `mori://shinzui/keiro/okf/improvement-requests/concepts/IR-49`.
 - [x] (2026-09-24 13:48Z) Changed the shard-count mismatch probe to start count-two, count-six and fresh count-four worker processes. Both PostgreSQL durability modes reproduced the same two contract failures and no other failures.
-- [ ] Add delivery assertions for the shard-count mismatch scenario; add the other two shard correctness scenarios.
+- [ ] Add delivery assertions for the shard-count mismatch scenario and the acknowledgement-coupled handler variants scenario.
+- [x] (2026-09-24) Added `keiro/shard/correctness/single-worker-drains-all-buckets`. A real worker claimed four buckets, delivered twenty account-category events exactly once to the sink and effect ledger, then relinquished every bucket on graceful stop. Both durability modes passed; a 100-event, eight-bucket durable run also passed. Stream-order evidence and default-sized run remain.
 - [ ] Add the shard concurrency and crash scenarios (six).
 - [ ] Extend the bundle; confirm `kenshou list`.
 
@@ -111,6 +112,8 @@ Milestone 4 — Durable-execution benchmarks, soak and telemetry arms
 - The worker dispatcher sends `WrkDone` when a role returns normally, even after the role has sent `WrkError`; the shard mismatch probe's last-message check sometimes observed `Done` instead of the expected mismatch error. The shard role now exits through the dispatcher's exception path on `ShardCountMismatch`, so the only terminal message is the error. The known-defect probe again reproduced exactly its two declared failures.
 - When an awakeable is signalled from the approval publication effect, the signal's journal append can cause the publish step action to run again before its own append settles. The first signal returns `True`, the repeated signal returns `False`, and the same workflow run completes from the indexed wake result. This was observed in both durability modes; the scenario judges the stable payload and idempotent return values rather than assuming one execution of the publication action.
 - `pg_stat_statements(false)` omits query text, so a query-text filter silently matched no rows and initially reported a zero delta. Switching the observer to `pg_stat_statements(true)` produced the expected one pending-awakeable count call per idle pass; the scenario now checks the sample.
+- A whole-number `VDouble` knob is encoded as a JSON number and decoded as `VInt` in a worker init message. This made the shard worker reject its three-second default lease with `knobDouble: missing or wrong type`. The shared `knobDouble` accessor now accepts an integer value as a double; the worker JSON round trip has a regression test.
+- The first shard delivery probe sampled ownership after stopping its worker, so it observed correctly relinquished buckets and falsely failed the ownership verdict. The scenario now samples before stop and separately checks that every bucket is unowned after the control stop.
 
 
 ## Decision Log
@@ -626,3 +629,14 @@ deadline. The startup role consumes those options when declared; its prior
 count-mismatch probe again reproduces only the two known failures after its
 error reporting was adjusted for the dispatcher contract. Delivery remains to
 be implemented.
+
+## Revision Note — 2026-09-24 (shard delivery)
+
+The shard role now uses Keiro's acknowledgement-aware subscription group in
+an async cancelled by the control stop. Each delivery writes a flushed worker
+fact and an idempotent sink row. The single-worker scenario passed twenty
+events in both durability modes with one effect and sink delivery per event,
+full ownership before stop, and full relinquish afterwards. A worker JSON
+round-trip test covers the integral decimal knob conversion needed to start
+with the default three-second lease. Stream order and larger populations
+remain open.

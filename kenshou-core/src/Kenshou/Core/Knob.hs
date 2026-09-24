@@ -142,7 +142,12 @@ knobInt :: ResolvedKnobs -> KnobName -> Int64
 knobInt knobs name = case Map.lookup name (resolvedKnobsMap knobs) of Just (VInt value) -> value; _ -> error "knobInt: missing or wrong type"
 
 knobDouble :: ResolvedKnobs -> KnobName -> Double
-knobDouble knobs name = case Map.lookup name (resolvedKnobsMap knobs) of Just (VDouble value) -> value; _ -> error "knobDouble: missing or wrong type"
+knobDouble knobs name = case Map.lookup name (resolvedKnobsMap knobs) of
+  Just (VDouble value) -> value
+  -- JSON number decoding cannot recover whether an integral value was
+  -- originally a decimal knob. Worker init messages use this round trip.
+  Just (VInt value) -> fromIntegral value
+  _ -> error "knobDouble: missing or wrong type"
 
 knobText :: ResolvedKnobs -> KnobName -> Text
 knobText knobs name = case Map.lookup name (resolvedKnobsMap knobs) of Just (VText value) -> value; _ -> error "knobText: missing or wrong type"

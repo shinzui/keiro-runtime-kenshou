@@ -1,6 +1,7 @@
 module Main (main) where
 
 import Data.Aeson (object)
+import Data.Aeson qualified as Aeson
 import Data.ByteString qualified as ByteString
 import Data.IORef (newIORef, readIORef)
 import Data.List (intersect)
@@ -159,6 +160,14 @@ main = hspec do
         Right knobs -> case ShardKnobs.shardOptionsFrom AllStreams knobs of
           Left _ -> pure ()
           Right _ -> expectationFailure "renew interval at the lease deadline was accepted"
+    it "keeps integral decimal defaults valid across worker JSON" do
+      case resolveKnobs ShardKnobs.shardKnobs [] of
+        Left errors -> expectationFailure (show errors)
+        Right knobs -> case Aeson.decode (Aeson.encode knobs) of
+          Nothing -> expectationFailure "resolved shard knobs failed to decode"
+          Just decoded -> case ShardKnobs.shardOptionsFrom AllStreams decoded of
+            Left err -> expectationFailure (show err)
+            Right options -> options.leaseTtl `shouldBe` (3 :: NominalDiffTime)
   describe "Outbox broker" do
     it "makes stable decisions from seed, identity and attempt" do
       now <- getCurrentTime

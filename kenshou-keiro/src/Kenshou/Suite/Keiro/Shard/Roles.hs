@@ -1,46 +1,85 @@
 module Kenshou.Suite.Keiro.Shard.Roles (roles) where
 
+import Control.Concurrent.Async (race, wait, withAsync)
 import Control.Exception (try)
 import Control.Monad (void)
-import Data.Aeson (withObject, (.:))
+import Data.Aeson (Value, object, withObject, (.:), (.:?), (.=))
 import Data.Aeson.Types (parseMaybe)
 import Data.Map.Strict qualified as Map
+import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.UUID qualified as UUID
+import Hasql.Decoders qualified as Decoders
+import Hasql.Encoders qualified as Encoders
+import Hasql.Statement qualified as Statement
+import Hasql.Transaction qualified as Tx
 import Keiro.Subscription.Shard (ShardCountMismatch, ShardLease (..), WorkerId (..), ensureShards)
-import Keiro.Subscription.Shard.Worker (ShardedWorkerOptions (..), defaultShardedWorkerOptions, mkShardedWorkerOptions)
+import Keiro.Subscription.Shard.Worker (ShardAck (..), ShardDelivery (..), ShardedWorkerOptions (..), defaultShardedWorkerOptions, mkShardedWorkerOptions, runShardedSubscriptionGroupAck)
 import Kenshou.Core.Knob (resolvedKnobsMap)
 import Kenshou.Core.Role (ControlMessage (..), PostgresConnInfo (..), RoleContext (..), WorkerInit (..), WorkerMessage (..), WorkerRole (..), mkRoleName)
 import Kenshou.Suite.Keiro.Shard.Knobs (shardKnobName, shardOptionsFrom)
-import Kenshou.Suite.Keiro.Workflow.Fixture (durableKirokuStore, withDurableStore)
-import Kiroku.Store (defaultConnectionSettings, runStoreIO)
+import Kenshou.Suite.Keiro.Workflow.Effects (EffectFact (..), EffectSink (..), withEffectSink)
+import Kenshou.Suite.Keiro.Workflow.Fixture (DurableStore, durableKirokuStore, ensureDurableTables, fixtureCategory, runDurable, withDurableStore)
+import Kiroku.Store (defaultConnectionSettings, runStoreIO, runTransaction)
 import Kiroku.Store.Subscription.Types (SubscriptionName (..), SubscriptionTarget (..))
+import Kiroku.Store.Types (CategoryName (..), EventId (..), GlobalPosition (..), RecordedEvent (..), StreamId (..))
 
 roles :: [WorkerRole]
-roles = [WorkerRole roleName "Starts a sharded subscription and reports its count validation result." ensureWorker]
+roles = [WorkerRole roleName "Validates shard count or runs the acknowledgement-aware sharded delivery loop." shardWorker]
   where
     roleName = either (error . Text.unpack) id (mkRoleName "keiro/shard-worker")
 
-ensureWorker :: RoleContext -> IO ()
-ensureWorker context = case context.init.postgres of
+shardWorker :: RoleContext -> IO ()
+shardWorker context = case context.init.postgres of
   Nothing -> context.send (WrkError "shard worker requires PostgreSQL")
-  Just postgres -> case parseMaybe (withObject "shard worker args" (\value -> (,) <$> value .: "subscription" <*> value .: "shardCount")) context.init.args of
+  Just postgres -> case parseMaybe (withObject "shard worker args" (\value -> (,,) <$> value .: "subscription" <*> value .: "shardCount" <*> value .:? "delivery")) context.init.args of
     Nothing -> context.send (WrkError "invalid shard worker arguments")
-    Just (subscription, count) -> case optionsResult count of
+    Just (subscription, count, delivery) -> case optionsResult count of
       Left err -> context.send (WrkError (Text.pack (show err)))
       Right options -> do
         context.send WrkReady
         context.receive >>= \case
-          Just CtlStart -> withDurableStore (defaultConnectionSettings postgres.connectionString) \fixture -> do
-            let lease = ShardLease (SubscriptionName subscription) (WorkerId UUID.nil) options.shardCount options.leaseTtl
-            outcome <- try @ShardCountMismatch (runStoreIO (durableKirokuStore fixture) (ensureShards lease))
-            case outcome of
-              Left err -> fail (show err)
-              Right (Left err) -> fail (show err)
-              Right (Right ()) -> context.send (WrkDone Nothing)
+          Just CtlStart -> withDurableStore (defaultConnectionSettings postgres.connectionString) \fixture ->
+            if delivery == Just True
+              then do
+                ensureDurableTables fixture
+                withEffectSink context [] \sink ->
+                  withAsync (runShardedSubscriptionGroupAck (durableKirokuStore fixture) (SubscriptionName subscription) options (recordDelivery fixture sink context.init.instanceName)) \worker -> do
+                    outcome <- race context.receive (wait worker)
+                    case outcome of
+                      Left (Just (CtlStop _)) -> context.send (WrkDone Nothing)
+                      Left _ -> context.send (WrkDone (Just "control channel closed"))
+                      Right () -> context.send (WrkError "shard delivery loop exited")
+              else do
+                let lease = ShardLease (SubscriptionName subscription) (WorkerId UUID.nil) options.shardCount options.leaseTtl
+                outcome <- try @ShardCountMismatch (runStoreIO (durableKirokuStore fixture) (ensureShards lease))
+                case outcome of
+                  Left err -> fail (show err)
+                  Right (Left err) -> fail (show err)
+                  Right (Right ()) -> context.send (WrkDone Nothing)
           _ -> void (context.send (WrkDone (Just "not started")))
   where
+    target = Category (CategoryName fixtureCategory)
     optionsResult count =
       if Map.member (shardKnobName "shard.shard-count") (resolvedKnobsMap context.init.knobs)
-        then shardOptionsFrom AllStreams context.init.knobs
-        else mkShardedWorkerOptions (defaultShardedWorkerOptions AllStreams count) {leaseTtl = 10, renewInterval = 2}
+        then shardOptionsFrom target context.init.knobs
+        else mkShardedWorkerOptions (defaultShardedWorkerOptions target count) {leaseTtl = 10, renewInterval = 2}
+
+recordDelivery :: DurableStore -> EffectSink -> Text -> ShardDelivery -> IO ShardAck
+recordDelivery fixture sink workerName delivery = do
+  let event = delivery.event
+      EventId identifier = event.eventId
+      StreamId stream = event.originalStreamId
+      GlobalPosition position = event.globalPosition
+      key = UUID.toText identifier
+      payload = object ["eventId" .= key, "streamId" .= stream, "globalPosition" .= position, "bucket" .= delivery.bucket, "worker" .= workerName]
+  sink.recordEffect (EffectFact "shard-delivery" key workerName (object ["bucket" .= delivery.bucket, "attempt" .= delivery.attempt]))
+  result <- runDurable fixture (runTransaction (Tx.statement payload insertSinkStatement))
+  either (fail . show) (const (pure ShardAckOk)) result
+
+insertSinkStatement :: Statement.Statement Value ()
+insertSinkStatement =
+  Statement.preparable
+    "INSERT INTO kenshou_durable.shard_sink (event_id, stream_id, global_position, bucket, first_worker) SELECT (x->>'eventId')::uuid, (x->>'streamId')::bigint, (x->>'globalPosition')::bigint, (x->>'bucket')::integer, x->>'worker' FROM (SELECT $1::jsonb AS x) input ON CONFLICT (event_id) DO UPDATE SET deliveries = kenshou_durable.shard_sink.deliveries + 1"
+    (Encoders.param (Encoders.nonNullable Encoders.jsonb))
+    Decoders.noResult
