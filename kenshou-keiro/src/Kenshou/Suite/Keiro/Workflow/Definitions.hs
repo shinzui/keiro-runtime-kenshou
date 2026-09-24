@@ -19,9 +19,15 @@ module Kenshou.Suite.Keiro.Workflow.Definitions
     rotatingApprovalWorkflow,
     patchedName,
     patchedWorkflow,
+    childName,
+    parentName,
+    childWorkflow,
+    parentWorkflow,
+    childRegistry,
   )
 where
 
+import Control.Exception (throwIO)
 import Control.Monad (forM)
 import Data.Aeson (object, (.=))
 import Data.Map.Strict qualified as Map
@@ -31,6 +37,7 @@ import Effectful (Eff, IOE, liftIO, (:>))
 import Effectful.Error.Static (Error)
 import Keiro.Workflow (PatchId (..), StepName (..), Workflow, WorkflowId (..), WorkflowName, continueAsNew, mkWorkflowName, patch, restoreSeed, step)
 import Keiro.Workflow.Awakeable (awakeableIdText, awakeableNamed)
+import Keiro.Workflow.Child (awaitChild, spawnChild)
 import Keiro.Workflow.Resume (WorkflowDef (..), WorkflowRegistry)
 import Keiro.Workflow.Sleep (sleep, sleepNamed)
 import Kenshou.Suite.Keiro.Workflow.Effects (BoundaryPoint (..), EffectFact (..), EffectSink (..))
@@ -165,3 +172,33 @@ patchedWorkflow sink gated wid = do
   step (StepName branch) do
     liftIO $ sink.recordEffect (EffectFact "step" (unWorkflowId wid <> "/" <> branch) "workflow" (object []))
     pure branch
+
+childName :: WorkflowName
+childName = either (error . show) id (mkWorkflowName "kenshouChild")
+
+parentName :: WorkflowName
+parentName = either (error . show) id (mkWorkflowName "kenshouParent")
+
+childWorkflow :: (IOE :> es) => EffectSink -> WorkflowId -> Eff (Workflow : es) Int
+childWorkflow sink wid = step (StepName "work") do
+  liftIO $ sink.recordEffect (EffectFact "step" (unWorkflowId wid <> "/work") "workflow" (object []))
+  if "child-fail" `Text.isPrefixOf` unWorkflowId wid
+    then liftIO (throwIO (userError "deliberate child failure"))
+    else pure ()
+  pure 42
+
+parentWorkflow :: (IOE :> es, Store :> es) => EffectSink -> WorkflowId -> Eff (Workflow : es) Int
+parentWorkflow sink wid = do
+  let childId = WorkflowId (unWorkflowId wid <> "-child")
+  handle <- spawnChild childName childId (childWorkflow sink childId)
+  answer <- awaitChild handle
+  step (StepName "after") do
+    liftIO $ sink.recordEffect (EffectFact "step" (unWorkflowId wid <> "/after") "workflow" (object []))
+    pure (answer + 1)
+
+childRegistry :: EffectSink -> WorkflowRegistry '[Store, Error StoreError, IOE]
+childRegistry sink =
+  Map.fromList
+    [ (childName, WorkflowDef (childWorkflow sink)),
+      (parentName, WorkflowDef (parentWorkflow sink))
+    ]

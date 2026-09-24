@@ -64,6 +64,11 @@ checks that the next pass finds exactly ten. Its
 before enabling patch `p1`, then checks that its old branch is preserved while
 a fresh instance takes the new branch. Two concurrent runs with different
 patch sets share one recorded decision.
+`keiro/workflow/correctness/children-spawn-await-cancel-fail` checks that a
+spawned child is discoverable before any child step, that the parent remains
+parked, and that completion writes an `{"ok": …}` result in the parent
+journal. It also checks cancellation markers and a child failure at the
+attempt ceiling.
 
 The two timer correctness scenarios,
 `keiro/timer/correctness/lifecycle-and-at-least-once` and

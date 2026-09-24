@@ -90,6 +90,7 @@ library
     Kenshou.Suite.Keiro.Timer.Oracle
     Kenshou.Suite.Keiro.Workflow
     Kenshou.Suite.Keiro.Workflow.AwakeableSmoke
+    Kenshou.Suite.Keiro.Workflow.ChildSmoke
     Kenshou.Suite.Keiro.Workflow.CrashSmoke
     Kenshou.Suite.Keiro.Workflow.Definitions
     Kenshou.Suite.Keiro.Workflow.Effects
