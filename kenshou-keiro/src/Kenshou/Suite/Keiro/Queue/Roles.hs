@@ -16,16 +16,36 @@ import Hasql.Pool qualified as Pool
 import Hasql.Session qualified as Session
 import Hasql.Statement qualified as Statement
 import Keiro.PGMQ.Codec (aesonJobCodec)
+import Keiro.PGMQ.Dlq (redriveDlq)
 import Keiro.PGMQ.Job (Job (..), JobContext (..), JobOrdering (..), JobOutcome (..), JobPolling (..), JobTuning (..), RetryDelay (..), RetryPolicy (..), defaultJobTuning, defaultRetryPolicy, jobProcessorWithContext, runJobOnceWithContext, runJobWorkers)
 import Keiro.PGMQ.Runtime (JobRuntime (..), queueRef, runJobEff, withJobRuntime)
 import Kenshou.Core.Role (ControlMessage (..), PostgresConnInfo (..), RoleContext (..), RoleName, WorkerInit (..), WorkerMessage (..), WorkerRole (..), mkRoleName)
 import Shibuya.App (SupervisionStrategy (..), waitApp)
 
 roles :: [WorkerRole]
-roles = [WorkerRole (roleName "keiro/queue-worker") "Runs a continuous typed-job processor under Shibuya supervision." worker]
+roles =
+  [ WorkerRole (roleName "keiro/queue-worker") "Runs a continuous typed-job processor under Shibuya supervision." worker,
+    WorkerRole (roleName "keiro/queue-redrive") "Redrives one visible DLQ row into the main queue." redrive
+  ]
 
 roleName :: Text -> RoleName
 roleName = either (error . Text.unpack) id . mkRoleName
+
+redrive :: RoleContext -> IO ()
+redrive context = case context.init.postgres of
+  Nothing -> context.send (WrkError "queue redrive requires PostgreSQL")
+  Just postgres -> case parseMaybe (withObject "queue redrive args" (\o -> (,) <$> o .: "queue" <*> o .:? "connectionString")) context.init.args of
+    Nothing -> context.send (WrkError "invalid queue redrive arguments")
+    Just (queue, overrideConnection) -> do
+      context.send WrkReady
+      context.receive >>= \case
+        Just CtlStart -> withJobRuntime (maybe postgres.connectionString id overrideConnection) Nothing \runtime -> do
+          let job = Job "queue-redrive" (queueRef queue) (aesonJobCodec @Text) Unordered defaultRetryPolicy
+          result <- runJobEff runtime (redriveDlq job 1)
+          case result of
+            Left err -> context.send (WrkError (Text.pack (show err)))
+            Right moved -> context.send (WrkCustom "stopped" (object ["moved" .= moved]))
+        _ -> pure ()
 
 effectInsertStatement :: Statement.Statement Text ()
 effectInsertStatement = Statement.preparable "INSERT INTO kenshou_fx.queue_effects (payload) VALUES ($1)" (Encoders.param (Encoders.nonNullable Encoders.text)) Decoders.noResult

@@ -637,6 +637,12 @@ then a one-processor replacement drains the job. The observation is filed at
 `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-6`; the exact acquisition
 failure remains under investigation.
 
+`redrive-window` uses a proxied operator process to expose the two-statement
+DLQ redrive window. After the send reaches the main queue, killing the operator
+leaves the original DLQ row as well. When that row becomes visible again,
+redriving it creates a second main-queue copy. The run reports the documented
+DOC-25 `exactly-one-place` limitation with a realised schedule and no loss.
+
 `write-side-steady-state` starts two command-writer processes and durable
 process-manager, router, and activity-projection workers. It stops writers at
 an operation boundary, waits for dispatch and projection to catch up, then

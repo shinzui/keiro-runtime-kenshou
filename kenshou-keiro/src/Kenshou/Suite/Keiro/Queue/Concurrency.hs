@@ -21,9 +21,11 @@ import Hasql.Session qualified as Session
 import Hasql.Statement qualified as Statement
 import Hasql.Transaction qualified as Tx
 import Keiro.PGMQ.Codec (aesonJobCodec)
-import Keiro.PGMQ.Job (Job (..), JobOrdering (..), RetryDelay (..), RetryPolicy (..), defaultRetryPolicy, enqueue, enqueueBatch, enqueueToGroup, ensureJobQueue)
+import Keiro.PGMQ.Dlq (redriveDlq)
+import Keiro.PGMQ.Job (Job (..), JobOrdering (..), JobOutcome (..), RetryDelay (..), RetryPolicy (..), defaultJobTuning, defaultRetryPolicy, enqueue, enqueueBatch, enqueueToGroup, ensureJobQueue, runJobOnceWithContext)
 import Keiro.PGMQ.Runtime (JobRuntime (..), QueueRef (..), queueRef, runJobEff, withJobRuntime)
 import Kenshou.Check.Fault (Fault (..), FaultHandle (..))
+import Kenshou.Check.Fault.Network (ProxyMode (..), proxiedConnectionString, setProxyMode, withTcpProxy)
 import Kenshou.Check.Fault.Postgres (Backend (..), BackendSelector (..), LockTarget (..), holdLock, listBackends, terminateOneBackend)
 import Kenshou.Check.Process (ProgressSnapshot (..), awaitMark, awaitReady, childPid, killChild, progress, roleProcess, sendCommand, spawn, withSupervisor)
 import Kenshou.Check.Scenario (withCheck)
@@ -47,7 +49,71 @@ import System.Timeout (timeout)
 import Text.Read (readMaybe)
 
 scenarios :: [Scenario]
-scenarios = [workersSurviveTransientPollingError, crashRedeliveryCadence, leaseExtension, fifoHeadsStrictOrder, deadLetterWindowDrainPath, deadLetterAtomicWorkerPath, runtimePoolIsolation]
+scenarios = [workersSurviveTransientPollingError, crashRedeliveryCadence, leaseExtension, fifoHeadsStrictOrder, deadLetterWindowDrainPath, deadLetterAtomicWorkerPath, runtimePoolIsolation, redriveWindow]
+
+redriveWindow :: Scenario
+redriveWindow =
+  deadLetterWindowDrainPath
+    { id = either (error . show) id (parseScenarioId "keiro/queue/concurrency/redrive-window"),
+      summary = "Pins the DLQ redrive send-then-delete crash window.",
+      tier = TierStandard,
+      knobs = [],
+      knownDefect = Just (KnownDefect "mori://shinzui/keiro/okf/user-documentation/concepts/DOC-25" "Redrive sends a main-queue row before deleting its DLQ source" ["exactly-one-place"] AllCohorts),
+      run = runRedriveWindow
+    }
+
+runRedriveWindow :: RunContext -> IO ScenarioReport
+runRedriveWindow context =
+  withJobRuntime postgres.connectionString Nothing \runtime ->
+    withCheck context \check -> withSupervisor check \supervisor -> do
+      let queue = sourceName context "redrive-window"
+          job = Job "queue-redrive" (queueRef queue) (aesonJobCodec @Text) Unordered defaultRetryPolicy
+          mainTable = "pgmq.q_" <> queueNameToText job.jobQueue.physicalName
+          dlqTable = "pgmq.q_" <> queueNameToText job.jobQueue.dlqName
+          countRows table = do
+            let statement = Statement.preparable ("SELECT count(*) FROM " <> table) Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
+            Pool.use runtime.runtimePool (Session.statement () statement) >>= either (fail . show) pure
+          placement = (,) <$> countRows mainTable <*> countRows dlqTable
+          waitMain = do
+            count <- countRows mainTable
+            if count > 0 then pure count else threadDelay 10000 >> waitMain
+          waitVisible = do
+            moved <- runJobEff runtime (redriveDlq job 1) >>= either (fail . show) pure
+            if moved > 0 then pure moved else threadDelay 500000 >> waitVisible
+      endpoint <- maybe (fail "PostgreSQL TCP endpoint unavailable") (\(host, port) -> pure (Text.unpack host, fromIntegral port)) postgres.tcpEndpoint
+      setup <- runJobEff runtime do
+        ensureJobQueue job
+        _ <- enqueue job ("redrive" :: Text)
+        runJobOnceWithContext defaultJobTuning 1 job (\_ _ -> pure (Dead "redrive-seed"))
+      _ <- either (fail . show) pure setup
+      seed <- placement
+      (observedMain, firstPlacement) <- withTcpProxy (pure endpoint) \proxy -> do
+        setProxyMode proxy (Latency 250)
+        let connection = proxiedConnectionString postgres proxy <> " application_name=kenshou_redrive_proxy"
+        spec <- roleProcess check "keiro/queue-redrive" 0 (object ["queue" .= queue, "connectionString" .= connection])
+        child <- spawn supervisor spec
+        awaitReady child 10000
+        sendCommand child CtlStart
+        appeared <- maybe False (> 0) <$> timeout 10000000 waitMain
+        killChild supervisor child
+        backends <- listBackends postgres
+        mapM_ (\backend -> do _ <- (terminateOneBackend postgres (ByPid backend.pid)).inject; pure ()) [backend | backend <- backends, backend.applicationName == "kenshou_redrive_proxy"]
+        state <- placement
+        pure (appeared, state)
+      secondMoved <- maybe 0 id <$> timeout 40000000 waitVisible
+      finalPlacement <- placement
+      let schedule = seed == (0, 1) && observedMain && firstPlacement == (1, 1)
+      recordMessagingCellsClassified
+        context
+        (Map.fromList [("seedMain", fst seed), ("seedDlq", snd seed), ("afterCrashMain", fst firstPlacement), ("afterCrashDlq", snd firstPlacement), ("finalMain", fst finalPlacement), ("finalDlq", snd finalPlacement), ("secondMoved", fromIntegral secondMoved)])
+        (object ["observedMainBeforeKill" .= observedMain])
+        [ ("schedule-realised", Contract, schedule),
+          ("exactly-one-place", Implementation, fst firstPlacement + snd firstPlacement == 1),
+          ("never-nowhere", Contract, fst firstPlacement + snd firstPlacement >= 1),
+          ("second-redrive-duplicates", Contract, secondMoved == 1 && finalPlacement == (2, 0))
+        ]
+  where
+    postgres = requirePostgres context
 
 runtimePoolIsolation :: Scenario
 runtimePoolIsolation =
