@@ -10,6 +10,7 @@ import Kenshou.Suite.Keiro.Workflow.DatabaseFaults qualified as DatabaseFaults
 import Kenshou.Suite.Keiro.Workflow.DirectRace qualified as DirectRace
 import Kenshou.Suite.Keiro.Workflow.ExactDiscovery qualified as ExactDiscovery
 import Kenshou.Suite.Keiro.Workflow.LinearSmoke qualified as LinearSmoke
+import Kenshou.Suite.Keiro.Workflow.ParkedPassBench qualified as ParkedPassBench
 import Kenshou.Suite.Keiro.Workflow.PatchSmoke qualified as PatchSmoke
 import Kenshou.Suite.Keiro.Workflow.ResumeRace qualified as ResumeRace
 import Kenshou.Suite.Keiro.Workflow.Roles qualified as Roles
@@ -19,7 +20,7 @@ import Kenshou.Suite.Keiro.Workflow.StepBoundary qualified as StepBoundary
 import Kenshou.Suite.Keiro.Workflow.Wake qualified as Wake
 
 scenarios :: [Scenario]
-scenarios = LinearSmoke.scenarios <> CrashSmoke.scenarios <> CrashBackoff.scenarios <> DatabaseFaults.scenarios <> DirectRace.scenarios <> ResumeRace.scenarios <> StepBoundary.scenarios <> Wake.scenarios <> SleepSmoke.scenarios <> AwakeableSmoke.scenarios <> RotationSmoke.scenarios <> ExactDiscovery.scenarios <> PatchSmoke.scenarios <> ChildSmoke.scenarios
+scenarios = LinearSmoke.scenarios <> CrashSmoke.scenarios <> CrashBackoff.scenarios <> DatabaseFaults.scenarios <> DirectRace.scenarios <> ResumeRace.scenarios <> StepBoundary.scenarios <> Wake.scenarios <> ParkedPassBench.scenarios <> SleepSmoke.scenarios <> AwakeableSmoke.scenarios <> RotationSmoke.scenarios <> ExactDiscovery.scenarios <> PatchSmoke.scenarios <> ChildSmoke.scenarios
 
 roles :: [WorkerRole]
 roles = Roles.roles

@@ -110,6 +110,7 @@ library
     Kenshou.Suite.Keiro.Workflow.Knobs
     Kenshou.Suite.Keiro.Workflow.LinearSmoke
     Kenshou.Suite.Keiro.Workflow.Oracle
+    Kenshou.Suite.Keiro.Workflow.ParkedPassBench
     Kenshou.Suite.Keiro.Workflow.PatchSmoke
     Kenshou.Suite.Keiro.Workflow.ResumeRace
     Kenshou.Suite.Keiro.Workflow.Roles
