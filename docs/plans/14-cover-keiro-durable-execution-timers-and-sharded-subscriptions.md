@@ -64,7 +64,7 @@ Milestone 1 — Durable workflow scenarios
 - [ ] Extend the patch scenario through real process `SIGKILL` and generation rotation.
 - [x] (2026-09-24) Added `kenshouParent`, `kenshouChild`, and `kenshouRotatedParent` with `keiro/workflow/correctness/children-spawn-await-cancel-fail`. Both durability modes passed sixteen checks for journaled spawn, zero-step child discovery, parked parent, result envelope, completion, idempotent cancellation, failure at the attempt ceiling, and a rotated parent attaching to a completed child.
 - [ ] Extend the child scenario to the planned multiple-child fan-out and knob-controlled child count.
-- [ ] Extend exact discovery to parked sleeps and children and record the `pg_stat_statements` deltas in addition to the measured idle-pass duration.
+- [x] (2026-09-24) Extended exact discovery to awakeable, sleep and child parking. All three passed in both durability modes at shakedown size; each passed with the default 2,000 parked workflows on durable PostgreSQL. The idle pass records its duration and the pending-awakeable count query's call and execution-time deltas, and checks exactly one query call.
 - [ ] Add the workflow concurrency and crash scenarios (eleven) and see them pass or report their known defect.
 - [ ] Add the `wake` correctness scenario.
 - [ ] Extend EP-12's bundle module with `Kenshou.Suite.Keiro.Workflow.scenarios` and `.roles`; confirm `kenshou list` shows them.
@@ -109,12 +109,17 @@ Milestone 4 — Durable-execution benchmarks, soak and telemetry arms
 - A real self-`SIGKILL` produced a ledger file ending inside a JSON line. `foldFacts` raised `Data.ByteString.hGetLine: end of file` before it could apply its existing torn-final-line rule, so the scenario exited 4 without verdicts. The ledger reader now treats that EOF as the torn final fact; the rerun passed all seven verdicts.
 - Keiro 0.17.0.0's `ensureShards` commits bucket insertion before throwing `ShardCountMismatch`. A four-bucket subscription remained at four rows after a count-two caller, but grew to six after a count-six caller; a subsequent count-four caller also threw. The external probe reported only `shard-larger-worker-left-four` and `shard-correct-worker-recovers` as failures in both durability modes. The upstream request is `mori://shinzui/keiro/okf/improvement-requests/concepts/IR-49`; the local Mori registry had not indexed it immediately after creation.
 - When an awakeable is signalled from the approval publication effect, the signal's journal append can cause the publish step action to run again before its own append settles. The first signal returns `True`, the repeated signal returns `False`, and the same workflow run completes from the indexed wake result. This was observed in both durability modes; the scenario judges the stable payload and idempotent return values rather than assuming one execution of the publication action.
+- `pg_stat_statements(false)` omits query text, so a query-text filter silently matched no rows and initially reported a zero delta. Switching the observer to `pg_stat_statements(true)` produced the expected one pending-awakeable count call per idle pass; the scenario now checks the sample.
 
 
 ## Decision Log
 
 - Decision: Validate exact discovery first with journaled awakeable promises, keeping sleep and child parking as explicit remaining arms of the same scenario.
   Rationale: The approval fixture already exposes durable wake identifiers, so the 2,000-instance default and exact `k` wake count can be tested without conflating discovery with timer or child-worker behavior. The scenario summary and Progress state its current scope.
+  Date: 2026-09-24
+
+- Decision: Park sleep and child populations for 60 seconds of wall time, then drain only ten timers with a virtual `now` 61 seconds ahead. Run a separate second pass for child completion and third pass for parent completion.
+  Rationale: The short sleeper fixture becomes due while a 2,000-instance population is being created, so it cannot demonstrate an idle pass. The virtual drain selects a bounded wake set without waiting a minute, and the two passes preserve the observable child-to-parent propagation sequence.
   Date: 2026-09-24
 
 - Decision: Begin EP-14 against EP-12's delivered fixture modules while EP-12 finishes unrelated benchmark and soak acceptance. Use the working build and required registered scenarios as the dependency gate. Register new worker roles with the delivered `keiro/<name>` format and keep the intended workflow/timer/shard suffixes.
@@ -601,3 +606,13 @@ business event append and before Keiro marks its row fired. The replacement
 worker requeues the stale claim, tolerates the duplicate event identifier,
 and marks the second attempt fired. Both durability modes passed. The
 randomly timed kill arm remains open.
+
+## Revision Note — 2026-09-24 (exact discovery)
+
+The exact-discovery scenario now parks awakeables, long sleeps or parents with
+sleeping children. It confirms zero candidates and no new step effects during
+the idle pass, then drains or signals ten wake sources and confirms the exact
+child and parent discovery counts. It reports idle-pass duration and the
+`pg_stat_statements` call and execution-time deltas for Keiro's pending
+awakeable count query; the query must be observed once. Default 2,000-instance
+durable runs passed for all three arms.

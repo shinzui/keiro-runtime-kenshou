@@ -10,6 +10,7 @@ module Kenshou.Suite.Keiro.Workflow.Definitions
     ordinalSleeperName,
     rotatedSleeperName,
     sleeperWorkflow,
+    sleeperWorkflowWithDelay,
     rotatedSleeperWorkflow,
     sleeperRegistry,
     approvalName,
@@ -26,6 +27,8 @@ module Kenshou.Suite.Keiro.Workflow.Definitions
     childRegistry,
     rotatedParentName,
     rotatedParentWorkflow,
+    discoveryParentName,
+    discoveryParentWorkflow,
   )
 where
 
@@ -35,6 +38,7 @@ import Data.Aeson (object, (.=))
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Data.Time (NominalDiffTime)
 import Effectful (Eff, IOE, liftIO, (:>))
 import Effectful.Error.Static (Error)
 import Keiro.Workflow (PatchId (..), StepName (..), Workflow, WorkflowId (..), WorkflowName, continueAsNew, mkWorkflowName, patch, restoreSeed, step)
@@ -93,11 +97,14 @@ rotatedSleeperName = either (error . show) id (mkWorkflowName "kenshouRotatedSle
 -- | The named form is safe across a code reorder; the ordinal form exposes
 -- its positional step key for the corresponding compatibility probe.
 sleeperWorkflow :: (IOE :> es, Store :> es) => EffectSink -> Bool -> WorkflowId -> Eff (Workflow : es) Int
-sleeperWorkflow sink named wid = do
+sleeperWorkflow sink named = sleeperWorkflowWithDelay sink named 0.2
+
+sleeperWorkflowWithDelay :: (IOE :> es, Store :> es) => EffectSink -> Bool -> NominalDiffTime -> WorkflowId -> Eff (Workflow : es) Int
+sleeperWorkflowWithDelay sink named delay wid = do
   before <- step (StepName "before") $ do
     liftIO $ sink.recordEffect (EffectFact "step" (unWorkflowId wid <> "/0/before") "workflow" (object []))
     pure (1 :: Int)
-  if named then sleepNamed (StepName "nap") 0.2 else sleep 0.2
+  if named then sleepNamed (StepName "nap") delay else sleep delay
   after <- step (StepName "after") $ do
     liftIO $ sink.recordEffect (EffectFact "step" (unWorkflowId wid <> "/0/after") "workflow" (object []))
     pure (2 :: Int)
@@ -218,3 +225,12 @@ rotatedParentWorkflow sink wid = do
   if generation == 0
     then continueAsNew (1 :: Int)
     else (+ 1) <$> awaitChild handle
+
+discoveryParentName :: WorkflowName
+discoveryParentName = either (error . show) id (mkWorkflowName "kenshouDiscoveryParent")
+
+discoveryParentWorkflow :: (IOE :> es, Store :> es) => EffectSink -> WorkflowId -> Eff (Workflow : es) Int
+discoveryParentWorkflow sink wid = do
+  let childId = WorkflowId (unWorkflowId wid <> "-child")
+  handle <- spawnChild sleeperName childId (sleeperWorkflowWithDelay sink True 60 childId)
+  awaitChild handle

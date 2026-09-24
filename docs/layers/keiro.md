@@ -56,10 +56,12 @@ before the workflow awaits it.
 `keiro/workflow/correctness/continue-as-new-abandons-awakeable-ids` records
 that rotation publishes a new approval id; an old signal settles its original
 row without waking the new generation, and the new id completes it.
-`keiro/workflow/correctness/exact-discovery` parks an awakeable population,
-measures an idle resume pass that finds no candidates, then signals ten and
-checks that the next pass finds exactly ten. Its
-`workflow.population.parked` knob defaults to 2,000.
+`keiro/workflow/correctness/exact-discovery` parks awakeables, sleeps, or
+parents with sleeping children according to `workflow.parked-on`. It measures
+an idle pass with no candidates and samples the pending-awakeable count query
+through `pg_stat_statements`. Signalling or draining ten wake sources then
+discovers exactly ten workflows; children wake their parents on a following
+pass. Its `workflow.population.parked` knob defaults to 2,000.
 `keiro/workflow/correctness/patch-decisions-are-frozen` parks an instance
 before enabling patch `p1`, then checks that its old branch is preserved while
 a fresh instance takes the new branch. Two concurrent runs with different
