@@ -5,21 +5,23 @@ import Control.Concurrent.STM (atomically, retry)
 import Control.Monad (forM, forM_)
 import Data.Aeson (Value (..), object, (.=))
 import Data.Aeson.KeyMap qualified as KeyMap
+import Data.Int (Int64)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (diffUTCTime, getCurrentTime)
+import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
 import Hasql.Decoders qualified as Decoders
 import Hasql.Encoders qualified as Encoders
 import Hasql.Statement qualified as Statement
 import Hasql.Transaction qualified as Tx
 import Keiro.Subscription.Shard (ownershipSnapshotFor)
-import Kenshou.Check.Fact (Fact (..), FactKind (..))
+import Kenshou.Check.Fact (Fact (..), FactKind (..), ProcId (..))
 import Kenshou.Check.Ledger (sealLedger)
 import Kenshou.Check.Ledger.Read (discoverLedgers, foldFacts)
-import Kenshou.Check.Process (ProgressSnapshot (..), awaitMark, awaitReady, killChild, progress, roleProcess, sendCommand, spawn, stopGracefully, withSupervisor)
+import Kenshou.Check.Process (ChildSignal (..), ProgressSnapshot (..), awaitMark, awaitReady, killChild, progress, roleProcess, sendCommand, signalChild, spawn, stopGracefully, withSupervisor)
 import Kenshou.Check.Scenario (CheckEnv (..), withCheck)
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
@@ -31,14 +33,94 @@ import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Role (ControlMessage (..), WorkerMessage (..))
 import Kenshou.Core.Scenario (CohortScope (..), KnownDefect (..), Placement (..), Scenario (..), ScenarioReport, Tier (..))
 import Kenshou.Suite.Keiro.Shard.Knobs (shardKnobName, shardKnobs)
-import Kenshou.Suite.Keiro.Shard.Oracle (ShardTiming (..), failoverDeadline, recordShardCells, recordShardTimingCells)
+import Kenshou.Suite.Keiro.Shard.Oracle (ShardTiming (..), checkpointsMonotonic, failoverDeadline, recordShardCells, recordShardTimingCells)
 import Kenshou.Suite.Keiro.Workflow.Fixture (durableKirokuStore, ensureDurableTables, runDurable, withDurableStore)
 import Kiroku.Store (defaultConnectionSettings, runStoreIO, runTransaction)
 import Kiroku.Store.Subscription.Types (SubscriptionName (..))
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [lateJoinerGetsNoBuckets, sigkillFailoverVsGracefulRelinquish, coverageAfterMembershipChange, fairShareShedding]
+scenarios = [lateJoinerGetsNoBuckets, sigkillFailoverVsGracefulRelinquish, coverageAfterMembershipChange, fairShareShedding, zombiePastLeaseTtl]
+
+zombiePastLeaseTtl :: Scenario
+zombiePastLeaseTtl =
+  lateJoinerGetsNoBuckets
+    { id = either (error . show) id (parseScenarioId "keiro/shard/concurrency/zombie-past-lease-ttl"),
+      summary = "Pauses a shard owner beyond lease expiry, resumes it, and checks checkpoint direction and the duplicate window.",
+      knownDefect = Nothing,
+      run = runZombie
+    }
+
+runZombie :: RunContext -> IO ScenarioReport
+runZombie context = withCheck context \check ->
+  withDurableStore (defaultConnectionSettings (requirePostgres context).connectionString) \fixture -> do
+    ensureDurableTables fixture
+    let store = durableKirokuStore fixture
+        name = SubscriptionName "kenshouShardZombie"
+        bucketCount = fromIntegral (knobInt context.knobs (shardKnobName "shard.shard-count")) :: Int
+        leaseMicros = round (knobDouble context.knobs (shardKnobName "shard.lease-ttl-seconds") * 1000000)
+        renewMicros = round (knobDouble context.knobs (shardKnobName "shard.renew-interval-seconds") * 1000000)
+        eventCount = fromIntegral (knobInt context.knobs (shardKnobName "shard.events")) :: Int
+        streamCount = fromIntegral (knobInt context.knobs (shardKnobName "shard.streams")) :: Int
+        ownership = runStoreIO store (ownershipSnapshotFor name)
+        checkpoints = runDurable fixture (runTransaction (Tx.statement "kenshouShardZombie" checkpointStatement))
+        sinkCount = runDurable fixture (runTransaction (Tx.statement () sinkCountStatement))
+        covered result = case result of Right rows -> length rows == bucketCount && all (\(_, owner, _) -> owner /= Nothing) rows; Left _ -> False
+        owners result = case result of Right rows -> Set.fromList [owner | (_, Just owner, _) <- rows]; Left _ -> Set.empty
+        transferred before after = covered after && Set.null (Set.intersection (owners before) (owners after))
+    (initial, lost, ownershipAfterLoss, resumedOwnership, checkpointSamples, appenderDone, drained, continueAt) <- withSupervisor check \supervisor -> do
+      firstSpec <- roleProcess check "keiro/shard-worker" 0 (object ["subscription" .= ("kenshouShardZombie" :: Text), "shardCount" .= bucketCount, "delivery" .= True, "handlerDelayMicros" .= (3000000 :: Int)])
+      first <- spawn supervisor firstSpec
+      awaitReady first 10000
+      sendCommand first CtlStart
+      initial <- waitUntil (covered <$> ownership) 160
+      before <- ownership
+      appenderSpec <- roleProcess check "keiro/shard-appender" 0 (object ["eventCount" .= eventCount, "streamCount" .= streamCount, "idPrefix" .= ("kenshou:shard:zombie:" :: Text), "streamPrefix" .= ("account-zombie-" :: Text), "pauseMicros" .= (1000 :: Int)])
+      appender <- spawn supervisor appenderSpec
+      awaitReady appender 10000
+      sendCommand appender CtlStart
+      _ <- waitUntil (any (Text.isPrefixOf "delivery-start-") . Map.keys . (.marks) <$> atomically (progress first)) 80
+      c0 <- checkpoints
+      signalChild supervisor first Stop
+      secondSpec <- roleProcess check "keiro/shard-worker" 1 (object ["subscription" .= ("kenshouShardZombie" :: Text), "shardCount" .= bucketCount, "delivery" .= True])
+      second <- spawn supervisor secondSpec
+      awaitReady second 10000
+      sendCommand second CtlStart
+      threadDelay (2 * leaseMicros)
+      lost <- waitUntil (transferred before <$> ownership) 120
+      ownershipAfterLoss <- ownership
+      c1 <- checkpoints
+      signalChild supervisor first Cont
+      continueAt <- getCurrentTime
+      threadDelay (renewMicros + 3500000)
+      resumedOwnership <- ownership
+      c2 <- checkpoints
+      appenderDone <- timeout 180000000 $ atomically do
+        state <- progress appender
+        case state.lastMessage of
+          Just (WrkDone Nothing) -> pure True
+          Just (WrkError _) -> pure False
+          _ -> retry
+      drained <- waitUntil ((== Right eventCount) <$> sinkCount) (max 160 (eventCount `div` 25))
+      _ <- stopGracefully supervisor first 5000
+      _ <- stopGracefully supervisor second 5000
+      pure (initial, lost, ownershipAfterLoss, resumedOwnership, [c0, c1, c2], appenderDone == Just True, drained, continueAt)
+    sealLedger check.ledger
+    ledgers <- discoverLedgers check.ledgerDirectory
+    facts <- foldFacts ledgers [] \seen fact -> pure (fact : seen)
+    let checkpointRows = concat [[(Text.pack (show member), position) | (member, position) <- rows] | Right rows <- checkpointSamples]
+        cutoff = round (utcTimeToPOSIXSeconds continueAt * 1000000) + fromIntegral renewMicros + 1000000
+        zombieEffects = [fact | fact <- facts, fact.kind == Effect, fact.proc.index == 0]
+        lateZombieEffects = [fact | fact <- facts, fact.kind == Effect, fact.proc.index == 0, fact.wall > cutoff]
+    recordShardCells
+      check
+      [ ("initial-owner-covered", initial),
+        ("survivor-claimed-expired-leases", lost),
+        ("zombie-did-not-reclaim", covered resumedOwnership && owners resumedOwnership == owners ownershipAfterLoss && lost),
+        ("checkpoints-never-regressed", length checkpointSamples == 3 && all (either (const False) (not . null)) checkpointSamples && checkpointsMonotonic checkpointRows),
+        ("zombie-effects-ended-after-reconcile", not (null zombieEffects) && null lateZombieEffects),
+        ("all-events-delivered", appenderDone && drained)
+      ]
 
 fairShareShedding :: Scenario
 fairShareShedding =
@@ -217,6 +299,13 @@ sinkCountStatement =
     "SELECT count(*)::int FROM kenshou_durable.shard_sink"
     Encoders.noParams
     (fromIntegral <$> Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int4)))
+
+checkpointStatement :: Statement.Statement Text [(Int, Int64)]
+checkpointStatement =
+  Statement.preparable
+    "SELECT consumer_group_member, last_seen FROM kiroku.subscriptions WHERE subscription_name = $1 ORDER BY consumer_group_member"
+    (Encoders.param (Encoders.nonNullable Encoders.text))
+    (Decoders.rowList ((,) <$> (fromIntegral <$> Decoders.column (Decoders.nonNullable Decoders.int4)) <*> Decoders.column (Decoders.nonNullable Decoders.int8)))
 
 sigkillFailoverVsGracefulRelinquish :: Scenario
 sigkillFailoverVsGracefulRelinquish =
