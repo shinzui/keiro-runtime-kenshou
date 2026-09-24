@@ -253,6 +253,8 @@ ordered publication after a transient failure, skipped successor attempts,
 publisher callback errors, and stable producer identity.
 The failure-skip probe exercises per-key, per-source, and stop-the-line
 ordering, including the summary's halted pivot for stop-the-line.
+Terminal rejection leaves successors publishable under all three ordered
+policies; stop-the-line does not halt on a rejected row.
 
 The crash scenario
 parks a publisher after the broker append, kills its process with `SIGKILL`,

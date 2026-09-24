@@ -75,6 +75,20 @@ runPublisherMisbehaviour context =
     _ <- runFixture (garbageCollectSent 0 now) >>= either (fail . show) pure
     afterGc <- readCase rejectionSource
     brokerRows <- Broker.readBroker broker
+    let runRejectionPolicy policy suffix = do
+          let source = sourceName context suffix
+              firstId = suffix <> "1"
+              secondId = suffix <> "2"
+          enqueueInline fixture source [(firstId, Just suffix, 1), (secondId, Just suffix, 2)]
+          policyBroker <- Broker.newBroker
+          let decide row = if row.event.messageId == firstId then Broker.RejectWith rejection else Broker.Succeed
+          policySummary <- runFixture (publishClaimedOutbox (Broker.publishScripted policyBroker model decide hooks "publisher") options {orderingPolicy = policy} Nothing) >>= either (fail . show) pure
+          policyRows <- readCase source
+          policyRecords <- Broker.readBroker policyBroker
+          let policyById = Map.fromList [(row.event.messageId, row) | row <- policyRows]
+          pure (policySummary.rejected == 1 && policySummary.published == 1 && policySummary.haltedOn == Nothing && maybe False ((== OutboxRejected) . (.status)) (Map.lookup firstId policyById) && maybe False ((== OutboxSent) . (.status)) (Map.lookup secondId policyById) && length policyRecords == 1)
+    perSourceRejection <- runRejectionPolicy PerSourceStream "reject-source"
+    stopLineRejection <- runRejectionPolicy StopTheLine "reject-stop"
     let byId rows = Map.fromList [(row.event.messageId, row) | row <- rows]
         throwMap = byId throwRows
         missingMap = byId missingRows
@@ -89,7 +103,9 @@ runPublisherMisbehaviour context =
             ("all-cases-claimed-own-rows", all ((== 2) . Map.size) [throwMap, missingMap, unknownMap, rejectMap]),
             ("rejection-terminal", rejectSummary.rejected == 1 && rejectSummary.published == 1 && case Map.lookup "reject1" rejectMap of Just row -> row.status == OutboxRejected && maybe False ((== "synthetic_rejection") . publishRejectionCode) row.rejection && row.rejectedAt /= Nothing; _ -> False),
             ("rejection-does-not-block-successor", maybe False ((== OutboxSent) . (.status)) (Map.lookup "reject2" rejectMap) && length brokerRows == 1),
-            ("rejection-survives-maintenance-and-gc", Map.member "reject1" afterGcMap && not (Map.member "reject2" afterGcMap))
+            ("rejection-survives-maintenance-and-gc", Map.member "reject1" afterGcMap && not (Map.member "reject2" afterGcMap)),
+            ("per-source-rejection-unblocks", perSourceRejection),
+            ("stop-line-rejection-does-not-halt", stopLineRejection)
           ]
     recordCells context cells
 
