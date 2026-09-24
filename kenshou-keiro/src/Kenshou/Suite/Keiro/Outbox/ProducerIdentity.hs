@@ -6,7 +6,7 @@ import Data.List.NonEmpty (NonEmpty (..))
 import Data.Time (UTCTime (..), addUTCTime, getCurrentTime)
 import Data.UUID qualified as UUID
 import Keiro.Integration.Event (IntegrationContentType (..), IntegrationEvent (messageId), TraceContext (..))
-import Keiro.Outbox (ConflictField (..), IntegrationEventDraft (..), IntegrationProducer (..), OutboxRow (..), ProducerEnqueueOutcome (..), ProducerEventKey (..), ProducerIdentity (..), deriveProducerIdentity, enqueueProducerEventTx, listOutbox, mkIntegrationProducer)
+import Keiro.Outbox (ConflictField (..), IntegrationEventDraft (..), IntegrationProducer (..), OutboxId (..), OutboxRow (..), ProducerEnqueueOutcome (..), ProducerEventKey (..), ProducerIdentity (..), deriveProducerIdentity, enqueueProducerEventTx, listOutbox, mkIntegrationProducer)
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
@@ -88,6 +88,8 @@ runProducerIdentity context =
         expectedIdentity = deriveProducerIdentity producer (ProducerEventKey recorded.eventId 0)
         changedProducer = producer {messageIdPrefix = "other"}
         changedIdentity = deriveProducerIdentity changedProducer (ProducerEventKey recorded.eventId 0)
+        frozenProducer = IntegrationProducer "ordering-integration-producer" "ordering" "msg" (\_ _ -> Nothing)
+        frozenIdentity = deriveProducerIdentity frozenProducer (ProducerEventKey (EventId (read "00000000-0000-0000-0000-000000000001")) 0)
     first <- enqueue producer draft
     before <- runFixture (listOutbox source) >>= either (fail . show) pure
     identical <- enqueue producer draft
@@ -108,6 +110,7 @@ runProducerIdentity context =
           _ -> False
         cells =
           [ ("deterministic-identity", case (first, before) of (ProducerInserted identity, [row]) -> identity == expectedIdentity && row.outboxId == identity.outboxId && row.event.messageId == identity.messageId; _ -> False),
+            ("adr-42-frozen-vector", frozenIdentity.outboxId == OutboxId (read "61dd62b4-bbfe-81ce-9634-6ce6afd48517") && frozenIdentity.messageId == "msg_v1_61dd62b4bbfef1ce56346ce6afd485172774bc060102e5cf455e39bd0edfa84b"),
             ("identical-replay-no-mutation", identicalOutcome identical && sameRow before afterDuplicate),
             ("one-field-conflicts", all (\(field, result) -> conflict field result) conflictOutcomes),
             ("namespace-change-is-identity-conflict", case identityConflict of ProducerIdentityConflict identity (IdentityField :| []) -> identity == changedIdentity && identity.outboxId == expectedIdentity.outboxId; _ -> False),

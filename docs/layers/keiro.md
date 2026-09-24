@@ -251,6 +251,8 @@ envelope. List the current scenarios with
 The correctness runs cover terminal `sent`, `rejected`, and `dead` states,
 ordered publication after a transient failure, skipped successor attempts,
 publisher callback errors, and stable producer identity.
+The identity probe also asserts the literal UUID and message ID vector from
+`mori://shinzui/keiro/okf/adrs/concepts/ADR-42`.
 The failure-skip probe exercises per-key, per-source, and stop-the-line
 ordering, including the summary's halted pivot for stop-the-line.
 Terminal rejection leaves successors publishable under all three ordered
