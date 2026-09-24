@@ -1,6 +1,7 @@
 module Kenshou.Suite.Keiro.Inbox.Concurrency (scenarios) where
 
 import Control.Concurrent (threadDelay)
+import Control.Concurrent.Async (wait, withAsync)
 import Control.Concurrent.STM (atomically)
 import Data.Aeson (object, withObject, (.:), (.=))
 import Data.Aeson.Types (parseMaybe)
@@ -8,13 +9,17 @@ import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Data.Time (getCurrentTime)
 import Hasql.Transaction qualified as Tx
-import Keiro.Inbox (InboxRow (..), InboxStatus (..), listInbox)
-import Keiro.Outbox (listOutbox)
+import Keiro.Inbox (InboxDedupePolicy (..), InboxResult (..), InboxRow (..), InboxStatus (..), garbageCollectCompleted, listInbox, runInboxTransaction)
+import Keiro.Integration.Event (IntegrationEvent (..))
+import Keiro.Outbox (OutboxRow (..), listOutbox)
 import Kenshou.Check.Fault (Fault (..))
+import Kenshou.Check.Fault.Network (ProxyMode (..), proxiedConnectionString, setProxyMode, withTcpProxy)
 import Kenshou.Check.Fault.Postgres (Backend (..), BackendSelector (..), listBackends, terminateOneBackend)
 import Kenshou.Check.Process (ProgressSnapshot (..), awaitMark, awaitReady, killChild, progress, roleProcess, sendCommand, spawn, withSupervisor)
 import Kenshou.Check.Scenario (withCheck)
+import Kenshou.Check.Verdict (InvariantClass (..))
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
@@ -23,17 +28,81 @@ import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobText, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Role (ControlMessage (..))
-import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..))
+import Kenshou.Core.Scenario (CohortScope (..), KnownDefect (..), Placement (..), Scenario (..), ScenarioReport, Tier (..), inconclusiveBecause)
 import Kenshou.Suite.Keiro.Fixture.Runtime (FixtureEnv (..), KeiroRunner (..), withFixtureEnv)
-import Kenshou.Suite.Keiro.Inbox.Correctness (effectReadStatement, ensureEffectTable)
-import Kenshou.Suite.Keiro.Messaging.Verdict (recordMessagingCells)
+import Kenshou.Suite.Keiro.Inbox.Correctness (effectInsertStatement, effectReadStatement, ensureEffectTable)
+import Kenshou.Suite.Keiro.Messaging.Verdict (recordMessagingCells, recordMessagingCellsClassified)
 import Kenshou.Suite.Keiro.Outbox.Workload (enqueueInline, sourceName)
 import Kiroku.Store (defaultConnectionSettings)
 import Kiroku.Store.Transaction qualified as KirokuTransaction
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [raceOneKey]
+scenarios = [raceOneKey, gcVsInsertRace]
+
+gcVsInsertRace :: Scenario
+gcVsInsertRace =
+  raceOneKey
+    { id = either (error . show) id (parseScenarioId "keiro/inbox/concurrency/gc-vs-insert-race"),
+      summary = "Races completed-row garbage collection with a conflicting inbox insert and lookup.",
+      knobs = [],
+      knownDefect = Just (KnownDefect "mori://shinzui/keiro/okf/user-documentation/concepts/DOC-10" "Garbage collection can remove a completed receipt between conflicting insert and lookup" ["effectively-once"] AllCohorts),
+      run = runGcVsInsertRace
+    }
+
+runGcVsInsertRace :: RunContext -> IO ScenarioReport
+runGcVsInsertRace context =
+  withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture -> do
+    let KeiroRunner runFixture = fixture.runner
+        source = sourceName context "gc-race"
+        postgres = requirePostgres context
+        endpoint = maybe (error "PostgreSQL TCP endpoint unavailable") (\(host, port) -> pure (Text.unpack host, fromIntegral port)) postgres.tcpEndpoint
+        handler event = Tx.statement event.messageId effectInsertStatement
+    ensureEffectTable fixture
+    enqueueInline fixture source [("raced", Just "key", 1)]
+    sourceRows <- runFixture (listOutbox source) >>= either (fail . show) pure
+    event <- case sourceRows of
+      [row] -> pure row.event
+      _ -> fail "GC race fixture did not contain exactly one event"
+    first <- runFixture (runInboxTransaction Nothing PreferIntegrationMessageId event Nothing handler) >>= either (fail . show) pure
+    seedRows <- runFixture (listInbox source) >>= either (fail . show) pure
+    seedBackends <- listBackends postgres
+    withTcpProxy endpoint \proxy -> do
+      setProxyMode proxy (Latency 250)
+      let connection = proxiedConnectionString postgres proxy <> " application_name=kenshou_inbox_gc_race"
+          awaitInsert = do
+            backends <- listBackends postgres
+            case [backend | backend <- backends, backend.applicationName == "kenshou_inbox_gc_race", backend.state == "idle in transaction", "INSERT INTO keiro.keiro_inbox" `Text.isInfixOf` backend.query] of
+              _ : _ -> pure True
+              [] -> threadDelay 5000 >> awaitInsert
+      withAsync
+        ( withFixtureEnv (defaultConnectionSettings connection) \proxyFixture -> do
+            let KeiroRunner runProxy = proxyFixture.runner
+            runProxy (runInboxTransaction Nothing PreferIntegrationMessageId event Nothing handler)
+        )
+        \consumer -> do
+          observed <- maybe False id <$> timeout 15000000 awaitInsert
+          beforeGcRows <- runFixture (listInbox source) >>= either (fail . show) pure
+          deleted <-
+            if observed
+              then do
+                setProxyMode proxy Stall
+                now <- getCurrentTime
+                removed <- runFixture (garbageCollectCompleted 0 now) >>= either (fail . show) pure
+                setProxyMode proxy Forward
+                pure removed
+              else pure 0
+          second <- wait consumer >>= either (fail . show) pure
+          rows <- runFixture (listInbox source) >>= either (fail . show) pure
+          effects <- runFixture (KirokuTransaction.runTransaction (Tx.statement () effectReadStatement)) >>= either (fail . show) pure
+          let schedule = first == Right (InboxProcessed ()) && observed && deleted == 1 && second == Right (InboxProcessed ()) && null rows
+              cells =
+                [ ("schedule-realised", Contract, schedule),
+                  ("effectively-once", Implementation, length effects == 1),
+                  ("at-least-once", Contract, not (null effects))
+                ]
+          report <- recordMessagingCellsClassified context (Map.fromList [("effects", fromIntegral (length effects)), ("deleted", fromIntegral deleted), ("rows", fromIntegral (length rows))]) (object ["observedInsert" .= observed, "first" .= show first, "second" .= show second, "seedRows" .= map (\row -> (row.dedupeKey, show row.receivedAt)) seedRows, "beforeGcRows" .= map (\row -> (row.dedupeKey, show row.receivedAt)) beforeGcRows, "afterRows" .= map (\row -> (row.dedupeKey, show row.receivedAt)) rows, "seedMatchingBackends" .= length [backend | backend <- seedBackends, backend.applicationName == "kenshou_inbox_gc_race"]]) cells
+          pure (if schedule then report else inconclusiveBecause "the inbox insert/GC interleaving was not observed")
 
 raceOneKey :: Scenario
 raceOneKey =

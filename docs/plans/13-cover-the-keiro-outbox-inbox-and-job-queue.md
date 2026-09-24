@@ -58,7 +58,7 @@ Milestone 2 — Inbox scenarios.
 
 - [ ] Implement `Kenshou.Suite.Keiro.Inbox.Effects` (harness-owned effect table and invocation sequence), `.Delivery`, `.Knobs`, `.Roles`, `.Oracle` with unit tests.
 - [ ] Implement the four inbox correctness scenarios: envelope round trip passed; all eight table-backed dedupe-policy and persistence arms of the matrix passed on durable PostgreSQL, including republish and missing-field checks; all four delegated dedupe-policy arms passed with stream receipts and typed refusal cases. The default exception, condemn, SQL-error, and delegated retry-ceiling arms of poison accounting passed; the clean, throwing-handler, condemning-handler, and delegated arms of batch intake passed. Deeper persistence oracles remain.
-- [ ] Implement the two inbox concurrency scenarios: the four-process no-kill, `SIGKILL`, and backend-only winner arms of `race-one-key` passed; both fault arms now require a fresh consumer to report duplicate after recovery. Delegated intake and GC-versus-insert remain.
+- [ ] Implement the two inbox concurrency scenarios: the four-process no-kill, `SIGKILL`, and backend-only winner arms of `race-one-key` passed; both fault arms now require a fresh consumer to report duplicate after recovery. The GC-versus-insert scenario is registered with a strict schedule guard, but its staged proxy runs remain inconclusive because a replacement receipt remains. Delegated process intake and exact GC staging remain.
 - [ ] Splice `Kenshou.Suite.Keiro.Inbox.scenarios` and `.roles` into the bundle; both lists are wired and all currently implemented inbox scenarios have passed durable runs. Complete the remaining arms and rerun.
 
 Milestone 3 — Job queue scenarios.
@@ -516,6 +516,16 @@ The table-backed matrix now compares exact effect IDs and dedupe keys, so a
 missing republish cannot be offset by an extra effect for another key. All
 eight policy/persistence combinations passed on durable PostgreSQL in the
 `01a0d4aa-*` runs.
+The staged inbox GC race is registered but has not met its exact guard. Runs
+`01a0d4ad-d3a3-7456-b442-41d65e0f797f`,
+`01a0d4ae-e9aa-72ee-8392-3bf4f72e28c6`,
+`01a0d4b7-2232-729f-963e-54be0124532c`, and
+`01a0d4ba-69a0-7210-89a6-44bbe89658b5` deleted the old completed row and
+observed a second effect, but a new completed row for the same key remained.
+The `effectively-once` implementation verdict is violated in those runs,
+while `schedule-realised` is false and the scenario outcome is inconclusive.
+The earlier query observer found no matching backend before the proxy
+consumer started. The exact insert-then-lookup gap still needs isolation.
 
 The inbox race now includes backend-only termination with a visible connection error, one peer winner, and a fresh redelivery classified duplicate. Durable run `01a0d498-893d-75dc-8e4c-62666a139fd5` passed; the SIGKILL arm passed again in `01a0d498-b9a1-75b0-a5ad-cf8188565639`.
 

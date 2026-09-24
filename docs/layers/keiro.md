@@ -514,6 +514,11 @@ see a duplicate. `inbox.kill-winner=backend-kill` terminates only the first
 consumer's database backend and checks that its connection error is visible.
 In both fault arms a fresh consumer redelivers the message after the peers
 finish and reports duplicate; the final effect count remains one.
+`gc-vs-insert-race` is registered with the documented inbox GC limitation.
+The current staged proxy runs delete the old receipt and observe a second
+handler effect, but the consumer leaves a replacement receipt. The strict
+schedule guard therefore reports these runs as inconclusive while the
+insert-versus-lookup gap is investigated.
 
 ## Job queue
 
