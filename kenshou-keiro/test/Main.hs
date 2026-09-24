@@ -1,10 +1,13 @@
 module Main (main) where
 
 import Data.Aeson (object)
+import Data.ByteString qualified as ByteString
 import Data.IORef (newIORef, readIORef)
 import Data.List (intersect)
 import Data.Proxy (Proxy (..))
+import Data.Text (Text)
 import Data.Time (getCurrentTime)
+import Data.Time.Clock (UTCTime)
 import Data.UUID qualified as UUID
 import Effectful (runEff)
 import Hedgehog (forAll)
@@ -13,6 +16,8 @@ import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
 import Keiki.Core (RegFile (..), step)
 import Keiro.Codec (Codec (..))
+import Keiro.Integration.Event (IntegrationContentType (..), IntegrationEvent (..))
+import Keiro.Outbox (OutboxId (..), OutboxRow (..), OutboxStatus (..))
 import Keiro.ProcessManager (ProcessManager (..), deterministicCommandId)
 import Keiro.Router (deterministicRouterCommandId)
 import Kenshou.Suite.Keiro.Fixture.Account
@@ -23,6 +28,7 @@ import Kenshou.Suite.Keiro.Fixture.Model qualified as Model
 import Kenshou.Suite.Keiro.Fixture.Oracle qualified as Oracle
 import Kenshou.Suite.Keiro.Fixture.Transfer
 import Kenshou.Suite.Keiro.Fixture.Workload qualified as Workload
+import Kenshou.Suite.Keiro.Outbox.Broker qualified as Broker
 import Kiroku.Store.Types (EventId (..), EventType (..), GlobalPosition (..), RecordedEvent (..), StreamId (..), StreamVersion (..))
 import Shibuya.Adapter (Adapter (..))
 import Shibuya.Core.Ack (AckDecision (..))
@@ -35,6 +41,26 @@ import Test.Hspec.Hedgehog (hedgehog)
 
 main :: IO ()
 main = hspec do
+  describe "Outbox broker" do
+    it "makes stable decisions from seed, identity and attempt" do
+      now <- getCurrentTime
+      let row = brokerRow now "one" (Just "group")
+          plan = Broker.FaultPlan 912 0.3 0.2 0.1 0.05 0.15
+          retryPlan = Broker.FaultPlan 912 1 0 0 0 0
+      Broker.decide plan row `shouldBe` Broker.decide plan (brokerRow now "one" (Just "group"))
+      Broker.decide retryPlan row `shouldBe` Broker.FailOnce
+      Broker.decide retryPlan (row {attemptCount = 2}) `shouldBe` Broker.Succeed
+      Broker.decide (Broker.FaultPlan 1 0 0 1 0 0) row `shouldBe` Broker.AlwaysFail
+    it "never appends a later row of a failed key in the same callback" do
+      now <- getCurrentTime
+      broker <- Broker.newBroker
+      let model = Broker.BrokerModel 0 0 4
+          plan = Broker.FaultPlan 1 0 0 1 0 0
+          hooks = Broker.PublishHook (const (pure ())) (const (pure ()))
+      outcomes <- runEff (Broker.publishCallback broker model plan hooks "test" [brokerRow now "first" (Just "group"), brokerRow now "second" (Just "group")])
+      length outcomes `shouldBe` 2
+      records <- Broker.readBroker broker
+      records `shouldBe` []
   describe "account event stream validation" do
     it "accepts every snapshot policy" do
       let accepted = accountEventStream SnapNever `seq` accountEventStream (SnapEvery 1) `seq` accountEventStream (SnapEvery 10) `seq` accountEventStream SnapOnTerminal `seq` True
@@ -138,6 +164,7 @@ main = hspec do
           actual `shouldBe` expected
           go (Model.apply actual model) (nextState, nextRegs) rest
         other -> expectationFailure ("model/transducer disagreement: " <> show (fst other))
+
     genCommand = do
       amount <- Gen.int (Range.linear (-2) 20)
       Gen.element
@@ -163,3 +190,19 @@ main = hspec do
         (Model.ModelNoOp, Just (nextState, nextRegs, [])) -> check model (nextState, nextRegs) rest
         (Model.ModelRejects, Nothing) -> check model state rest
         _ -> False
+
+brokerRow :: UTCTime -> Text -> Maybe Text -> OutboxRow
+brokerRow now messageId key =
+  OutboxRow
+    { outboxId = OutboxId UUID.nil,
+      event = IntegrationEvent messageId "source" "topic" key "Test" 1 ApplicationJson Nothing Nothing Nothing ByteString.empty now Nothing Nothing Nothing Nothing,
+      status = OutboxPending,
+      attemptCount = 1,
+      nextAttemptAt = now,
+      lastError = Nothing,
+      publishedAt = Nothing,
+      rejectedAt = Nothing,
+      rejection = Nothing,
+      createdAt = now,
+      updatedAt = now
+    }

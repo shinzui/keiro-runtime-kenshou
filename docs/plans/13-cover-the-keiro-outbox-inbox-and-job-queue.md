@@ -11,6 +11,12 @@ provenance:
     model: "claude-fable-5-1"
     harness: "claude-code"
     at: 2026-09-20T17:15:35Z
+  revisions:
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-24T02:59:06Z
+      mode: "implement"
+      note: "Started outbox broker and first durable scenario"
 ---
 
 # Cover the keiro outbox, inbox and job queue
@@ -26,18 +32,18 @@ keiro is the top library of the keiro runtime (a cohort of Haskell event-sourcin
 
 After this plan a maintainer can, from this repository, list and run about forty scenarios under the identifiers `keiro/outbox/…`, `keiro/inbox/…` and `keiro/queue/…`. They establish that every outbox row reaches `sent`, `rejected` or `dead` under every ordering policy and backoff schedule; that per-key publish order holds when enqueues are serialized and measurably breaks in the one situation keiro documents (concurrent inline enqueues of one key); that a publisher killed with `SIGKILL` between the broker's acknowledgement and the database mark produces bounded duplicates and no loss, and that only the maintenance pass reclaims its rows; that the inbox is effectively-once within its retention window for every dedupe policy, persistence mode and idempotence owner, and that the documented garbage-collection race really can re-run a handler; that a job is redelivered at the visibility timeout rather than the retry delay, is dead-lettered before its handler once its read count exceeds the retry ceiling, keeps strict per-group order under `FifoHeads` with competing worker processes, and that `runJobWorkers` survives a database connection being killed while it polls — the exact test keiro itself carries as `pendingWith`. Benchmarks give enqueue-to-publish latency, inbox intake throughput (table-backed versus delegated) and job throughput by ordering, batch size, visibility timeout and polling mode on a durable PostgreSQL; soaks watch `keiro_outbox`, `keiro_inbox` and the PGMQ tables grow with and without garbage collection; and every scenario can be run with OpenTelemetry tracing and metrics switched on or off so their cost is measured rather than assumed.
 
-To see it working after implementation, run `cabal run kenshou -- list --layer keiro --component outbox` and then `cabal run kenshou -- run keiro/outbox/concurrency/crash-between-publish-and-mark --dim pg.durability=durable --out runs/`. The command exits 0 and the run directory contains `verdicts/no-loss.json`, `verdicts/bounded-duplicates.json` and `verdicts/reclaimed-only-by-maintenance.json`, each naming how many rows were enqueued, how many broker records were observed, which process was killed when, and which rows were duplicated.
+To see it working after implementation, run `cabal run kenshou -- list 'keiro/outbox/**'` and then `cabal run kenshou -- run keiro/outbox/concurrency/crash-between-publish-and-mark --dim pg.durability=durable --out runs/`. The command exits 0 and the run directory contains `verdicts/no-loss.json`, `verdicts/bounded-duplicates.json` and `verdicts/reclaimed-only-by-maintenance.json`, each naming how many rows were enqueued, how many broker records were observed, which process was killed when, and which rows were duplicated.
 
 
 ## Progress
 
 Milestone 1 — Outbox scenarios (includes the shared messaging support used by all three components).
 
-- [ ] Verify the hard dependencies are in place (checks listed in Concrete Steps, step 1) and read the completed plans `docs/plans/2-…`, `4-…`, `5-…`, `6-…`, `7-…` and `12-…` for exact signatures; record any mismatch with the expectations in Interfaces and Dependencies in Surprises & Discoveries.
-- [ ] Add build dependencies and module stanzas for the outbox namespace to `kenshou-keiro/kenshou-keiro.cabal`.
-- [ ] Implement `Kenshou.Suite.Keiro.Outbox.Broker` (synthetic broker, broker model, fault plan, publish hook) with unit tests for determinism and for the ordering contract of the callback.
+- [x] (2026-09-24 03:01 UTC) Verify the hard dependencies: the Nix-shell build, Keiro listing, PostgreSQL round trip, backend kill and proxy partition selftests passed. Read the prerequisite plans' interface sections and the fixture milestone; the fixture module names match the completed work.
+- [x] (2026-09-24 02:59 UTC) Add the initial outbox modules and their build dependencies to `kenshou-keiro/kenshou-keiro.cabal`.
+- [ ] Complete `Kenshou.Suite.Keiro.Outbox.Broker`: the in-process broker, model, deterministic fault decisions and callback hooks are implemented and two unit tests pass; the PostgreSQL table backend and stronger determinism and ordering tests remain.
 - [ ] Implement `Kenshou.Suite.Keiro.Outbox.Knobs`, `.Workload`, `.Roles`, `.Oracle`; unit-test every oracle against doctored rows (non-vacuity).
-- [ ] Implement the five outbox correctness scenarios.
+- [ ] Implement the five outbox correctness scenarios: `failure-skips-successors` is implemented and passed on a durable database at 2026-09-24 02:58 UTC; four remain.
 - [ ] Implement the six outbox concurrency and crash scenarios.
 - [ ] Export `Kenshou.Suite.Keiro.Outbox.scenarios` and `.roles` and splice them into the bundle module created by `docs/plans/12-…`.
 - [ ] Run every outbox scenario locally with `pg.durability=durable`; record outcomes and any upstream finding; file upstream reports for unexpected failures and attach `KnownDefect` references.
@@ -69,7 +75,9 @@ Milestone 4 — Messaging benchmarks, soak and telemetry arms.
 
 ## Surprises & Discoveries
 
-(None yet.)
+- The project shell does not expose `ghc` directly to a plain `cabal` invocation. `nix develop -c cabal build kenshou-keiro kenshou-check kenshou-measure kenshou-diagnose kenshou-telemetry` passed; use `nix develop -c` for the subsequent commands. The completed write-side fixture exports the modules named in Interfaces and Dependencies.
+- The first outbox scenario passed with durable PostgreSQL: `keiro/outbox/correctness/failure-skips-successors` wrote its verdicts under `runs/01a0d15a-0b81-771e-9bea-a08921d97bf2` and the CLI reported `passed`. This establishes the scenario registration and fixture integration, not the other ten outbox scenarios.
+- The implemented `kenshou list` accepts positional scenario selectors and has no `--component` option. The old plan command exited 2 with `Invalid option '--component'`; the plan now uses selectors such as `list 'keiro/outbox/**'`.
 
 
 ## Decision Log
@@ -145,7 +153,7 @@ Conventions for every scenario below unless it says otherwise: `pg.version` supp
 
 ### Milestone 1 — Outbox scenarios
 
-Scope: the shared messaging support (synthetic broker, fault plan, workload, worker roles, oracles) and eleven outbox scenarios. At the end, `kenshou list --layer keiro --component outbox` shows them and each runs to an outcome locally. Acceptance is the behaviour listed per scenario plus unit tests that prove each oracle fails on doctored data.
+Scope: the shared messaging support (synthetic broker, fault plan, workload, worker roles, oracles) and eleven outbox scenarios. At the end, `kenshou list 'keiro/outbox/**'` shows them and each runs to an outcome locally. Acceptance is the behaviour listed per scenario plus unit tests that prove each oracle fails on doctored data.
 
 The synthetic broker is `Kenshou.Suite.Keiro.Outbox.Broker`. It stores what a Kafka topic would: records with a topic, a partition (hash of the key modulo `broker.partitions`, default 4), a monotonically increasing offset, key, payload and headers, produced from `Keiro.Outbox.Kafka.outboxRowToKafkaRecord` so the wire mapping under test is keiro's own. The in-process backend is a `TVar` log for single-process scenarios and benchmarks; the table backend writes to `kenshou_fx.broker_log` (created with `CREATE SCHEMA IF NOT EXISTS kenshou_fx` and `CREATE TABLE IF NOT EXISTS` at scenario set-up, outside the pg-migrate ledger and outside the `keiro` schema) over a harness-owned connection that is not part of the kiroku pool. A broker model adds service time (`broker.invocation-micros` per call, default 1000; `broker.per-record-micros`, default 10), following the model keiro's own benchmark uses. A fault plan decides, as a pure function of the seed, the row's `messageId` and its `attemptCount`, whether the callback reports success, failure, rejection, throws, or drops the row's outcome, so multi-process runs are reproducible whatever the interleaving. The callback honours the contract keiro places on publishers: once a row of a `(source, key)` group has failed in a call, no later row of that group is appended in that call. Two hooks run inside the callback, one before the broker append and one between the append and the return of outcomes; crash scenarios use them to announce "batch claimed" or "batch appended" on the control channel and block until told to continue or killed.
 
@@ -201,7 +209,7 @@ toInboundRecord :: UTCTime -> BrokerRecord -> KafkaInboundRecord -- consumed by 
 
 ### Milestone 2 — Inbox scenarios
 
-Scope: effect recording, the delivery generator, consumer roles and six scenarios. At the end `kenshou list --layer keiro --component inbox` shows them. Acceptance is per scenario below.
+Scope: effect recording, the delivery generator, consumer roles and six scenarios. At the end `kenshou list 'keiro/inbox/**'` shows them. Acceptance is per scenario below.
 
 `Kenshou.Suite.Keiro.Inbox.Effects` creates `kenshou_fx.inbox_effects (source text, dedupe_key text, message_id text, consumer text, txid bigint, applied_at timestamptz)` with no unique constraint, and the sequence `kenshou_fx.handler_calls`. The standard handler is a `Tx.Transaction` that calls `nextval` on the sequence and inserts one effect row with `txid_current()`; variants fail with a pure exception (`pure $! error "…"`, the technique keiro's own tests use), with a SQL error (division by zero), by calling `Tx.condemn`, or sleep with `pg_sleep`. For delegated intake the effect is one `Deposited`-style event on a fixture account stream, appended through `Keiro.Inbox.Delegated.delegatedCommand` with the marker from `delegatedEventId "kenshou-consumer" source dedupe target "deposit"`. `Kenshou.Suite.Keiro.Inbox.Delivery` turns broker records into deliveries with `toInboundRecord` and `Keiro.Inbox.Kafka.integrationEventFromKafka`, and generates redeliveries (same record again) and republishes (same logical message at a new offset, optionally with a new `messageId`) from the seed. Knobs: `inbox.dedupe-policy` (enum `message-id` default, `source-event`, `kafka-delivery`, `custom`), `inbox.persistence` (enum `full-envelope` default, `dedupe-only`), `inbox.idempotence` (enum `inbox-table` default, `delegated`; selects the runner family; `delegated` with `dedupe-only` is rejected as a usage error), `inbox.batch-size` (int, default 0 meaning the per-message runner), `inbox.attempt-ceiling` (int, default 3), `inbox.consumers` (int, default 1), `inbox.deliveries`, `inbox.redelivery-ratio`, `inbox.republish-ratio`, `inbox.payload-bytes`, `inbox.gc` (enum `off` default, `on`), `inbox.retention-seconds`, `inbox.gc-interval-ms`, `inbox.failure-mode` (enum `pure-exception` default, `sql-error`, `condemn`), `inbox.race-mode` (enum `staged` default, `statistical`). Roles: `keiro.inbox.consumer` and `keiro.inbox.gc`.
 
@@ -219,7 +227,7 @@ Scope: effect recording, the delivery generator, consumer roles and six scenario
 
 ### Milestone 3 — Job queue scenarios
 
-Scope: a scripted fixture job, a job runtime helper, roles and eleven scenarios. At the end `kenshou list --layer keiro --component queue` shows them. The environment must include the PGMQ migration component.
+Scope: a scripted fixture job, a job runtime helper, roles and eleven scenarios. At the end `kenshou list 'keiro/queue/**'` shows them. The environment must include the PGMQ migration component.
 
 `Kenshou.Suite.Keiro.Queue.Jobs` defines the payload and the handler. The handler looks up the step for the delivery's zero-based `attempt` in the payload's script, so behaviour is a function of the message and the delivery count alone, whichever process handles it. `StepAwaitController` writes a fact and blocks on the control channel, which is how crash windows are pinned.
 
@@ -321,7 +329,7 @@ Step 3, splice the lists into the bundle module that `docs/plans/12-…` created
 Step 4, run scenarios. The transcript is illustrative; identifiers and counts will differ.
 
 ```bash
-cabal run kenshou -- list --layer keiro --component outbox
+cabal run kenshou -- list 'keiro/outbox/**'
 cabal run kenshou -- run keiro/outbox/concurrency/crash-between-publish-and-mark \
   --dim pg.durability=durable --set outbox.kills=3 --out runs/
 echo "exit=$?"
