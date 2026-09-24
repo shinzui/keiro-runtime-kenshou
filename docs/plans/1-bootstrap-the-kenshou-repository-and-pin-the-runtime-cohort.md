@@ -22,6 +22,11 @@ provenance:
       at: 2026-09-21T02:35:53Z
       mode: "implement"
       note: "Implemented EP-1 milestones and maintained living plan evidence."
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-24T22:53:06Z
+      mode: "update"
+      note: "Consolidated Progress into delivered outcomes and remaining acceptance"
 ---
 
 # Bootstrap the kenshou repository and pin the runtime cohort
@@ -44,41 +49,7 @@ This plan owns Integration Points 1 and 2 of `docs/masterplans/1-build-an-extens
 
 ## Progress
 
-Milestone 1 — Scaffold the repository, development shell and formatting hooks
-
-- [x] (2026-09-21T02:35:34Z) Confirm the starting state (no `flake.nix`, no `cabal.project`, no `docs/adr/`) and that `seihou`, `nix`, `just`, `okf`, `dhall` and `mori` are on the `PATH`.
-- [x] (2026-09-21T02:39:01Z) Add the `nix-haskell-flake` variables to `.seihou/config.dhall` and apply the module with `seihou run nix-haskell-flake`.
-- [x] (2026-09-21T02:39:01Z) Write `flake.module.nix` (PostgreSQL 17 and 18 bin directories as environment variables, `dhall`, `git`, Linux-only `procps` and `lsof`, fourmolu from the `ghc9124` package set) and `git add` it together with `flake.lock`.
-- [x] (2026-09-21T02:39:01Z) Write `cabal.project`, the placeholder `cohort/active.project` and `cohort/released.project`, and the skeleton `kenshou-core` package so that the package glob matches something.
-- [x] (2026-09-21T02:39:01Z) Write the `Justfile` (meta, haskell, cohort, docs and database groups).
-- [x] (2026-09-21T02:39:01Z) Enter `nix develop`, check tool versions and both PostgreSQL variables, run `cabal build all`, `nix fmt` and `just process-compose-check`.
-- [x] (2026-09-21T02:39:28Z) Commit (`8aff79a`).
-
-Milestone 2 — Pin the released and head cohorts and print the resolved cohort identity
-
-- [x] (2026-09-21T03:10:43Z) Run `cabal update`, read the index ceiling it prints, and re-verify every cohort version against Hackage.
-- [x] (2026-09-21T03:10:43Z) Write the full `cohort/released.project` and `cohort/head.project`; re-resolve the head commits with `git ls-remote`.
-- [x] (2026-09-21T03:10:43Z) Write the descriptors `cohort/released.json` and `cohort/head.json` and the two JSON Schemas under `schemas/`.
-- [x] (2026-09-21T03:10:43Z) Implement `Kenshou.Core.Cohort` (descriptor, plan reader, identity, plan hash, consistency check) with `kenshou-core-test`.
-- [x] (2026-09-21T03:10:43Z) Create `kenshou-cli` with Git-aware `kenshou --version`, `kenshou cohort show` and `kenshou cohort check`, usage errors exiting 2, and `kenshou-cli-test`.
-- [x] (2026-09-21T03:10:43Z) Add the `use-cohort`, `cohort-show`, `cohort-check` and `cohort-assert-released` recipes; prove a switch to `head` and back changes the printed identity.
-- [x] (2026-09-21T03:22:00Z) Commit (`c524951`) and verify clean Cabal and Nix builds both report revision `c524951`.
-
-Milestone 3 — Prove the whole cohort links and migrates in one build
-
-- [x] (2026-09-21T03:38:30Z) Add the `kenshou-linkproof` test suite to `kenshou-cli/kenshou-cli.cabal` with a dependency on every runtime package.
-- [x] (2026-09-21T03:38:30Z) Write `kenshou-cli/linkproof/Main.hs` and `kenshou-cli/linkproof/LinkProof/Imports.hs`.
-- [x] (2026-09-21T03:38:30Z) Run it green on the released cohort; run it on the head cohort and record the outcome.
-- [x] (2026-09-21T03:39:37Z) Commit (`60dc3cf`).
-
-Milestone 4 — Adopt the ADR bundle, update mori.dhall and the README, add CI
-
-- [x] (2026-09-21T03:49:15Z) Draft the first ADR, run the `adopt-architecture-decisions` blueprint (or the manual fallback), allocate the second ADR with `okf id next`, and record the adopted `haskell-jitsurei` CLI interaction standard in the appropriate ADR before validating strictly.
-- [x] (2026-09-21T03:49:15Z) Extend `mori.dhall` (packages, dependencies, `okfBundles`, docs) and run `mori validate --check-deps` and `mori register`.
-- [x] (2026-09-21T03:49:15Z) Replace the README "Status" block with the layer-package layout.
-- [x] (2026-09-21T03:49:15Z) Add `.github/workflows/ci.yaml` and finish `just verify`.
-- [x] (2026-09-21T03:53:04Z) Commit the Milestone 4 implementation (`fa691b7`), run `just verify` from a clean clone, and update the MasterPlan's Progress and registry status.
-
+- [x] (2026-09-21) Repository and cohort bootstrap complete: the Nix shell, released and head cohort identity, CLI build identity, combined migration check, CI, and ADR bundle are in place. Validation and implementation detail remain in Outcomes & Retrospective and Concrete Steps.
 
 ## Surprises & Discoveries
 

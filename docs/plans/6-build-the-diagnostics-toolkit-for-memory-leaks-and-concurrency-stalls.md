@@ -22,6 +22,11 @@ provenance:
       at: 2026-09-21T18:10:58Z
       mode: "implement"
       note: "Started implementation and verified the kernel and measurement baseline."
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-24T22:53:07Z
+      mode: "update"
+      note: "Consolidated Progress into delivered outcomes and remaining acceptance"
 ---
 
 # Build the diagnostics toolkit for memory leaks and concurrency stalls
@@ -46,52 +51,7 @@ To see it working, run the seven self-test scenarios this plan adds. `selftest/d
 
 ## Progress
 
-Milestone 1 — The leak verdict over sampled series
-
-- [x] (2026-09-21T18:10:25Z) Confirm the state delivered by `docs/plans/2-build-the-harness-kernel-for-scenarios-dimensions-run-specs-and-results.md` and `docs/plans/4-build-the-measurement-toolkit-for-load-latency-sampling-and-comparison.md` (build green, `series/rts.csv` headers recorded in Surprises & Discoveries).
-- [x] (2026-09-21T18:31:31Z) Create the package `kenshou-diagnose` (cabal file, `Kenshou.Diagnose`, test suite `kenshou-diagnose-test`).
-- [x] (2026-09-21T18:31:31Z) `Kenshou.Diagnose.Context`: the single adapter over the kernel's `RunContext`.
-- [x] (2026-09-21T18:31:31Z) `Kenshou.Diagnose.Document`: the `kenshou.diagnosis/v1` envelope, its JSON codecs and `schemas/diagnosis.v1.schema.json`.
-- [x] (2026-09-21T18:31:31Z) `Kenshou.Diagnose.Stats`: Theil–Sen slope, moving-block bootstrap interval, window minima and medians, with property tests.
-- [x] (2026-09-21T18:31:31Z) `Kenshou.Diagnose.Series` and `Kenshou.Diagnose.Series.Catalog`: header-driven CSV reading and the probe-to-column bindings, reconciled with the real headers.
-- [x] (2026-09-21T18:31:31Z) `Kenshou.Diagnose.Leak`: probe specifications, the verdict rules, `judgeLeaks`, `analyseRunDirectory`, `leakOutcome`, and `policies/leak-default.json` with `schemas/leak-policy.v1.schema.json`.
-- [x] (2026-09-21T18:31:31Z) `Kenshou.Diagnose.Leak.MajorGcProbe`: the opt-in forced major collection sampler writing `series/rts-major.csv`, refusing benchmark scenarios.
-- [x] (2026-09-21T18:31:31Z) Synthetic-series fixtures and unit tests: leak, sawtooth-stable, plateau-after-growth, too-short, interval-straddles-floor.
-- [x] (2026-09-21T18:31:31Z) Create the ADR "leak verdicts are judged on live bytes after major garbage collections, not on resident memory".
-
-Milestone 2 — The stall watchdog with thread dumps and lock graphs
-
-- [x] (2026-09-21T19:08:54Z) `Kenshou.Diagnose.Progress` (counters) and `Kenshou.Diagnose.Threads` (labels, dump, stack decoding with a timeout, `SIGUSR2` dump handler for worker processes).
-- [x] (2026-09-21T19:08:54Z) `Kenshou.Diagnose.Postgres`: activity, lock, statement-rate and settings captures returning JSONB; advisory-lock key labelling.
-- [x] (2026-09-21T19:08:54Z) `Kenshou.Diagnose.LockGraph`: wait-for graph, cycles, root blockers, DOT and text rendering.
-- [x] (2026-09-21T19:08:54Z) `Kenshou.Diagnose.Pool`: occupancy statistics folded from hasql-pool observations.
-- [x] (2026-09-21T19:08:54Z) `Kenshou.Diagnose.Stall` and `Kenshou.Diagnose.Stall.Classify`: `withWatchdog`, capture, the pure classifier, `suspendDeadline`, `StallDetected`.
-- [x] (2026-09-21T19:08:54Z) Classifier unit tests over checked-in snapshot fixtures; an integration test of the PostgreSQL captures on PostgreSQL 17 and 18.
-
-Milestone 3 — Profiling build variants and bounded event logs
-
-- [x] (2026-09-21T19:35:34Z) Spike: prove `endEventLogging` can be called from Haskell through the foreign function interface and stops event-log growth; record the result.
-- [x] (2026-09-21T19:35:34Z) `cabal.diagnose-info-table.project` and `cabal.diagnose-profiled.project`, build directories under `dist-diagnose/`, ignore rules.
-- [x] (2026-09-21T19:35:34Z) `Kenshou.Diagnose.Profile`: modes, run-time system flag assembly, profile sessions, the worker re-exec hook, phase markers in the event log, harness-driven heap censuses.
-- [x] (2026-09-21T19:35:34Z) `Kenshou.Diagnose.Profile.EventlogGuard`: in-process size guard, parent-side backstop, free-disk preflight.
-- [x] (2026-09-21T19:35:34Z) `Kenshou.Diagnose.Profile.GhcDebug` behind the cabal flag `ghc-debug`.
-- [x] (2026-09-21T19:35:34Z) `just diagnose-tools`, `just diagnose-build-info-table`, `just diagnose-build-profiled`.
-
-Milestone 4 — `kenshou diagnose` recipes and the diagnosis guide
-
-- [x] (2026-09-21T19:56:12Z) `kenshou-cli/src/Kenshou/Cli/Diagnose.hs` with `leak`, `stall` and `profile`, wired into the executable; exit codes per the command-line contract.
-- [x] (2026-09-21T19:56:12Z) `Kenshou.Diagnose.Render`: human-readable and `--json` output.
-- [x] (2026-09-21T19:56:12Z) Checked-in leaking and stalled run fixtures, golden render tests, all five exit-code cases, and sealed-manifest immutability coverage.
-- [x] (2026-09-21T19:56:12Z) `kenshou-cli/help/diagnostics.md` and `docs/guides/diagnosing-leaks-and-stalls.md`.
-
-Milestone 5 — Seeded leak and deadlock self-tests that prove the detectors fire
-
-- [x] (2026-09-21T20:40:25Z) `Kenshou.Diagnose.SelfTest.Leak`: `leaking-worker` (heap, threads and file-descriptor kinds) and `stable-worker`.
-- [x] (2026-09-21T20:40:25Z) `Kenshou.Diagnose.SelfTest.Stall`: `deadlocked-workers`, `pool-starved`, `lock-waiter`, `idle-spinner`, `healthy-progress`.
-- [x] (2026-09-21T20:40:25Z) `Kenshou.Diagnose.SelfTest.bundle` registered in `kenshou-cli/src/Kenshou/Cli/Registry.hs`.
-- [x] (2026-09-21T20:40:25Z) Run all seven scenarios locally on PostgreSQL 18 and the five PostgreSQL ones also on 17; walk the guide end to end with `leaking-worker`; record transcripts here.
-- [x] (2026-09-21T20:40:25Z) ADR distillation pass; update the MasterPlan's Progress and registry status.
-
+- [x] (2026-09-21) Diagnostics toolkit complete: leak and stall analysis, profiling sessions, CLI recipes, and seeded detector self-tests have been validated. See Outcomes & Retrospective for results.
 
 ## Surprises & Discoveries
 

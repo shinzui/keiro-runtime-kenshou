@@ -11,6 +11,12 @@ provenance:
     model: "claude-fable-5-1"
     harness: "claude-code"
     at: 2026-09-20T17:15:36Z
+  revisions:
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-24T22:53:08Z
+      mode: "update"
+      note: "Consolidated Progress into delivered outcomes and remaining acceptance"
 ---
 
 # Verify the assembled runtime end to end and under soak
@@ -31,47 +37,7 @@ You can see it working when `kenshou run runtime/order-flow/correctness/happy-pa
 
 ## Progress
 
-Milestone 1 — The two-context reference system
-
-- [ ] Confirm the hard dependencies are complete (kernel, four toolkits, `Kenshou.Env.Kafka`, `Kenshou.Suite.Keiro.Fixture.*`) using the checks in Concrete Steps.
-- [ ] Create `kenshou-runtime/kenshou-runtime.cabal`, the `Kenshou.Suite.Runtime` bundle module and the `kenshou-runtime-test` suite.
-- [ ] Write the two seam modules `Kenshou.Suite.Runtime.System.Ledger` (only importer of the keiro fixture) and `Kenshou.Suite.Runtime.System.Broker` (only importer of `Kenshou.Env.Kafka`).
-- [ ] Write the order, fulfilment and saga-log aggregates with their codecs and validated event streams.
-- [ ] Write the integration contracts and the Kafka bridge (outbox publish function, Kafka-to-inbox consumer).
-- [ ] Write the shop and warehouse wiring: process managers, router, projections, producers, workflow, pick job, timer fire action, maintenance passes.
-- [ ] Write the worker roles, the topology launcher, the driver with its terminal observer, and quiescence detection.
-- [ ] Register the bundle in `kenshou-cli` (three-line edit) and add `runtime/order-flow/correctness/single-order-roundtrip`.
-
-Milestone 2 — End-to-end correctness invariants
-
-- [ ] Write the SQL oracles and the cross-context merge for invariants I1 to I4.
-- [ ] Write the duplicate-window, checkpoint-monotonicity, trace-continuity and operator cross-check checkers (I5 to I8).
-- [ ] Add the non-vacuity unit tests that doctor data and require each checker to fail.
-- [ ] Add scenarios `happy-path`, `mixed-outcomes`, `completion-expiry-race`, `duplicate-submission`, `trace-continuity`, `keiro-ops-cross-check`.
-
-Milestone 3 — The whole-runtime failure matrix
-
-- [ ] Add process faults: `sigkill-role` with a variant per role, `sigkill-storm`, `paused-lease-holder`, `rolling-restart`.
-- [ ] Add PostgreSQL faults: `backend-kill`, `postmaster-restart`.
-- [ ] Add broker and network faults: `broker-restart`, `partition-database`, `partition-broker`.
-- [ ] Add resource faults: `pool-starvation`, `slow-consumer-backpressure`, and the cell-only `memory-limit` and `disk-full`.
-- [ ] Add the two known-defect scenarios for the Kafka hop.
-- [ ] Prove every fault scenario is non-vacuous (fault evidence recorded, `errored` when the fault did not take effect).
-
-Milestone 4 — Gated soaks of one, four and twenty-four hours
-
-- [ ] Write the rolling audit, the growth-bound checker and the latency-drift checker.
-- [ ] Write the stage gate (`soak.gate-run-result`) and its unit tests.
-- [ ] Add `steady-reduced`, `steady-1h`, `steady-4h`, `steady-24h`, `churn-reduced`, `churn-4h`.
-- [ ] Run `steady-reduced` and `churn-reduced` locally and record the results in this plan.
-
-Milestone 5 — End-to-end benchmarks and whole-system telemetry overhead
-
-- [ ] Add `order-to-terminal-latency`, `sustained-throughput`, `scaling-with-worker-processes`.
-- [ ] Add `runtime/telemetry/benchmark/whole-system-overhead` and its entries in `policies/telemetry-overhead.json`.
-- [ ] Write `docs/layers/runtime.md`.
-- [ ] Create the ADRs named in Context and Orientation and run the ADR distillation pass.
-
+- [ ] Deliver the two-context reference system, end-to-end invariants and failure matrix, gated soaks, benchmarks, and whole-runtime telemetry comparison; verify the assembled-runtime acceptance in Validation and Acceptance.
 
 ## Surprises & Discoveries
 

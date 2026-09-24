@@ -17,6 +17,11 @@ provenance:
       at: 2026-09-20T21:08:38Z
       mode: "update"
       note: "Adopted relevant Haskell Jitsurei CLI patterns and the bounded Settei configuration contract."
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-24T22:53:09Z
+      mode: "update"
+      note: "Consolidated Progress into delivered outcomes and remaining acceptance"
 ---
 
 # Run kenshou on leased cells with payloads, submission and retrieval
@@ -37,47 +42,7 @@ Every kenshou run that executed on a cell remains an ordinary kenshou run direct
 
 ## Progress
 
-Milestone 1 — the content-addressed kenshou payload:
-
-- [ ] Confirm the state left by the hard dependencies (commands at the top of Concrete Steps) and that the remote `x86_64-linux` builder answers.
-- [ ] Set `nix.haskell-nix = "true"` in `.seihou/config.dhall`, re-run the Seihou module `nix-haskell-flake`, commit the regenerated `flake.nix` and `flake.lock`; add `zstd` and `google-cloud-sdk` to the dev shell.
-- [ ] Write `scripts/payload-lock.sh` and generate `nix/cohort-locks/released.lock.json` and `nix/cohort-locks/head.lock.json`; add the `payload-lock` recipe.
-- [ ] Write `nix/kenshou/cohort-overlay.nix`, `nix/kenshou/packages.nix`, `nix/kenshou/identity.nix` and `nix/kenshou/default.nix`, import the last from `flake.module.nix`, and expose `kenshou-released`, `kenshou-head` and the `-info-table` and `-profiled` variants.
-- [ ] Build `kenshou-released` for the local system; run `kenshou list` and `kenshou cohort show --json` from the Nix-built binary; confirm the closure contains no compiler.
-- [ ] Add the optional `resolver` member to `kenshou.cohort-identity/v1` and make the cohort equality gate (`just payload-check <cohort>`) pass for both cohorts.
-- [ ] Create the package `kenshou-remote` with `Kenshou.Remote.Store`, `.Store.Gcs`, `.Store.File`, `.Payload`, `.Payload.Nix`, the schema `kenshou.payload/v1`, the verb `kenshou cell payload build|publish|show`, and `kenshou-remote-test`.
-- [ ] Build for `x86_64-linux` through the remote builder, publish to the control bucket, and show that publishing the same closure twice uploads nothing.
-- [ ] Write the ADR "the cell payload pins the runtime cohort from the cohort descriptor".
-
-Milestone 2 — `kenshou cell` lease, submit, watch and fetch:
-
-- [ ] `Kenshou.Remote.Cell.Docs`: every `cell.*` document this client reads or writes, with golden tests against the examples shipped by the cell repository.
-- [ ] `Kenshou.Remote.Cell.Lease`: acquire, renew, release, cancel, heartbeat thread, with the two-contender race test over the file store.
-- [ ] `Kenshou.Remote.Cell.Prepare`: validation, routing by PostgreSQL major, by server control and by capability (`policies/cell-routing.json`), the shared-server form of `extraPostgres`, rewriting for the cell, reset derivation and slicing, with property tests.
-- [ ] `Kenshou.Remote.Cell.Exec`: the cell-side entry point `kenshou cell exec`: preflight and capability probe (`pg_partman`, broker implementation and version), the process environment (`KENSHOU_CELL_PG_URL` and one variable per extra server, `KENSHOU_CELL_FINGERPRINT`, `KENSHOU_HEALTH_NOTICES`, `KENSHOU_CELL_FAULT_HOOK` when the cell offers a hook, `KENSHOU_CLOCK_SKEW_BOUND_MICROS`), input materialisation, the cell context document and the health-notice mapper.
-- [ ] The scenario `selftest/remote/correctness/cell-environment`, `kenshou cell probe` and the capabilities document.
-- [ ] `Kenshou.Remote.Cell.Session`, `.Submit` and `.Watch`: `withCellSession`, `runSlice`, `cellRunChild`, the session file, status and log following, outcome and exit-code mapping.
-- [ ] `Kenshou.Remote.Cell.Fetch`: download, the three-way verification, and the derived `cell-run.json`.
-- [ ] The in-process fake cell and the end-to-end test of `kenshou cell run` against the file store.
-- [ ] Wire the verbs (`status`, `probe`, `lease`, `release`, `route`, `submit`, `watch`, `fetch`, `verify`, `runs`, `run`, `resume`, `debug`, hidden `exec`) into `kenshou-cli`.
-- [ ] Raise the integration requests listed in Interfaces and Dependencies against `docs/plans/16-provide-leased-verification-cells-in-load-testing-infra.md`; land the PostgreSQL role fix there before real-cell acceptance.
-- [ ] Real-cell acceptance on `cell-alpha` (PostgreSQL 18) and routing of a PostgreSQL 17 run to `cell-beta`; interoperability with `cellctl`.
-- [ ] Write the ADR "cell evidence is linked to sealed results, never merged into them".
-
-Milestone 3 — paired comparisons inside one lease:
-
-- [ ] `Kenshou.Remote.Pair`: expansion of a plan into candidate and baseline trials with the measurement toolkit's paired schedule, one submission per run, block validity and replacement blocks.
-- [ ] `kenshou cell pair`, ending in `kenshou compare --vary cohort` over the fetched run directories.
-- [ ] Acceptance on a cell: an A/A control answers `pass`; released against head answers with a verdict; a simulated maintenance event yields `infrastructure-failure` and never `regression`.
-- [ ] `kenshou cell overhead`: the telemetry plan's `planOverhead`, `executeOverhead` with `runChild = cellRunChild`, and `analyseOverhead`, all inside one lease; acceptance on a cell with the synthetic service.
-
-Milestone 4 — proof that one correctness scenario passes identically locally and on a cell:
-
-- [ ] `Kenshou.Remote.Parity`, the schema `kenshou.parity-report/v1` and `kenshou cell parity`.
-- [ ] Run the three parity scenarios locally and on a cell with the same seed; record the reports and the documented intentional differences.
-- [ ] Write `docs/guides/running-on-gcp.md` (operation, costs, failure handling).
-- [ ] Add `kenshou-remote` to `mori.dhall`, the tests to `just verify`, distil the Decision Log into `docs/adr/`, and update Integration Point 9 of the MasterPlan with anything that changed.
-
+- [ ] Deliver the content-addressed Kenshou payload and `kenshou cell` lifecycle, paired comparisons within a lease, and equivalent local/cell correctness evidence; verify the acceptance commands in Validation and Acceptance.
 
 ## Surprises & Discoveries
 

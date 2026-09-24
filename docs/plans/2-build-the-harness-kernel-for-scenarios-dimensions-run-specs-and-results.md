@@ -22,6 +22,11 @@ provenance:
       at: 2026-09-21T03:59:09Z
       mode: "implement"
       note: "Started implementation of the harness kernel and CLI contracts."
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-24T22:53:06Z
+      mode: "update"
+      note: "Consolidated Progress into delivered outcomes and remaining acceptance"
 ---
 
 # Build the harness kernel for scenarios, dimensions, run specs and results
@@ -42,45 +47,7 @@ Seven self-test scenarios under the `selftest` layer prove each of those behavio
 
 ## Progress
 
-Milestone 1 — Scenario model, layer bundles, registry and `kenshou list`
-
-- [x] (2026-09-20 21:00 PDT) Confirm the state EP-1 left behind (build, dev shell, `kenshou cohort show`, `docs/adr/`), as listed in Context and Orientation.
-- [x] (2026-09-20 21:24 PDT) Extend `kenshou-core/kenshou-core.cabal` (dependencies, modules, `kenshou-core-test`) and restructure `kenshou-cli` into library, executable and `kenshou-cli-test`.
-- [x] (2026-09-20 21:24 PDT) `Kenshou.Core.Id`, `Kenshou.Core.Outcome`, `Kenshou.Core.Selector` with property tests.
-- [x] (2026-09-20 21:24 PDT) `Kenshou.Core.Scenario`, `Kenshou.Core.Bundle` (`LayerBundle`, `Registry`, `mkRegistry`) with validation tests.
-- [x] (2026-09-20 21:24 PDT) `Kenshou.Core.Cli` (`CliCommand`, command groups, `InputSource`, exit-code-2 parse handling), `Kenshou.Core.Cli.Config` (Settei source ordering and diagnostics), `Kenshou.Cli.Config` (run declaration and bindings), `Kenshou.Cli.Registry`, and `Kenshou.Cli.Main`.
-- [x] (2026-09-20 21:24 PDT) `Kenshou.Cli.Help` with embedded terminal-aware topics, `Kenshou.Cli.Completions`, retained Git-aware `Kenshou.Cli.Version`, and parser/PTY/completion tests.
-- [x] (2026-09-20 21:24 PDT) `Kenshou.Core.Selftest` with `always-pass`, `always-fail`, `errors`; `kenshou list` in text and `--json` form.
-
-Milestone 2 — Dimensions, knobs and the run specification
-
-- [x] (2026-09-20 21:22 PDT) `Kenshou.Core.Knob` (specs, typed values, `--set` parsing, validation, accessors).
-- [x] (2026-09-20 21:22 PDT) `Kenshou.Core.Dimension` (four closed dimensions, `Supported`, `resolveDimensions`).
-- [x] (2026-09-20 21:22 PDT) `Kenshou.Core.Phase`, `Kenshou.Core.RunSpec` (document, hand-written JSON codecs, redaction) and `Kenshou.Core.RunSpec.Resolve` (`resolveRunSpec`).
-- [x] (2026-09-20 21:22 PDT) `kenshou run … --print-spec` prints the effective run specification; usage errors exit 2.
-
-Milestone 3 — Environments, the composed migration plan and worker roles
-
-- [x] (2026-09-20 22:13 PDT) `Kenshou.Core.Env.Migration` (one `pg-migrate` plan for kiroku, keiro, PGMQ).
-- [x] (2026-09-20 22:13 PDT) `Kenshou.Core.Env.Postgres` (ephemeral fsync-off, ephemeral durable, external; version selection; template and clones; settings snapshot; server control).
-- [x] (2026-09-20 22:13 PDT) `Kenshou.Core.Role`, `Kenshou.Core.Role.Dispatch`, `Kenshou.Core.Role.Spawn`; hidden `kenshou worker`.
-- [x] (2026-09-20 22:13 PDT) Integration tests against PostgreSQL 18 and, when `KENSHOU_PG17_BIN` is set, 17.
-
-Milestone 4 — The runner, the run directory, the manifest and exit codes
-
-- [x] (2026-09-20 22:13 PDT) `Kenshou.Core.Log`, `Kenshou.Core.Context` (`RunContext` and its helpers).
-- [x] (2026-09-20 22:13 PDT) `Kenshou.Core.Fingerprint`, `Kenshou.Core.Compat`, `Kenshou.Core.Canonical`.
-- [x] (2026-09-20 22:13 PDT) `Kenshou.Core.RunResult`, `Kenshou.Core.Manifest` (`writeManifest`, `verifyManifest`).
-- [x] (2026-09-20 22:13 PDT) `Kenshou.Core.Run.executeRun`; `kenshou run`; self-tests `outcome` and `known-defect`; exit-code tests.
-- [x] (2026-09-20 22:13 PDT) ADR: this repository owns the runtime-facing `list`/`run`/`compare` protocol.
-
-Milestone 5 — Published JSON Schemas, golden fixtures and the self-test scenarios
-
-- [x] (2026-09-20 22:13 PDT) `schemas/*.schema.json` for the six kernel documents and `schemas/README.md`.
-- [x] (2026-09-20 22:13 PDT) Golden fixtures under `kenshou-core/test/golden/` and the schema-validation test (`check-jsonschema`).
-- [x] (2026-09-20 22:13 PDT) Self-tests `postgres-roundtrip` and `worker-echo`; `just selftest` and `just schemas-check`.
-- [x] (2026-09-20 22:13 PDT) ADR: scenarios never open a database themselves; one ledger per database. Distil the Decision Log into `docs/adr/`.
-
+- [x] (2026-09-20) Harness kernel complete: scenario registry, typed knobs and dimensions, migrated environments, worker dispatch, versioned run artifacts, schemas, CLI, and self-tests are implemented and validated. See Outcomes & Retrospective for acceptance evidence.
 
 ## Surprises & Discoveries
 

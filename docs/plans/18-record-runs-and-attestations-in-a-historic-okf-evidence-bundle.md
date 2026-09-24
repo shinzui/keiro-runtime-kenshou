@@ -17,6 +17,11 @@ provenance:
       at: 2026-09-20T21:08:38Z
       mode: "update"
       note: "Adopted relevant Haskell Jitsurei CLI patterns and the bounded Settei configuration contract."
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-24T22:53:09Z
+      mode: "update"
+      note: "Consolidated Progress into delivered outcomes and remaining acceptance"
 ---
 
 # Record runs and attestations in a historic OKF evidence bundle
@@ -37,54 +42,7 @@ You can see it working at the end by running `just verify`, which validates the 
 
 ## Progress
 
-Milestone 1 — The bundle, the local profile and the first computation definitions
-
-- [ ] Confirm prerequisites: the repository builds (`docs/plans/1-…`), `kenshou run` writes a run directory (`docs/plans/2-…`), `kenshou compare` writes a comparison document (`docs/plans/4-…`), `okf --version` is 0.9.0.0 or later, `dhall --version` answers.
-- [ ] Create `docs/verification/` with `log.md` and the `profile.dhall` from this plan; run `dhall freeze` and `dhall format`; confirm the pinned hash was not typed by hand.
-- [ ] Add the two non-Markdown reference files under `docs/verification/references/`.
-- [ ] Write the computation definitions `VC-1` run-outcome, `VC-2` latency-summary and `VC-3` paired-comparison from the real implementations, allocating each handle with `okf id next`.
-- [ ] Generate indexes with `okf index docs/verification --write --okf-version 0.2` and pass strict, enforced validation.
-- [ ] Add `scripts/test-verification-profile.sh` with one rejection fixture per load-bearing rule.
-- [ ] Register the bundle in `mori.dhall` with a `Local` profile binding; `mori validate` passes.
-- [ ] Add the `evidence-validate`, `evidence-index-check` and `evidence-profile-test` recipes to the `Justfile` and hang them on `verify`.
-- [ ] Write the ADR "evidence records are immutable events that link to data and never contain it; baselines are derived, not stored".
-
-Milestone 2 — `kenshou record` and the digest and revision check
-
-- [ ] Create the package `kenshou-evidence` and prove `okf-core` resolves inside the active cohort.
-- [ ] `Kenshou.Evidence.Types` with smart constructors for digests, revisions and identifiers.
-- [ ] `Kenshou.Evidence.Frontmatter` codec with round-trip properties that cover the YAML coercion hazards.
-- [ ] `Kenshou.Evidence.Source`, the one module that reads kernel documents.
-- [ ] `Kenshou.Evidence.Store` with the `gcloud`, in-memory and store-root implementations.
-- [ ] `Kenshou.Evidence.Record.recordRun`, including refusal rules, idempotence, log entry and index regeneration.
-- [ ] `Kenshou.Evidence.Record.recordComparison`.
-- [ ] `Kenshou.Evidence.Check` structural rules.
-- [ ] `Kenshou.Evidence.Check` immutability rule against git history.
-- [ ] Wire `kenshou record` and `kenshou evidence check` into `kenshou-cli` in the Evidence help group, with named option groups, parser-derived completions, clean JSON stdout, and the contract exit codes.
-- [ ] Unit and property tests green: `cabal test kenshou-evidence:kenshou-evidence-test`.
-
-Milestone 3 — `kenshou attest` and the verified trail
-
-- [ ] The `Recomputer` registry and the core recomputers for `run-outcome`, `latency-summary` and `paired-comparison`.
-- [ ] The six attestation checks.
-- [ ] The attestation writer and the append to the run's `verified` list.
-- [ ] Reconcile the immutability rule with that append, with a test for each side.
-- [ ] The human anomaly-acceptance path (`--accept-anomaly`).
-- [ ] Wire `kenshou attest` into the Evidence help group with the same option-group, completion, help-width, and output-channel contract.
-- [ ] The tamper test: a changed byte yields `refuted` and exit code 1.
-
-Milestone 4 — `kenshou history`, validation gates and the seeded corpus
-
-- [ ] `Kenshou.Evidence.History` with the derived baseline and its JSON Schema under `schemas/`.
-- [ ] Wire `kenshou history` into the Analysis help group and add the embedded `evidence` help topic covering the four commands and their exit codes.
-- [ ] Obtain the owner's confirmation, then create or adopt the durable bucket.
-- [ ] Seed the corpus: one recorded, attested run per evidence kind and one comparison.
-- [ ] Add `evidence-check` to `just verify` and to CI with full git history available.
-- [ ] Run the scale probe and record the figures.
-- [ ] Write `docs/guides/recording-evidence.md`.
-- [ ] Write the ADR "the evidence corpus freezes its type and field names; its profile may only relax", in the commit that adds the first record.
-- [ ] ADR distillation pass and the hand-off note for `docs/plans/19-publish-the-verification-evidence-profile-in-okf-profiles.md`.
-
+- [ ] Deliver the historic evidence bundle, profile and computations, `record`, `attest`, and `history` commands, digest/revision validation, and a seeded corpus; verify the acceptance commands in Validation and Acceptance.
 
 ## Surprises & Discoveries
 

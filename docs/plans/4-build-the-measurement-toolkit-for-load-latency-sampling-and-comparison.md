@@ -22,6 +22,11 @@ provenance:
       at: 2026-09-21T14:46:22Z
       mode: "implement"
       note: "Started EP-4 implementation after validating the completed kernel contracts."
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-24T22:53:07Z
+      mode: "update"
+      note: "Consolidated Progress into delivered outcomes and remaining acceptance"
 ---
 
 # Build the measurement toolkit for load, latency, sampling and comparison
@@ -42,60 +47,7 @@ The work is visible through three self-test scenarios that need no runtime libra
 
 ## Progress
 
-Milestone 1 — Clocks, the latency recorder and warm-up exclusion
-
-- [x] (2026-09-21 14:46Z) Confirm the state expected from `docs/plans/1-bootstrap-the-kenshou-repository-and-pin-the-runtime-cohort.md` and `docs/plans/2-build-the-harness-kernel-for-scenarios-dimensions-run-specs-and-results.md` with the checks in Concrete Steps; record the real kernel names next to the expected ones in Surprises & Discoveries.
-- [x] (2026-09-21 14:48Z) Create `kenshou-measure/kenshou-measure.cabal` (library plus `kenshou-measure-test`) and confirm `cabal build kenshou-measure` succeeds with an empty facade module.
-- [x] (2026-09-21 14:58Z) `Kenshou.Measure.Clock`: monotonic nanosecond clock, paired wall/monotonic capture, `sleepUntilNs` that never returns early.
-- [x] (2026-09-21 14:58Z) `Kenshou.Measure.Histogram`: log-linear layout, record, merge, quantile, exact min/max/sum, overflow counter; property tests for precision and merge laws.
-- [x] (2026-09-21 14:58Z) `Kenshou.Measure.Histogram.Codec`: `KHST` version 1 encoder and decoder, round-trip property, golden byte fixture.
-- [x] (2026-09-21 14:58Z) `Kenshou.Measure.Samples`: `KSMP` version 1 raw-sample writer (per-worker blocks, single writer thread, back-pressure counter) and streaming reader.
-- [x] (2026-09-21 14:58Z) `Kenshou.Measure.Phase`: `PhasePlan`, `PhaseClock`, classification by intended start.
-- [x] (2026-09-21 14:58Z) `Kenshou.Measure.Recorder`: operations, per-worker recorders, per-cause error counters, merge and file output at finish, interval histograms when raw samples are not retained in full.
-- [x] (2026-09-21 14:58Z) `Kenshou.Measure.Session`, first part: `MeasureEnv` and `measureEnvFromRunContext`, the single point of contact with the kernel.
-- [x] (2026-09-21 14:58Z) Timing tests: warm-up samples are excluded from the steady histogram; a histogram recomputed from the raw file equals the recorded one; recording ten million samples on one thread stays under the cost budget.
-
-Milestone 2 — Closed-loop and open-loop load generators
-
-- [x] (2026-09-21 15:08Z) `Kenshou.Measure.Load.Types` and `Kenshou.Measure.Knobs`: `Operation`, `OpResult`, `LoadModel`, the shared `load.*` and `measure.*` knob specifications and their parser.
-- [x] (2026-09-21 15:08Z) `Kenshou.Measure.Load.Arrival`: constant-rate and seeded Poisson schedules; tests for exact constant spacing, Poisson mean and reproducibility from the seed.
-- [x] (2026-09-21 15:08Z) `Kenshou.Measure.Load.Closed`: N workers back to back with staggered start, think time, duration or count bound, drain.
-- [x] (2026-09-21 15:08Z) `Kenshou.Measure.Session`, second part: the `Measurement` record and a first `withMeasurement` returning a `MeasurementReport` with the recorder and load reports.
-- [x] (2026-09-21 15:08Z) `Kenshou.Measure.Load.Open`: shared schedule with atomically claimed tickets, latency from intended start, bounded executors, lag and backlog accounting, overload evidence, abort on runaway lag; `series/load.csv`.
-- [x] (2026-09-21 15:08Z) `Kenshou.Measure.Selftest.SleepService` and `Kenshou.Measure.Selftest.bundle`; register the bundle in `kenshou-cli` (one import, one list element, one `build-depends` entry).
-- [x] (2026-09-21 15:08Z) Run `selftest/measure/benchmark/sleep-service` in all three load models and record the observed percentiles in this plan.
-
-Milestone 3 — Runtime, process and PostgreSQL samplers
-
-- [x] (2026-09-21 15:30Z) `Kenshou.Measure.Sampler` and `Kenshou.Measure.Sampler.Csv`: absolute-deadline ticking, boundary samples at phase changes, `series/sampler.csv` with lateness and cost per tick.
-- [x] (2026-09-21 15:30Z) `Kenshou.Measure.Sampler.Rts`: `GHC.Stats` columns, live bytes after major collections derived from cumulative counters, Haskell thread count; graceful absence when `-T` is off.
-- [x] (2026-09-21 15:30Z) `Kenshou.Measure.Sampler.Process` and `Kenshou.Measure.Sampler.Host`: `/proc` readers with fixture-based parser tests, the macOS fallback in `kenshou-measure/cbits/kenshou_proc_darwin.c`.
-- [x] (2026-09-21 15:30Z) `Kenshou.Measure.Sampler.Postgres`: dedicated connection, activity, checkpointer, WAL, database, relation and statement series for PostgreSQL 17 and 18; graceful absence of `pg_stat_statements`.
-- [x] (2026-09-21 15:30Z) `Kenshou.Measure.Session`, third part: `MeasureConfig`, `measureConfigFromKnobs`, and `withMeasurement` starting and stopping the samplers around the body.
-- [x] (2026-09-21 15:30Z) `Kenshou.Measure.Selftest.PgInsert`; run it under `pg.version=17` and `pg.version=18` and confirm every `series/pg-*.csv` file has rows.
-
-Milestone 4 — Summaries and paired comparison with verdicts
-
-- [x] (2026-09-21 16:00Z) `Kenshou.Measure.Stats`: exact quantiles, geometric mean, seeded bootstrap with `splitmix`, Student-t table, interval envelope.
-- [x] (2026-09-21 16:00Z) `Kenshou.Measure.Metrics` and `Kenshou.Measure.Summary`: the `kenshou.measurements/v1` section, the flat metric map, the evidence grade, `summarizeRunDir`; `withMeasurement` registers the section with the kernel.
-- [x] (2026-09-21 16:00Z) `Kenshou.Measure.Compare.Ordering`: `pairedSchedule` for ABBA and BAAB and `validateInterleaving`.
-- [x] (2026-09-21 16:00Z) `Kenshou.Measure.Compare.Compatibility`: key components derived from run documents, "equal except the declared varying axes" (a non-empty list).
-- [x] (2026-09-21 16:00Z) `Kenshou.Measure.Compare.Policy` and `policies/default.json`, `policies/selftest.json`.
-- [x] (2026-09-21 16:00Z) `Kenshou.Measure.Compare`: per-metric verdict rule, overall verdict, `kenshou.comparison/v1` document; deterministic focused tests plus live fixtures for pass, regression and noise. Infrastructure failure is completed with the health-gate integration in Milestone 5.
-- [x] (2026-09-21 16:00Z) `Kenshou.Measure.Cli`: `kenshou compare` and `kenshou summarize`, wired into `kenshou-cli` with the contract exit codes.
-- [x] (2026-09-21 16:00Z) JSON Schemas in `schemas/` for the measurements section, the comparison, the policy and the sample metadata; emitted documents validate against them.
-- [x] (2026-09-21 16:00Z) `Kenshou.Measure.Selftest.RegressionInjected`; the live paired comparisons returned regression/1 for the slowdown, pass/0 for equal arms, and inconclusive/3 for mixed noise.
-- [x] (2026-09-21 16:00Z) `Kenshou.Measure.Methodology` and `docs/guides/measuring-and-comparing.md`.
-
-Milestone 5 — Health gates that separate infrastructure trouble from regressions
-
-- [x] (2026-09-21 16:18Z) `Kenshou.Measure.Health`: observation type, severity mapping to outcomes, and gate evaluation from persisted run artifacts.
-- [x] (2026-09-21 16:18Z) Gates: driver CPU saturation, CPU steal, open-loop backlog growth, checkpoint-inside-window annotation, clock anomalies and sampler lateness, recorder back-pressure, insufficient samples.
-- [x] (2026-09-21 16:18Z) Host-maintenance notice hook: `KENSHOU_HEALTH_NOTICES` JSON-lines file, `kenshou.health-notice/v1` schema, and capture into the sealed run directory.
-- [x] (2026-09-21 16:18Z) Comparison integration: hard observations give `infrastructure-failure`, soft observations and checkpoint asymmetry give `inconclusive`, never `regression`.
-- [x] (2026-09-21 16:18Z) `selftest.inject` knob on the sleep-service scenario; demonstrated backlog/3, process-pause/4, and maintenance-notice/4 with the expected gate names.
-- [x] (2026-09-21 16:18Z) ADR work: created the comparison-evidence and independent-measurement-channel ADRs, extended the protocol ADR, validated the bundle, and passed `just verify`.
-
+- [x] (2026-09-21) Measurement toolkit complete: load generation, latency recording, samplers, summaries, health gates, and paired comparison have executable self-tests and PostgreSQL 17/18 evidence. See Outcomes & Retrospective for results.
 
 ## Surprises & Discoveries
 

@@ -11,6 +11,12 @@ provenance:
     model: "claude-fable-5-1"
     harness: "claude-code"
     at: 2026-09-20T17:15:36Z
+  revisions:
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-24T22:53:09Z
+      mode: "update"
+      note: "Consolidated Progress into delivered outcomes and remaining acceptance"
 ---
 
 # Provide leased verification cells in load-testing-infra
@@ -33,55 +39,7 @@ You can see it working with the fixture payloads this plan ships: two terminals 
 
 ## Progress
 
-Milestone 1 — a parameterised, multi-instance cell stack:
-
-- [ ] Verify prerequisites in `load-testing-infra` (clean checkout, dev shell, gcloud identity and roles, builder VM, image bucket) and mark IR-1 `in-progress`.
-- [ ] Factor the project-isolation preflight into `scripts/lib/preflight.sh` with the allowlist file, and the image functions into `scripts/lib/images.sh`; existing scripts source them with unchanged behaviour.
-- [ ] Write `scripts/cell/bootstrap.sh` (state bucket, KMS key, API enablement) and run it.
-- [ ] Add NixOS role modules and flake outputs `cell-image-driver`, `cell-image-postgres17`, `cell-image-postgres18`, `cell-image-monitoring` (agent stubbed as a no-op unit until Milestone 2) and `scripts/cell/upload-cell-images.sh`.
-- [ ] Create the Pulumi program `infra/cells/` with the `shared` and `cell` kinds, labels, service account, Private Google Access, scheduling options.
-- [ ] Write lifecycle scripts `create.sh`, `start.sh`, `stop.sh`, `status.sh`, `destroy.sh`, `upgrade.sh`; create `cell-alpha` and `cell-beta` side by side.
-- [ ] Add the idle self-stop timer and the `cell.policy/v1` object.
-- [ ] Evaluate and record the determinism options (`minCpuPlatform`, `onHostMaintenance`, compact placement, provisioned IOPS) in `docs/cells/determinism.md`.
-- [ ] Add labels to the disposable lane's resources.
-
-Milestone 2 — the generic cell agent and run-time payload delivery:
-
-- [ ] Create the Rust crate `nixos/pkgs/cell-agent` with the `ObjectStore` trait, the GCS and file backends, token providers, and the document types with golden fixtures and JSON Schemas.
-- [ ] Implement `scripts/cell/payload-publish.sh` and the three fixture payloads (`hello`, `contaminate`, `probe`).
-- [ ] Implement the driver agent's submission loop: validate, fetch and verify the bundle, `nix-store --import`, run under `systemd-run` with limits, chunked log streaming, status updates, verbatim publication of the output directory.
-- [ ] Implement `cellctl submit`, `watch` and the darwin/linux package output; put `cellctl` in the dev shell.
-- [ ] Rebuild images with the real agent, upgrade `cell-alpha`, and run the hello payload end to end without any SSH.
-- [ ] Implement multi-driver execution (same command on every driver with index variables) and prove it on a two-driver cell.
-
-Milestone 3 — leases, deterministic reset and health gates:
-
-- [ ] Implement lease acquire, renew, release, takeover of an expired lease, cancellation, and quarantine in the library, with unit tests over the file backend including the two-contender race.
-- [ ] Enforce the lease in the agent (submission must name the active lease; lease loss or cancellation kills the run; several submissions per lease).
-- [ ] Implement the PostgreSQL role agent (`/v1/reset`, `/v1/health`) and the driver-side reset (processes, work directories, payload roots), with the settings allowlist and the evidence document.
-- [ ] Give the run role what a payload that manages its own databases needs: `CREATEDB`, and `pg_hba.conf` access to every database from the cell subnet; extend the reset to drop every database that role owns.
-- [ ] Publish the consumer-requested generic facilities: the optional fault hook behind `allowFaultInjection` (with `heal-all` in the reset and health-gate suppression), `CELL_HEALTH_FILE`, the clock-skew bound and chrony figures, the PostgreSQL extension inventory, and the broker's implementation and version.
-- [ ] Implement the five health gates and the mapping to `infrastructure-failure`.
-- [ ] Run the acceptance fixtures: simultaneous acquisition, contaminate-then-probe under `cold` and `warm` policies, simulated maintenance event, storage pressure, agent version mismatch.
-- [ ] Measure lease-to-accepted latency for a warm and a stopped cell (twenty observations each) and record p95.
-
-Milestone 4 — the immutable results bucket and artifact manifest:
-
-- [ ] Tighten the results bucket (creator-only service account, retention policy, versioning, lifecycle) and prove an overwrite attempt fails.
-- [ ] Publish the full run tree: submission, work file, output, logs, exact-window metrics export, fingerprint, reset evidence, health, run result, and `manifest.json` written last.
-- [ ] Implement `cellctl fetch` and `cellctl verify`, and the tool-free recipe with `gcloud storage`, `sha256sum` and `jq`.
-- [ ] Run candidate and baseline fixture payloads under one lease and show two independent trees naming the same lease.
-- [ ] Stop, start, upgrade, quarantine and finally destroy a cell, verifying an old run after each step.
-- [ ] Add the budget alert and `scripts/cell/janitor.sh`.
-
-Milestone 5 — broker and collector roles, with the disposable lane still working:
-
-- [ ] Add the OpenTelemetry Collector (null-sink and file-sink OTLP endpoints, self-metrics scraped) to the cell monitoring image and the firewall.
-- [ ] Add the optional Redpanda broker role (pinned container image baked into the NixOS image), its reset and health endpoints, and the environment-file entries.
-- [ ] Prove both with fixture payloads (spans accepted by the collector; a topic created, written and gone after reset).
-- [ ] Run the disposable lane once with pgbench and once with kiroku at its existing pins; compare the artifact sets with the documented ones.
-- [ ] Write `docs/cells/protocol.md`, `docs/user/verification-cells.md`, update `docs/user/README.md`, `CLAUDE.md` and `mori.dhall`; mark IR-1 `completed` with evidence; update Integration Point 9 in the MasterPlan if anything changed.
-
+- [ ] Deliver leased, resettable multi-instance verification cells with the generic agent, payload delivery, health gates, immutable result publication, broker, and collector roles; verify the cell protocol in Validation and Acceptance.
 
 ## Surprises & Discoveries
 

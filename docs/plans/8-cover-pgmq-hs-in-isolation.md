@@ -32,6 +32,11 @@ provenance:
       at: 2026-09-24T02:42:47Z
       mode: "update"
       note: "Added owner-repository OKF bug-report audit and local canonical URI tracking."
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-24T22:53:07Z
+      mode: "update"
+      note: "Consolidated Progress into delivered outcomes and remaining acceptance"
 ---
 
 # Cover pgmq-hs in isolation
@@ -50,80 +55,11 @@ After this plan, a maintainer can run `kenshou list --layer pgmq` and see about 
 
 ## Progress
 
-Milestone 1 — pgmq-hs correctness scenarios (includes the package, the shared harness and registration).
-
-- [x] (2026-09-22 00:34Z) Verified the kernel, measurement, correctness, diagnostics, telemetry, CLI, live PostgreSQL round trip, released pgmq cohort, Hackage release, and upstream tag.
-- [x] (2026-09-22 00:52Z) Created `kenshou-pgmq`, its 39-module library, `kenshou-pgmq-test`, and the 49-scenario bundle; the package and CLI build in the dev shell.
-- [x] (2026-09-22 00:52Z) Registered the bundle in `kenshou-cli`; `kenshou list --layer pgmq` reports 49 registry-valid scenarios and three worker roles.
-- [x] (2026-09-22 05:54Z) Wired every internal library required by `kenshou-cli` through the Nix `callCabal2nix` graph; `nix flake check` now evaluates the CLI package and passes both repository checks.
-- [x] (2026-09-22 01:01Z) Implemented `Kenshou.Suite.Pgmq.Knobs` (common knob vocabulary and `resolveKnobs`) with focused default, invalid-combination, and queue-identity tests.
-- [x] (2026-09-22 00:52Z) Implemented the pool, per-run queue names, setup/teardown, plain/traced effect interpreter, telemetry bracket, and pg_partman probe; live round trips pass on PostgreSQL 17 and 18.
-- [x] (2026-09-22 02:28Z) Completed the dedicated-connection SQL metrics poller; live collection recorded queue-depth transitions and poll latency, while queue-name derivation remains unit tested.
-- [x] (2026-09-22 00:52Z) Implemented the fact vocabulary, database-clock lease and due-time oracles, topic model, and raw LISTEN wrapper; doctored overlap, duplicate-read-count, early-delivery, and explicit-release tests pass.
-- [x] (2026-09-22 01:42Z) Replaced the catalog-wide probe for all 18 correctness identifiers with contract-specific runners and added durable queue/archive conservation queries.
-- [x] (2026-09-22 01:42Z) Implemented the `queue`, `send`, `read` and `ack` correctness scenarios.
-- [x] (2026-09-22 01:42Z) Implemented the `vt` correctness scenarios, including real wall-clock expiry.
-- [x] (2026-09-22 02:28Z) Implemented the `fifo`, `topics`, `notify`, `config` and `effectful` correctness scenarios, including W3C trace propagation and the two known-defect scenarios.
-- [x] (2026-09-22 01:42Z) Ran all 18 correctness scenarios on PostgreSQL 17 and 18. Sixteen pass on both versions; `mixed-case-alias-collision` reproduces its declared non-blocking defect on both; `grouped-result-order` returned ordered vectors in these runs and reports that the declared defect did not reproduce.
-- [x] (2026-09-22 04:09Z) Persisted machine-readable `kenshou.verdict/v1` artifacts for the contract checks instead of leaving their results only in summary JSON; live lifecycle evidence is in run `01a0c751-7882-7279-8f18-e79bb08a5221`.
-- [x] (2026-09-22 00:52Z) Wrote the first `docs/layers/pgmq.md`, with every registered identifier, classification, known-defect link, shared knobs, and operating rules; the unit suite enforces coverage.
-
-Milestone 2 — pgmq-hs concurrency and crash scenarios.
-
-- [x] (2026-09-22 02:05Z) Implemented `Kenshou.Suite.Pgmq.Roles` (`pgmq-producer`, `pgmq-consumer`, `pgmq-reconciler`) with the `after-read` crash point, finite producer/consumer protocols, and real reconciliation; the roles remain registered in the bundle.
-- [x] (2026-09-22 02:05Z) Replaced the catalog-wide probe for all 20 concurrency identifiers with scenario-specific runners spanning thread and process contention, `SIGKILL`, pool exhaustion, backend termination, PostgreSQL immediate shutdown, TCP reset, FIFO hazards, notification state, reconciliation, and overlapping acknowledgements.
-- [x] (2026-09-22 20:15Z) Replaced the manufactured unlocked-read result with sixteen concurrent PostgreSQL reads of one row. The ordinary PGMQ path has one owner and passes; the unlocked SQL path has sixteen owners and fails with a persisted verdict.
-- [x] (2026-09-22 20:25Z) Collected every worker-process read mark from its persisted control log and applied `checkLeaseIntervals` to database-clock leases; durable PostgreSQL 17 and 18 runs observed all 1,000 sends with no overlap or duplicate read count and an empty queue.
-- [x] (2026-09-22 20:48Z) Ran concurrent producer and consumer processes, reconstructed all lease intervals and sent IDs from strict worker logs, and proved process-level non-vacuity with four unlocked SQL readers. PostgreSQL 18 handled 1,200 messages without overlap; the unlocked arm failed with `DuplicateReadCount`.
-- [x] (2026-09-22 20:20Z) Captured each killed consumer's database read time, visibility deadline, message IDs, and read counts; verified every kill round, no early redelivery, bounded expiry lag, final delivery, and acknowledgement on PostgreSQL 17 and 18.
-- [x] (2026-09-22 20:55Z) Replaced the one-batch queue-length probe with five producer processes killed at seeded delays after their persisted intents. PostgreSQL 18 observed three whole committed batches and two absent batches, including two committed batches whose `Sent` mark was interrupted; the per-batch durable-key verdict passed on PostgreSQL 17 and 18.
-- [x] (2026-09-22 20:56Z) Ran the stale acknowledgement boundary through separate owner pools and recorded both database-clock leases, both delete results, the failed visibility extension, and the final empty queue in an implementation-class verdict on PostgreSQL 17 and 18.
-- [x] (2026-09-22 21:10Z) Replaced the alias to deterministic redelivery with seeded consumer-process kills and restarts under continuous batch production. Short durable runs on PostgreSQL 17 and 18 passed the no-loss, interrupted-lease, bounded-duplicate, lease-interval, and drain oracles; PostgreSQL 18 processed 4,000 sends with four kills and 40 unacknowledged killed leases.
-- [x] (2026-09-22 21:43Z) Ran the full ten-minute, 500/s random-kill acceptance on durable PostgreSQL 18: 300,000 sends, 120 `SIGKILL` and restart rounds, 857 unacknowledged killed leases, 300,000 handled keys, zero lease findings, and an empty final queue. Ten committed acknowledgements had no worker-side reply mark, so the oracle used durable handling and drain evidence.
-- [x] (2026-09-22 21:56Z) Completed the matching ten-minute, 500/s random-kill acceptance on durable PostgreSQL 17: 300,000 sends, 120 `SIGKILL` and restart rounds, 809 unacknowledged killed leases, 300,000 handled keys, zero lease findings, and an empty final queue.
-- [x] (2026-09-22 02:05Z) Implemented pool exhaustion with long polling and verified transient acquisition timeout plus same-pool recovery.
-- [x] (2026-09-22 02:54Z) Added pg_partman to both dev-shell PostgreSQL majors and replaced the partition probes with live notification-storm and retention workloads; both declared defects reproduce on PostgreSQL 17 and 18 as non-blocking known defects.
-- [x] (2026-09-22 21:26Z) Expanded the immediate PostgreSQL crash probe to persist the outage error, same-pool recovery time, durability setting, and committed message IDs. PostgreSQL 17 and 18 both recovered in under 0.4 seconds with all committed rows and `fsync=on`; both rejected the empty-SQLSTATE disconnect as permanent. Filed the common classifier gap as `mori://shinzui/pgmq-hs/okf/improvement-requests/concepts/IR-4` and verified backend termination, restart, and TCP reset report only their exact classifier failures as non-blocking known defects.
-- [ ] Complete the backend-termination, PostgreSQL restart/crash, unlogged-queue, and network-proxy workloads and their full transient-error and conservation oracles beyond the focused probes already present.
-- [x] (2026-09-22 02:05Z) Implemented and ran the FIFO concurrency scenarios (head-per-group barrier, grouped batch successor hazard, producer commit-order inversion).
-- [x] (2026-09-22 03:38Z) Replaced the listener-fallback probe with a real LISTEN backend termination; PostgreSQL 17 and 18 both prove disconnected notifications do not replay and the polling fallback drains all 20 sends inside the configured bound.
-- [x] (2026-09-22 21:39Z) Expanded throttle-loss-after-crash on PostgreSQL 17 and 18: after immediate shutdown the unlogged throttle state vanished and all 250 sends over five seconds notified; reconciliation reported `EnabledNotify`, restored the throttle row, and bounded the next 250 sends to six notifications. The listener saw only the canonical channel.
-- [x] (2026-09-22 21:48Z) Expanded concurrent reconciliation to fifty rounds of ten declarations with eight callers. Every round's catalog converged, but reports claimed multiple creators, and both PostgreSQL majors produced SQLSTATE `23505` from FIFO index creation. Filed both defects as `mori://shinzui/pgmq-hs/okf/improvement-requests/concepts/IR-5` and verified precise non-blocking labels on PostgreSQL 17 and 18 while catalog correctness remains a separate blocking check.
-- [x] (2026-09-22 21:52Z) Expanded overlapping batch acknowledgements to sixteen simultaneous callers through sixteen pool connections, with opposite identifier orders, bounded transient retries, durable deletion conservation, and a recorded deadlock rate. PostgreSQL 17 and 18 each deleted all 200 IDs exactly once and drained; both observed zero deadlocks, so the live SQLSTATE branch still needs a reproducer.
-- [x] (2026-09-22 21:56Z) Moved the fifty-round reconciliation workload from eight threads to eight persistent `pgmq-reconciler` child processes with round-specific control marks. PostgreSQL 18 preserved catalog convergence in all rounds and reported 24 known FIFO index errors plus duplicate creator claims; the known-defect disposition remained precise and non-blocking.
-- [x] (2026-09-22 21:56Z) The same eight-process, fifty-round reconciliation workload on durable PostgreSQL 17 converged in every round and reproduced the FIFO index race and duplicate creator reports as the precise non-blocking IR-5 defect.
-- [x] (2026-09-22 22:01Z) Recorded queue depth and partition count after each partition maintenance step on durable PostgreSQL 17 and 18. Both first lost rows when the 300th send advanced retention: queue depth fell to 201, then remained 201 through 2,000 sends. Each lost all 50 leased rows and 1,799 rows overall, reproducing the declared non-blocking retention defect.
-- [x] (2026-09-22 22:04Z) Paced the partitioned notification storm at 200 sends/s for five seconds and listened through the disabled phase. Durable PostgreSQL 17 and 18 each emitted 1,000 partition-channel notices, versus the throttle bound of 21, and zero notices after disabling. The known defect remains non-blocking with the throughput of both phases recorded.
-- [x] (2026-09-22 22:07Z) Added a controlled two-transaction batch-delete tail to the sixteen-worker overlapping acknowledgment scenario. Opposite row locks forced a live SQLSTATE `40P01` on both durable PostgreSQL majors; `pgmq-effectful` classified it transient, the winning transaction deleted both IDs, and the queue drained.
-- [x] (2026-09-22 22:12Z) Ran all other nineteen concurrency identifiers on each durable PostgreSQL major. Each version had thirteen passing scenarios and six precise, non-blocking known-defect reproductions, with no new blocking failures. Together with the full random-kill runs, all twenty identifiers have run on both versions.
-- [x] (2026-09-22 22:15Z) Expanded the TCP reset probe to 100 confirmed sends before the reset, one ambiguous interrupted send, and 100 confirmed sends after same-pool recovery. Durable key and queue-count oracles passed on PostgreSQL 17 and 18; only the known reset classifier check failed.
-- [x] (2026-09-22 22:20Z) Added 100 pre-fault and 100 post-fault confirmed sends to backend termination and immediate PostgreSQL crash, with durable-key conservation checks on both supported majors. The same pools recovered, all 200 keys remained, and only the already registered transient classifier checks failed. Expanded the unlogged-crash probe to exact keys: 100 logged rows survived and 100 unlogged rows vanished on both majors.
-- [x] (2026-09-22 22:23Z) Wired `pgmq.fault.kind=latency` to the TCP proxy. A warm send under 1 ms rose to about 402 ms with 200 ms configured in each direction, without errors or lost keys, on both durable PostgreSQL majors.
-- [x] (2026-09-22 22:27Z) Routed `pgmq.conn.tcp-user-timeout-ms` through Hasql's `Connection.other "tcp_user_timeout"` when nonzero. PostgreSQL 17 and 18 both accepted a 5,000 ms setting in the latency scenario; its blackhole timing semantics remain unverified.
-- [x] (2026-09-22 22:29Z) Exercised `pgmq.fault.kind=stop-start` with a PostgreSQL fast stop on both majors. Each retained all 200 confirmed keys and recovered the same pool in under 0.25 seconds; only the already registered transient-classifier check failed.
-- [x] (2026-09-22 22:39Z) Added a dedicated response-blackhole scenario so its timeout defect has a separate upstream owner from the TCP reset classifier. A producer child process remained blocked past five seconds on PostgreSQL 17 and 18 with default libpq settings and past ten seconds on both with `tcp_user_timeout=5000`; the supervisor killed it at the bound, the pool recovered, confirmed keys remained durable, and the exact known-defect label was non-blocking. Filed `mori://shinzui/pgmq-hs/okf/improvement-requests/concepts/IR-6`.
-- [ ] Complete the wider outage workloads beyond the focused recovery probes.
-
-Milestone 3 — pgmq-hs benchmarks.
-
-- [x] (2026-09-22 02:28Z) Implemented `Kenshou.Suite.Pgmq.RawSql` and `Kenshou.Suite.Pgmq.Client`; live layer-ladder runs exercised distinct hand-written SQL, pgmq-hasql, and pgmq-effectful paths.
-- [x] (2026-09-22 02:28Z) Implemented measured `layer-ladder`, `send-throughput`, and `read-ack-throughput` workloads using the shared load generator and recorder.
-- [x] (2026-09-22 03:11Z) Implemented distinct poll, server long-poll, and LISTEN/NOTIFY-with-poll-fallback paths in `produce-consume-latency`; benchmark-grade PostgreSQL 18 runs passed for all three modes.
-- [x] (2026-09-22 02:28Z) Implemented `invisible-backlog-read-cost`, `grouped-read-cost`, and `notify-insert-overhead`; short live runs of the grouped, send, metrics, and all three ladder paths pass.
-- [x] (2026-09-22 03:42Z) Added `policies/pgmq.json`, ran fixed-rate paired A/A controls for all nine benchmarks, and proved the deliberately slowed read/ack arm is detected as a regression. Send throughput and produce-consume A/A pass; the other seven remain honestly inconclusive on tail-latency interval width despite passing individual runs and stable throughput.
-- [ ] Re-run the seven locally noisy A/A controls on a quiet cell and confirm verdict `pass` without weakening the checked-in tail-latency policy.
-
-Milestone 4 — pgmq-hs soak and telemetry arms.
-
-- [x] (2026-09-22 02:28Z) Added functional `pgmq.trace.propagate` and `otel.semconv-stability-opt-in` knobs; live correctness runs pass under all four tracing arms, SQL metrics collection, all semantic-convention modes, and W3C context propagation.
-- [x] (2026-09-22 05:03Z) Implemented `pgmq/queue/soak/steady-state` and `pgmq/queue/soak/steady-state-reduced` from one constructor, made their arrival model explicitly open-constant, and added an independently judged `series/pgmq-queue-depth.csv` sampler. Short proof run `01a0c77e-4338-7331-b80c-5110827f77b8` wrote the series, kept depth at zero after first-delivery nack churn, and drained without workload failures; its leak verdict is intentionally inconclusive because the overridden steady window was five seconds.
-- [ ] Obtain a `stable` leak verdict from the full twenty-minute reduced profile. Final tracing-off run `01a0c798-5508-7549-9b0e-2fc0754328e8` kept every non-heap probe stable but still measured 96.8 MB/hour of bounded-probe live-heap growth.
-- [x] (2026-09-22 02:28Z) Implemented and ran `interpreter-tracing-overhead` and `metrics-poll-overhead`. Metrics collection passed policy; tracing found `sdk-inmemory` above policy while `noop` and `sdk-otlp` passed.
-- [ ] Run the reduced soak with `telemetry.tracing=sdk-otlp` and confirm the leak verdict is still `stable`. Final run `01a0c798-5508-77db-9004-674089ca9310` exported every span without loss and kept the exporter queue bounded, but the common live-heap probe still grew at 78.3 MB/hour.
-- [x] (2026-09-22 02:28Z) Wrote ADR-12 through ADR-14 for database-clock leases, native SQL metrics collection, and limitation/known-defect classification; the 14-record bundle passes strict OKF validation.
-- [x] (2026-09-22 05:52Z) Updated the MasterPlan progress and this retrospective; the EP-8 registry row remains `In Progress` because concurrency, benchmark A/A, and stable-heap acceptance are unresolved.
-- [ ] Audit every reproduced PGMQ known-defect scenario against the owning repository's current OKF reports and published contract. Start with disconnect classification (`mori://shinzui/pgmq-hs/okf/improvement-requests/concepts/IR-4`) and concurrent reconciliation (`mori://shinzui/pgmq-hs/okf/improvement-requests/concepts/IR-5`); decide whether the response blackhole (`mori://shinzui/pgmq-hs/okf/improvement-requests/concepts/IR-6`), mixed-case alias collision, partitioned notification storm and retention loss each break a promised behavior. File one reproducible OKF bug report per distinct confirmed wrong behavior, or document why the existing request or plan remains the right artifact. Record every filed canonical bug concept URI in a local `docs/findings/` record, this plan and the MasterPlan's issue register.
-
+- [x] (2026-09-22) Correctness baseline: the PGMQ bundle and roles are registered; all eighteen correctness scenarios ran on PostgreSQL 17 and 18 with persisted verdicts and scoped known-defect outcomes.
+- [x] (2026-09-22) Concurrency and crash baseline: all twenty identifiers ran on both PostgreSQL versions. The full random-kill acceptance handled 300,000 sends and 120 kills per version without loss; fault probes isolate known classifier and reconciliation defects.
+- [x] (2026-09-22) Measurement baseline: nine benchmarks, comparison policy, telemetry arms, and reduced/full soak constructors produce artifacts. Two A/A controls passed; seven local A/A results were inconclusive under the checked-in tail policy.
+- [ ] Complete wider outage and blackhole semantics, rerun the seven noisy A/A controls on a quiet cell, and audit reproduced upstream findings against published contracts.
+- [ ] Obtain stable reduced-soak leak verdicts with tracing off and OTLP. Existing twenty-minute runs kept non-heap probes stable but measured post-GC heap growth; see Outcomes & Retrospective.
 
 ## Surprises & Discoveries
 

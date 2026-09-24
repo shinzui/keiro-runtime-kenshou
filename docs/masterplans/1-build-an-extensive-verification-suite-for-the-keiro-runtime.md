@@ -76,6 +76,11 @@ provenance:
       at: 2026-09-24T16:33:52Z
       mode: "update"
       note: "Recorded EP-14 implementation progress and completed timer milestone."
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-24T22:52:53Z
+      mode: "update"
+      note: "Consolidated child status and removed duplicated task checklists"
 ---
 
 # Build an extensive verification suite for the keiro runtime
@@ -123,11 +128,11 @@ There is no local ADR corpus yet: `docs/adr/` does not exist in this repository,
 | 6 | Build the diagnostics toolkit for memory leaks and concurrency stalls | docs/plans/6-build-the-diagnostics-toolkit-for-memory-leaks-and-concurrency-stalls.md | EP-2, EP-4 | EP-5 | Complete |
 | 7 | Add telemetry arms and measure observability overhead | docs/plans/7-add-telemetry-arms-and-measure-observability-overhead.md | EP-2, EP-4 | EP-6 | Complete |
 | 8 | Cover pgmq-hs in isolation | docs/plans/8-cover-pgmq-hs-in-isolation.md | EP-2, EP-4, EP-5, EP-6, EP-7 | EP-3 | In Progress |
-| 9 | Cover kiroku in isolation | docs/plans/9-cover-kiroku-in-isolation.md | EP-2, EP-4, EP-5, EP-6, EP-7 | EP-3 | Not Started |
-| 10 | Cover shibuya core and its PGMQ and kiroku adapters | docs/plans/10-cover-shibuya-core-and-its-pgmq-and-kiroku-adapters.md | EP-2, EP-4, EP-5, EP-6, EP-7 | EP-3, EP-8, EP-9 | Not Started |
+| 9 | Cover kiroku in isolation | docs/plans/9-cover-kiroku-in-isolation.md | EP-2, EP-4, EP-5, EP-6, EP-7 | EP-3 | In Progress |
+| 10 | Cover shibuya core and its PGMQ and kiroku adapters | docs/plans/10-cover-shibuya-core-and-its-pgmq-and-kiroku-adapters.md | EP-2, EP-4, EP-5, EP-6, EP-7 | EP-3, EP-8, EP-9 | In Progress |
 | 11 | Cover the Kafka transport edge with a disposable broker | docs/plans/11-cover-the-kafka-transport-edge-with-a-disposable-broker.md | EP-2, EP-4, EP-5, EP-6, EP-7 | EP-3, EP-10 | Not Started |
-| 12 | Cover the keiro command processor, process managers and routers | docs/plans/12-cover-the-keiro-command-processor-process-managers-and-routers.md | EP-2, EP-4, EP-5, EP-6, EP-7 | EP-3, EP-9 | Not Started |
-| 13 | Cover the keiro outbox, inbox and job queue | docs/plans/13-cover-the-keiro-outbox-inbox-and-job-queue.md | EP-12 | EP-3, EP-8, EP-10 | Not Started |
+| 12 | Cover the keiro command processor, process managers and routers | docs/plans/12-cover-the-keiro-command-processor-process-managers-and-routers.md | EP-2, EP-4, EP-5, EP-6, EP-7 | EP-3, EP-9 | In Progress |
+| 13 | Cover the keiro outbox, inbox and job queue | docs/plans/13-cover-the-keiro-outbox-inbox-and-job-queue.md | EP-12 | EP-3, EP-8, EP-10 | In Progress |
 | 14 | Cover keiro durable execution, timers and sharded subscriptions | docs/plans/14-cover-keiro-durable-execution-timers-and-sharded-subscriptions.md | EP-12 | EP-3, EP-9 | In Progress |
 | 15 | Verify the assembled runtime end to end and under soak | docs/plans/15-verify-the-assembled-runtime-end-to-end-and-under-soak.md | EP-11, EP-12 | EP-3, EP-13, EP-14, EP-17 | Not Started |
 | 16 | Provide leased verification cells in load-testing-infra | docs/plans/16-provide-leased-verification-cells-in-load-testing-infra.md | None | EP-2 | Not Started |
@@ -238,95 +243,9 @@ The following cross-plan decisions should become ADRs in `docs/adr/` when the ow
 
 ## Progress
 
-Track milestone-level progress across all child plans. Each entry names the child plan and the milestone.
+The Exec-Plan Registry above is the source of truth for child status. Seven foundation plans (EP-1–7) are complete. Six layer plans (EP-8–10 and EP-12–14) are in progress; EP-11 and EP-15–19 have not started. Each child Progress section now records only major delivered outcomes and remaining acceptance work. Do not count checkboxes across children as a percentage of initiative completion.
 
-- [x] EP-1: Scaffold the repository, development shell and formatting hooks
-- [x] EP-1: Pin the released and head cohorts, print the resolved cohort identity, and establish Git-aware CLI release identity
-- [x] EP-1: Prove the whole cohort links and migrates in one build
-- [x] EP-1: Adopt the ADR bundle, update mori.dhall and the README, add CI
-- [x] EP-2: Scenario model, layer bundles, registry, `kenshou list`, the shared CLI discovery surface, and the Settei configuration seam
-- [x] EP-2: Dimensions, knobs and the run specification
-- [x] EP-2: Environments, the composed migration plan and worker roles
-- [x] EP-2: The runner, the run directory, the manifest and exit codes
-- [x] EP-2: Published JSON Schemas, golden fixtures and the self-test scenarios
-- [x] EP-3: The component graph of the runtime
-- [x] EP-3: Change detection from cohort diffs, named components and repository paths
-- [x] EP-3: Matrix expansion, tier budgets and `kenshou plan`
-- [x] EP-3: Named suites and resumable `kenshou execute`
-- [x] EP-4: Clocks, the latency recorder and warm-up exclusion
-- [x] EP-4: Closed-loop and open-loop load generators
-- [x] EP-4: Runtime, process and PostgreSQL samplers
-- [x] EP-4: Summaries and paired comparison with verdicts
-- [x] EP-4: Health gates that separate infrastructure trouble from regressions
-- [x] EP-5: The bounded ledger and the verdict document
-- [x] EP-5: The invariant checker library
-- [x] EP-5: Process control for worker roles
-- [x] EP-5: PostgreSQL, network and wake-up fault injectors
-- [x] EP-5: Model-based testing support with replayable seeds
-- [x] EP-6: The leak verdict over sampled series
-- [x] EP-6: The stall watchdog with thread dumps and lock graphs
-- [x] EP-6: Profiling build variants and bounded event logs
-- [x] EP-6: `kenshou diagnose` recipes and the diagnosis guide
-- [x] EP-6: Seeded leak and deadlock self-tests that prove the detectors fire
-- [x] EP-7: Tracing arms
-- [x] EP-7: Metrics arms and the harness scraper
-- [x] EP-7: The paired overhead protocol and `kenshou overhead`
-- [x] EP-7: Detectors for telemetry-induced problems
-- [x] (2026-09-22 04:09Z) EP-8: pgmq-hs correctness scenarios
-- [ ] EP-8: pgmq-hs concurrency and crash scenarios
-- [ ] EP-8: pgmq-hs benchmarks
-- [ ] EP-8: pgmq-hs soak and telemetry arms
-- [ ] EP-9: kiroku correctness scenarios
-- [ ] EP-9: kiroku concurrency, crash and known-defect scenarios
-- [ ] EP-8: Audit reproduced pgmq-hs findings against published behavior and existing reports; file missing reproducible OKF bugs and record each canonical concept URI locally.
-- [ ] EP-9: Diagnose the blocking Kiroku network-partition miss and audit the five reproduced known defects; file missing owner-repository bug reports with local concept URI links.
-- [ ] EP-10: Audit historical and current Shibuya findings across core, metrics and adapters; file missing owner-repository bug reports with local concept URI links.
-- [ ] EP-12: Check the two concurrently filed Keiro bug reports and their local finding links for completion without recreating them.
-- [ ] EP-9: kiroku benchmarks lifted from kiroku-bench
-- [ ] EP-9: kiroku soak and telemetry arms
-- [ ] EP-10: shibuya core lifecycle, ordering, batching and metrics-truthfulness scenarios
-- [ ] EP-10: PGMQ adapter scenarios
-- [ ] EP-10: kiroku adapter scenarios
-- [ ] EP-10: shibuya benchmarks, soak and telemetry arms
-- [ ] EP-11: The disposable broker fixture
-- [ ] EP-11: Kafka adapter correctness and rebalance scenarios, with the producer path and keiro's record conversions
-- [ ] EP-11: Kafka crash, outage and model-based scenarios
-- [ ] EP-11: Kafka benchmarks, soak and telemetry arms
-- [ ] EP-12: The keiro fixture domain
-- [ ] EP-12: Command processor scenarios with snapshots and projections
-- [ ] EP-12: Process manager scenarios
-- [ ] EP-12: Router scenarios
-- [ ] EP-12: Write-side benchmarks, soak and telemetry arms
-- [ ] EP-13: Outbox scenarios
-- [ ] EP-13: Inbox scenarios
-- [ ] EP-13: Job queue scenarios
-- [ ] EP-13: Messaging benchmarks, soak and telemetry arms
-- [ ] EP-14: Durable workflow scenarios
-- [x] EP-14: Timer scenarios — six registered probes passed locally in both PostgreSQL durability modes, including process claims, real kills, slow duplicate fire, and foreground resume tokens.
-- [ ] EP-14: Sharded subscription scenarios
-- [ ] EP-14: Durable-execution benchmarks, soak and telemetry arms
-- [ ] EP-15: The two-context reference system
-- [ ] EP-15: End-to-end correctness invariants
-- [ ] EP-15: The whole-runtime failure matrix
-- [ ] EP-15: Gated soaks of one, four and twenty-four hours
-- [ ] EP-15: End-to-end benchmarks and whole-system telemetry overhead
-- [ ] EP-16: A parameterised, multi-instance cell stack
-- [ ] EP-16: The generic cell agent and run-time payload delivery
-- [ ] EP-16: Leases, deterministic reset and health gates
-- [ ] EP-16: The immutable results bucket and artifact manifest
-- [ ] EP-16: Broker and collector roles, with the disposable lane still working
-- [ ] EP-17: The content-addressed kenshou payload
-- [ ] EP-17: `kenshou cell` lease, submit, watch and fetch
-- [ ] EP-17: Paired comparisons inside one lease
-- [ ] EP-17: Proof that one correctness scenario passes identically locally and on a cell
-- [ ] EP-18: The bundle, the local profile and the first computation definitions
-- [ ] EP-18: `kenshou record` and the digest and revision check
-- [ ] EP-18: `kenshou attest` and the verified trail
-- [ ] EP-18: `kenshou history`, validation gates and the seeded corpus
-- [ ] EP-19: The improvement request and the profile with its fixtures
-- [ ] EP-19: Generated documentation, the amended ADR and the release
-- [ ] EP-19: Repointing the bundle at the published profile
-
+The current integration priorities are: close EP-8's leak and comparison gates; diagnose EP-9's network-partition miss; complete Shibuya's core and adapter coverage in EP-10; finish the remaining Keiro layer acceptance in EP-12–14; and deliver EP-11's broker before EP-15's assembled-runtime work. EP-17 depends on EP-16's cell protocol, and EP-19 depends on EP-18's evidence bundle. EP-13's full and reduced soaks are deferred under the current work instruction; its non-soak baseline and remaining work are summarized in that child plan.
 
 ## Surprises & Discoveries
 

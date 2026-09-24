@@ -22,6 +22,11 @@ provenance:
       at: 2026-09-21T13:23:15Z
       mode: "implement"
       note: "Implemented EP-3 from prerequisite validation through the change-aware planner and resumable executor."
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-24T22:53:06Z
+      mode: "update"
+      note: "Consolidated Progress into delivered outcomes and remaining acceptance"
 ---
 
 # Plan and select runs from what changed
@@ -48,39 +53,7 @@ The first prints the changed component, every dependent component with the depen
 
 ## Progress
 
-Milestone 1 — The component graph of the runtime
-
-- [x] (2026-09-21T13:22:51Z) Confirm the prerequisites from `docs/plans/1-…` and `docs/plans/2-…` (build, `kenshou list`, self-test scenarios, `docs/adr/profile.dhall`) and record the real EP-2 type and function names in Surprises & Discoveries.
-- [x] (2026-09-21T13:35:10Z) Add `Kenshou.Plan.Selector` (selector grammar, parser, matcher) with unit tests.
-- [x] (2026-09-21T13:35:10Z) Add `Kenshou.Plan.Catalog` (`ScenarioInfo`, projection from `Scenario`, decoder for `kenshou list --json`) and the fixture catalog `kenshou-core/test/fixtures/plan/catalog-planned.json`.
-- [x] (2026-09-21T13:35:10Z) Write `kenshou-core/data/components.json` and `schemas/component-graph.v1.schema.json`; embed the file in `Kenshou.Plan.Components`.
-- [x] (2026-09-21T13:35:10Z) Implement graph validation (unknown references, acyclicity, duplicate packages) and the dependents closure with shortest paths; unit tests including the two acceptance selections.
-- [x] (2026-09-21T13:35:10Z) Implement `Kenshou.Plan.Components.Check`: drift check against `dist-newstyle/cache/plan.json` and lint against a catalog.
-- [x] (2026-09-21T13:35:10Z) Add `kenshou plan --graph-show` and `kenshou plan --graph-check`; reconcile the `kenshou-harness` edges with what the check reports.
-
-Milestone 2 — Change detection from cohort diffs, named components and repository paths
-
-- [x] (2026-09-21T13:49:23Z) Add `Kenshou.Plan.Change` (change records, union, selection with reasons).
-- [x] (2026-09-21T13:49:23Z) Add `Kenshou.Plan.Change.Cohort` (normalise two `kenshou.cohort/v1` descriptors to package maps and diff them).
-- [x] (2026-09-21T13:49:23Z) Add `Kenshou.Plan.Change.Git` (`--since` path mapping including the automatic cohort-file diff, and `--upstream-diff`).
-- [x] (2026-09-21T13:49:23Z) Wire `--changed`, `--cohort-from/--cohort-to`, `--since`, `--upstream-diff`, `--all`, `--select`, `--exclude`, `--catalog`, `--graph` and `--explain` into `kenshou plan`.
-- [x] (2026-09-21T13:49:23Z) Unit tests with a temporary git repository and descriptor fixtures; the five acceptance selections pass.
-
-Milestone 3 — Matrix expansion, tier budgets and `kenshou plan`
-
-- [x] (2026-09-21T14:09:19Z) Add `Kenshou.Plan.Policy` and `Kenshou.Plan.Matrix` (four dimension policies, two knob policies, pinned values, benchmark durability rule, pairwise generator) with property tests.
-- [x] (2026-09-21T14:09:19Z) Add `Kenshou.Plan.RunPlan` (document types, ordering, trials, seeds, estimates, budget, skipped list) and `schemas/run-plan.v1.schema.json` with a golden fixture.
-- [x] (2026-09-21T14:09:19Z) Make `kenshou plan` emit `kenshou.run-plan/v1` to `--out` or standard output; validate every generated run specification with EP-2's validator.
-- [x] (2026-09-21T14:09:19Z) Record the ADR for change-based selection.
-
-Milestone 4 — Named suites and resumable `kenshou execute`
-
-- [x] (2026-09-21T14:33:12Z) Add `Kenshou.Plan.Suite`, `schemas/suite.v1.schema.json` and the five files in `suites/`; unit test that every checked-in suite parses and plans.
-- [x] (2026-09-21T14:33:12Z) Add `Kenshou.Plan.Summary` and `Kenshou.Plan.Execute` (child process per run, atomic summary, lock file, `--resume`, `--fail-fast`, `--environment`, opt-in timeout) and `schemas/plan-summary.v1.schema.json`.
-- [x] (2026-09-21T14:33:12Z) Add `kenshou execute`; EP-2 had already delivered `kenshou run --run-id`, so no kernel CLI change was necessary.
-- [x] (2026-09-21T14:33:12Z) End-to-end check: execute passing and failing plans, interrupt a sleeping self-test, resume it under a fresh run identifier, and observe the required exit codes and preserved attempt history.
-- [x] (2026-09-21T14:33:12Z) Add `docs/planning.md` (user guide: inputs, policies, suites, reading a plan), the embedded `planning` help topic, and the ADR distillation pass.
-
+- [x] (2026-09-21) Planning and execution loop complete: the component graph, change selection, run-plan expansion, named suites, and resumable execution have validated CLI and fixture coverage. See Outcomes & Retrospective for evidence.
 
 ## Surprises & Discoveries
 

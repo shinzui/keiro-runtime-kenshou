@@ -11,6 +11,12 @@ provenance:
     model: "claude-fable-5-1"
     harness: "claude-code"
     at: 2026-09-20T17:15:36Z
+  revisions:
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-24T22:53:09Z
+      mode: "update"
+      note: "Consolidated Progress into delivered outcomes and remaining acceptance"
 ---
 
 # Publish the verification evidence profile in okf-profiles
@@ -33,42 +39,7 @@ To see it working at the end: in `/Users/shinzui/Keikaku/bokuno/okf-profiles`, `
 
 ## Progress
 
-Milestone 1 — The improvement request and the profile with its fixtures (in `/Users/shinzui/Keikaku/bokuno/okf-profiles`)
-
-- [ ] Confirm the hard dependency: `docs/plans/18-…` is complete, the corpus under `docs/verification/` exists and all its gates are green.
-- [ ] Confirm the okf-profiles checkout is clean, on `master`, level with `origin/master`, and that `just check` is green before any edit.
-- [ ] Read the completed EP-18 plan, `docs/verification/profile.dhall` and the corpus; write the generalisation table (kept closed, opened, demoted) into this plan's Decision Log.
-- [ ] Allocate the next improvement-request handle with `okf id next` and file the request (expected IR-7) with index and log entries; validate the request bundle; commit.
-- [ ] Author `profiles/assurance/verification-evidence.dhall` with its header rationale; export it from `profiles/assurance/package.dhall`.
-- [ ] Prove the profile loads (`dhall type` and `okf profile show --registry ./package.dhall assurance.verificationEvidence`).
-- [ ] Build the acceptance bundle `fixtures/verification-evidence/` from the scrubbed real corpus.
-- [ ] Build `fixtures/verification-evidence-invalid/<case>/`, one case per load-bearing rule.
-- [ ] Write `scripts/test-verification-evidence-profile.sh` with diagnostic assertions.
-- [ ] Run the two ADR-9 checks (exactly one advisory per case; every rule swept for load-bearingness) and record the sweep result here.
-- [ ] Validate this repository's real corpus, unchanged, against the working-tree profile.
-- [ ] `just check` green; commit the profile, fixtures and script.
-
-Milestone 2 — Generated documentation, the amended ADR and the release (in `/Users/shinzui/Keikaku/bokuno/okf-profiles`)
-
-- [ ] Add the export to the `profiles=(…)` array in `scripts/test-profile-docs.sh`; run `just docs`; confirm only `docs/profiles/verification-evidence/` is new.
-- [ ] README: layout tree, script table row, catalog row, the paragraph about profiles with no `status`; CHANGELOG `[Unreleased]` entry.
-- [ ] Amend ADR-6 in place; allocate and write the new ADR (expected ADR-15); update `docs/adr/index.md` and `docs/adr/log.md`; move the improvement request to `in-progress`.
-- [ ] `just check` green; commit the documentation and decisions.
-- [ ] Prepare the release chores on the working tree (version everywhere, new package hash, `mori.dhall` profile entry, CHANGELOG section); `just check` green; commit.
-- [ ] STOP. Show the owner the two commits, the version and the hash, and obtain explicit confirmation before tagging or pushing.
-- [ ] After confirmation: annotated tag, push `master` and the tag, verify the remote tag peels to the release commit and the remote semantic hash equals the local one.
-- [ ] Complete the improvement request (`status: completed`, `completedAt`, `resolution`), commit, push (covered by the same confirmation).
-
-Milestone 3 — Repointing the bundle at the published profile (in this repository)
-
-- [ ] Replace `docs/verification/profile.dhall` with the pinned import (plus the narrowing overlay if Milestone 1 opened any vocabulary); run `dhall freeze`.
-- [ ] Switch the `verification` bundle in `mori.dhall` to `Schema.ProfileBinding.Published` with the version and pin.
-- [ ] Re-run every evidence gate; prove no recorded run or attestation changed; prove a deliberately broken scratch copy is still rejected.
-- [ ] Update the ADR that EP-18 created, and its log; validate `docs/adr`.
-- [ ] Refresh the local Mori registry for both repositories and check the pin verdict.
-- [ ] Update the MasterPlan's Progress and Exec-Plan Registry; commit with this repository's trailers.
-- [ ] ADR distillation pass and Outcomes & Retrospective.
-
+- [ ] Publish the verification evidence profile with fixtures and generated documentation, amend its ADR, release it, and repoint the evidence bundle; verify the publication acceptance in Validation and Acceptance.
 
 ## Surprises & Discoveries
 

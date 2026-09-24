@@ -27,6 +27,11 @@ provenance:
       at: 2026-09-21T23:50:00Z
       mode: "implement"
       note: "Completed the overhead protocol, telemetry-induced problem detectors, acceptance runs, and durable documentation."
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-24T22:53:07Z
+      mode: "update"
+      note: "Consolidated Progress into delivered outcomes and remaining acceptance"
 ---
 
 # Add telemetry arms and measure observability overhead
@@ -54,45 +59,7 @@ Because latency and throughput are recorded in-process by the measurement toolki
 
 ## Progress
 
-Milestone 1 — Tracing arms
-
-- [x] (2026-09-21 20:55Z) Verified the completed kernel and measurement APIs and recorded the concrete extension names below.
-- [x] (2026-09-21 20:55Z) Confirmed the OpenTelemetry release against Hackage and upstream tags; added the missing `hs-opentelemetry-exporter-prometheus` and `hs-opentelemetry-otlp` 1.0.0.0 pins to both cohorts.
-- [x] (2026-09-21 21:00Z) Created the `kenshou-telemetry` package skeleton, test suite, Cabal file, and manual `otlp-grpc` flag.
-- [x] (2026-09-21 21:00Z) Implemented `Kenshou.Telemetry.Spec` with the shared knobs, resolved arm specification, cross-knob validation, and explicit gRPC feature rejection.
-- [x] (2026-09-21 21:38Z) Implemented `Kenshou.Telemetry.Tracing`, `.Tracing.Probe` and `.Tracing.Pipeline`, including bounded retention and queue high-water accounting.
-- [x] (2026-09-21 21:38Z) Implemented `Kenshou.Telemetry.Sink` and registered the worker role `selftest/telemetry-otlp-sink` under the kernel's required layer-qualified role naming contract.
-- [x] (2026-09-21 21:38Z) Implemented `Kenshou.Telemetry.withTelemetry` for the four tracing arms, with timed flush and shutdown and the built-in sink isolated in a worker process.
-- [x] (2026-09-21 21:38Z) Implemented the synthetic service and `selftest/telemetry/benchmark/arms-on-synthetic-service` (tracing part); registered the self-test bundle.
-- [x] (2026-09-21 21:38Z) Added unit coverage for arms, propagation, probe bounds, exact failure accounting, non-blocking queue saturation, and plain/gzip OTLP; ran the scenario successfully under all four tracing arms.
-
-Milestone 2 — Metrics arms and the harness scraper
-
-- [x] (2026-09-21 22:28Z) Implemented `Kenshou.Telemetry.Metrics` with explicit providers, Prometheus exposition, final collection, and the periodic OTLP reader.
-- [x] (2026-09-21 22:28Z) Implemented `Kenshou.Telemetry.Endpoint` with the endpoint contract, free-port reservation, and readiness polling.
-- [x] (2026-09-21 22:28Z) Implemented the fixed-schedule HTTP scraper, WebSocket subscribers, slot-leak probe, and the isolated `selftest/telemetry-scraper` worker role.
-- [x] (2026-09-21 22:28Z) Wrote line-flushed HTTP and WebSocket series and per-endpoint latency, body-size, failure, and skipped-tick summaries.
-- [x] (2026-09-21 22:28Z) Extended the synthetic service and exercised off, collect, serve, serve-scraped, and periodic-OTLP configurations.
-- [x] (2026-09-21 22:28Z) Wrote `docs/guides/wiring-telemetry-arms.md`; compiled its Kiroku recipe against the released cohort in a disposable scratch package.
-
-Milestone 3 — The paired overhead protocol and `kenshou overhead`
-
-- [x] (2026-09-21 23:50Z) Implemented `Kenshou.Telemetry.Overhead` (`planOverhead`, `executeOverhead`, `analyseOverhead`) and `.Overhead.Policy` with fresh child processes, atomic state, retries, replacement blocks, and leak-hook aggregation.
-- [x] (2026-09-21 23:50Z) Added the overhead policy and report schemas plus a minimal golden report; policy and real reports validate.
-- [x] (2026-09-21 23:50Z) Added the Execution-group `overhead` subcommand, JSON and human output, exit codes, `--resume`, and `--analyse-only`.
-- [x] (2026-09-21 23:50Z) Added the explicit comparison control axis and permitted only declared telemetry dimensions to vary.
-- [x] (2026-09-21 23:50Z) Completed the 12-run headline, A/A control, forced-regression, invalid-input, interruption/resume, and schema acceptance cases.
-
-Milestone 4 — Detectors for telemetry-induced problems
-
-- [x] (2026-09-21 23:50Z) Implemented `Kenshou.Telemetry.Compose` (`composeHandlers`, `timedHandler`, `slowHandler`, `asyncHandler`).
-- [x] (2026-09-21 23:50Z) Implemented `Kenshou.Telemetry.Continuity` with trace continuity and context-isolation checks.
-- [x] (2026-09-21 23:50Z) Implemented all planned findings and `series/otel-pipeline.csv`; telemetry-degraded arms now make overhead results inconclusive.
-- [x] (2026-09-21 23:50Z) Implemented and passed the trace-continuity and slow-exporter/back-pressure self-tests with injected-defect non-vacuity.
-- [x] (2026-09-21 23:50Z) Wired the completed diagnostics toolkit's leak analyser once per arm on the longest run.
-- [x] (2026-09-21 23:50Z) Amended ADR-7 with the old GCP constraint, isolated-helper rule, verdict independence, and the canonical Kiroku controlled-evidence reference; added the OKF log entry.
-- [x] (2026-09-21 23:50Z) Distilled implementation decisions and marked EP-7 complete in the MasterPlan.
-
+- [x] (2026-09-21) Telemetry toolkit complete: tracing and metrics arms, scraping, overhead comparisons, and pipeline-health detectors run through the CLI. See Outcomes & Retrospective for arm evidence and limits.
 
 ## Surprises & Discoveries
 

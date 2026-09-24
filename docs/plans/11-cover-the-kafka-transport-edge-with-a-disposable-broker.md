@@ -11,6 +11,12 @@ provenance:
     model: "claude-fable-5-1"
     harness: "claude-code"
     at: 2026-09-20T17:15:35Z
+  revisions:
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-24T22:53:08Z
+      mode: "update"
+      note: "Consolidated Progress into delivered outcomes and remaining acceptance"
 ---
 
 # Cover the Kafka transport edge with a disposable broker
@@ -36,55 +42,7 @@ cabal run kenshou -- run kafka/adapter/concurrency/sigkill-redelivery-window --o
 
 ## Progress
 
-Milestone 1 — The disposable broker fixture
-
-- [ ] Confirm the hard dependencies are complete and the development shell links librdkafka (checks in Concrete Steps).
-- [ ] Spike: start Apache Kafka 4.x in KRaft mode by hand from the development shell; record the working `server.properties`, the `kafka-storage.sh format` form, the start-up time, and that `rpk` can create, describe and delete against it.
-- [ ] Add `pkgs.apacheKafka` and `pkgs.redpanda-client` to the development shell through `flake.module.nix`.
-- [ ] Create the `kenshou-kafka` package with its `kenshou-kafka-test` suite.
-- [ ] `Kenshou.Env.Kafka.Spec` and `Kenshou.Env.Kafka.Naming` with unit tests (run-spec fragment decoding, refusal of the machine-global address, prefix shape).
-- [ ] `Kenshou.Env.Kafka.ApacheKafka`: port allocation, properties rendering, format, start, readiness, kill, stop, start-again, log capture, stale-broker sweep.
-- [ ] Proxy lanes through the correctness toolkit's TCP proxy (one broker listener per lane).
-- [ ] `Kenshou.Env.Kafka.Admin` over `rpk`: topics with N partitions, run-scoped deletion, committed offsets, lag, group membership; golden tests for the JSON parsing.
-- [ ] `Kenshou.Env.Kafka.External` (brokers and control hooks from the run specification) and `Kenshou.Env.Kafka.RedpandaContainer` (opt-in).
-- [ ] `schemas/kenshou.kafka-env.v1.json` and the `kafka` summary section with backend, broker version and broker properties.
-- [ ] Scenarios `kafka/broker/correctness/fixture-roundtrip` and `kafka/broker/concurrency/kill-and-restart`; `Kenshou.Suite.Kafka.bundle`; the three-line registration in `kenshou-cli`; first version of `docs/layers/kafka.md`; the fixture ADR.
-
-Milestone 2 — Kafka adapter correctness and rebalance scenarios (with the producer path and keiro's record conversions)
-
-- [ ] Worker roles `kafka-adapter-consumer`, `kafka-raw-consumer`, `kafka-producer`; `HandlerPolicy`; ledger fact encoders; `kafka.prop.*` pass-through.
-- [ ] `kafka/adapter/correctness/ack-ok-commits-and-resumes`.
-- [ ] `kafka/adapter/correctness/retry-redelivers-and-never-commits-past`.
-- [ ] `kafka/adapter/correctness/dead-letter-drops-record`.
-- [ ] `kafka/adapter/correctness/halt-leaves-offset-uncommitted`.
-- [ ] `kafka/adapter/concurrency/non-serial-finalization-commits-past-halt` (known defect).
-- [ ] `kafka/adapter/correctness/multi-topic-partition-key` (known defect).
-- [ ] `kafka/adapter/concurrency/group-rebalance-with-inflight`.
-- [ ] `kafka/adapter/concurrency/stale-barrier-after-partition-roundtrip`.
-- [ ] `kafka/producer/correctness/acked-offsets-and-batch-loop`, `kafka/producer/concurrency/batch-loop-reports-enqueue-not-delivery` (known defect), `kafka/producer/correctness/transactions-commit-and-abort`.
-- [ ] `kafka/keiro-records/correctness/roundtrip-through-broker`.
-
-Milestone 3 — Kafka crash, outage and model-based scenarios
-
-- [ ] `kafka/adapter/concurrency/sigkill-redelivery-window`.
-- [ ] `kafka/adapter/concurrency/auto-offset-store-loses-on-crash` (known defect).
-- [ ] `kafka/adapter/concurrency/halt-holds-assignment-past-max-poll-interval` (known defect).
-- [ ] `kafka/consumer/concurrency/static-membership-restart-without-revoke`.
-- [ ] `kafka/consumer/concurrency/static-membership-fencing-is-observable` (known defect on the released cohort only).
-- [ ] `kafka/adapter/concurrency/broker-outage-and-reconnect`.
-- [ ] `kafka/adapter/concurrency/partitioned-consumer-becomes-zombie`.
-- [ ] Simulated `KafkaConsumer` interpreter, schedule generator and `kafka/adapter/correctness/ack-state-machine-model` (known defect), with the non-vacuity unit test against a reference ack handler.
-- [ ] `kafka/adapter/concurrency/barrier-overwrite-loses-record` and `kafka/adapter/concurrency/buffered-successors-run-before-retry` (known defects).
-
-Milestone 4 — Kafka benchmarks, soak and telemetry arms
-
-- [ ] `Kenshou.Suite.Kafka.Telemetry`: tracing and metrics arms for producer, consumer and shibuya runner.
-- [ ] `kafka/pipeline/benchmark/produce-consume-throughput`, `kafka/adapter/benchmark/poll-cap-latency`, `kafka/producer/benchmark/produce-modes`.
-- [ ] `kafka/telemetry/correctness/w3c-context-continuity` and `kafka/telemetry/correctness/context-leak-regression`.
-- [ ] One recorded `kenshou overhead` comparison for the layer.
-- [ ] `kafka/pipeline/soak/consumer-memory-and-fd-stability` and `kafka/consumer/soak/rebalance-churn-native-memory` (known defect on the released cohort only).
-- [ ] Finish `docs/layers/kafka.md`; ADR distillation pass; update the MasterPlan registry and progress.
-
+- [ ] Deliver the disposable broker, Kafka adapter correctness and rebalance coverage, real crash/outage/model scenarios, benchmarks, soaks, and telemetry arms; verify the acceptance commands in Validation and Acceptance.
 
 ## Surprises & Discoveries
 

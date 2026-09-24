@@ -27,6 +27,11 @@ provenance:
       at: 2026-09-24T02:42:47Z
       mode: "update"
       note: "Added owner-repository OKF bug-report audit and local canonical URI tracking."
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-24T22:53:08Z
+      mode: "update"
+      note: "Consolidated Progress into delivered outcomes and remaining acceptance"
 ---
 
 # Cover shibuya core and its PGMQ and kiroku adapters
@@ -45,55 +50,10 @@ After this plan a maintainer can, from this repository, run `kenshou list --laye
 
 ## Progress
 
-Milestone 1 — shibuya core lifecycle, ordering, batching and metrics-truthfulness scenarios (no database).
-
-- [x] (2026-09-23 13:38Z) Verify the hard dependencies are complete (kernel, measurement, correctness, diagnostics, telemetry) with the checks in Concrete Steps, and read their finished plans for exact signatures. `nix develop -c cabal build all`, the self-test list, `kill-and-restart-worker`, and `leaking-worker` all passed.
-- [x] (2026-09-23 13:42Z) Create `kenshou-shibuya/kenshou-shibuya.cabal` with the library and the `kenshou-shibuya-test` suite; `nix develop -c cabal build kenshou-shibuya kenshou` succeeds on the released cohort.
-- [x] (2026-09-23 13:42Z) Implement the `Kenshou.Suite.Shibuya.Cohort` capability probe and review references; linked-core unit checks pass on the released cohort.
-- [x] (2026-09-23 13:48Z) Cross-check the capability probe against the resolved head cohort and run the unit checks there; the pinned head build and four package tests pass.
-- [x] (2026-09-23 13:56Z) Finish `Kenshou.Suite.Shibuya.Knobs`: common specifications and all five parsers are present, with example and generated round-trip tests.
-- [ ] Complete `Kenshou.Suite.Shibuya.Matrix`: thirteen boundaries and five cases enumerate sixty-five cells; the eight registered scenarios have tested tags, while the remaining scenario tags, justified exclusions, and complete sixty-five-cell coverage assertion remain.
-- [ ] Implement `Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter`, `.Handlers`, `.App`, `.RestartLoop` with unit tests. The synthetic broker covers lease expiry, retry redelivery, stale finalization, scripted finalizer faults, throwing or blocking shutdowns, and a one-shot source fault followed by adapter replacement. `RestartLoop` waits for `waitApp`, stops the old application, applies a bounded backoff, and rebuilds processors until its restart limit or stop request. `Handlers` provides scripted decisions and delays, a gate, per-delivery start/end facts, and active/high-water counts, including cancellation cleanup. Its seeded-delay convenience function, the telemetry/metrics app helper, and the broker's ledger writer remain (20 package tests pass).
-- [ ] Implement the `core-runner` scenarios (fifteen) and the `shibuya-core-worker` and `shibuya-gc-probe` worker roles. Nine scenarios exist: invalid configuration, duplicate processor IDs, idle-intake halt, finite-source conservation, nonpositive concurrency, explicit restart after source failure, a measured unfinalized-lease bound, concurrent adapter shutdown failure, and forced shutdown conservation. The other six and both roles remain.
-- [ ] Implement the `core-ordering` scenarios (four). The policy matrix checks all seven valid ordering/concurrency pairs with 16 uniform partition keys. The hot-key scenario checks per-key order, conservation and cold-key progress while reporting a paired P99 latency ratio. The model and worker-failure scenarios remain.
-- [ ] Implement the `core-batch` correctness and concurrency scenarios (two).
-- [ ] Implement the `metrics` scenarios (eight) including the free-port allocation for `startMetricsServer`.
-- [x] (2026-09-23 13:42Z) Register the initial `bundle` in `kenshou-cli`; `kenshou list --layer shibuya` displays the two implemented scenarios.
-- [ ] Expand the registered bundle to all twenty-nine Milestone 1 scenarios and their roles; eleven are registered now.
-- [x] (2026-09-23 17:16Z) Add the concurrent adapter shutdown failure scenario and its matrix tags. The package's 20 tests pass; the released run reproduces a nonblocking known defect, the pinned head run passes, and the active cohort is restored to released.
-- [x] (2026-09-23 17:24Z) Verify current Hackage and upstream releases, and add `cohort/shibuya-current.project` as an isolated release lane. All 20 Shibuya package tests pass with `shibuya-core` 0.10.0.0; the current `shibuya-metrics` 0.10.0.0, PGMQ adapter 0.16.1.0 and kiroku adapter 0.5.1.3 build in that lane.
-- [ ] Make every Shibuya scenario executable in the isolated current-release lane and run the cohort-sensitive scenarios there. The lane currently builds and tests the package and adapters but does not include the full `kenshou` CLI, whose other layer packages still resolve through the historical runtime cohort.
-- [x] (2026-09-23 17:31Z) Add forced shutdown conservation scenario and matrix tags. The 20 package tests pass and the historical released run `runs/01a0cf4f-7ea0-772f-9f32-1427dac03e93/run-result.json` passed, including restart finalization of all thirty messages.
-- [x] (2026-09-23 18:00Z) Add the hot-key head-of-line scenario and its knobs. Its released-cohort run `runs/01a0cf7d-1faf-7630-95e4-0ef2258071c6/run-result.json` passed with cold-key P99 at about 106 ms versus 78 ms in the control, a ratio of about 1.36.
-- [ ] Run every Milestone 1 scenario on the released cohort and on the head cohort; record the observed outcome of each cohort-sensitive scenario in Surprises & Discoveries.
-- [x] (2026-09-23 16:12Z) Re-run `nix develop -c cabal test kenshou-shibuya-test` after the ordering addition (20 examples, 0 failures) and `nix develop -c just cohort-check` on the restored released cohort; both passed and the working tree is clean.
-
-Milestone 2 — PGMQ adapter scenarios.
-
-- [ ] Implement `Kenshou.Suite.Shibuya.Fixture.Pgmq` (queue naming, producers, pools through the fault proxy, SQL oracles) with unit tests.
-- [ ] Implement worker roles `shibuya-pgmq-consumer` and `shibuya-pgmq-producer`.
-- [ ] Implement the PGMQ adapter correctness scenarios (three).
-- [ ] Implement the PGMQ adapter concurrency and crash scenarios (eight).
-- [ ] Run them with `pg.durability=durable` on `pg.version` 17 and 18 and record outcomes.
-
-Milestone 3 — kiroku adapter scenarios.
-
-- [ ] Implement `Kenshou.Suite.Shibuya.Fixture.Kiroku` (store, appenders, SQL oracles on `subscriptions` and `kiroku.dead_letters`) with unit tests.
-- [ ] Implement worker roles `shibuya-kiroku-consumer` and `shibuya-kiroku-appender`.
-- [ ] Implement the kiroku adapter correctness scenarios (three).
-- [ ] Implement the kiroku adapter concurrency and crash scenarios (six).
-- [ ] Run them with `pg.durability=durable` on `pg.version` 17 and 18 and record outcomes, including the measured replay window per subscription shape.
-
-Milestone 4 — shibuya benchmarks, soak and telemetry arms.
-
-- [ ] Implement the five benchmark scenarios and run three paired trials of each locally.
-- [ ] Implement the four soak pairs (short and full) and run each short variant to a leak verdict.
-- [ ] Implement the two trace-continuity scenarios and confirm every scenario honours `telemetry.tracing` and `telemetry.metrics`.
-- [ ] Run `kenshou overhead` on the two designated benchmarks and add the shibuya entries to `policies/telemetry-overhead.json`.
-- [ ] Write `docs/layers/shibuya.md` (scenario catalogue, knobs, what each proves, the boundary matrix, the cohort table).
-- [ ] Audit each reproduced Shibuya finding, including historical 0.9.0.3 lifecycle failures and defects still open on the current release, against upstream reviews, remediation plans and any existing bug reports. File or reuse one owner-repository OKF bug report per distinct confirmed broken provision claim; use an improvement request for behavior never promised. Record each report's canonical Mori concept URI in a local `docs/findings/` record, this plan, the MasterPlan's issue register and the matching cohort-scoped scenario reference. Keep unreproduced or unowned findings visible without inventing bug reports.
-- [ ] Create the ADRs named in Context and Orientation, validate the ADR bundle, and complete Outcomes & Retrospective.
-
+- [x] (2026-09-23) Core baseline: the Shibuya package, knobs, synthetic adapter, eleven registered scenarios, cohort capability probe, and twenty package tests run on the released cohort; focused current-release tests also pass.
+- [ ] Complete the core lifecycle, ordering, batching, metrics and boundary-matrix scenarios; run cohort-sensitive cases on released, head, and isolated current-release lanes.
+- [ ] Implement and verify the PGMQ and Kiroku adapter scenarios, including durable crash and recovery arms on PostgreSQL 17 and 18.
+- [ ] Deliver benchmarks, soaks, telemetry comparisons, layer guide, upstream finding audit, and ADR/outcome distillation.
 
 ## Surprises & Discoveries
 
