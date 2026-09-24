@@ -255,7 +255,7 @@ runFailureSkipsSuccessors context =
           hooks = Broker.PublishHook (const (pure ())) (const (pure ()))
           choose row = if row.event.messageId == "a2" then Broker.FailOnce else Broker.Succeed
           callback = Broker.publishScripted broker model choose hooks "publisher"
-          options = defaultPublishOptions {batchSize = 16, backoff = ConstantBackoff 0}
+          options = defaultPublishOptions {batchSize = 16, backoff = ConstantBackoff 60}
       summary <- runFixture (publishClaimedOutbox callback options Nothing) >>= either (fail . show) pure
       rows <- runFixture (listOutbox source) >>= either (fail . show) pure
       records <- Broker.readBroker broker
@@ -272,4 +272,37 @@ runFailureSkipsSuccessors context =
               ("broker-six-records", length records == 6),
               ("pass-summary", summary.published == 6 && summary.retried == 4)
             ]
-      recordCells context cells
+      let sourceA = sourceName context "per-source-a"
+          sourceB = sourceName context "per-source-b"
+          sourceStop = sourceName context "stop-line"
+          policyEntries prefix key = [(prefix <> suffix, Just key, index) | (suffix, index) <- zip ["1", "2", "3", "4", "5"] [1 :: Int ..]]
+          pivotCallback pivot = Broker.publishScripted broker model (\row -> if row.event.messageId == pivot then Broker.FailOnce else Broker.Succeed) hooks "publisher"
+          lookupState mapping messageId status attempts = case Map.lookup messageId mapping of
+            Just row -> row.status == status && row.attemptCount == attempts
+            Nothing -> False
+      enqueueInline fixture sourceA (policyEntries "ps-a" "a")
+      enqueueInline fixture sourceB (policyEntries "ps-b" "b")
+      perSourceSummary <- runFixture (publishClaimedOutbox (pivotCallback "ps-a2") options {orderingPolicy = PerSourceStream} Nothing) >>= either (fail . show) pure
+      perSourceA <- runFixture (listOutbox sourceA) >>= either (fail . show) pure
+      perSourceB <- runFixture (listOutbox sourceB) >>= either (fail . show) pure
+      let perSourceRows = Map.fromList [(row.event.messageId, row) | row <- perSourceA <> perSourceB]
+          perSourceHeld =
+            lookupState perSourceRows "ps-a1" OutboxSent 1
+              && lookupState perSourceRows "ps-a2" OutboxFailed 1
+              && all (\messageId -> lookupState perSourceRows messageId OutboxFailed 0) ["ps-a3", "ps-a4", "ps-a5"]
+              && all (\messageId -> lookupState perSourceRows messageId OutboxSent 1) ["ps-b1", "ps-b2", "ps-b3", "ps-b4", "ps-b5"]
+              && perSourceSummary.published == 6
+              && perSourceSummary.retried == 4
+      enqueueInline fixture sourceStop (policyEntries "sl-a" "a" <> policyEntries "sl-b" "b")
+      stopSummary <- runFixture (publishClaimedOutbox (pivotCallback "sl-a2") options {orderingPolicy = StopTheLine} Nothing) >>= either (fail . show) pure
+      stopRows <- runFixture (listOutbox sourceStop) >>= either (fail . show) pure
+      let stopById = Map.fromList [(row.event.messageId, row) | row <- stopRows]
+          pivotId = (.outboxId) <$> Map.lookup "sl-a2" stopById
+          stopHeld =
+            lookupState stopById "sl-a1" OutboxSent 1
+              && lookupState stopById "sl-a2" OutboxFailed 1
+              && all (\messageId -> lookupState stopById messageId OutboxFailed 0) ["sl-a3", "sl-a4", "sl-a5", "sl-b1", "sl-b2", "sl-b3", "sl-b4", "sl-b5"]
+              && stopSummary.published == 1
+              && stopSummary.retried == 9
+              && stopSummary.haltedOn == pivotId
+      recordCells context (cells <> [("per-source-isolation", perSourceHeld), ("stop-the-line-halts-on-pivot", stopHeld)])

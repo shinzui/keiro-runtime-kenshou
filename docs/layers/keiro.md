@@ -250,7 +250,11 @@ envelope. List the current scenarios with
 
 The correctness runs cover terminal `sent`, `rejected`, and `dead` states,
 ordered publication after a transient failure, skipped successor attempts,
-publisher callback errors, and stable producer identity. The crash scenario
+publisher callback errors, and stable producer identity.
+The failure-skip probe exercises per-key, per-source, and stop-the-line
+ordering, including the summary's halted pivot for stop-the-line.
+
+The crash scenario
 parks a publisher after the broker append, kills its process with `SIGKILL`,
 and checks that only maintenance reclaims the stranded rows. Its 2,000-row
 default passed with three kills on durable PostgreSQL. The run writes
