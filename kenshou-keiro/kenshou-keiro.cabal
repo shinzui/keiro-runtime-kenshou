@@ -69,6 +69,8 @@ library
     Kenshou.Suite.Keiro.ProcessManager.Bench
     Kenshou.Suite.Keiro.ProcessManager.Concurrency
     Kenshou.Suite.Keiro.ProcessManager.Correctness
+    Kenshou.Suite.Keiro.Queue
+    Kenshou.Suite.Keiro.Queue.Correctness
     Kenshou.Suite.Keiro.Router.Bench
     Kenshou.Suite.Keiro.Router.Concurrency
     Kenshou.Suite.Keiro.Router.Correctness
@@ -93,15 +95,19 @@ library
     keiki-codec-json,
     keiro,
     keiro-core,
+    keiro-pgmq,
     kenshou-check,
     kenshou-core,
     kenshou-diagnose,
     kenshou-measure,
     kenshou-telemetry,
     kiroku-store,
+    pgmq-core,
+    pgmq-effectful,
     random,
     shibuya-core,
     shibuya-kiroku-adapter,
+    shibuya-pgmq-adapter,
     stm,
     streamly,
     streamly-core,
