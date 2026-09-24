@@ -420,7 +420,10 @@ and checks that only maintenance reclaims the stranded rows. Its 2,000-row
 default passed with three kills on durable PostgreSQL. The run writes
 `no-loss.json`, `bounded-duplicates.json`, and
 `reclaimed-only-by-maintenance.json` with counts and killed process IDs. The
-four-process publisher scenario passed with 20,000 rows and 200 keys: each
+`outbox.crash-point=after-claim` arm parks before any broker append; its
+32-row durable run left no broker duplicates and recovered all rows through
+maintenance. The default after-append arm passed again after this role change.
+The four-process publisher scenario passed with 20,000 rows and 200 keys: each
 outbox row had one broker record and one consumed attempt, and first-record
 order held within each key. A strengthened 2,000-row run observed records from
 two publishers, with no loss or duplicate records. The inline enqueue ordering

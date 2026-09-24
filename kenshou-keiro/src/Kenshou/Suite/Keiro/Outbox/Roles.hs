@@ -21,17 +21,24 @@ roleName = either (error . Text.unpack) id . mkRoleName
 publisher :: RoleContext -> IO ()
 publisher context = case context.init.postgres of
   Nothing -> context.send (WrkError "outbox publisher requires PostgreSQL")
-  Just postgres -> case parseMaybe (withObject "publisher args" (\value -> (,,) <$> (value .:? "parkAfterAppend" .!= False) <*> (value .:? "loop" .!= False) <*> (value .:? "pauseMicros" .!= (0 :: Int)))) context.init.args of
+  Just postgres -> case parseMaybe (withObject "publisher args" (\value -> (,,,) <$> (value .:? "parkBeforeAppend" .!= False) <*> (value .:? "parkAfterAppend" .!= False) <*> (value .:? "loop" .!= False) <*> (value .:? "pauseMicros" .!= (0 :: Int)))) context.init.args of
     Nothing -> context.send (WrkError "invalid outbox publisher arguments")
-    Just (parkAfterAppend, loop, pauseMicros) -> do
+    Just (parkBeforeAppend, parkAfterAppend, loop, pauseMicros) -> do
       context.send WrkReady
       context.receive >>= \case
         Just CtlStart -> withFixtureEnv (defaultConnectionSettings postgres.connectionString) \fixture -> Broker.withTableBroker postgres.connectionString \broker -> do
           let KeiroRunner runFixture = fixture.runner
               model = Broker.BrokerModel 0 0 4
-              hooks = Broker.PublishHook (const (pure ())) \rows -> do
-                context.send (WrkCustom "broker-appended" (object ["rows" .= length rows]))
-                if parkAfterAppend then forever (threadDelay 1000000) else pure ()
+              hooks =
+                Broker.PublishHook
+                  ( \rows -> do
+                      context.send (WrkCustom "batch-claimed" (object ["rows" .= length rows]))
+                      if parkBeforeAppend then forever (threadDelay 1000000) else pure ()
+                  )
+                  ( \rows -> do
+                      context.send (WrkCustom "broker-appended" (object ["rows" .= length rows]))
+                      if parkAfterAppend then forever (threadDelay 1000000) else pure ()
+                  )
               callback = Broker.publishScripted broker model (const Broker.Succeed) hooks context.init.instanceName
               options = defaultPublishOptions {batchSize = 32, backoff = ConstantBackoff 0}
               drive published idleMicros = do

@@ -28,7 +28,7 @@ import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (parseScenarioId)
-import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobInt, mkKnobName)
+import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobInt, knobText, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Role (ControlMessage (..))
 import Kenshou.Core.Scenario (CohortScope (..), KnownDefect (..), Placement (..), Scenario (..), ScenarioReport, Tier (..), inconclusiveBecause)
@@ -171,13 +171,14 @@ crashBetweenPublishAndMark =
   Scenario
     { id = either (error . show) id (parseScenarioId "keiro/outbox/concurrency/crash-between-publish-and-mark"),
       revision = 1,
-      summary = "Kills a publisher after durable broker append and checks maintenance reclamation and bounded replay.",
+      summary = "Kills a publisher before or after broker append and checks maintenance reclamation and bounded replay.",
       tier = TierStandard,
       placement = PlaceEither,
       knobs =
         [ KnobSpec (knobName "outbox.rows") "Number of integration events" KnobInt (VInt 2000) (IntRange 32 20000) [],
-          KnobSpec (knobName "outbox.kills") "Publisher processes killed after broker append" KnobInt (VInt 3) (IntRange 1 8) [],
-          KnobSpec (knobName "outbox.key-cardinality") "Number of partition keys" KnobInt (VInt 20) (IntRange 1 200) []
+          KnobSpec (knobName "outbox.kills") "Number of publisher processes killed" KnobInt (VInt 3) (IntRange 1 8) [],
+          KnobSpec (knobName "outbox.key-cardinality") "Number of partition keys" KnobInt (VInt 20) (IntRange 1 200) [],
+          KnobSpec (knobName "outbox.crash-point") "Publisher interruption point" KnobText (VText "after-broker-append") (OneOf (VText "after-broker-append" :| [VText "after-claim"])) [VText "after-claim"]
         ],
       dimensions =
         DimensionSupport
@@ -204,6 +205,7 @@ runCrashBetweenPublishAndMark context =
             source = sourceName context "crash"
             rowCount = fromIntegral (knobInt context.knobs (knobName "outbox.rows"))
             killCount = fromIntegral (knobInt context.knobs (knobName "outbox.kills"))
+            afterClaim = knobText context.knobs (knobName "outbox.crash-point") == "after-claim"
             keyCardinality = fromIntegral (knobInt context.knobs (knobName "outbox.key-cardinality"))
             entries = [(Text.pack (show index), Just ("key-" <> Text.pack (show (index `mod` keyCardinality))), index) | index <- [1 .. rowCount :: Int]]
             options = defaultPublishOptions {batchSize = 32, backoff = ConstantBackoff 0}
@@ -214,11 +216,11 @@ runCrashBetweenPublishAndMark context =
         let recordIds records = [value | record <- records, (name, value) <- record.headers, name == TextEncoding.encodeUtf8 headerMessageId]
             killOne index = do
               before <- Broker.readBroker broker
-              spec <- roleProcess check "keiro/outbox-publisher" index (object ["parkAfterAppend" .= True])
+              spec <- roleProcess check "keiro/outbox-publisher" index (object ["parkBeforeAppend" .= afterClaim, "parkAfterAppend" .= not afterClaim])
               child <- spawn supervisor spec
               awaitReady child 10000
               sendCommand child CtlStart
-              awaitMark child "broker-appended" 30000
+              awaitMark child (if afterClaim then "batch-claimed" else "broker-appended") 30000
               after <- Broker.readBroker broker
               killChild supervisor child
               stranded <- readRows
@@ -227,10 +229,11 @@ runCrashBetweenPublishAndMark context =
               preMaintenance <- runFixture (publishClaimedOutbox callback options Nothing) >>= either (fail . show) pure
               maintenance <- runFixture (outboxMaintenancePass (OutboxMaintenanceOptions 10 1) Nothing) >>= either (fail . show) pure
               reclaimed <- readRows
-              let newIds = drop (length before) (recordIds after)
-                  publishing rows = Set.fromList [TextEncoding.encodeUtf8 row.event.messageId | row <- rows, row.status == OutboxPublishing]
+              let publishing rows = Set.fromList [TextEncoding.encodeUtf8 row.event.messageId | row <- rows, row.status == OutboxPublishing]
+                  newIds = if afterClaim then Set.toList (publishing stranded) else drop (length before) (recordIds after)
                   failed rows = Set.fromList [TextEncoding.encodeUtf8 row.event.messageId | row <- rows, row.status == OutboxFailed]
-                  held = length newIds == 32 && publishing stranded == Set.fromList newIds && publishing stillStranded == Set.fromList newIds && preMaintenance.claimed == 0 && maintenance.requeued == 32 && Set.fromList newIds `Set.isSubsetOf` failed reclaimed
+                  brokerWindow = if afterClaim then length after == length before else length after == length before + 32
+                  held = brokerWindow && length newIds == 32 && publishing stranded == Set.fromList newIds && publishing stillStranded == Set.fromList newIds && preMaintenance.claimed == 0 && maintenance.requeued == 32 && Set.fromList newIds `Set.isSubsetOf` failed reclaimed
               pure (newIds, held, fromIntegral (childPid child) :: Int)
         kills <- traverse killOne [0 .. killCount - 1]
         let drain = do
@@ -257,8 +260,8 @@ runCrashBetweenPublishAndMark context =
                 ("reclaimed-only-by-maintenance", all (\(_, held, _) -> held) kills),
                 ("drained-before-deadline", maybe False (const True) finished),
                 ("no-loss", length rows == rowCount && all ((== OutboxSent) . (.status)) rows && all (`Map.member` counts) expectedIds),
-                ("bounded-duplicates", extras <= 32 * killCount && all (\(messageId, count) -> count <= 1 + killCount && (count == 1 || Set.member messageId killedIds)) (Map.toList counts)),
+                ("bounded-duplicates", extras <= (if afterClaim then 0 else 32 * killCount) && all (\(messageId, count) -> count <= 1 + killCount && (count == 1 || Set.member messageId killedIds)) (Map.toList counts)),
                 ("per-key-order", length observedOrder == rowCount && Oracle.perKeyOrder observedOrder)
               ]
             evidence = Map.fromList [("enqueued", fromIntegral rowCount), ("brokerRecords", fromIntegral (length records)), ("killedPublishers", fromIntegral killCount), ("duplicatedMessages", fromIntegral (length [() | count <- Map.elems counts, count > 1]))]
-        recordMessagingCells context evidence (object ["killedPids" .= [pid | (_, _, pid) <- kills]]) cells
+        recordMessagingCells context evidence (object ["crashPoint" .= knobText context.knobs (knobName "outbox.crash-point"), "killedPids" .= [pid | (_, _, pid) <- kills]]) cells
