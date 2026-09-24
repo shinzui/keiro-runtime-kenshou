@@ -44,7 +44,7 @@ Milestone 1 — Outbox scenarios (includes the shared messaging support used by 
 - [ ] Complete `Kenshou.Suite.Keiro.Outbox.Broker`: the in-process broker, model, deterministic fault decisions, callback hooks and PostgreSQL table backend are implemented; stronger determinism and ordering tests remain.
 - [ ] Implement `Kenshou.Suite.Keiro.Outbox.Knobs`, `.Workload`, `.Roles`, `.Oracle`: `.Workload` now enqueues run-namespaced inline events, `.Oracle` has per-key-order and duplicate-budget checks with doctored unit inputs, and a one-pass publisher role supports a crash window; knobs, the remaining roles, and SQL oracles remain.
 - [ ] Finish the five outbox correctness scenarios: all five are registered and have passed durable PostgreSQL runs; `terminal-state-matrix` passed at its 2,000-row default and `per-key-order-serialized` at its 5,000-row default. The remaining plan-specific arms and frozen identity vector are pending.
-- [ ] Implement the six outbox concurrency and crash scenarios: the first real `SIGKILL` arm of `crash-between-publish-and-mark` passed with 32 rows; its planned knobs and other arms remain.
+- [ ] Implement the six outbox concurrency and crash scenarios: the `after-broker-append` arm of `crash-between-publish-and-mark` now passes with the planned 2,000-row backlog, 20 keys, and three real `SIGKILL` events. Other crash points, attempt exhaustion, and the five other scenarios remain.
 - [x] (2026-09-24 03:35 UTC) Export `Kenshou.Suite.Keiro.Outbox.scenarios` and `.roles` and splice them into the bundle module created by `docs/plans/12-…`.
 - [ ] Run every outbox scenario locally with `pg.durability=durable`; record outcomes and any upstream finding; file upstream reports for unexpected failures and attach `KnownDefect` references.
 
@@ -90,6 +90,7 @@ Milestone 4 — Messaging benchmarks, soak and telemetry arms.
 - The queue retry ceiling scenario passed in `01a0d186-b8df-704a-bfd1-51c82cee2701`. Its DLQ query checks `dead_letter_reason=max_retries_exceeded` and wrapper read counts of four and one for the three-attempt and zero-attempt policies respectively.
 - The inbox batch scenario passed in `01a0d188-bf5b-7211-9fd4-0504b828a6d8`: clean deliveries shared one PostgreSQL transaction, a repeated key stayed positional, and a throwing delivery triggered per-message fallback without double effects. The matrix still passed after adding a transaction ID to the shared effect table in `01a0d189-681c-7193-9195-552fb32500ec`.
 - The crash scenario's first implementation used the command fixture's generic verdict writer, which gave files a `keiro-fixture-` prefix and omitted crash evidence. A messaging verdict writer now emits the plan's exact verdict filenames with enqueue, broker, kill, duplicate counts and the killed PID. The durable rerun passed in `01a0d18b-be3c-7219-a804-c2fae6acf6fa`.
+- The repeated after-append crash arm passed at 32 rows and three kills in `01a0d18e-abf1-7387-b6a9-14177f45550f`, then at its 2,000-row default with 20 keys and three kills in `01a0d18f-117a-7149-9aa8-3c6a5da4939d`. The first kill held maintenance for three stale-row timeouts; later kills reclaimed their 32-row batches after each timeout. The final oracle checked all 2,000 sent rows, bounded duplicate records, and first-record per-key order.
 
 
 ## Decision Log
