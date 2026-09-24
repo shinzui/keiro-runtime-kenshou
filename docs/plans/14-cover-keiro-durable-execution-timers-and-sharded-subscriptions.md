@@ -77,6 +77,7 @@ Milestone 2 — Timer scenarios
 - [x] (2026-09-24) Added `keiro/timer/concurrency/skip-locked-claims-across-processes`. Four real timer-worker processes passed at 100 timers in both PostgreSQL modes and at the default 5,000 timers on durable PostgreSQL, with one claim, effect and event per timer.
 - [x] (2026-09-24) Added `keiro/timer/concurrency/sigkill-between-fire-and-mark`. A worker self-`SIGKILL` after its committed business event leaves the timer firing; a replacement requeues and completes it on attempt two with two bounded fire facts and one business event. Both PostgreSQL durability modes passed.
 - [ ] Add the other two timer concurrency scenarios and random-kill arm to the fire/mark crash scenario.
+- [x] (2026-09-24) Added `keiro/timer/concurrency/slow-fire-double-fires`. The first worker pauses six seconds after its business append; a second worker requeues the stale claim and completes attempt two. Both PostgreSQL durability modes passed checks for two raw fires, one business event, a fired row, and rejection of the first worker's late mark.
 - [ ] Extend the bundle; confirm `kenshou list`.
 
 Milestone 3 — Sharded subscription scenarios
@@ -661,3 +662,12 @@ checks a survivor owns every bucket within `failoverDeadline`. The graceful
 arm requires immediate unowned rows and reownership within the shorter
 renewal deadline. The default eight-bucket durable run and four-bucket runs
 in both durability modes passed.
+
+## Revision Note — 2026-09-24 (slow timer fire)
+
+The timer worker has a one-shot slow-fire mode that claims a timer, commits
+the deterministic business event, waits beyond the stuck-claim timeout, then
+reports the result of its late `markTimerFired`. A second ordinary process
+requeues and completes the timer during that wait. Both durability modes
+passed: the row had two attempts, the effect ledger had two raw fires, the
+business stream had one event, and the late mark returned `False`.

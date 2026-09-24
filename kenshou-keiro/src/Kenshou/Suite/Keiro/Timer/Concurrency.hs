@@ -1,6 +1,7 @@
 module Kenshou.Suite.Keiro.Timer.Concurrency (scenarios) where
 
 import Control.Concurrent (threadDelay)
+import Control.Concurrent.STM (atomically)
 import Control.Monad (forM, forM_)
 import Data.Aeson (Value (Null), object, (.=))
 import Data.ByteString qualified as ByteString
@@ -21,7 +22,7 @@ import Keiro.Timer (TimerId (..), TimerRequest (..), TimerRow (..), TimerStatus 
 import Kenshou.Check.Fact (Fact (..), FactKind (..))
 import Kenshou.Check.Ledger (sealLedger)
 import Kenshou.Check.Ledger.Read (discoverLedgers, foldFacts)
-import Kenshou.Check.Process (awaitReady, roleProcess, sendCommand, spawn, stopGracefully, withSupervisor)
+import Kenshou.Check.Process (ProgressSnapshot (..), awaitMark, awaitReady, progress, roleProcess, sendCommand, spawn, stopGracefully, withSupervisor)
 import Kenshou.Check.Scenario (CheckEnv (..), withCheck)
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
@@ -40,7 +41,70 @@ import Kiroku.Store (defaultConnectionSettings, readStreamForward, runStoreIO, r
 import Kiroku.Store.Types (RecordedEvent (..), StreamName (..), StreamVersion (..))
 
 scenarios :: [Scenario]
-scenarios = [skipLocked, sigkillBetweenFireAndMark]
+scenarios = [skipLocked, sigkillBetweenFireAndMark, slowFireDoubleFires]
+
+slowFireDoubleFires :: Scenario
+slowFireDoubleFires =
+  skipLocked
+    { id = either (error . show) id (parseScenarioId "keiro/timer/concurrency/slow-fire-double-fires"),
+      summary = "Lets one timer fire outlast stale-claim requeue and checks duplicate attempts, one event and a rejected late mark.",
+      run = runSlowFireDoubleFires
+    }
+
+runSlowFireDoubleFires :: RunContext -> IO ScenarioReport
+runSlowFireDoubleFires context = withCheck context \check ->
+  withDurableStore (defaultConnectionSettings (requirePostgres context).connectionString) \fixture -> do
+    now <- getCurrentTime
+    let store = durableKirokuStore fixture
+        tid = fixtureTimerId 900001
+        request = TimerRequest tid "kenshou" "timer-slow-fire" (addUTCTime (-1) now) Null
+        lookupOne = runStoreIO store (lookupTimer tid)
+        fired = do
+          result <- lookupOne
+          pure (case result of Right (Just row) -> row.status == Fired; _ -> False)
+    seeded <- runStoreIO store (runTransaction (scheduleTimerTx request))
+    sealLedger check.ledger
+    (firstEffect, secondCompleted, lateMarkRejected) <- withSupervisor check \supervisor -> do
+      firstSpec <- roleProcess check "keiro/timer-worker" 0 (object ["slowFireMicros" .= (6000000 :: Int)])
+      first <- spawn supervisor firstSpec
+      awaitReady first 10000
+      sendCommand first CtlStart
+      firstEffect <- awaitTimerEffect check tid 100
+      secondSpec <- roleProcess check "keiro/timer-worker" 1 (object [])
+      second <- spawn supervisor secondSpec
+      awaitReady second 10000
+      sendCommand second CtlStart
+      secondCompleted <- waitUntil fired 80
+      awaitMark first "slow-mark" 10000
+      status <- atomically (progress first)
+      _ <- stopGracefully supervisor second 2000
+      pure (firstEffect, secondCompleted, Map.lookup "slow-mark" status.marks == Just (object ["marked" .= False]))
+    finalRow <- lookupOne
+    business <- runStoreIO store (readStreamForward (StreamName ("kenshouTimer-" <> timerText tid)) (StreamVersion 0) 3)
+    ledgers <- discoverLedgers check.ledgerDirectory
+    effects <- foldFacts ledgers Map.empty \counts fact ->
+      pure if fact.kind == Effect then Map.insertWith (+) fact.key (1 :: Int) counts else counts
+    recordTimerCells
+      check
+      [ ("slow-fire-started", seeded == Right () && firstEffect),
+        ("second-worker-fired", secondCompleted && case finalRow of Right (Just row) -> row.status == Fired && row.attempts == 2 && row.firedEventId == Just (businessEventId tid); _ -> False),
+        ("raw-fire-twice", Map.lookup (timerText tid) effects == Just 2 && Map.size effects == 1),
+        ( "one-business-event",
+          case business of
+            Right events -> case Vector.toList events of
+              [event] -> event.eventId == businessEventId tid
+              _ -> False
+            Left _ -> False
+        ),
+        ("late-mark-rejected", lateMarkRejected)
+      ]
+
+awaitTimerEffect :: CheckEnv -> TimerId -> Int -> IO Bool
+awaitTimerEffect _ _ 0 = pure False
+awaitTimerEffect check tid remaining = do
+  ledgers <- discoverLedgers check.ledgerDirectory
+  found <- foldFacts ledgers False \seen fact -> pure (seen || fact.kind == Effect && fact.key == timerText tid)
+  if found then pure True else threadDelay 50000 >> awaitTimerEffect check tid (remaining - 1)
 
 sigkillBetweenFireAndMark :: Scenario
 sigkillBetweenFireAndMark =

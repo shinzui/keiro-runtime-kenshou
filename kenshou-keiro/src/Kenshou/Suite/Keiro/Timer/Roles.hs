@@ -15,7 +15,7 @@ import Data.UUID.V5 qualified as UUID.V5
 import Effectful (Eff, IOE, liftIO)
 import Effectful.Error.Static (Error)
 import Effectful.Error.Static qualified as Error
-import Keiro.Timer (TimerId (..), TimerRow (..), drainDueTimersWith, runTimerWorkerWith)
+import Keiro.Timer (TimerId (..), TimerRow (..), claimDueTimer, drainDueTimersWith, markTimerFired, runTimerWorkerWith)
 import Keiro.Workflow.Sleep (workflowSleepFireAction)
 import Kenshou.Core.Knob (knobInt, resolvedKnobsMap)
 import Kenshou.Core.Role (ControlMessage (..), PostgresConnInfo (..), RoleContext (..), WorkerInit (..), WorkerMessage (..), WorkerRole (..), mkRoleName)
@@ -35,9 +35,9 @@ roles = [WorkerRole roleName "Claims and fires durable timers, with an optional 
 timerWorker :: RoleContext -> IO ()
 timerWorker context = case context.init.postgres of
   Nothing -> context.send (WrkError "timer worker requires PostgreSQL")
-  Just postgres -> case parseMaybe (withObject "timer worker args" (\value -> value .:? "killAfterFire")) context.init.args of
+  Just postgres -> case parseMaybe (withObject "timer worker args" (\value -> (,) <$> value .:? "killAfterFire" <*> value .:? "slowFireMicros")) context.init.args of
     Nothing -> context.send (WrkError "invalid timer worker arguments")
-    Just killAfterFire -> case timerOptionsFrom context.init.knobs of
+    Just (killAfterFire, slowFireMicros) -> case timerOptionsFrom context.init.knobs of
       Left err -> context.send (WrkError (Text.pack (show err)))
       Right options -> do
         context.send WrkReady
@@ -61,7 +61,23 @@ timerWorker context = case context.init.postgres of
                       Just (Just (CtlStop _)) -> context.send (WrkDone Nothing)
                       Just Nothing -> pure ()
                       _ -> tick >> threadDelay tickMicros >> loop
-              loop
+              case slowFireMicros of
+                Just delay -> do
+                  now <- getCurrentTime
+                  outcome <- runStoreIO store do
+                    claimed <- claimDueTimer now
+                    case claimed of
+                      Nothing -> pure Nothing
+                      Just row -> do
+                        produced <- fire sink row
+                        liftIO (threadDelay delay)
+                        marked <- maybe (pure False) (markTimerFired row.timerId) produced
+                        pure (Just marked)
+                  case outcome of
+                    Left err -> context.send (WrkError (Text.pack (show err)))
+                    Right marked -> context.send (WrkCustom "slow-mark" (object ["marked" .= marked]))
+                  context.send (WrkDone Nothing)
+                Nothing -> loop
           _ -> void (context.send (WrkDone (Just "not started")))
       where
         configured = resolvedKnobsMap context.init.knobs

@@ -85,6 +85,10 @@ one claim, one flushed effect, and one deterministic business event. Its
 `keiro/timer/concurrency/sigkill-between-fire-and-mark` kills a worker after
 the business event append. A replacement requeues the firing row and marks it
 fired on attempt two while the business stream still has one event.
+`keiro/timer/concurrency/slow-fire-double-fires` pauses the first worker after
+its business append while a second worker requeues and completes the stale
+claim. The probe confirms two fire attempts, one business event, and refusal
+of the first worker's late mark.
 The
 `keiro/shard/correctness/lease-coverage-smoke` scenario claims four buckets
 one per pass, relinquishes them, and checks that another owner can claim them
