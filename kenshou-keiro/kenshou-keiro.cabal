@@ -80,6 +80,11 @@ library
     Kenshou.Suite.Keiro.Router.Concurrency
     Kenshou.Suite.Keiro.Router.Correctness
     Kenshou.Suite.Keiro.Telemetry
+    Kenshou.Suite.Keiro.Workflow
+    Kenshou.Suite.Keiro.Workflow.Definitions
+    Kenshou.Suite.Keiro.Workflow.Effects
+    Kenshou.Suite.Keiro.Workflow.Fixture
+    Kenshou.Suite.Keiro.Workflow.LinearSmoke
 
   build-depends:
     aeson,
@@ -118,6 +123,7 @@ library
     streamly-core,
     text,
     time,
+    unix,
     uuid,
     vector,
 

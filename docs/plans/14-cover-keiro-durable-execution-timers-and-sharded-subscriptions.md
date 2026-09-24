@@ -11,6 +11,12 @@ provenance:
     model: "claude-fable-5-1"
     harness: "claude-code"
     at: 2026-09-20T17:15:35Z
+  revisions:
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-24T05:09:17Z
+      mode: "implement"
+      note: "Started implementation; verified dependency seam and discovered role-name contract"
 ---
 
 # Cover keiro durable execution, timers and sharded subscriptions
@@ -33,10 +39,11 @@ The plan also turns several facts discovered by reading keiro's source into exec
 
 Milestone 1 — Durable workflow scenarios
 
-- [ ] Verify the hard dependencies are in place (the check in Concrete Steps) and read the completed plans `docs/plans/2-…`, `4-…`, `5-…`, `6-…`, `7-…` and `12-…` for exact signatures.
-- [ ] Add `Kenshou.Suite.Keiro.Workflow.Fixture` (the single seam to the EP-12 fixture domain) and `ensureDurableTables`.
-- [ ] Add `Kenshou.Suite.Keiro.Workflow.Effects` (effect ledger sink, boundary points, self-`SIGKILL` crash plans) with unit tests.
-- [ ] Add `Kenshou.Suite.Keiro.Workflow.Definitions` (the nine fixture workflow definitions, registry, pure expected-step model) with unit tests of the model.
+- [x] (2026-09-24 05:09Z) Verified the package and CLI build, the required self-test and command identifiers, and the delivered fixture and kernel signatures. EP-12 still has unfinished independent benchmark and soak work; its fixture seam needed here is present.
+- [x] (2026-09-24 05:17Z) Added `Kenshou.Suite.Keiro.Workflow.Fixture` as the EP-12 seam and `ensureDurableTables`; both compile. Account command and conservation adapters are still needed when the transfer workflow is added.
+- [x] (2026-09-24 05:17Z) Added `Kenshou.Suite.Keiro.Workflow.Effects` with flushed effect and crash-arm facts, named boundaries, self-`SIGKILL` plans, and a pure crash schedule test. A child-process kill test remains to be added with crash scenarios.
+- [ ] Added the linear definition, registry entry, and pure expected-step/result model in `Workflow.Definitions`; eight definitions and their model tests remain.
+- [x] (2026-09-24 05:17Z) Registered an incremental `keiro/workflow/correctness/linear-replay-smoke` scenario. It passed against provisioned PostgreSQL and wrote seven passing verdicts for replay, effects, journal identity, and step index.
 - [ ] Add `Kenshou.Suite.Keiro.Workflow.Knobs` and `.Roles` (`keiro.workflow.resume-worker`, `keiro.workflow.driver`, `keiro.workflow.gc-worker`).
 - [ ] Add `Kenshou.Suite.Keiro.Workflow.Oracle` (journal, effect, quiescence, stranding, backoff-ladder checkers) with unit tests on doctored inputs.
 - [ ] Add the workflow correctness scenarios (seven) and see them pass locally.
@@ -71,10 +78,20 @@ Milestone 4 — Durable-execution benchmarks, soak and telemetry arms
 
 ## Surprises & Discoveries
 
-(None yet.)
+- The plan's example list filter assumes a top-level JSON array. The delivered CLI emits `kenshou.scenario-list/v1` with scenarios under `.scenarios[]`; `jq -r '.scenarios[].id'` found all required dependency identifiers on 2026-09-24.
+- The delivered worker role parser accepts `keiro/<name>` rather than `keiro.workflow.<name>`; `mkRoleName` in `kenshou-core/src/Kenshou/Core/Role.hs` enforces exactly two slash-delimited segments. The role names in this plan must be adapted before registration.
+- `Keiro.Workflow.Journal` is a hidden package module in the released cohort; the public `Keiro.Workflow` module re-exports `deterministicJournalId` and `loadStepIndex`. A direct hidden-module import failed compilation and was replaced by the public import.
 
 
 ## Decision Log
+
+- Decision: Begin EP-14 against EP-12's delivered fixture modules while EP-12 finishes unrelated benchmark and soak acceptance. Use the working build and required registered scenarios as the dependency gate. Register new worker roles with the delivered `keiro/<name>` format and keep the intended workflow/timer/shard suffixes.
+  Rationale: The fixture domain and CLI bundle already compile and expose the interfaces EP-14 consumes. `mkRoleName` rejects the dotted role names proposed before the kernel implementation existed.
+  Date: 2026-09-23
+
+- Decision: Register `keiro/workflow/correctness/linear-replay-smoke` as an incremental vertical probe before the full all-kind replay scenario. Keep its summary limited to the linear workflow.
+  Rationale: It proves the fixture, public journal APIs, ledger, bundle registration, and verdict artifact path end to end while the remaining workflow definitions are built. It does not claim the acceptance of the planned all-kind scenario.
+  Date: 2026-09-23
 
 - Decision: Only one module of this plan, `Kenshou.Suite.Keiro.Workflow.Fixture`, imports the EP-12 fixture domain (`Kenshou.Suite.Keiro.Fixture.*`); every other module goes through it.
   Rationale: `docs/plans/12-…` was being drafted concurrently and its exact names were unknown. A single seam makes a naming mismatch a one-file fix and makes this plan's needs explicit. The completed plan `docs/plans/12-cover-the-keiro-command-processor-process-managers-and-routers.md` delivers the fixture as the modules `Kenshou.Suite.Keiro.Fixture.Domain`, `.Account`, `.Transfer`, `.Bonus`, `.Projection`, `.Model`, `.Workload`, `.Oracle`, `.Runtime`, `.Roles` and `.Bridge` (account-ledger aggregate, transfer saga process manager, bonus router, projections, pure model, seeded workload, SQL oracles including `money-is-conserved`, and `submitAccountCommand`); read its Milestone 1 and its Interfaces and Dependencies section first and reconcile the names assumed here against the real exports before writing anything else.

@@ -21,6 +21,7 @@ import Keiro.Integration.Event (IntegrationContentType (..), IntegrationEvent (.
 import Keiro.Outbox (OutboxId (..), OutboxRow (..), OutboxStatus (..))
 import Keiro.ProcessManager (ProcessManager (..), deterministicCommandId)
 import Keiro.Router (deterministicRouterCommandId)
+import Keiro.Workflow (WorkflowId (..))
 import Kenshou.Suite.Keiro.Fixture.Account
 import Kenshou.Suite.Keiro.Fixture.Bonus
 import Kenshou.Suite.Keiro.Fixture.Bridge
@@ -31,6 +32,8 @@ import Kenshou.Suite.Keiro.Fixture.Transfer
 import Kenshou.Suite.Keiro.Fixture.Workload qualified as Workload
 import Kenshou.Suite.Keiro.Outbox.Broker qualified as Broker
 import Kenshou.Suite.Keiro.Outbox.Oracle qualified as OutboxOracle
+import Kenshou.Suite.Keiro.Workflow.Definitions qualified as WorkflowDefinitions
+import Kenshou.Suite.Keiro.Workflow.Effects qualified as WorkflowEffects
 import Kiroku.Store.Types (EventId (..), EventType (..), GlobalPosition (..), RecordedEvent (..), StreamId (..), StreamVersion (..))
 import Shibuya.Adapter (Adapter (..))
 import Shibuya.Core.Ack (AckDecision (..))
@@ -43,6 +46,21 @@ import Test.Hspec.Hedgehog (hedgehog)
 
 main :: IO ()
 main = hspec do
+  describe "workflow crash schedule" do
+    it "arms only the named positive occurrence of a matching boundary" do
+      let boundary = WorkflowEffects.AfterStepAction "s3"
+          plans = [WorkflowEffects.CrashPlan boundary 2]
+      WorkflowEffects.shouldCrash plans boundary 1 `shouldBe` False
+      WorkflowEffects.shouldCrash plans boundary 2 `shouldBe` True
+      WorkflowEffects.shouldCrash plans boundary 3 `shouldBe` False
+      WorkflowEffects.shouldCrash plans (WorkflowEffects.AfterStepAction "s4") 2 `shouldBe` False
+      WorkflowEffects.shouldCrash [WorkflowEffects.CrashPlan boundary 0] boundary 0 `shouldBe` False
+  describe "linear workflow model" do
+    it "predicts the named journal steps and stable result" do
+      let params = WorkflowDefinitions.DefinitionParams 7 3
+          wid = WorkflowId "wf-1"
+      WorkflowDefinitions.expectedLinearSteps params `shouldBe` ["s0", "s1", "s2"]
+      WorkflowDefinitions.expectedLinearResult params wid `shouldBe` 7 * 3 + 31 * 4 * 3 + 3
   describe "Outbox broker" do
     it "makes stable decisions from seed, identity and attempt" do
       now <- getCurrentTime
