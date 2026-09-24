@@ -59,7 +59,7 @@ Milestone 3 — Job queue scenarios.
 
 - [ ] Add `keiro-pgmq`, `pgmq-core`, `pgmq-effectful`, `shibuya-core`, `shibuya-pgmq-adapter` (and `shibuya-metrics` for the `serve` arm) to the cabal file; the first queue smoke run confirmed the migrated database includes the PGMQ component. `shibuya-metrics` remains.
 - [ ] Implement `Kenshou.Suite.Keiro.Queue.Jobs` (scripted fixture job), `.Runtime`, `.Knobs`, `.Roles`, `.Oracle` with unit tests.
-- [ ] Implement the three queue correctness scenarios: `consumption-config-rejections` passed with a queued row and a direct `read_ct = 0` oracle; job outcomes and maximum retries remain.
+- [ ] Implement the three queue correctness scenarios: `consumption-config-rejections` passed with a queued row and a direct `read_ct = 0` oracle; `max-retries-before-handler` passed with three handler calls, a fourth-read DLQ wrapper and the zero-ceiling arm. Job outcome semantics remain.
 - [ ] Implement the eight queue concurrency and crash scenarios, including the transient-polling-error scenario that replaces keiro's pending test.
 - [ ] Splice `Kenshou.Suite.Keiro.Queue.scenarios` and `.roles` into the bundle; run all queue scenarios; record outcomes.
 
@@ -87,6 +87,7 @@ Milestone 4 — Messaging benchmarks, soak and telemetry arms.
 - The inbox envelope round trip passed in run `01a0d17b-6554-720a-a28b-d9ddb32744bd`. The first poison accounting arm passed in `01a0d17c-a11c-76c9-b4e6-1ca06d73f2f4`.
 - The first effectively-once matrix run failed only its persistence-shape check: the shared outbox workload generated empty payloads, so full-envelope and dedupe-only were indistinguishable. Giving each probe a nonempty message-ID payload made the check meaningful. Full-envelope and dedupe-only then passed in `01a0d17e-6446-724d-925d-11f61af93d59` and `01a0d17f-3e26-7551-be30-a1eca5575c8b`. The CLI uses `--set` for a knob override, not `--knob`.
 - The PGMQ migration is available under `SchemaPgmq` in the environment. The first queue validation run passed in `01a0d182-5dea-740f-9266-42f966963458`; the stronger SQL read-count check initially hit a decoder mismatch because `read_ct` is narrower than `bigint`, and an explicit SQL cast fixed it. The full scenario passed in `01a0d184-2021-7578-bab7-766c6e1a7b12`.
+- The queue retry ceiling scenario passed in `01a0d186-b8df-704a-bfd1-51c82cee2701`. Its DLQ query checks `dead_letter_reason=max_retries_exceeded` and wrapper read counts of four and one for the three-attempt and zero-attempt policies respectively.
 
 
 ## Decision Log
