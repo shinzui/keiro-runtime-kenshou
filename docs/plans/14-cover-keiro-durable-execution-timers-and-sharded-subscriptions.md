@@ -66,6 +66,7 @@ Milestone 1 — Durable workflow scenarios
 - [ ] Extend the child scenario to the planned multiple-child fan-out and knob-controlled child count.
 - [x] (2026-09-24) Extended exact discovery to awakeable, sleep and child parking. All three passed in both durability modes at shakedown size; each passed with the default 2,000 parked workflows on durable PostgreSQL. The idle pass records its duration and the pending-awakeable count query's call and execution-time deltas, and checks exactly one query call.
 - [ ] Add the workflow concurrency and crash scenarios (eleven) and see them pass or report their known defect.
+- [x] (2026-09-24) Added `keiro/workflow/concurrency/direct-run-vs-resume-worker`. Real inline runs raced a polling resume process while final journals, instance rows and replay results stayed exact. Ten-instance shakedowns passed in both modes and observed six and seven duplicate step effects without crashes; the default 100-instance durable run passed and measured 61 duplicate effects.
 - [ ] Add the `wake` correctness scenario.
 - [x] (2026-09-24) Extended EP-12's bundle module with `Kenshou.Suite.Keiro.Workflow.scenarios` and `.roles`; `kenshou list --json` shows the registered workflow scenarios.
 - [ ] For each suspected defect that reproduces, file the improvement request in keiro and attach the `KnownDefect` reference.
@@ -767,3 +768,12 @@ callers through the real sharded delivery loop. Neither misconfigured worker
 delivers it, and the only failures remain the two declared consequences of
 the larger worker inserting extra shard rows. Both PostgreSQL modes
 reproduced exactly those known failures.
+
+## Revision Note — 2026-09-24 (direct workflow runs and resume workers)
+
+The direct-run race starts a polling resume worker while inline callers run
+the same population of linear workflows. It checks every final instance,
+replayed result, and deterministic journal step ID, and records duplicate
+step effects as a measurement. Ten-instance runs passed in both durability
+modes and measured six and seven duplicates. The default 100-instance
+durable run passed with 61 duplicate effects and no crash injection.

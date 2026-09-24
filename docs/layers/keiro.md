@@ -147,6 +147,11 @@ A Keiro-only smoke plan selected sixteen scenarios and completed locally in
 about half a minute. Fifteen passed; the `NoAdvance` receipt scenario reproduced
 its declared nonblocking known defect. The plan executor exited zero.
 
+`keiro/workflow/concurrency/direct-run-vs-resume-worker` races inline
+linear runs with a polling resume process. Journals and replay results stay
+exact; the default durable run measured 61 duplicate step effects over 100
+instances without a crash.
+
 The registered command scenarios also cover duplicate event identifiers,
 optimistic retry and exhaustion, controlled SQL rollback, and hydration over
 stream lengths and page sizes. `keiro/snapshot/correctness/policy-matrix`

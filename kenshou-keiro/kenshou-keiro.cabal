@@ -101,6 +101,7 @@ library
     Kenshou.Suite.Keiro.Workflow.ChildSmoke
     Kenshou.Suite.Keiro.Workflow.CrashSmoke
     Kenshou.Suite.Keiro.Workflow.Definitions
+    Kenshou.Suite.Keiro.Workflow.DirectRace
     Kenshou.Suite.Keiro.Workflow.Effects
     Kenshou.Suite.Keiro.Workflow.ExactDiscovery
     Kenshou.Suite.Keiro.Workflow.Fixture
