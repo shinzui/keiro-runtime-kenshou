@@ -122,8 +122,13 @@ paired trials on the target cell are still required for comparisons.
 `hydration-cost` prepares a selected stream length with `snapshot.policy=never`
 or `every-100` and a selected `command.page-size`. Its timed close command
 is rejected after hydration, keeping the stream length fixed across samples.
-The final ledger check confirms that measurement added no events. Both policy
-arms passed local 15-second runs at length 100.
+History setup appends batches directly and uses commands at each snapshot
+boundary, so the snapshot arm starts with the expected saved state. The final
+ledger and snapshot checks confirm the prepared history and that measurement
+added no events. Both policy arms passed local 15-second runs at length 100;
+the snapshot arm also passed at lengths 1,000 and 10,000. The 10,000-event
+replay arm passed its durable checks over 129 commands in 30 seconds but had
+only 109 steady samples, leaving its benchmark grade inconclusive.
 `all-stream-append-ceiling` uses independent account streams, so its writers
 share the Kiroku global append position without account version conflicts.
 `kiroku.pool-size` and `command.writers` select a cell for a scaling sweep.

@@ -1,6 +1,6 @@
 module Kenshou.Suite.Keiro.Command.Bench (scenarios) where
 
-import Data.Aeson (object, (.=))
+import Data.Aeson (object, toJSON, (.=))
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
@@ -30,8 +30,10 @@ import Kenshou.Suite.Keiro.Fixture.Oracle qualified as Oracle
 import Kenshou.Suite.Keiro.Fixture.Projection (accountBalanceProjection, ensureFixtureReadModels)
 import Kenshou.Suite.Keiro.Fixture.Runtime
 import Kenshou.Telemetry (TelemetryHandles (..), telemetryKnobs, telemetrySpecFromContext, withTelemetry)
-import Kiroku.Store (defaultConnectionSettings)
+import Kiroku.Store (appendToStream, defaultConnectionSettings)
 import Kiroku.Store.Connection (ConnectionSettingsM (..))
+import Kiroku.Store.Types (EventType (..), ExpectedVersion (..))
+import Kiroku.Store.Types qualified as StoreTypes
 
 scenarios :: [Scenario]
 scenarios = [throughputLatency, hydrationCost, allStreamAppendCeiling]
@@ -87,7 +89,35 @@ runHydrationCost context =
           keiroMetrics <- traverse newKeiroMetrics telemetry.meter
           let options = defaultRunCommandOptions {pageSize = page, verifyReplayOnAppend = False, tracer = telemetry.tracer, metrics = keiroMetrics}
               target = accountStream account
-          seeded <- traverse (\command -> runFixture (runCommand options eventStream target command)) (OpenAccount (OpenAccountData account 1) : replicate streamLength (Deposit (DepositData account 1 "seed")))
+          opened <- runFixture (runCommand options eventStream target (OpenAccount (OpenAccountData account 1)))
+          let seedEvent = StoreTypes.EventData {StoreTypes.eventId = Nothing, StoreTypes.eventType = EventType "Deposited", StoreTypes.payload = toJSON (DepositData account 1 "seed"), StoreTypes.metadata = Nothing, StoreTypes.causationId = Nothing, StoreTypes.correlationId = Nothing}
+              appendBatch count =
+                if count == 0
+                  then pure True
+                  else do
+                    result <- runFixture (appendToStream (accountStreamName account) AnyVersion (replicate count seedEvent))
+                    pure (either (const False) (const True) result)
+              seedHistory version remaining
+                | remaining == 0 = pure True
+                | policyName == "never" = do
+                    let batch = min 1000 remaining
+                    accepted <- appendBatch batch
+                    if accepted then seedHistory (version + batch) (remaining - batch) else pure False
+                | otherwise = do
+                    let distance = 100 - version `mod` 100
+                        direct = min remaining (distance - 1)
+                    accepted <- appendBatch direct
+                    if not accepted
+                      then pure False
+                      else
+                        if direct == remaining
+                          then pure True
+                          else do
+                            snapshotCommand <- runFixture (runCommand options eventStream target (Deposit (DepositData account 1 "seed")))
+                            case snapshotCommand of
+                              Right (Right result) | result.eventsAppended == 1 -> seedHistory (version + direct + 1) (remaining - direct - 1)
+                              _ -> pure False
+          historySeeded <- seedHistory 1 streamLength
           let operation _ _ = do
                 result <- runFixture (runCommand options eventStream target (CloseAccount (CloseAccountData account)))
                 pure case result of
@@ -100,13 +130,19 @@ runHydrationCost context =
           acquired <- Connection.acquire (Settings.connectionString (requirePostgres context).connectionString <> Settings.applicationName "kenshou-keiro-hydration-bench-oracle")
           connection <- either (fail . show) pure acquired
           rows <- Oracle.readCategoryLog connection "account"
+          snapshots <- Oracle.readSnapshots connection
           Connection.release connection
           let completions = sum [batch.completed | batch <- report.loads]
               failures = sum [batch.failed | batch <- report.loads]
-              seededOk = all (\case Right (Right response) -> response.eventsAppended == 1; _ -> False) seeded
+              seededOk = case opened of Right (Right response) -> response.eventsAppended == 1 && historySeeded; _ -> False
               modelOk = case Oracle.modelFromLog rows of Right model -> Model.totalMoney model == 1 + streamLength && length rows == streamLength + 1; Left _ -> False
+              snapshotOk =
+                let expectedVersion = ((streamLength + 1) `div` 100) * 100
+                 in if policyName == "never" || expectedVersion == 0
+                      then Map.notMember (accountStreamName account) snapshots
+                      else case Map.lookup (accountStreamName account) snapshots of Just (version, _) -> version == fromIntegral expectedVersion; Nothing -> False
           putSummary context Measurements "hydration-cost" (object ["streamLength" .= streamLength, "snapshotPolicy" .= policyName, "pageSize" .= page, "completed" .= completions, "failed" .= failures])
-          base <- recordCells context [("stream-prepared", seededOk), ("commands-completed", completions > 0 && failures == 0), ("durable-ledger", Oracle.logWellFormed rows && modelOk)]
+          base <- recordCells context [("stream-prepared", seededOk), ("snapshot-policy-prepared", snapshotOk), ("commands-completed", completions > 0 && failures == 0), ("durable-ledger", Oracle.logWellFormed rows && modelOk)]
           pure (base {outcome = measuredOutcome report base.outcome})
 
 throughputLatency :: Scenario
