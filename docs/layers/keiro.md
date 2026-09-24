@@ -89,6 +89,10 @@ fired on attempt two while the business stream still has one event.
 its business append while a second worker requeues and completes the stale
 claim. The probe confirms two fire attempts, one business event, and refusal
 of the first worker's late mark.
+`keiro/timer/concurrency/foreground-resume-tokens` races four claimant
+processes for one dead timer. It checks one owner, renewal, guarded mutation
+refusals, recovery after lease expiry with stuck requeue disabled, retained
+reason and attempts, and refusal of an expired owner's completion.
 The
 `keiro/shard/correctness/lease-coverage-smoke` scenario claims four buckets
 one per pass, relinquishes them, and checks that another owner can claim them

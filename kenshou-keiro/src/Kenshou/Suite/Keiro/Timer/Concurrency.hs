@@ -3,7 +3,8 @@ module Kenshou.Suite.Keiro.Timer.Concurrency (scenarios) where
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM (atomically)
 import Control.Monad (forM, forM_)
-import Data.Aeson (Value (Null), object, (.=))
+import Data.Aeson (Value (..), object, (.=))
+import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString qualified as ByteString
 import Data.Int (Int64)
 import Data.List.NonEmpty (NonEmpty (..))
@@ -18,11 +19,11 @@ import Hasql.Decoders qualified as Decoders
 import Hasql.Encoders qualified as Encoders
 import Hasql.Statement qualified as Statement
 import Hasql.Transaction qualified as Tx
-import Keiro.Timer (TimerId (..), TimerRequest (..), TimerRow (..), TimerStatus (..), lookupTimer, scheduleTimerTx)
+import Keiro.Timer (TimerId (..), TimerRequest (..), TimerRow (..), TimerStatus (..), TimerWorkerOptions (..), cancelTimer, claimDueTimer, deadLetterTimer, defaultTimerWorkerOptions, lookupTimer, markTimerFired, requeueStuckTimer, runTimerWorkerWith, scheduleTimerTx)
 import Kenshou.Check.Fact (Fact (..), FactKind (..))
 import Kenshou.Check.Ledger (sealLedger)
 import Kenshou.Check.Ledger.Read (discoverLedgers, foldFacts)
-import Kenshou.Check.Process (ProgressSnapshot (..), awaitMark, awaitReady, progress, roleProcess, sendCommand, spawn, stopGracefully, withSupervisor)
+import Kenshou.Check.Process (ProgressSnapshot (..), awaitMark, awaitReady, killChild, progress, roleProcess, sendCommand, spawn, stopGracefully, withSupervisor)
 import Kenshou.Check.Scenario (CheckEnv (..), withCheck)
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
@@ -41,7 +42,97 @@ import Kiroku.Store (defaultConnectionSettings, readStreamForward, runStoreIO, r
 import Kiroku.Store.Types (RecordedEvent (..), StreamName (..), StreamVersion (..))
 
 scenarios :: [Scenario]
-scenarios = [skipLocked, sigkillBetweenFireAndMark, slowFireDoubleFires]
+scenarios = [skipLocked, sigkillBetweenFireAndMark, slowFireDoubleFires, foregroundResumeTokens]
+
+foregroundResumeTokens :: Scenario
+foregroundResumeTokens =
+  skipLocked
+    { id = either (error . show) id (parseScenarioId "keiro/timer/concurrency/foreground-resume-tokens"),
+      summary = "Races guarded dead-timer resume claims across processes and checks renewal, guarded transitions and expiry recovery.",
+      run = runForegroundResumeTokens
+    }
+
+runForegroundResumeTokens :: RunContext -> IO ScenarioReport
+runForegroundResumeTokens context = withCheck context \check ->
+  withDurableStore (defaultConnectionSettings (requirePostgres context).connectionString) \fixture -> do
+    now <- getCurrentTime
+    let store = durableKirokuStore fixture
+        tid = fixtureTimerId 900002
+        lateTid = fixtureTimerId 900003
+        reason = "manual-review"
+        request = TimerRequest tid "kenshou" "timer-foreground-resume" (addUTCTime (-1) now) Null
+        lateRequest = TimerRequest lateTid "kenshou" "timer-late-resume" (addUTCTime (-1) now) Null
+        lookupOne = runStoreIO store (lookupTimer tid)
+        claimed snapshot = case Map.lookup "resume-claim" snapshot.marks of
+          Just (Object fields) -> KeyMap.lookup "claimed" fields == Just (Bool True)
+          _ -> False
+        recovered = do
+          result <- lookupOne
+          pure (case result of Right (Just row) -> row.status == Dead && row.attempts == 1; _ -> False)
+    seeded <- runStoreIO store (runTransaction (scheduleTimerTx request))
+    dead <- runStoreIO store (deadLetterTimer tid reason)
+    lateSeeded <- runStoreIO store (runTransaction (scheduleTimerTx lateRequest))
+    lateDead <- runStoreIO store (deadLetterTimer lateTid reason)
+    (winnerCount, attemptsAfterClaim, renewed, guarded, expiredRecovered, lateComplete) <- withSupervisor check \supervisor -> do
+      workers <- forM [0 .. 3 :: Int] \index -> do
+        spec <- roleProcess check "keiro/timer-resume-claimer" index (object ["timerId" .= timerText tid, "reason" .= reason, "maxAttempts" .= (4 :: Int), "leaseSeconds" .= (2 :: Int)])
+        worker <- spawn supervisor spec
+        awaitReady worker 10000
+        pure worker
+      forM_ workers (\worker -> sendCommand worker CtlStart)
+      forM_ workers (\worker -> awaitMark worker "resume-claim" 10000)
+      states <- traverse (atomically . progress) workers
+      let winners = [worker | (worker, state) <- zip workers states, claimed state]
+      attemptsAfterClaim <- lookupOne
+      case winners of
+        [owner] -> do
+          guardedResults <-
+            sequence
+              [ runStoreIO store (markTimerFired tid (businessEventId tid)),
+                runStoreIO store (cancelTimer tid),
+                runStoreIO store (deadLetterTimer tid "incorrect"),
+                runStoreIO store (requeueStuckTimer tid)
+              ]
+          sendCommand owner (CtlCustom "renew" Null)
+          awaitMark owner "resume-renew" 5000
+          renewal <- atomically (progress owner)
+          let renewed = Map.lookup "resume-renew" renewal.marks == Just (object ["renewed" .= True])
+              guarded = all (== Right False) guardedResults
+          killChild supervisor owner
+          threadDelay 2500000
+          later <- getCurrentTime
+          _ <- runStoreIO store (runTimerWorkerWith Nothing defaultTimerWorkerOptions {requeueStuckAfter = Nothing} later (const (pure Nothing)))
+          expiredRecovered <- recovered
+          lateSpec <- roleProcess check "keiro/timer-resume-claimer" 4 (object ["timerId" .= timerText lateTid, "reason" .= reason, "maxAttempts" .= (4 :: Int), "leaseSeconds" .= (2 :: Int)])
+          lateOwner <- spawn supervisor lateSpec
+          awaitReady lateOwner 10000
+          sendCommand lateOwner CtlStart
+          awaitMark lateOwner "resume-claim" 10000
+          threadDelay 2500000
+          expiryNow <- getCurrentTime
+          _ <- runStoreIO store (runTimerWorkerWith Nothing defaultTimerWorkerOptions {requeueStuckAfter = Nothing} expiryNow (const (pure Nothing)))
+          sendCommand lateOwner (CtlCustom "complete" Null)
+          awaitMark lateOwner "resume-complete" 5000
+          lateState <- atomically (progress lateOwner)
+          let lateComplete = Map.lookup "resume-complete" lateState.marks == Just (object ["completed" .= False])
+          pure (1 :: Int, attemptsAfterClaim, renewed, guarded, expiredRecovered, lateComplete)
+        _ -> pure (length winners, attemptsAfterClaim, False, False, False, False)
+    finalRow <- lookupOne
+    lateRow <- runStoreIO store (lookupTimer lateTid)
+    finalGuard <- runStoreIO store (runTransaction (Tx.statement (let TimerId value = tid in value) resumeGuardStatement))
+    dueAfterRecovery <- getCurrentTime >>= runStoreIO store . claimDueTimer
+    let firstAttempt = case attemptsAfterClaim of Right (Just row) -> row.status == Firing && row.attempts == 1; _ -> False
+        retained = case finalRow of Right (Just row) -> row.status == Dead && row.attempts == 1; _ -> False
+        lateRetained = case lateRow of Right (Just row) -> row.status == Dead && row.attempts == 1; _ -> False
+    recordTimerCells
+      check
+      [ ("seed-dead-row", seeded == Right () && dead == Right True),
+        ("single-foreground-owner", winnerCount == 1 && firstAttempt),
+        ("guarded-transitions-refused", guarded),
+        ("lease-renewed", renewed),
+        ("expired-claim-recovered-without-stuck-timeout", expiredRecovered && retained && finalGuard == Right (Just (Just reason, True, True)) && dueAfterRecovery == Right Nothing),
+        ("former-owner-late-completion-refused", lateSeeded == Right () && lateDead == Right True && lateComplete && lateRetained)
+      ]
 
 slowFireDoubleFires :: Scenario
 slowFireDoubleFires =
@@ -247,6 +338,13 @@ remainingTimerCount =
     "SELECT count(*) FROM keiro.keiro_timers WHERE status <> 'fired'"
     Encoders.noParams
     (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
+
+resumeGuardStatement :: Statement.Statement UUID.UUID (Maybe (Maybe Text.Text, Bool, Bool))
+resumeGuardStatement =
+  Statement.preparable
+    "SELECT last_error, resume_claim_token IS NULL, resume_lease_until IS NULL FROM keiro.keiro_timers WHERE timer_id = $1"
+    (Encoders.param (Encoders.nonNullable Encoders.uuid))
+    (Decoders.rowMaybe ((,,) <$> Decoders.column (Decoders.nullable Decoders.text) <*> Decoders.column (Decoders.nonNullable Decoders.bool) <*> Decoders.column (Decoders.nonNullable Decoders.bool)))
 
 fixtureTimerId :: Int -> TimerId
 fixtureTimerId number = TimerId $ UUID.V5.generateNamed UUID.V5.namespaceURL (ByteString.unpack (TextEncoding.encodeUtf8 ("kenshou:timer:process-claim:" <> Text.pack (show number))))

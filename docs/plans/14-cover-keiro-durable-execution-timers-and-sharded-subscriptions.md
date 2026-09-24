@@ -76,7 +76,8 @@ Milestone 2 — Timer scenarios
 - [x] (2026-09-24 05:35Z) Added both timer correctness scenarios; each passed under both `fsync-off` and `durable`. The attempt-ceiling probe checks two callback executions, post-claim dead-lettering on attempt three, zero-ceiling refusal, persisted reason and invalid options.
 - [x] (2026-09-24) Added `keiro/timer/concurrency/skip-locked-claims-across-processes`. Four real timer-worker processes passed at 100 timers in both PostgreSQL modes and at the default 5,000 timers on durable PostgreSQL, with one claim, effect and event per timer.
 - [x] (2026-09-24) Added `keiro/timer/concurrency/sigkill-between-fire-and-mark`. A worker self-`SIGKILL` after its committed business event leaves the timer firing; a replacement requeues and completes it on attempt two with two bounded fire facts and one business event. Both PostgreSQL durability modes passed.
-- [ ] Add `foreground-resume-tokens` and the random-kill arm to the fire/mark crash scenario.
+- [ ] Add the random-kill arm to the fire/mark crash scenario.
+- [x] (2026-09-24) Added `keiro/timer/concurrency/foreground-resume-tokens` and `keiro/timer-resume-claimer`. Four processes race for one dead row. Both PostgreSQL modes passed checks for one claimant, one added attempt, successful renewal, refusal of four guarded lifecycle operations, expiry recovery by an ordinary pass with stuck requeue disabled, retained reason and attempts, no due claim, and rejection of a former owner's late completion.
 - [x] (2026-09-24) Added `keiro/timer/concurrency/slow-fire-double-fires`. The first worker pauses six seconds after its business append; a second worker requeues the stale claim and completes attempt two. Both PostgreSQL durability modes passed checks for two raw fires, one business event, a fired row, and rejection of the first worker's late mark.
 - [x] (2026-09-24) The bundle includes timer scenarios and the timer worker role; `kenshou list --json` shows the five implemented timer scenarios.
 
@@ -680,3 +681,13 @@ a supervised process and reports progress each thousand events. The
 single-worker drain scenario uses this role before starting its delivery
 worker, so the source and consumer cross a real process boundary. The
 default-size durable run and smaller runs in both PostgreSQL modes passed.
+
+## Revision Note — 2026-09-24 (foreground timer resume)
+
+The `keiro/timer-resume-claimer` role holds Keiro's opaque resume token in a
+worker process. Four processes race for one dead row; only the winner can
+renew. The scenario tests four ordinary timer mutations against its guarded
+row, kills the owner, and drives expiry recovery through an ordinary timer
+pass with `requeueStuckAfter = Nothing`. It also holds a second token past
+expiry and verifies that its former owner cannot complete afterward. Both
+durability modes passed, including retained reason and attempt count.

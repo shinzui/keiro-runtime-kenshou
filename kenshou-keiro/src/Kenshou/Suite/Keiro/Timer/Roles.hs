@@ -2,7 +2,7 @@ module Kenshou.Suite.Keiro.Timer.Roles (roles, businessEventId) where
 
 import Control.Concurrent (threadDelay)
 import Control.Monad (void)
-import Data.Aeson (object, withObject, (.:?), (.=))
+import Data.Aeson (object, withObject, (.:), (.:?), (.=))
 import Data.Aeson.Types (parseMaybe)
 import Data.ByteString qualified as ByteString
 import Data.Map.Strict qualified as Map
@@ -15,7 +15,7 @@ import Data.UUID.V5 qualified as UUID.V5
 import Effectful (Eff, IOE, liftIO)
 import Effectful.Error.Static (Error)
 import Effectful.Error.Static qualified as Error
-import Keiro.Timer (TimerId (..), TimerRow (..), claimDueTimer, drainDueTimersWith, markTimerFired, runTimerWorkerWith)
+import Keiro.Timer (DeadTimerClaimRequest (..), TimerId (..), TimerRow (..), claimDeadTimer, claimDueTimer, completeTimerResume, drainDueTimersWith, markTimerFired, renewTimerResume, resumeClaimTimer, runTimerWorkerWith)
 import Keiro.Workflow.Sleep (workflowSleepFireAction)
 import Kenshou.Core.Knob (knobInt, resolvedKnobsMap)
 import Kenshou.Core.Role (ControlMessage (..), PostgresConnInfo (..), RoleContext (..), WorkerInit (..), WorkerMessage (..), WorkerRole (..), mkRoleName)
@@ -28,9 +28,47 @@ import Kiroku.Store.Types (EventData (..), EventId (..), EventType (..), Expecte
 import System.Timeout (timeout)
 
 roles :: [WorkerRole]
-roles = [WorkerRole roleName "Claims and fires durable timers, with an optional self-kill after the fire effect." timerWorker]
+roles =
+  [ WorkerRole roleName "Claims and fires durable timers, with an optional self-kill after the fire effect." timerWorker,
+    WorkerRole resumeName "Claims and renews a guarded foreground resume for a dead timer." resumeWorker
+  ]
   where
     roleName = either (error . Text.unpack) id (mkRoleName "keiro/timer-worker")
+    resumeName = either (error . Text.unpack) id (mkRoleName "keiro/timer-resume-claimer")
+
+resumeWorker :: RoleContext -> IO ()
+resumeWorker context = case context.init.postgres of
+  Nothing -> context.send (WrkError "timer resume claimer requires PostgreSQL")
+  Just postgres -> case parseMaybe (withObject "timer resume args" (\value -> (,,,) <$> value .: "timerId" <*> value .: "reason" <*> value .: "maxAttempts" <*> value .: "leaseSeconds")) context.init.args of
+    Nothing -> context.send (WrkError "invalid timer resume arguments")
+    Just (rawId, reason, attemptCeiling, lease) -> case UUID.fromText rawId of
+      Nothing -> context.send (WrkError "invalid timer identifier")
+      Just identifier -> do
+        context.send WrkReady
+        context.receive >>= \case
+          Just CtlStart -> withDurableStore (defaultConnectionSettings postgres.connectionString) \fixture -> do
+            let store = durableKirokuStore fixture
+                request = DeadTimerClaimRequest (TimerId identifier) "kenshou" reason attemptCeiling lease
+            result <- runStoreIO store (claimDeadTimer request)
+            case result of
+              Left err -> context.send (WrkError (Text.pack (show err)))
+              Right (Left err) -> context.send (WrkError (Text.pack (show err)))
+              Right (Right Nothing) -> context.send (WrkCustom "resume-claim" (object ["claimed" .= False])) >> context.send (WrkDone Nothing)
+              Right (Right (Just claim)) -> do
+                context.send (WrkCustom "resume-claim" (object ["claimed" .= True, "attempts" .= (resumeClaimTimer claim).attempts]))
+                let loop =
+                      context.receive >>= \case
+                        Just (CtlCustom "renew" _) -> do
+                          renewed <- runStoreIO store (renewTimerResume claim lease)
+                          context.send (WrkCustom "resume-renew" (object ["renewed" .= case renewed of Right (Right True) -> True; _ -> False]))
+                          loop
+                        Just (CtlCustom "complete" _) -> do
+                          completed <- runStoreIO store (completeTimerResume claim (businessEventId (TimerId identifier)))
+                          context.send (WrkCustom "resume-complete" (object ["completed" .= case completed of Right True -> True; _ -> False]))
+                          context.send (WrkDone Nothing)
+                        _ -> context.send (WrkDone Nothing)
+                loop
+          _ -> context.send (WrkDone (Just "not started"))
 
 timerWorker :: RoleContext -> IO ()
 timerWorker context = case context.init.postgres of
