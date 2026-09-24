@@ -80,6 +80,9 @@ library
     Kenshou.Suite.Keiro.Router.Concurrency
     Kenshou.Suite.Keiro.Router.Correctness
     Kenshou.Suite.Keiro.Telemetry
+    Kenshou.Suite.Keiro.Timer
+    Kenshou.Suite.Keiro.Timer.Correctness
+    Kenshou.Suite.Keiro.Timer.Oracle
     Kenshou.Suite.Keiro.Workflow
     Kenshou.Suite.Keiro.Workflow.CrashSmoke
     Kenshou.Suite.Keiro.Workflow.Definitions

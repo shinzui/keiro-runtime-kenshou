@@ -56,7 +56,7 @@ Milestone 1 — Durable workflow scenarios
 Milestone 2 — Timer scenarios
 
 - [ ] Add `Kenshou.Suite.Keiro.Timer.Knobs`, `.Roles` (`keiro.timer.worker`) and `.Oracle` with unit tests.
-- [ ] Add the timer correctness scenarios (two).
+- [ ] Add the timer correctness scenarios (two). `keiro/timer/correctness/lifecycle-and-at-least-once` is registered and passed under both `fsync-off` and `durable` on 2026-09-24; `max-attempts-dead-letters-post-claim` remains.
 - [ ] Add the timer concurrency and crash scenarios (four).
 - [ ] Extend the bundle; confirm `kenshou list`.
 
@@ -83,6 +83,7 @@ Milestone 4 — Durable-execution benchmarks, soak and telemetry arms
 - The delivered worker role parser accepts `keiro/<name>` rather than `keiro.workflow.<name>`; `mkRoleName` in `kenshou-core/src/Kenshou/Core/Role.hs` enforces exactly two slash-delimited segments. The role names in this plan must be adapted before registration.
 - `Keiro.Workflow.Journal` is a hidden package module in the released cohort; the public `Keiro.Workflow` module re-exports `deterministicJournalId` and `loadStepIndex`. A direct hidden-module import failed compilation and was replaced by the public import.
 - Reading the correctness toolkit's ledger directory while `withCheck` still held the harness ledger open failed on macOS with `withBinaryFile: resource busy (file is locked)`. The crash probe seals the harness ledger before polling worker ledgers; its rerun passed with the `crash-armed` fact and both `s2` effect facts present.
+- The CLI cohort document identifies components by `.id`, not `.name` as the plan's illustrative filter says. `jq '.components[] | select(.id=="keiro")'` confirmed the executed cohort still pins `keiro`, `keiro-core`, `keiro-pgmq`, migrations and test support to 0.17.0.0.
 
 
 ## Decision Log

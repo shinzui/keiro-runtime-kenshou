@@ -19,7 +19,8 @@ import Kenshou.Suite.Keiro.Router.Bench qualified as RouterBench
 import Kenshou.Suite.Keiro.Router.Concurrency qualified as RouterConcurrency
 import Kenshou.Suite.Keiro.Router.Correctness qualified as RouterCorrectness
 import Kenshou.Suite.Keiro.Telemetry qualified as KeiroTelemetry
+import Kenshou.Suite.Keiro.Timer qualified as Timer
 import Kenshou.Suite.Keiro.Workflow qualified as Workflow
 
 bundle :: LayerBundle
-bundle = LayerBundle Keiro (Correctness.scenarios <> Concurrency.scenarios <> Bench.scenarios <> Soak.scenarios <> SteadyState.scenarios <> Projection.scenarios <> PMCorrectness.scenarios <> PMConcurrency.scenarios <> PMBench.scenarios <> RouterCorrectness.scenarios <> RouterConcurrency.scenarios <> RouterBench.scenarios <> KeiroTelemetry.scenarios <> Outbox.scenarios <> Inbox.scenarios <> Queue.scenarios <> Workflow.scenarios) (Roles.roles <> Outbox.roles <> Inbox.roles <> Queue.roles <> Workflow.roles)
+bundle = LayerBundle Keiro (Correctness.scenarios <> Concurrency.scenarios <> Bench.scenarios <> Soak.scenarios <> SteadyState.scenarios <> Projection.scenarios <> PMCorrectness.scenarios <> PMConcurrency.scenarios <> PMBench.scenarios <> RouterCorrectness.scenarios <> RouterConcurrency.scenarios <> RouterBench.scenarios <> KeiroTelemetry.scenarios <> Outbox.scenarios <> Inbox.scenarios <> Queue.scenarios <> Workflow.scenarios <> Timer.scenarios) (Roles.roles <> Outbox.roles <> Inbox.roles <> Queue.roles <> Workflow.roles <> Timer.roles)
