@@ -134,6 +134,9 @@ once, and delivery of events that follow each failure.
 `keiro/shard/concurrency/zombie-past-lease-ttl` pauses an owner past lease
 expiry, lets another worker claim its buckets, resumes the old process, and
 checks checkpoint direction, the post-resume effect window, and full delivery.
+`keiro/shard/concurrency/database-faults` terminates shard worker database
+backends and restarts the run's PostgreSQL server. It checks the worker error
+hook, continued process life, recovered ownership, and delivery of all events.
 These correctness probes support both PostgreSQL durability modes. The remaining workflow kinds, process concurrency cases,
 subscription delivery checks, benchmarks and soaks remain in the plan's
 Progress section.

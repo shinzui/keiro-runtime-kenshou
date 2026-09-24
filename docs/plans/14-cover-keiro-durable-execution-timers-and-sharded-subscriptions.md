@@ -97,6 +97,7 @@ Milestone 3 — Sharded subscription scenarios
 - [x] (2026-09-24) Added `keiro/shard/concurrency/coverage-after-membership-change`. A separate appender feeds account events while worker membership changes gracefully and by `SIGKILL`; 100 ms ownership samples preserve valid bucket rows, and verdict parameters report the measured recovery gaps. A 100-event, four-bucket run passed in both modes and the default 20,000-event, eight-bucket durable run passed with graceful and killed gaps of 3.54 s and 6.60 s. Per-event duplicate-window and checkpoint monotonicity checks remain.
 - [x] (2026-09-24) Added `keiro/shard/concurrency/fair-share-shedding`. The second worker joins after the first owns more than its fair share but before coverage is complete. A delayed handler holds an event on the bucket the first worker sheds; the worker ledger records redelivery, ownership rebalances to the fair-share cap, and the sink receives every event. A 100-event, four-bucket run passed in both modes and the default 20,000-event, eight-bucket durable run passed.
 - [x] (2026-09-24) Added `keiro/shard/concurrency/zombie-past-lease-ttl`. A worker paused with `SIGSTOP` beyond twice its lease loses every bucket to a survivor. After `SIGCONT`, the resumed worker does not reclaim, checkpoint samples never decrease, and its effect ledger stops after the next reconciliation window. Both modes passed at 100 events and the default 20,000-event durable run passed.
+- [x] (2026-09-24) Added `keiro/shard/concurrency/database-faults`. It terminates the delivery worker's PostgreSQL backends, immediately shuts down and restarts the run's postmaster, and checks the shard error hook, live worker, recovered coverage and complete sink delivery. A 1,000-event four-bucket run passed in both modes; the default 20,000-event eight-bucket durable run passed. The exact two-pass reader restart timing remains to be measured.
 - [x] (2026-09-24) The bundle includes shard scenarios and the shard worker role; `kenshou list --json` shows the five implemented shard scenarios.
 
 Milestone 4 — Durable-execution benchmarks, soak and telemetry arms
@@ -747,3 +748,13 @@ checks that ownership stays with the survivor. Flushed effect timestamps
 must show no old-worker delivery after one renewal interval plus one second;
 the sink must receive the full appended population. Both PostgreSQL modes
 passed at 100 events, and the default 20,000-event durable run passed.
+
+## Revision Note — 2026-09-24 (shard database faults)
+
+The shard worker now sends structured error-hook marks for reader, acquire,
+snapshot and startup failures. The database-fault scenario terminates its
+named PostgreSQL backends, restarts the run-owned postmaster, and requires an
+acquire or reader error, a live worker, full recovered ownership, and all
+seeded events in the sink. Both durability modes passed at 1,000 events;
+the default 20,000-event durable run passed. Reader restart time relative
+to two reconciliation passes remains to be recorded.

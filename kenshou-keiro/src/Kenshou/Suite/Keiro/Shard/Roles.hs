@@ -20,7 +20,7 @@ import Hasql.Encoders qualified as Encoders
 import Hasql.Statement qualified as Statement
 import Hasql.Transaction qualified as Tx
 import Keiro.Subscription.Shard (ShardCountMismatch, ShardLease (..), WorkerId (..), ensureShards)
-import Keiro.Subscription.Shard.Worker (RetryDelay (..), ShardAck (..), ShardDelivery (..), ShardedWorkerOptions (..), defaultShardedWorkerOptions, mkShardedWorkerOptions, runShardedSubscriptionGroup, runShardedSubscriptionGroupAck)
+import Keiro.Subscription.Shard.Worker (RetryDelay (..), ShardAck (..), ShardDelivery (..), ShardWorkerError (..), ShardedWorkerOptions (..), defaultShardedWorkerOptions, mkShardedWorkerOptions, runShardedSubscriptionGroup, runShardedSubscriptionGroupAck)
 import Kenshou.Core.Knob (resolvedKnobsMap)
 import Kenshou.Core.Role (ControlMessage (..), PostgresConnInfo (..), RoleContext (..), WorkerInit (..), WorkerMessage (..), WorkerRole (..), mkRoleName)
 import Kenshou.Suite.Keiro.Shard.Knobs (shardKnobName, shardOptionsFrom)
@@ -80,7 +80,8 @@ shardWorker context = case context.init.postgres of
                 ensureDurableTables fixture
                 withEffectSink context [] \sink -> do
                   plainAttempts <- newIORef Map.empty
-                  let plainHandler event = do
+                  let activeOptions = options {onShardError = Just (\err -> context.send (WrkCustom ("shard-error-" <> errorKind err) (object ["detail" .= show err])))}
+                      plainHandler event = do
                         let EventId identifier = event.eventId
                             key = UUID.toText identifier
                         number <- atomicModifyIORef' plainAttempts \previous ->
@@ -91,8 +92,8 @@ shardWorker context = case context.init.postgres of
                           else void (recordDelivery fixture sink context.init.instanceName context.send handlerDelayMicros (ShardDelivery event (fromIntegral (number - 1)) 0))
                       runGroup =
                         if handlerMode == Just ("plain" :: Text)
-                          then runShardedSubscriptionGroup (durableKirokuStore fixture) (SubscriptionName subscription) options plainHandler
-                          else runShardedSubscriptionGroupAck (durableKirokuStore fixture) (SubscriptionName subscription) options (recordDelivery fixture sink context.init.instanceName context.send handlerDelayMicros)
+                          then runShardedSubscriptionGroup (durableKirokuStore fixture) (SubscriptionName subscription) activeOptions plainHandler
+                          else runShardedSubscriptionGroupAck (durableKirokuStore fixture) (SubscriptionName subscription) activeOptions (recordDelivery fixture sink context.init.instanceName context.send handlerDelayMicros)
                   withAsync runGroup \worker -> do
                     outcome <- race context.receive (wait worker)
                     case outcome of
@@ -113,6 +114,11 @@ shardWorker context = case context.init.postgres of
       if Map.member (shardKnobName "shard.shard-count") (resolvedKnobsMap context.init.knobs)
         then shardOptionsFrom target context.init.knobs
         else mkShardedWorkerOptions (defaultShardedWorkerOptions target count) {leaseTtl = 10, renewInterval = 2}
+    errorKind = \case
+      ShardReaderDied _ _ -> "reader-died"
+      ShardAcquireFailed _ -> "acquire-failed"
+      ShardSnapshotFailed _ -> "snapshot-failed"
+      ShardEnsureFailed _ -> "ensure-failed"
 
 recordDelivery :: DurableStore -> EffectSink -> Text -> (WorkerMessage -> IO ()) -> Maybe Int -> ShardDelivery -> IO ShardAck
 recordDelivery fixture sink workerName send delay delivery = do
