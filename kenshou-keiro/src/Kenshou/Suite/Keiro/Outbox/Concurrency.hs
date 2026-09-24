@@ -27,6 +27,7 @@ import Keiro.Outbox (BackoffSchedule (..), IntegrationEventDraft (..), Integrati
 import Kenshou.Check.Fault (Fault (..), FaultHandle (..))
 import Kenshou.Check.Fault.Postgres (Backend (..), BackendSelector (..), LockTarget (..), holdLock, listBackends, terminateOneBackend)
 import Kenshou.Check.Process (awaitMark, awaitReady, childPid, killChild, roleProcess, sendCommand, spawn, withSupervisor)
+import Kenshou.Check.Process qualified as Process
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Check.Verdict (InvariantClass (..))
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
@@ -53,7 +54,65 @@ import Streamly.Data.Stream qualified as Streamly
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [crashBetweenPublishAndMark, multiProcessPublishers, concurrentInlineEnqueueOrder]
+scenarios = [crashBetweenPublishAndMark, multiProcessPublishers, concurrentInlineEnqueueOrder, zombiePublisherFinalization]
+
+zombiePublisherFinalization :: Scenario
+zombiePublisherFinalization =
+  crashBetweenPublishAndMark
+    { id = either (error . show) id (parseScenarioId "keiro/outbox/concurrency/zombie-publisher-finalization"),
+      summary = "Checks that a publisher resumed after maintenance cannot finalize another publisher's claim.",
+      knobs = [KnobSpec (knobName "outbox.zombie-outcome") "Outcome reported by the stale publisher" KnobText (VText "failed") (OneOf (VText "failed" :| [VText "succeeded", VText "dead"])) [VText "succeeded", VText "dead"]],
+      knownDefect = Just (KnownDefect "mori://shinzui/keiro/okf/bug-reports/concepts/BUG-5" "Stale publishers can finalize a row after maintenance and another publisher re-claim it" ["stale-finalization-no-effect", "terminal-consistent-with-success"] AllCohorts),
+      run = runZombiePublisherFinalization
+    }
+
+runZombiePublisherFinalization :: RunContext -> IO ScenarioReport
+runZombiePublisherFinalization context =
+  withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture ->
+    Broker.withTableBroker (requirePostgres context).connectionString \broker ->
+      withCheck context \check -> withSupervisor check \supervisor -> do
+        let KeiroRunner runFixture = fixture.runner
+            source = sourceName context "zombie"
+            outcome = knobText context.knobs (knobName "outbox.zombie-outcome")
+            maxAttempts = if outcome == "dead" then 2 else 10 :: Int
+            readSingle = do
+              rows <- runFixture (listOutbox source) >>= either (fail . show) pure
+              case rows of
+                [row] -> pure row
+                _ -> fail "zombie fixture did not contain exactly one outbox row"
+            startPublisher index publisherOutcome = do
+              spec <- roleProcess check "keiro/outbox-publisher" index (object ["parkAfterAppend" .= True, "outcome" .= publisherOutcome, "maxAttempts" .= maxAttempts])
+              child <- spawn supervisor spec
+              awaitReady child 10000
+              sendCommand child CtlStart
+              awaitMark child "broker-appended" 30000
+              pure child
+            finishPublisher child = do
+              sendCommand child (CtlCustom "continue" Null)
+              awaitMark child "finished" 30000
+        enqueueInline fixture source [("zombie", Just "one-key", 1)]
+        first <- startPublisher 0 (if outcome == "succeeded" then "succeeded" else "failed")
+        firstClaim <- readSingle
+        Process.signalChild supervisor first Process.Stop
+        threadDelay 1500000
+        maintenance <- runFixture (outboxMaintenancePass (OutboxMaintenanceOptions maxAttempts 1) Nothing) >>= either (fail . show) pure
+        reclaimed <- readSingle
+        second <- startPublisher 1 ("succeeded" :: Text.Text)
+        secondClaim <- readSingle
+        Process.signalChild supervisor first Process.Cont
+        finishPublisher first
+        afterStale <- readSingle
+        finishPublisher second
+        finalRow <- readSingle
+        records <- Broker.readBroker broker
+        let schedule = firstClaim.status == OutboxPublishing && maintenance.requeued == 1 && reclaimed.status == OutboxFailed && secondClaim.status == OutboxPublishing && secondClaim.attemptCount == 2
+            staleDidNothing = afterStale.status == OutboxPublishing && afterStale.attemptCount == 2
+            terminalConsistent = finalRow.status == OutboxSent && length records == (if outcome == "succeeded" then 2 else 1)
+        recordMessagingCellsClassified
+          context
+          (Map.fromList [("brokerRecords", fromIntegral (length records)), ("attempts", fromIntegral finalRow.attemptCount)])
+          (object ["outcome" .= outcome, "firstClaim" .= show firstClaim.status, "reclaimed" .= show reclaimed.status, "secondClaim" .= show secondClaim.status, "afterStale" .= show afterStale.status, "final" .= show finalRow.status])
+          [("schedule-realised", Contract, schedule), ("stale-finalization-no-effect", Implementation, staleDidNothing), ("terminal-consistent-with-success", Contract, terminalConsistent)]
 
 concurrentInlineEnqueueOrder :: Scenario
 concurrentInlineEnqueueOrder =

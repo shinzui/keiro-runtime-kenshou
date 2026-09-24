@@ -460,6 +460,18 @@ derived message ID for its source event. Use `outbox.enqueuers` and
 `outbox.source-events` to change the contention size. Republications are
 expected because suppression ends when GC removes a sent row.
 
+`zombie-publisher-finalization` stops a publisher after it claims one row,
+lets maintenance requeue that row, and parks a second publisher after its
+broker append. When the first publisher resumes, its late finalization
+changes the second publisher's claim. The `failed` and `dead` arms leave the
+row in those states despite the second publisher reporting success; the
+`succeeded` arm also proves that the old publisher can finalize the newer
+claim. All three durable schedules were realised. The ideal finalization
+verdicts are scoped to upstream
+`mori://shinzui/keiro/okf/bug-reports/concepts/BUG-5` and are reported as a
+known defect, while a missed schedule remains a blocking failure. Select the
+arm with `outbox.zombie-outcome=failed|succeeded|dead`.
+
 ## Inbox
 
 `keiro/inbox/correctness/envelope-round-trip` passes outbox records through

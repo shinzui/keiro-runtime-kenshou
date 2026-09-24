@@ -21,9 +21,9 @@ roleName = either (error . Text.unpack) id . mkRoleName
 publisher :: RoleContext -> IO ()
 publisher context = case context.init.postgres of
   Nothing -> context.send (WrkError "outbox publisher requires PostgreSQL")
-  Just postgres -> case parseMaybe (withObject "publisher args" (\value -> (,,,) <$> (value .:? "parkBeforeAppend" .!= False) <*> (value .:? "parkAfterAppend" .!= False) <*> (value .:? "loop" .!= False) <*> (value .:? "pauseMicros" .!= (0 :: Int)))) context.init.args of
+  Just postgres -> case parseMaybe (withObject "publisher args" (\value -> (,,,,,) <$> (value .:? "parkBeforeAppend" .!= False) <*> (value .:? "parkAfterAppend" .!= False) <*> (value .:? "loop" .!= False) <*> (value .:? "pauseMicros" .!= (0 :: Int)) <*> (value .:? "outcome" .!= ("succeeded" :: Text)) <*> (value .:? "maxAttempts" .!= (10 :: Int)))) context.init.args of
     Nothing -> context.send (WrkError "invalid outbox publisher arguments")
-    Just (parkBeforeAppend, parkAfterAppend, loop, pauseMicros) -> do
+    Just (parkBeforeAppend, parkAfterAppend, loop, pauseMicros, outcome, maxAttempts) -> do
       context.send WrkReady
       context.receive >>= \case
         Just CtlStart -> withFixtureEnv (defaultConnectionSettings postgres.connectionString) \fixture -> Broker.withTableBroker postgres.connectionString \broker -> do
@@ -39,8 +39,8 @@ publisher context = case context.init.postgres of
                       context.send (WrkCustom "broker-appended" (object ["rows" .= length rows]))
                       if parkAfterAppend then awaitContinue else pure ()
                   )
-              callback = Broker.publishScripted broker model (const Broker.Succeed) hooks context.init.instanceName
-              options = defaultPublishOptions {batchSize = 32, backoff = ConstantBackoff 0}
+              callback = Broker.publishScripted broker model (const (if outcome == "failed" then Broker.AlwaysFail else Broker.Succeed)) hooks context.init.instanceName
+              options = defaultPublishOptions {batchSize = 32, backoff = ConstantBackoff 0, maxAttempts = maxAttempts}
               awaitContinue =
                 context.receive >>= \case
                   Just (CtlCustom "continue" _) -> pure ()
