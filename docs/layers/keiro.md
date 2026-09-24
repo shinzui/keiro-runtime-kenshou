@@ -104,6 +104,9 @@ per-stream order. The default 20,000-event durable run passed.
 after the first owns every bucket. Both durability modes reproduce the declared
 Keiro 0.17.0.0 limitation: healthy ownership remains with the first worker,
 while complete coverage persists.
+`keiro/shard/concurrency/sigkill-failover-vs-graceful-relinquish` checks lease
+retention after a killed worker, transfer by the calculated failover deadline,
+and immediate release and faster recovery after a graceful stop.
 These correctness probes support both PostgreSQL durability modes. The remaining workflow kinds, process concurrency cases,
 subscription delivery checks, benchmarks and soaks remain in the plan's
 Progress section.

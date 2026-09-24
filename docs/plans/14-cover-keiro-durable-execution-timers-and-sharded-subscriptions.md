@@ -89,6 +89,7 @@ Milestone 3 — Sharded subscription scenarios
 - [x] (2026-09-24) Added `keiro/shard/correctness/single-worker-drains-all-buckets`. A real worker claimed four buckets, delivered twenty account-category events exactly once to the sink and effect ledger, then relinquished every bucket on graceful stop. Both durability modes passed; a 100-event, eight-bucket durable run also passed. The sink now records first-delivery sequence and verifies strict per-stream order. A 100-event, five-stream run passed in both modes, and the default 20,000-event, 500-stream, eight-bucket durable run passed.
 - [ ] Add the shard concurrency and crash scenarios (six).
 - [x] (2026-09-24) Added `keiro/shard/concurrency/late-joiner-gets-no-buckets` with three real delivery workers. Four- and eight-bucket durable runs and a four-bucket fsync-off run reproduced exactly the declared `shard-late-workers-share` known defect; the first owner covered all buckets and coverage persisted after the two joiners started.
+- [x] (2026-09-24) Added `keiro/shard/concurrency/sigkill-failover-vs-graceful-relinquish`. It samples ownership after `SIGKILL` and halfway through the lease, requires transfer to a surviving worker within the calculated failover deadline, then checks immediate release on graceful stop and reownership within the renewal deadline. Four-bucket runs passed in both PostgreSQL modes; the default eight-bucket durable run passed.
 - [ ] Extend the bundle; confirm `kenshou list`.
 
 Milestone 4 — Durable-execution benchmarks, soak and telemetry arms
@@ -651,3 +652,12 @@ deadline. It reports the expected lack of sharing through the plan's declared
 `KnownDefect`, while separately requiring initial and continued coverage.
 The four-bucket runs in both PostgreSQL durability modes and an eight-bucket
 durable run each reproduced only the sharing failure.
+
+## Revision Note — 2026-09-24 (shard failover)
+
+The process failover probe now compares a killed owner with a graceful stop.
+It requires the killed owner's leases to remain present before expiry, then
+checks a survivor owns every bucket within `failoverDeadline`. The graceful
+arm requires immediate unowned rows and reownership within the shorter
+renewal deadline. The default eight-bucket durable run and four-bucket runs
+in both durability modes passed.
