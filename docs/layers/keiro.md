@@ -80,6 +80,9 @@ the post-claim dead-letter ceiling. The
 four timer-worker processes against due timers and checks that each timer has
 one claim, one flushed effect, and one deterministic business event. Its
 `timer.count` knob defaults to 5,000; the default durable run passed.
+`keiro/timer/concurrency/sigkill-between-fire-and-mark` kills a worker after
+the business event append. A replacement requeues the firing row and marks it
+fired on attempt two while the business stream still has one event.
 The
 `keiro/shard/correctness/lease-coverage-smoke` scenario claims four buckets
 one per pass, relinquishes them, and checks that another owner can claim them

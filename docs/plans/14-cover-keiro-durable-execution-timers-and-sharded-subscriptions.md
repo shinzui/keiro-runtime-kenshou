@@ -75,7 +75,8 @@ Milestone 2 — Timer scenarios
 - [x] (2026-09-24) Added `Timer.Knobs` with nullable attempt and stuck-requeue settings, `keiro/timer-worker` with a journal-safe deterministic business event and flushed effect fact, and the initial `.Oracle`; 27 Keiro unit examples pass.
 - [x] (2026-09-24 05:35Z) Added both timer correctness scenarios; each passed under both `fsync-off` and `durable`. The attempt-ceiling probe checks two callback executions, post-claim dead-lettering on attempt three, zero-ceiling refusal, persisted reason and invalid options.
 - [x] (2026-09-24) Added `keiro/timer/concurrency/skip-locked-claims-across-processes`. Four real timer-worker processes passed at 100 timers in both PostgreSQL modes and at the default 5,000 timers on durable PostgreSQL, with one claim, effect and event per timer.
-- [ ] Add the other three timer concurrency and crash scenarios.
+- [x] (2026-09-24) Added `keiro/timer/concurrency/sigkill-between-fire-and-mark`. A worker self-`SIGKILL` after its committed business event leaves the timer firing; a replacement requeues and completes it on attempt two with two bounded fire facts and one business event. Both PostgreSQL durability modes passed.
+- [ ] Add the other two timer concurrency scenarios and random-kill arm to the fire/mark crash scenario.
 - [ ] Extend the bundle; confirm `kenshou list`.
 
 Milestone 3 — Sharded subscription scenarios
@@ -592,3 +593,11 @@ timers. Nullable timer settings are validated at startup. Four worker
 processes drained 5,000 timers in the durable PostgreSQL mode with exactly one
 claim and one event per timer; 100-timer runs passed in both modes. The crash,
 slow-fire and foreground-resume scenarios remain open.
+
+## Revision Note — 2026-09-24 (timer fire/mark crash)
+
+The timer worker can self-`SIGKILL` immediately after the deterministic
+business event append and before Keiro marks its row fired. The replacement
+worker requeues the stale claim, tolerates the duplicate event identifier,
+and marks the second attempt fired. Both durability modes passed. The
+randomly timed kill arm remains open.

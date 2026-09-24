@@ -2,7 +2,7 @@ module Kenshou.Suite.Keiro.Timer.Concurrency (scenarios) where
 
 import Control.Concurrent (threadDelay)
 import Control.Monad (forM, forM_)
-import Data.Aeson (Value (Null), object)
+import Data.Aeson (Value (Null), object, (.=))
 import Data.ByteString qualified as ByteString
 import Data.Int (Int64)
 import Data.List.NonEmpty (NonEmpty (..))
@@ -40,7 +40,70 @@ import Kiroku.Store (defaultConnectionSettings, readStreamForward, runStoreIO, r
 import Kiroku.Store.Types (RecordedEvent (..), StreamName (..), StreamVersion (..))
 
 scenarios :: [Scenario]
-scenarios = [skipLocked]
+scenarios = [skipLocked, sigkillBetweenFireAndMark]
+
+sigkillBetweenFireAndMark :: Scenario
+sigkillBetweenFireAndMark =
+  skipLocked
+    { id = either (error . show) id (parseScenarioId "keiro/timer/concurrency/sigkill-between-fire-and-mark"),
+      summary = "Kills a timer worker after its business event, then checks requeue, bounded duplicate fire and one event.",
+      knobs = timerKnobs,
+      run = runSigkillBetweenFireAndMark
+    }
+
+runSigkillBetweenFireAndMark :: RunContext -> IO ScenarioReport
+runSigkillBetweenFireAndMark context = withCheck context \check ->
+  withDurableStore (defaultConnectionSettings (requirePostgres context).connectionString) \fixture -> do
+    now <- getCurrentTime
+    let store = durableKirokuStore fixture
+        tid = fixtureTimerId 900000
+        request = TimerRequest tid "kenshou" "timer-crash-window" (addUTCTime (-1) now) Null
+        lookupOne = runStoreIO store (lookupTimer tid)
+        fired = do
+          result <- lookupOne
+          pure (case result of Right (Just row) -> row.status == Fired; _ -> False)
+    seeded <- runStoreIO store (runTransaction (scheduleTimerTx request))
+    sealLedger check.ledger
+    (armed, firingBeforeRestart, completed) <- withSupervisor check \supervisor -> do
+      firstSpec <- roleProcess check "keiro/timer-worker" 0 (object ["killAfterFire" .= True])
+      first <- spawn supervisor firstSpec
+      awaitReady first 10000
+      sendCommand first CtlStart
+      armed <- awaitCrashArm check 100
+      firingBeforeRestart <- lookupOne
+      secondSpec <- roleProcess check "keiro/timer-worker" 1 (object [])
+      second <- spawn supervisor secondSpec
+      awaitReady second 10000
+      sendCommand second CtlStart
+      completed <- waitUntil fired 160
+      _ <- stopGracefully supervisor second 2000
+      pure (armed, firingBeforeRestart, completed)
+    finalRow <- lookupOne
+    business <- runStoreIO store (readStreamForward (StreamName ("kenshouTimer-" <> timerText tid)) (StreamVersion 0) 3)
+    ledgers <- discoverLedgers check.ledgerDirectory
+    (effects, arms) <- foldFacts ledgers (Map.empty, 0 :: Int) \(counts, marks) fact ->
+      pure (if fact.kind == Effect then (Map.insertWith (+) fact.key (1 :: Int) counts, marks) else (counts, marks + if fact.kind == Mark && fact.id == "crash-armed" then 1 else 0))
+    let cells =
+          [ ("crash-arm-flushed", armed && arms == 1),
+            ("first-claim-left-firing", seeded == Right () && case firingBeforeRestart of Right (Just row) -> row.status == Firing && row.attempts == 1; _ -> False),
+            ("requeued-and-fired", completed && case finalRow of Right (Just row) -> row.status == Fired && row.attempts == 2 && row.firedEventId == Just (businessEventId tid); _ -> False),
+            ("duplicate-effect-bounded", Map.lookup (timerText tid) effects == Just 2 && Map.size effects == 1),
+            ( "one-business-event",
+              case business of
+                Right events -> case Vector.toList events of
+                  [event] -> event.eventId == businessEventId tid
+                  _ -> False
+                Left _ -> False
+            )
+          ]
+    recordTimerCells check cells
+
+awaitCrashArm :: CheckEnv -> Int -> IO Bool
+awaitCrashArm _ 0 = pure False
+awaitCrashArm check remaining = do
+  ledgers <- discoverLedgers check.ledgerDirectory
+  found <- foldFacts ledgers False \seen fact -> pure (seen || fact.kind == Mark && fact.id == "crash-armed")
+  if found then pure True else threadDelay 50000 >> awaitCrashArm check (remaining - 1)
 
 skipLocked :: Scenario
 skipLocked =
