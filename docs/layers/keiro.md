@@ -643,6 +643,11 @@ leaves the original DLQ row as well. When that row becomes visible again,
 redriving it creates a second main-queue copy. The run reports the documented
 DOC-25 `exactly-one-place` limitation with a realised schedule and no loss.
 
+All eleven registered queue scenarios produced outcomes in one durable local
+sweep (`01a0d539-*` through `01a0d53c-*`). Eight passed outright; the drain
+window, redrive window, and transient polling worker reported only their scoped
+known-defect failures, leaving the sweep nonblocking.
+
 `write-side-steady-state` starts two command-writer processes and durable
 process-manager, router, and activity-projection workers. It stops writers at
 an operation boundary, waits for dispatch and projection to catch up, then
