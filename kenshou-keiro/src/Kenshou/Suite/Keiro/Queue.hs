@@ -5,9 +5,10 @@ import Kenshou.Core.Scenario (Scenario)
 import Kenshou.Suite.Keiro.Queue.Concurrency qualified as Concurrency
 import Kenshou.Suite.Keiro.Queue.Correctness qualified as Correctness
 import Kenshou.Suite.Keiro.Queue.Roles qualified as Roles
+import Kenshou.Suite.Keiro.Queue.Telemetry qualified as Telemetry
 
 scenarios :: [Scenario]
-scenarios = Correctness.scenarios <> Concurrency.scenarios
+scenarios = Correctness.scenarios <> Concurrency.scenarios <> Telemetry.scenarios
 
 roles :: [WorkerRole]
 roles = Roles.roles

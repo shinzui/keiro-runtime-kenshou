@@ -568,6 +568,12 @@ insert-versus-lookup gap is investigated.
 
 The queue scenarios provision PGMQ through the harness migration and run
 Keiro's typed job API through its separate runtime pool.
+`telemetry-contract` enqueues traced jobs and checks Consumer spans on both
+bounded drain and continuous worker execution. It covers Done, Dead, and a
+thrown drain handler; the acknowledgement and status mapping, source trace
+parent, FIFO partition, and worker-only inflight attributes are checked against
+the actual deliveries. The contract passes with in-memory tracing and collected
+metrics, and with both disabled.
 `consumption-config-rejections` checks invalid tuning, ordering mismatch,
 unsafe legacy FIFO batch size, and error precedence. Direct SQL confirms that
 the queued row still has `read_ct = 0` after all rejections; valid tuning then
