@@ -22,8 +22,14 @@ verdict. The conservation check includes debited transfer value still in flight.
 `workload.operations` knob defaults to 500.
 
 The fixture also defines a bonus event stream and a transfer process manager
-with deterministic target commands. Their scenario coverage is being added
-under the repository-local `docs/plans/12-cover-the-keiro-command-processor-process-managers-and-routers.md` plan.
+with deterministic target commands. The command, process-manager, router,
+projection, snapshot, benchmark, soak, and telemetry scenarios share this
+fixture. Their implementation record is the repository-local
+`docs/plans/12-cover-the-keiro-command-processor-process-managers-and-routers.md` plan.
+
+A Keiro-only smoke plan selected sixteen scenarios and completed locally in
+about half a minute. Fifteen passed; the `NoAdvance` receipt scenario reproduced
+its declared nonblocking known defect. The plan executor exited zero.
 
 The registered command scenarios also cover duplicate event identifiers,
 optimistic retry and exhaustion, controlled SQL rollback, and hydration over
@@ -104,7 +110,12 @@ rebuild fencing, and the documented effect of pruning deduplication rows. A
 projection worker crash after apply checks that redelivery is deduplicated;
 the `skip-dedup` arm fails. `projection.batch-size` and `projection.events`
 let the run keep more events pending across the crash; batch sizes 1 and 10
-both replayed one duplicate within the batch bound. The stronger
+both replayed one duplicate within the batch bound. `projection.crash-count`
+repeats the apply-before-checkpoint kill on successive events; a three-kill
+batch-size-one run passed its per-kill activity and deduplication checks.
+Larger batches can replay the whole applied prefix after each kill; a
+five-kill batch-size-ten run passed with one to five reported duplicates.
+The oracle bounds that count by the batch size. The stronger
 apply/checkpoint atomicity run
 reproduces the known defect at
 `mori://shinzui/keiro/okf/improvement-requests/concepts/IR-10`.
@@ -204,3 +215,10 @@ checks over 868 account events and wrote both writer latency series and
 application-specific connection probes. Its first and last tenth had 64 and
 63 latency samples, below the minimum for a decided drift comparison.
 Periodic kills, telemetry arms, and longer runs remain pending.
+A five-minute sixteen-account run passed all nine durable checks over 9,250
+account events. The process-manager and router child reports flagged growing
+post-GC live heaps, while their native memory, threads, descriptors, and
+connections were stable. The signal and reproduction steps are recorded in
+`docs/findings/1-keiro-write-side-worker-heap-growth.md`; a longer isolated
+subscription run is needed to determine whether this is retained runtime
+state or a true leak.
