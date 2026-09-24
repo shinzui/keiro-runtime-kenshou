@@ -6,6 +6,8 @@ module Kenshou.Suite.Keiro.Outbox.Broker
     FaultDecision (..),
     PublishHook (..),
     newBroker,
+    newTableBroker,
+    withTableBroker,
     readBroker,
     decide,
     publishCallback,
@@ -15,19 +17,32 @@ where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM (TVar, atomically, modifyTVar', newTVarIO, readTVarIO)
+import Control.Exception (bracket)
+import Data.Aeson (Value)
+import Data.Aeson qualified as Aeson
 import Data.Bits (xor)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as ByteString
 import Data.Foldable (toList)
-import Data.Int (Int64)
+import Data.Functor.Contravariant (contramap)
+import Data.Int (Int32, Int64)
 import Data.Map.Strict qualified as Map
 import Data.Sequence (Seq, (|>))
 import Data.Sequence qualified as Seq
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Data.Text.Encoding qualified as TextEncoding
 import Data.Time (UTCTime, getCurrentTime)
 import Data.Word (Word64)
 import Effectful (Eff, IOE, liftIO, (:>))
+import Hasql.Connection.Settings qualified as ConnectionSettings
+import Hasql.Decoders qualified as Decoders
+import Hasql.Encoders qualified as Encoders
+import Hasql.Pool (Pool)
+import Hasql.Pool qualified as Pool
+import Hasql.Pool.Config qualified as PoolConfig
+import Hasql.Session qualified as Session
+import Hasql.Statement qualified as Statement
 import Keiro.Integration.Event (IntegrationEvent (..))
 import Keiro.Outbox (OutboxId, OutboxRow (..), PublishOutcome (..), PublishRejection, mkPublishRejection)
 import Keiro.Outbox.Kafka (KafkaProducerRecord (..), outboxRowToKafkaRecord)
@@ -45,7 +60,7 @@ data BrokerRecord = BrokerRecord
   }
   deriving stock (Eq, Show)
 
-newtype Broker = Broker (TVar (Seq BrokerRecord))
+data Broker = InProcessBroker !(TVar (Seq BrokerRecord)) | TableBroker !Pool
 
 data BrokerModel = BrokerModel
   { invocationMicros :: !Int,
@@ -73,10 +88,39 @@ data PublishHook = PublishHook
   }
 
 newBroker :: IO Broker
-newBroker = Broker <$> newTVarIO Seq.empty
+newBroker = InProcessBroker <$> newTVarIO Seq.empty
+
+newTableBroker :: Pool -> IO Broker
+newTableBroker pool = do
+  let schema =
+        "CREATE SCHEMA IF NOT EXISTS kenshou_fx; "
+          <> "CREATE TABLE IF NOT EXISTS kenshou_fx.broker_log ("
+          <> "record_offset bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, "
+          <> "topic text NOT NULL, partition bigint NOT NULL, record_key bytea, "
+          <> "payload bytea NOT NULL, headers jsonb NOT NULL, "
+          <> "appended_at timestamptz NOT NULL DEFAULT clock_timestamp(), "
+          <> "publisher text NOT NULL, attempt integer NOT NULL)"
+  Pool.use pool (Session.script schema) >>= either (fail . show) pure
+  pure (TableBroker pool)
+
+withTableBroker :: Text -> (Broker -> IO value) -> IO value
+withTableBroker connectionString action =
+  bracket
+    (Pool.acquire (PoolConfig.settings [PoolConfig.size 2, PoolConfig.staticConnectionSettings (ConnectionSettings.connectionString connectionString)]))
+    Pool.release
+    (\pool -> newTableBroker pool >>= action)
 
 readBroker :: Broker -> IO [BrokerRecord]
-readBroker (Broker rows) = toList <$> readTVarIO rows
+readBroker (InProcessBroker rows) = toList <$> readTVarIO rows
+readBroker (TableBroker pool) = do
+  rows <- Pool.use pool (Session.statement () readBrokerStatement) >>= either (fail . show) pure
+  traverse decodeRow rows
+  where
+    decodeRow (topic, partition, offset, key, payload, headersValue, appendedAt, publisher, attempt) = do
+      headers <- case Aeson.fromJSON headersValue of
+        Aeson.Error message -> fail ("invalid synthetic broker headers: " <> message)
+        Aeson.Success pairs -> pure [(TextEncoding.encodeUtf8 name, TextEncoding.encodeUtf8 value) | (name, value) <- (pairs :: [(Text, Text)])]
+      pure BrokerRecord {topic, partition, offset, key, payload, headers, appendedAt, publisher, attempt = fromIntegral (attempt :: Int32)}
 
 -- The decision depends on stable message identity and the attempt, never on
 -- callback interleaving or a process-local random generator.
@@ -123,27 +167,61 @@ publishScripted broker model choose hooks publisherName rows = liftIO do
             pure (failedGroups, outcomes <> [(row.outboxId, PublishSucceeded)])
 
 append :: Broker -> BrokerModel -> Text -> OutboxRow -> IO ()
-append (Broker logRows) model publisherName row = do
+append broker model publisherName row = do
   threadDelay (max 0 model.perRecordMicros)
   now <- getCurrentTime
   let wire = outboxRowToKafkaRecord row
       partitionNumber = fromIntegral (foldl hashByte (14695981039346656037 :: Word64) (maybe [] (map fromIntegral . ByteString.unpack) wire.key) `mod` fromIntegral (max 1 model.partitions))
       hashByte :: Word64 -> Word64 -> Word64
       hashByte value byte = (value `xor` byte) * 1099511628211
-  atomically $ modifyTVar' logRows \records ->
-    let offsetNumber = fromIntegral (length [() | record <- toList records, record.topic == wire.topic, record.partition == partitionNumber])
-     in records
-          |> BrokerRecord
-            { topic = wire.topic,
-              partition = partitionNumber,
-              offset = offsetNumber,
-              key = wire.key,
-              payload = wire.payload,
-              headers = wire.headers,
-              appendedAt = now,
-              publisher = publisherName,
-              attempt = row.attemptCount
-            }
+  let record =
+        BrokerRecord
+          { topic = wire.topic,
+            partition = partitionNumber,
+            offset = 0,
+            key = wire.key,
+            payload = wire.payload,
+            headers = wire.headers,
+            appendedAt = now,
+            publisher = publisherName,
+            attempt = row.attemptCount
+          }
+  case broker of
+    InProcessBroker logRows ->
+      atomically $ modifyTVar' logRows \records ->
+        let offsetNumber = fromIntegral (length [() | previous <- toList records, previous.topic == wire.topic, previous.partition == partitionNumber])
+         in records |> (record {offset = offsetNumber})
+    TableBroker pool ->
+      Pool.use pool (Session.statement record appendStatement) >>= either (fail . show) pure
+
+appendStatement :: Statement.Statement BrokerRecord ()
+appendStatement =
+  Statement.preparable
+    "INSERT INTO kenshou_fx.broker_log (topic, partition, record_key, payload, headers, publisher, attempt) VALUES ($1, $2, $3, $4, $5, $6, $7)"
+    ( contramap (.topic) (Encoders.param (Encoders.nonNullable Encoders.text))
+        <> contramap (.partition) (Encoders.param (Encoders.nonNullable Encoders.int8))
+        <> contramap (.key) (Encoders.param (Encoders.nullable Encoders.bytea))
+        <> contramap (.payload) (Encoders.param (Encoders.nonNullable Encoders.bytea))
+        <> contramap (Aeson.toJSON . fmap (\(name, value) -> (TextEncoding.decodeUtf8 name, TextEncoding.decodeUtf8 value)) . (.headers)) (Encoders.param (Encoders.nonNullable Encoders.jsonb))
+        <> contramap (.publisher) (Encoders.param (Encoders.nonNullable Encoders.text))
+        <> contramap (fromIntegral @Int @Int32 . (.attempt)) (Encoders.param (Encoders.nonNullable Encoders.int4))
+    )
+    Decoders.noResult
+
+readBrokerStatement :: Statement.Statement () [(Text, Int64, Int64, Maybe ByteString, ByteString, Value, UTCTime, Text, Int32)]
+readBrokerStatement =
+  Statement.preparable
+    "SELECT topic, partition, record_offset, record_key, payload, headers, appended_at, publisher, attempt FROM kenshou_fx.broker_log ORDER BY record_offset"
+    Encoders.noParams
+    (Decoders.rowList ((,,,,,,,,) <$> text <*> int8 <*> int8 <*> key <*> bytes <*> jsonb <*> timestamp <*> text <*> int4))
+  where
+    text = Decoders.column (Decoders.nonNullable Decoders.text)
+    int8 = Decoders.column (Decoders.nonNullable Decoders.int8)
+    int4 = Decoders.column (Decoders.nonNullable Decoders.int4)
+    key = Decoders.column (Decoders.nullable Decoders.bytea)
+    bytes = Decoders.column (Decoders.nonNullable Decoders.bytea)
+    jsonb = Decoders.column (Decoders.nonNullable Decoders.jsonb)
+    timestamp = Decoders.column (Decoders.nonNullable Decoders.timestamptz)
 
 foldlM :: (Monad m) => (a -> b -> m a) -> a -> [b] -> m a
 foldlM step initial = go initial

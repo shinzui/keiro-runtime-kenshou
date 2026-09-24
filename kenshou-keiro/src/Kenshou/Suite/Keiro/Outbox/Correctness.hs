@@ -250,26 +250,26 @@ runFailureSkipsSuccessors context =
         source = sourceName context "failure-skips"
         entries = [("a" <> suffix, Just "a", index) | (suffix, index) <- zip ["1", "2", "3", "4", "5"] [1 :: Int ..]] <> [("b" <> suffix, Just "b", index) | (suffix, index) <- zip ["1", "2", "3", "4", "5"] [1 :: Int ..]]
     enqueueInline fixture source entries
-    broker <- Broker.newBroker
-    let model = Broker.BrokerModel 0 0 4
-        hooks = Broker.PublishHook (const (pure ())) (const (pure ()))
-        choose row = if row.event.messageId == "a2" then Broker.FailOnce else Broker.Succeed
-        callback = Broker.publishScripted broker model choose hooks "publisher"
-        options = defaultPublishOptions {batchSize = 16, backoff = ConstantBackoff 0}
-    summary <- runFixture (publishClaimedOutbox callback options Nothing) >>= either (fail . show) pure
-    rows <- runFixture (listOutbox source) >>= either (fail . show) pure
-    records <- Broker.readBroker broker
-    let byId = Map.fromList [(row.event.messageId, row) | row <- rows]
-        isState messageId status attempts = case Map.lookup messageId byId of
-          Just row -> row.status == status && row.attemptCount == attempts
-          Nothing -> False
-        cells =
-          [ ("ten-rows", length rows == 10),
-            ("first-sent", isState "a1" OutboxSent 1),
-            ("pivot-failed", isState "a2" OutboxFailed 1),
-            ("successors-skipped", all (\messageId -> isState messageId OutboxFailed 0) ["a3", "a4", "a5"]),
-            ("independent-key-sent", all (\messageId -> isState messageId OutboxSent 1) ["b1", "b2", "b3", "b4", "b5"]),
-            ("broker-six-records", length records == 6),
-            ("pass-summary", summary.published == 6 && summary.retried == 4)
-          ]
-    recordCells context cells
+    Broker.withTableBroker (requirePostgres context).connectionString \broker -> do
+      let model = Broker.BrokerModel 0 0 4
+          hooks = Broker.PublishHook (const (pure ())) (const (pure ()))
+          choose row = if row.event.messageId == "a2" then Broker.FailOnce else Broker.Succeed
+          callback = Broker.publishScripted broker model choose hooks "publisher"
+          options = defaultPublishOptions {batchSize = 16, backoff = ConstantBackoff 0}
+      summary <- runFixture (publishClaimedOutbox callback options Nothing) >>= either (fail . show) pure
+      rows <- runFixture (listOutbox source) >>= either (fail . show) pure
+      records <- Broker.readBroker broker
+      let byId = Map.fromList [(row.event.messageId, row) | row <- rows]
+          isState messageId status attempts = case Map.lookup messageId byId of
+            Just row -> row.status == status && row.attemptCount == attempts
+            Nothing -> False
+          cells =
+            [ ("ten-rows", length rows == 10),
+              ("first-sent", isState "a1" OutboxSent 1),
+              ("pivot-failed", isState "a2" OutboxFailed 1),
+              ("successors-skipped", all (\messageId -> isState messageId OutboxFailed 0) ["a3", "a4", "a5"]),
+              ("independent-key-sent", all (\messageId -> isState messageId OutboxSent 1) ["b1", "b2", "b3", "b4", "b5"]),
+              ("broker-six-records", length records == 6),
+              ("pass-summary", summary.published == 6 && summary.retried == 4)
+            ]
+      recordCells context cells

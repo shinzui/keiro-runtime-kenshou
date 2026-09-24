@@ -41,11 +41,11 @@ Milestone 1 — Outbox scenarios (includes the shared messaging support used by 
 
 - [x] (2026-09-24 03:01 UTC) Verify the hard dependencies: the Nix-shell build, Keiro listing, PostgreSQL round trip, backend kill and proxy partition selftests passed. Read the prerequisite plans' interface sections and the fixture milestone; the fixture module names match the completed work.
 - [x] (2026-09-24 02:59 UTC) Add the initial outbox modules and their build dependencies to `kenshou-keiro/kenshou-keiro.cabal`.
-- [ ] Complete `Kenshou.Suite.Keiro.Outbox.Broker`: the in-process broker, model, deterministic fault decisions and callback hooks are implemented and two unit tests pass; the PostgreSQL table backend and stronger determinism and ordering tests remain.
-- [ ] Implement `Kenshou.Suite.Keiro.Outbox.Knobs`, `.Workload`, `.Roles`, `.Oracle`: `.Workload` now enqueues run-namespaced inline events, and `.Oracle` has per-key-order and duplicate-budget checks with doctored unit inputs; knobs, roles, and SQL oracles remain.
+- [ ] Complete `Kenshou.Suite.Keiro.Outbox.Broker`: the in-process broker, model, deterministic fault decisions, callback hooks and PostgreSQL table backend are implemented; stronger determinism and ordering tests remain.
+- [ ] Implement `Kenshou.Suite.Keiro.Outbox.Knobs`, `.Workload`, `.Roles`, `.Oracle`: `.Workload` now enqueues run-namespaced inline events, `.Oracle` has per-key-order and duplicate-budget checks with doctored unit inputs, and a one-pass publisher role supports a crash window; knobs, the remaining roles, and SQL oracles remain.
 - [ ] Finish the five outbox correctness scenarios: all five are registered and have passed durable PostgreSQL runs; `terminal-state-matrix` passed at its 2,000-row default and `per-key-order-serialized` at its 5,000-row default. The remaining plan-specific arms and frozen identity vector are pending.
-- [ ] Implement the six outbox concurrency and crash scenarios.
-- [ ] Export `Kenshou.Suite.Keiro.Outbox.scenarios` and `.roles` and splice them into the bundle module created by `docs/plans/12-…`.
+- [ ] Implement the six outbox concurrency and crash scenarios: the first real `SIGKILL` arm of `crash-between-publish-and-mark` passed with 32 rows; its planned knobs and other arms remain.
+- [x] (2026-09-24 03:35 UTC) Export `Kenshou.Suite.Keiro.Outbox.scenarios` and `.roles` and splice them into the bundle module created by `docs/plans/12-…`.
 - [ ] Run every outbox scenario locally with `pg.durability=durable`; record outcomes and any upstream finding; file upstream reports for unexpected failures and attach `KnownDefect` references.
 
 Milestone 2 — Inbox scenarios.
@@ -82,6 +82,8 @@ Milestone 4 — Messaging benchmarks, soak and telemetry arms.
 - The first `producer-identity` run passed seven of eight checks. For a changed message-ID namespace, `ProducerIdentityConflict` carries the attempted identity: its outbox UUID remains the original UUID while its message ID carries the new namespace. The scenario initially compared that returned identity with the original message ID; the check now compares it with `deriveProducerIdentity` for the changed producer and still demands exactly `IdentityField`.
 - The corrected `publisher-misbehaviour` and `producer-identity` scenarios passed on durable PostgreSQL in runs `01a0d167-23fd-75f0-a9dd-716c6287b9b7` and `01a0d16c-1722-73c2-9e19-ad577f97a48b`.
 - The 5,000-row `per-key-order-serialized` default passed on durable PostgreSQL in run `01a0d16c-bb1b-756e-a4d3-26c6e56a1a6a`.
+- The first table-broker run failed at table creation because `offset` is a PostgreSQL keyword. Renaming the column to `record_offset` fixed it; `failure-skips-successors` then passed in run `01a0d174-2602-7004-b1bf-8173e1e7cae1`.
+- The role registry requires `layer/name` identifiers, so the outbox publisher is registered as `keiro/outbox-publisher`. The first process-death run passed on durable PostgreSQL in `01a0d177-db24-754e-9fd6-30bf28bbd987`: the controller observed all 32 broker records, killed the publisher, saw 32 `publishing` rows, confirmed an ordinary publisher pass reclaimed none, then maintenance requeued them and replay produced exactly two records per message.
 
 
 ## Decision Log

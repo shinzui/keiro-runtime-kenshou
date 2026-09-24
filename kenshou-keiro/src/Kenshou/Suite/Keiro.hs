@@ -19,4 +19,4 @@ import Kenshou.Suite.Keiro.Router.Correctness qualified as RouterCorrectness
 import Kenshou.Suite.Keiro.Telemetry qualified as KeiroTelemetry
 
 bundle :: LayerBundle
-bundle = LayerBundle Keiro (Correctness.scenarios <> Concurrency.scenarios <> Bench.scenarios <> Soak.scenarios <> SteadyState.scenarios <> Projection.scenarios <> PMCorrectness.scenarios <> PMConcurrency.scenarios <> PMBench.scenarios <> RouterCorrectness.scenarios <> RouterConcurrency.scenarios <> RouterBench.scenarios <> KeiroTelemetry.scenarios <> Outbox.scenarios) Roles.roles
+bundle = LayerBundle Keiro (Correctness.scenarios <> Concurrency.scenarios <> Bench.scenarios <> Soak.scenarios <> SteadyState.scenarios <> Projection.scenarios <> PMCorrectness.scenarios <> PMConcurrency.scenarios <> PMBench.scenarios <> RouterCorrectness.scenarios <> RouterConcurrency.scenarios <> RouterBench.scenarios <> KeiroTelemetry.scenarios <> Outbox.scenarios) (Roles.roles <> Outbox.roles)
