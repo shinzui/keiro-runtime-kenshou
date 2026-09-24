@@ -22,6 +22,11 @@ provenance:
       at: 2026-09-23T17:13:47Z
       mode: "implement"
       note: "Added concurrent adapter shutdown failure scenario and matrix tags"
+    - model: "gpt-6"
+      harness: "codex"
+      at: 2026-09-24T02:42:47Z
+      mode: "update"
+      note: "Added owner-repository OKF bug-report audit and local canonical URI tracking."
 ---
 
 # Cover shibuya core and its PGMQ and kiroku adapters
@@ -86,7 +91,7 @@ Milestone 4 — shibuya benchmarks, soak and telemetry arms.
 - [ ] Implement the two trace-continuity scenarios and confirm every scenario honours `telemetry.tracing` and `telemetry.metrics`.
 - [ ] Run `kenshou overhead` on the two designated benchmarks and add the shibuya entries to `policies/telemetry-overhead.json`.
 - [ ] Write `docs/layers/shibuya.md` (scenario catalogue, knobs, what each proves, the boundary matrix, the cohort table).
-- [ ] File upstream improvement requests or bug reports for defects found that have no upstream record, and attach their URIs as known-defect references.
+- [ ] Audit each reproduced Shibuya finding, including historical 0.9.0.3 lifecycle failures and defects still open on the current release, against upstream reviews, remediation plans and any existing bug reports. File or reuse one owner-repository OKF bug report per distinct confirmed broken provision claim; use an improvement request for behavior never promised. Record each report's canonical Mori concept URI in a local `docs/findings/` record, this plan, the MasterPlan's issue register and the matching cohort-scoped scenario reference. Keep unreproduced or unowned findings visible without inventing bug reports.
 - [ ] Create the ADRs named in Context and Orientation, validate the ADR bundle, and complete Outcomes & Retrospective.
 
 
@@ -107,6 +112,10 @@ Milestone 4 — shibuya benchmarks, soak and telemetry arms.
 
 
 ## Decision Log
+
+- Decision: Reconcile reproduced historical and current Shibuya failures against owner-repository OKF bug reports by distinct reproduction, recording each confirmed bug's affected version and canonical concept URI locally before this plan is complete.
+  Rationale: Reviews and remediation plans preserve audit context, but a producer-owned bug report makes a broken released behavior independently reproducible and prevents historical 0.9.0.3 findings from being misattributed to 0.10.0.0.
+  Date: 2026-09-23
 
 - Decision: Scenario code is black-box and cohort-portable. It imports only names that exist with the same type in both shibuya-core 0.9.0.3 from Hackage and the repository head, and uses no C preprocessor conditions on runtime versions. The single exception is `Shibuya.Internal.Runner.KeyedScheduler.runKeyedScheduler`, whose signature is identical in both.
   Rationale: The two cores carry the same version number (0.9.0.3), so `MIN_VERSION_shibuya_core` cannot tell them apart, and a cabal flag set from `cohort/head.project` would make this plan edit a file owned by `docs/plans/1-bootstrap-the-kenshou-repository-and-pin-the-runtime-cohort.md`. Head-only names (`totalShutdownTimeout`, `getLifecycleSnapshot`, `ProcessorFailure`, `InvalidConcurrency`, `DuplicateProcessorId`) are therefore never referenced; behaviour is observed through `waitApp`, return values, exceptions rendered as text, metrics and the ledger.
@@ -228,6 +237,8 @@ Three decisions of this plan deserve new ADRs when implemented: cohort-sensitive
 
 
 ## Plan of Work
+
+The upstream-report audit spans all four milestones, even though its completion checklist is in Milestone 4. Start with the historical 0.9.0.3 findings that the current implemented scenarios reproduce (duplicate processor IDs, invalid concurrency, idle-intake halt and adapter shutdown), then check the metrics and adapter findings as their scenarios run. Inspect each owning project's current `coordination.bugReports` bundle, review findings and remediation plans before filing. Compare the historical released cohort, pinned remediation head and current 0.10.0.0 Shibuya lane so that `affectedVersion` names the actual release and a report does not claim a current defect that has been fixed. One reproducible wrong behavior gets one report even if multiple review records mention it; a second, independently reproducible behavior gets its own report. Each report must include observed and expected behavior with the published authority, exact version and cohort revisions, scenario identifier, complete command, run ID, failed labels, matrix cell, relevant knobs and telemetry dimensions, and `origin: mori://shinzui/keiro-runtime-kenshou/masterplans/1-build-an-extensive-verification-suite-for-the-keiro-runtime`. If the owning repository has no bug-report bundle, adopt its local OKF profile before filing. Validate the bundle, then record the canonical bug concept URI in a local `docs/findings/` record, the MasterPlan register and the scenario's narrowly scoped `KnownDefect` reference. An existing review, plan or improvement request supplies context but does not by itself satisfy this audit when a reproduced published behavior is broken.
 
 Every scenario below states its identifier, purpose, knobs, procedure, oracle with the invariant's class, tier, placement and the matrix cells it covers. Unless stated otherwise a scenario supports every value of `telemetry.tracing` and `telemetry.metrics`, has placement `either`, and a database scenario supports `pg.version` 17 and 18 (default 18) and both `pg.durability` values, except that crash, outage and benchmark scenarios support only `durable`. The shared core knobs are `shibuya.inbox-size` (integer, default 100, at least 1; `AppConfig.inboxSize`), `shibuya.concurrency` (text, default `serial`; `serial`, `ahead:<n>` or `async:<n>`, where the parser deliberately accepts zero and negative `n`), `shibuya.ordering` (`strict-in-order`, `partitioned-in-order`, `unordered`; default `unordered`), `shibuya.strategy` (`ignore-failures`, `stop-all-on-failure`; default `ignore-failures`), `shibuya.processor-kind` (`single`, `batch`; default `single`), `shibuya.drain-timeout-seconds` (decimal, default 30), `shibuya.messages` (integer), `shibuya.handler-delay-micros` (integer, default 0), `shibuya.partitions` (`none`, `uniform:<n>`, `hot-key:<n>`, `high-cardinality`; default `none`) and `shibuya.decisions` (`all-ok`, `retry-every:<n>`, `dead-letter-every:<n>`, `throw-every:<n>`; default `all-ok`).
 
@@ -445,7 +456,7 @@ Telemetry arms. Every scenario that calls `runApp` does so through `Fixture.App`
 
 The overhead comparisons are `kenshou overhead shibuya/core-ordering/benchmark/concurrency-sweep --arms tracing=off,noop,sdk-inmemory,sdk-otlp --arms metrics=off,serve,serve-scraped` and the same for `shibuya/pgmq-adapter/benchmark/end-to-end-throughput-latency`, plus one run with `shibuya-metrics.ws-subscribers=10` at the default 100 ms push interval. Add shibuya entries to `policies/telemetry-overhead.json`, seeded from upstream's `performance-budgets.json` as starting limits (throughput no more than 5 percent down, p99 no more than 10 percent up, allocated bytes per message no more than 5 percent up for `off` against `noop`) and marked provisional until a cell run calibrates them.
 
-Finally write `docs/layers/shibuya.md`: what the layer isolates, the scenario catalogue by component with knobs and what each proves, the 13 by 5 matrix rendered from `Kenshou.Suite.Shibuya.Matrix`, the cohort table (finding, released outcome, head outcome, reference), the sizing rule from the leased-bound scenarios, and the restart-loop pattern. For each defect observed without an upstream record — the retry-counting gap, sticky `Failed` readiness, hot-key head-of-line if above the alert factor, the unexposed consumer-group guard, the 1000-event live replay window — file an improvement request or bug report in the owning repository through its own process, then put the resulting `mori://` URI on the scenario.
+Finally write `docs/layers/shibuya.md`: what the layer isolates, the scenario catalogue by component with knobs and what each proves, the 13 by 5 matrix rendered from `Kenshou.Suite.Shibuya.Matrix`, the cohort table (finding, released outcome, head outcome, reference), the sizing rule from the leased-bound scenarios, and the restart-loop pattern. Audit both existing reviewed failures and new observations, including the retry-counting gap, sticky `Failed` readiness, hot-key head-of-line if above the alert factor, the unexposed consumer-group guard, and the 1000-event live replay window. For each independently reproduced wrong behavior, check the owning repository's published contract and existing OKF bug reports; file a versioned bug report for a confirmed broken claim or an improvement request for new behavior. Record the canonical report URI in `docs/findings/`, this plan and the MasterPlan's issue register, then update only the matching scenario and cohort reference.
 
 
 ## Concrete Steps
@@ -537,6 +548,8 @@ When ADRs are added, run the validation command from Context and Orientation bef
 
 ## Validation and Acceptance
 
+The report audit is accepted when every reproduced Shibuya failure has a recorded disposition: a validated owner-repository OKF bug concept whose canonical URI appears in this repository's finding, this plan and the MasterPlan register; an existing equivalent bug concept reused by URI; or a written reason that the observation is a documented limitation, a request for new behavior, an unreproduced suspicion or a harness failure. At minimum reconcile the implemented 0.9.0.3 lifecycle reproductions and later metrics, PGMQ-adapter and Kiroku-adapter findings as those milestones finish. Check `affectedVersion` against the released and current lanes before editing scenario references; do not make a fixed historical bug non-blocking on a current cohort.
+
 Milestone 1 is accepted when `cabal test kenshou-shibuya-test` passes (including `MatrixSpec`, which accounts for all sixty-five cells, the parser properties, and the synthetic broker's lease and redelivery tests); the same package tests pass with `cabal --project-file=cohort/shibuya-current.project test kenshou-shibuya-test`; `kenshou list --layer shibuya` shows the twenty-nine Milestone 1 scenarios; on the historical 0.9.0.3 cohort every scenario either passes or fails as a known defect with its reference printed, and specifically `halt-wakes-idle-intake` passes for `serial` and is a known defect for `ahead:4`, `async:4`, partitioned and batch; on the pinned remediation and current 0.10.0.0 cohorts the eight cohort-sensitive scenarios (`duplicate-processor-ids-are-rejected`, `nonpositive-concurrency-is-rejected`, `halt-wakes-idle-intake` in every mode, `finalization-failure-is-a-failure-not-a-halt`, `adapter-shutdown-failure-does-not-skip-siblings`, `blocking-adapter-shutdown-is-bounded`, `startup-cancellation-leaks-nothing`, `keyed-worker-failure-stops-intake`) all pass with no known-defect annotation, the two regression guards pass on all cohorts, and the metrics scenarios keep their annotations where the defects remain. Non-vacuity is part of acceptance: each checker used must be shown by a unit test to fail on a doctored ledger, and every known-defect scenario's control check must pass.
 
 Milestone 2 is accepted when the eleven PGMQ scenarios run on PostgreSQL 17 and 18 with `pg.durability=durable`; the kill scenario's verdict file lists each kill instant, the redelivery delay of each killed message (all within the VT plus the poll interval plus two seconds) and `budgetBurnedByCrashes`; `multi-process-competition` shows zero overlapping leases across four processes; the atomic-move verdict passes and the duplicate-copy verdict is either passed or the REV-11-F1 known defect; and after every run no `kenshou worker` process and no queue with the run's prefix remains.
@@ -610,3 +623,5 @@ Revision note (2026-09-23): Verified that Hackage 0.10.0.0 superseded the origin
 Revision note (2026-09-23): Added a forced shutdown and restart conservation scenario. It waits for four handlers to block, forces a one-second drain timeout, verifies finalization stops after shutdown, then resumes the broker and confirms all messages finish.
 
 Revision note (2026-09-23): Added a paired hot-key ordering probe with per-key order and overlap oracles, a cold-key starvation deadline, and a reported P99 latency ratio. The historical released run passed.
+
+Revision note (2026-09-23): Replaced the open-ended upstream filing item with an explicit audit across historical and current Shibuya cohorts. Confirmed broken claims require versioned OKF bug reports, exact reproduction evidence, and canonical concept URI links in local findings and the MasterPlan.

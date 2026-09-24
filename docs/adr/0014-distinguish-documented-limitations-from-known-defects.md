@@ -1,8 +1,8 @@
 ---
 type: Architecture Decision Record
 title: Distinguish documented limitations from known defects
-description: Verification asserts documented implementation limitations as expected behavior and reserves known-defect status for behavior with an identified upstream correction.
-timestamp: 2026-09-22T02:17:39Z
+description: Verification distinguishes documented limitations from known defects and links confirmed runtime failures to reproducible owner-repository bug reports.
+timestamp: 2026-09-24T02:30:02Z
 generated:
   by: process:codex
   at: "2026-09-22T02:17:39Z"
@@ -34,6 +34,20 @@ Known-defect references use canonical `mori://` URIs. A new observation without
 an upstream artifact is recorded as evidence and remains blocking according to
 its invariant class; the suite does not invent or claim a defect filing.
 
+For a newly reproduced failure of behavior the producer already promises,
+file an OKF `Bug Report` in the repository that owns the behavior. State the
+affected released version (or `unreleased` for an unshipped head), the
+observed and expected behavior, the source of the expectation, and ordered
+steps that reproduce it. Include the exact Kenshou cohort and run evidence,
+and set `origin` to
+`mori://shinzui/keiro-runtime-kenshou/masterplans/1-build-an-extensive-verification-suite-for-the-keiro-runtime`.
+Record the report's canonical concept URI in the matching local
+`docs/findings/` record and in that MasterPlan's issue register. Reuse an
+equivalent existing report; where the behavior was never promised, file an
+improvement request instead. Only attach `KnownDefect` to the scenario's
+specific failure labels and affected cohorts, so another failure remains
+blocking.
+
 Kiroku scenarios state the desired behavior in their oracle and carry the
 upstream artifact in `KnownDefect`. The released cohort's five probes cover
 fresh-stream deadlock (`mori://shinzui/kiroku/okf/improvement-requests/concepts/IR-7`),
@@ -56,3 +70,5 @@ checked against its resolved cohort before the defect is retired.
   defects locally.
 - Scenario documentation must state whether it verifies a contract, an
   implementation property, or a referenced known defect.
+- A confirmed runtime failure has a versioned, reproducible owner-repository
+  record and a canonical URI that remains visible in this repository.

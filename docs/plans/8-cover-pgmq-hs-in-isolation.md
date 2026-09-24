@@ -27,6 +27,11 @@ provenance:
       at: 2026-09-22T20:55:50Z
       mode: "implement"
       note: "Added durable per-batch SIGKILL accounting and separate-owner stale-ack evidence."
+    - model: "gpt-6"
+      harness: "codex"
+      at: 2026-09-24T02:42:47Z
+      mode: "update"
+      note: "Added owner-repository OKF bug-report audit and local canonical URI tracking."
 ---
 
 # Cover pgmq-hs in isolation
@@ -117,6 +122,7 @@ Milestone 4 — pgmq-hs soak and telemetry arms.
 - [ ] Run the reduced soak with `telemetry.tracing=sdk-otlp` and confirm the leak verdict is still `stable`. Final run `01a0c798-5508-77db-9004-674089ca9310` exported every span without loss and kept the exporter queue bounded, but the common live-heap probe still grew at 78.3 MB/hour.
 - [x] (2026-09-22 02:28Z) Wrote ADR-12 through ADR-14 for database-clock leases, native SQL metrics collection, and limitation/known-defect classification; the 14-record bundle passes strict OKF validation.
 - [x] (2026-09-22 05:52Z) Updated the MasterPlan progress and this retrospective; the EP-8 registry row remains `In Progress` because concurrency, benchmark A/A, and stable-heap acceptance are unresolved.
+- [ ] Audit every reproduced PGMQ known-defect scenario against the owning repository's current OKF reports and published contract. Start with disconnect classification (`mori://shinzui/pgmq-hs/okf/improvement-requests/concepts/IR-4`) and concurrent reconciliation (`mori://shinzui/pgmq-hs/okf/improvement-requests/concepts/IR-5`); decide whether the response blackhole (`mori://shinzui/pgmq-hs/okf/improvement-requests/concepts/IR-6`), mixed-case alias collision, partitioned notification storm and retention loss each break a promised behavior. File one reproducible OKF bug report per distinct confirmed wrong behavior, or document why the existing request or plan remains the right artifact. Record every filed canonical bug concept URI in a local `docs/findings/` record, this plan and the MasterPlan's issue register.
 
 
 ## Surprises & Discoveries
@@ -241,6 +247,10 @@ Milestone 4 — pgmq-hs soak and telemetry arms.
 
 ## Decision Log
 
+- Decision: Reconcile each reproduced PGMQ failure against the producer's published contract and OKF bug reports before closing this plan, and store the canonical bug concept URI in the local finding, MasterPlan register and precise scenario reference when a bug is confirmed.
+  Rationale: Existing improvement requests describe intended corrections, while a bug report records the affected version and replayable broken behavior. The response-blackhole deadline and documented limitations require a contract check before bug classification.
+  Date: 2026-09-23
+
 - Decision: Every scenario talks to PGMQ through `pgmq-effectful` (the function `runOps` in `Kenshou.Suite.Pgmq.Harness`) unless it needs something the effect cannot express (a caller-owned transaction, hand-written SQL, a `LISTEN` connection). `pgmq-hasql` is covered transitively and by the layer ladder and the interpreter-parity scenario.
   Rationale: `runPgmq` delegates one-to-one to `Pgmq.Hasql.Sessions` (verified in `pgmq-effectful/src/Pgmq/Effectful/Interpreter.hs`), so nothing is lost, and the interpreter choice (`runPgmq` versus `runPgmqTraced`) is the only tracing seam pgmq-hs has. Routing every scenario through it lets every scenario honour the `telemetry.tracing` dimension, which is how we learn whether tracing causes problems rather than only what it costs.
   Date: 2026-09-20
@@ -361,6 +371,8 @@ Decisions of this plan that deserve a new ADR once they have survived implementa
 
 
 ## Plan of Work
+
+Before declaring this layer complete, reconcile the observed failures with upstream ownership. The current released cohort exercises pgmq-hs 0.6.1.0 on durable PostgreSQL 17 and 18; use the sealed runs already named in Surprises & Discoveries as the reproduction basis and rerun only where the evidence is insufficient. Inspect the current `mori://shinzui/pgmq-hs` source, its already cited improvement requests and plans, and any existing `coordination.bugReports` bundle. A report needs the affected version and exact cohort revision, scenario identifier, full invocation, run ID, failed verdict labels, PostgreSQL version, fault settings, expected behavior and its published authority, plus a `mori://shinzui/keiro-runtime-kenshou/masterplans/1-build-an-extensive-verification-suite-for-the-keiro-runtime` origin. If the owner has not adopted the bug-report profile, establish its local OKF bundle before filing; do not replace a bug report with a second improvement request. Keep a failure blocking when it has no supported known-defect disposition. After filing, put the canonical bug concept URI in `docs/findings/`, the MasterPlan register, and the scenario's `KnownDefect` reference for only its applicable cohort and failure labels.
 
 ### Shared design used by every milestone
 
@@ -698,6 +710,8 @@ Before each commit run `nix fmt` (fourmolu and cabal-gild through treefmt) and `
 
 ## Validation and Acceptance
 
+The upstream-report reconciliation is accepted when every reproduced PGMQ finding has a documented disposition: a validated owner-repository OKF bug concept and matching canonical URI in `docs/findings/`, this plan, the MasterPlan register and the exact scenario reference; an existing equivalent bug concept reused by URI; or a written explanation that the published contract is not broken and an improvement request or plan is the appropriate record. The disconnect-classification and reconciliation failures must be checked explicitly, and the response blackhole must not be called a bug solely because the ten-second harness deadline was missed.
+
 Milestone 1 is accepted when `cabal test kenshou-pgmq-test` passes (including the doctored-ledger tests that make `checkLeaseIntervals` fail on an overlap, on a duplicate read count and on an early redelivery, and the topic matcher's unit tests); `kenshou list --layer pgmq --kind correctness` prints eighteen scenarios; each ends `passed` on `pg.version=17` and `18`, except `pgmq/fifo/correctness/grouped-result-order` and `pgmq/config/correctness/mixed-case-alias-collision`, which end with the kernel's non-blocking known-defect result (how that is rendered and which exit code it gets is defined by the kernel plan, not here), and the partitioned variant of `lifecycle-by-kind`, which ends `passed` with pg_partman and `errored` with the remediation text without it; and the run log of `wall-clock-expiry` shows a redelivery at or after the lease's `visibilityTime`, never before, with `read_ct=2`.
 
 Milestone 2 is accepted when `crash-redelivery-read-count` shows five real `SIGKILL`s in its log and a maximum `read_ct` of six; `no-double-lease-threads` passes with the default and fails with `pgmq.sabotage=unlocked-read`; `pool-exhaustion-long-poll` shows acquisition timeouts only when pollers are at least the pool size; `postgres-restart-recovery` shows every acknowledged send present after an immediate-mode crash; the two pg_partman known-defect scenarios report message counts lost or notifications in excess; and each scenario has written one verdict file per checker under `verdicts/`.
@@ -706,7 +720,7 @@ Milestone 3 is accepted when every benchmark writes histograms under `samples/` 
 
 Milestone 4 is accepted when the reduced soak ends `passed` with `diagnosis/` holding a `stable` leak verdict per process and `series/` holding relation-size, dead-tuple and queue-depth series; the same soak with `--dim telemetry.tracing=sdk-otlp` is still `stable`; `kenshou overhead` writes a `kenshou.overhead-report/v1` for tracing and for metrics; and `docs/layers/pgmq.md` lists every registered scenario, which the unit test `bundle is documented` enforces by comparing identifiers in the bundle with identifiers in the guide.
 
-For the whole plan: `kenshou list --layer pgmq --json | jq length` prints the number of scenarios in the guide (adjust the `jq` path if the kernel's list document is not a top-level array); no module in `kenshou-pgmq` imports another layer package (`grep -r "Kenshou.Suite\.\(Kiroku\|Shibuya\|Kafka\|Keiro\)" kenshou-pgmq` prints nothing); and the only files changed outside `kenshou-pgmq/`, `docs/layers/pgmq.md`, `policies/pgmq.json` and `docs/adr/` are the two registration files in `kenshou-cli/`.
+For the whole plan: `kenshou list --layer pgmq --json | jq length` prints the number of scenarios in the guide (adjust the `jq` path if the kernel's list document is not a top-level array); no module in `kenshou-pgmq` imports another layer package (`grep -r "Kenshou.Suite\.\(Kiroku\|Shibuya\|Kafka\|Keiro\)" kenshou-pgmq` prints nothing); and changes outside the layer package are limited to its guide, policy, applicable ADRs, local finding records, this plan, the MasterPlan register and the two registration files in `kenshou-cli/`. Owner-repository OKF bug reports are tracked by their canonical Mori URIs here.
 
 
 ## Idempotence and Recovery
@@ -723,3 +737,5 @@ Runtime libraries, at the versions the cohort pins (do not add bounds that contr
 At the end of Milestone 1 these exist: `Kenshou.Suite.Pgmq (bundle :: LayerBundle)`; `Kenshou.Suite.Pgmq.Knobs (PgmqKnobs, QueueKind, ReadStrategy, AckMode, commonKnobs, resolveKnobs)`; `Kenshou.Suite.Pgmq.Harness (PgmqRun, withPgmqRun, withPgmqPool, scenarioQueueName, withScenarioQueue, requirePartman, runOps)`; `Kenshou.Suite.Pgmq.Telemetry (pgmqTracer, withMetricsPoller)`; `Kenshou.Suite.Pgmq.Facts (PgmqFact)`; `Kenshou.Suite.Pgmq.Oracle (checkLeaseIntervals, checkNotBeforeDue, queueKeys, archiveKeys, conservation)`; `Kenshou.Suite.Pgmq.Listener (withListener, awaitNotifications)`; `Kenshou.Suite.Pgmq.TopicModel (matches :: TopicPattern -> RoutingKey -> Bool)`; and `Kenshou.Suite.Pgmq.Correctness.{Queue,Send,Read,Ack,Vt,Fifo,Topics,Notify,Config,Effectful}`, each with `scenarios :: [Scenario]`. At the end of Milestone 2: `Kenshou.Suite.Pgmq.Roles (roles, CrashPoint)` and `Kenshou.Suite.Pgmq.Concurrency.{Lease,Crash,Pool,Outage,Fifo,Notify,Retention,Config}`. At the end of Milestone 3: `Kenshou.Suite.Pgmq.RawSql`, `Kenshou.Suite.Pgmq.Client (PgmqClient, Layer, mkClient)`, `Kenshou.Suite.Pgmq.Bench.{Ladder,Send,ReadAck,ProduceConsume,Backlog,Fifo,Notify}` and `policies/pgmq.json`. At the end of Milestone 4: `Kenshou.Suite.Pgmq.Soak.SteadyState (mkSteadyState)`, `Kenshou.Suite.Pgmq.Bench.Overhead` and `docs/layers/pgmq.md`.
 
 What other plans consume from this one. Nothing imports `kenshou-pgmq` except `kenshou-cli`. `docs/plans/3-plan-and-select-runs-from-what-changed.md` selects `pgmq/**` when any pgmq-hs package or the PostgreSQL version changes, and can narrow to `pgmq/config/**` or `pgmq/effectful/**` using the component mapping given in Context and Orientation. `docs/plans/10-cover-shibuya-core-and-its-pgmq-and-kiroku-adapters.md` and `docs/plans/13-cover-the-keiro-outbox-inbox-and-job-queue.md` build on the facts established here — lease accounting on the database clock, `read_ct` as a delivery count, the pool-pinning of long polls, the FIFO boundary — and may copy the lease-interval rule, but they must not import this package. The services this plan needs at run time are PostgreSQL 17 and 18 from the dev shell or a cell, with pg_partman compiled in for the partitioned-queue scenarios, and, for `telemetry.tracing=sdk-otlp`, the OTLP sink the telemetry plan provides.
+
+Revision note (2026-09-23): Added a completion gate to audit reproduced PGMQ failures against published behavior and existing owner records, file versioned OKF bug reports where warranted, and track each canonical bug concept URI in Kenshou.

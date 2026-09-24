@@ -1,5 +1,8 @@
 # Bundle Update Log
 
+## 2026-09-24
+* **Changed**: Require versioned owner-repository OKF bug reports and local canonical-URI tracking for confirmed runtime failures.
+
 ## 2026-09-23
 * **Decision**: Accepted parking in Keiro hooks before external process or backend termination.
 * **Decision**: Accepted kenshou-keiro ownership of the shared ledger fixture and SQL oracles.
