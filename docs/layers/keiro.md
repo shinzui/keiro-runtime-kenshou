@@ -622,6 +622,11 @@ handler, observes a committed DLQ row while the source delete waits, and
 interrupts the drainer by process or backend kill. Both durable arms retain
 the message in the source and DLQ tables. The schedule and no-loss verdicts
 hold; the duplicate-place verdict is the scoped DOC-25 known defect.
+`dead-letter-atomic-worker-path` uses the same source-row lock against a
+continuous supervised worker. Its blocked move leaves no committed DLQ row;
+after backend termination the message is only in the main queue. A replacement
+worker moves it to one DLQ row, so `exactly-one-place` holds throughout the
+observed interruption and recovery.
 
 `write-side-steady-state` starts two command-writer processes and durable
 process-manager, router, and activity-projection workers. It stops writers at

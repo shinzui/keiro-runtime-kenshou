@@ -50,12 +50,14 @@ worker context = case context.init.postgres of
               draining = mode == Just ("lease-drain" :: Text) || mode == Just "dead-drain"
               leasing = mode == Just ("lease" :: Text) || mode == Just "lease-drain"
               fifo = mode == Just ("fifo" :: Text)
+              deadWorker = mode == Just ("dead-worker-hold" :: Text) || mode == Just "dead-recovery"
               policy = if holding then RetryPolicy 3 (RetryDelay 60) True else defaultRetryPolicy
               tuning
                 | holding = defaultJobTuning {visibilityTimeout = 3, polling = if pollingMode == Just ("long-poll" :: Text) then LongPoll 5 100 else PollEvery 1}
                 | leasing = defaultJobTuning {visibilityTimeout = 2, polling = PollEvery 0.2}
                 | mode == Just "throw-once" = defaultJobTuning {visibilityTimeout = 1, polling = PollEvery 0.2}
                 | fifo = defaultJobTuning {visibilityTimeout = 10, batchSize = 8, polling = PollEvery 0.1, ordering = FifoHeads}
+                | deadWorker = defaultJobTuning {visibilityTimeout = 3, polling = PollEvery 0.1}
                 | otherwise = defaultJobTuning
               job = Job "queue-poll-probe" (queueRef queue) (aesonJobCodec @Text) (if fifo then FifoHeads else Unordered) policy
               handler jobContext payload = do
@@ -74,35 +76,46 @@ worker context = case context.init.postgres of
                           _ <- context.receive
                           pure ()
                         else
-                          if fifo
+                          if mode == Just "dead-worker-hold"
                             then do
-                              started <- Pool.use runtime.runtimePool (Session.statement payload fifoStartStatement)
-                              spanId <- either (fail . show) pure started
-                              when (payload == "0:0") (threadDelay 5000000)
-                              threadDelay 10000
-                              finished <- Pool.use runtime.runtimePool (Session.statement spanId fifoFinishStatement)
-                              either (fail . show) pure finished
-                              count <- atomicModifyIORef' counter (\value -> (value + 1, value + 1))
-                              now <- getCurrentTime
-                              context.send (WrkProgress (fromIntegral count) now)
-                            else do
-                              when (not leasing) do
-                                now <- getCurrentTime
-                                context.send (WrkCustom "delivery" (object ["attempt" .= jobContext.attempt, "headers" .= jobContext.headers, "payload" .= payload, "at" .= show now]))
-                              when leasing do
-                                now <- getCurrentTime
-                                context.send (WrkCustom "delivery" (object ["attempt" .= jobContext.attempt, "payload" .= payload, "at" .= show now]))
-                                threadDelay 6000000
-                              result <- Pool.use runtime.runtimePool (Session.statement payload effectInsertStatement)
-                              either (fail . show) pure result
-                              count <- atomicModifyIORef' counter (\value -> (value + 1, value + 1))
-                              now <- getCurrentTime
-                              context.send (WrkProgress (fromIntegral count) now)
+                              context.send (WrkCustom "delivery" (object ["payload" .= payload]))
+                              _ <- context.receive
+                              pure ()
+                            else
+                              if mode == Just "dead-recovery"
+                                then context.send (WrkCustom "delivery" (object ["payload" .= payload]))
+                                else
+                                  if fifo
+                                    then do
+                                      started <- Pool.use runtime.runtimePool (Session.statement payload fifoStartStatement)
+                                      spanId <- either (fail . show) pure started
+                                      when (payload == "0:0") (threadDelay 5000000)
+                                      threadDelay 10000
+                                      finished <- Pool.use runtime.runtimePool (Session.statement spanId fifoFinishStatement)
+                                      either (fail . show) pure finished
+                                      count <- atomicModifyIORef' counter (\value -> (value + 1, value + 1))
+                                      now <- getCurrentTime
+                                      context.send (WrkProgress (fromIntegral count) now)
+                                    else do
+                                      when (not leasing) do
+                                        now <- getCurrentTime
+                                        context.send (WrkCustom "delivery" (object ["attempt" .= jobContext.attempt, "headers" .= jobContext.headers, "payload" .= payload, "at" .= show now]))
+                                      when leasing do
+                                        now <- getCurrentTime
+                                        context.send (WrkCustom "delivery" (object ["attempt" .= jobContext.attempt, "payload" .= payload, "at" .= show now]))
+                                        threadDelay 6000000
+                                      result <- Pool.use runtime.runtimePool (Session.statement payload effectInsertStatement)
+                                      either (fail . show) pure result
+                                      count <- atomicModifyIORef' counter (\value -> (value + 1, value + 1))
+                                      now <- getCurrentTime
+                                      context.send (WrkProgress (fromIntegral count) now)
                 when (mode == Just "throw-once" && jobContext.attempt == Just 0) (liftIO (fail "fixture worker handler failure"))
                 pure $ case mode of
                   Just "retry-once" | jobContext.attempt == Just 0 -> Retry (RetryDelay 1)
                   Just "dead" -> Dead "worker-poison"
                   Just "dead-drain" -> Dead "drain-poison"
+                  Just "dead-worker-hold" -> Dead "worker-poison"
+                  Just "dead-recovery" -> Dead "worker-poison"
                   _ -> Done
           result <-
             if draining

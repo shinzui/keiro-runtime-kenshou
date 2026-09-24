@@ -41,7 +41,77 @@ import System.Timeout (timeout)
 import Text.Read (readMaybe)
 
 scenarios :: [Scenario]
-scenarios = [workersSurviveTransientPollingError, crashRedeliveryCadence, leaseExtension, fifoHeadsStrictOrder, deadLetterWindowDrainPath]
+scenarios = [workersSurviveTransientPollingError, crashRedeliveryCadence, leaseExtension, fifoHeadsStrictOrder, deadLetterWindowDrainPath, deadLetterAtomicWorkerPath]
+
+deadLetterAtomicWorkerPath :: Scenario
+deadLetterAtomicWorkerPath =
+  deadLetterWindowDrainPath
+    { id = either (error . show) id (parseScenarioId "keiro/queue/concurrency/dead-letter-atomic-worker-path"),
+      summary = "Checks that the worker path moves a dead letter atomically under backend interruption.",
+      knobs = [],
+      knownDefect = Nothing,
+      run = runDeadLetterAtomicWorkerPath
+    }
+
+runDeadLetterAtomicWorkerPath :: RunContext -> IO ScenarioReport
+runDeadLetterAtomicWorkerPath context =
+  withJobRuntime (requirePostgres context).connectionString Nothing \runtime ->
+    withCheck context \check -> withSupervisor check \supervisor -> do
+      let postgres = requirePostgres context
+          queue = sourceName context "atomic-dead"
+          job = Job "queue-poll-probe" (queueRef queue) (aesonJobCodec @Text) Unordered defaultRetryPolicy
+          mainTable = "pgmq.q_" <> queueNameToText job.jobQueue.physicalName
+          dlqTable = "pgmq.q_" <> queueNameToText job.jobQueue.dlqName
+          lockFault = holdLock postgres (RowLock "pgmq" ("q_" <> queueNameToText job.jobQueue.physicalName))
+          countRows table = do
+            let statement = Statement.preparable ("SELECT count(*) FROM " <> table) Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
+            Pool.use runtime.runtimePool (Session.statement () statement) >>= either (fail . show) pure
+          placement = (,) <$> countRows mainTable <*> countRows dlqTable
+          startWorker index mode = do
+            spec <- roleProcess check "keiro/queue-worker" index (object ["queue" .= queue, "mode" .= (mode :: Text)])
+            child <- spawn supervisor spec
+            awaitReady child 10000
+            sendCommand child CtlStart
+            awaitMark child "running" 30000
+            pure child
+          waitBlocked = do
+            backends <- listBackends postgres
+            case [backend | backend <- backends, "queue-worker-0" `Text.isInfixOf` backend.applicationName, backend.waitEvent == Just "transactionid" || backend.waitEventType == Just "Lock"] of
+              backend : _ -> pure backend.pid
+              [] -> threadDelay 10000 >> waitBlocked
+          waitRecovered = do
+            state <- placement
+            if state == (0, 1) then pure state else threadDelay 100000 >> waitRecovered
+      setup <- runJobEff runtime do
+        ensureJobQueue job
+        enqueue job ("atomic-dead" :: Text)
+      _ <- either (fail . show) pure setup
+      first <- startWorker 0 "dead-worker-hold"
+      awaitMark first "delivery" 10000
+      (blocked, beforeKill) <- bracket lockFault.inject (.heal) \_ -> do
+        sendCommand first (CtlCustom "continue" (object []))
+        blockedPid <- timeout 10000000 waitBlocked
+        before <- placement
+        case blockedPid of
+          Just pid -> do
+            _ <- (terminateOneBackend postgres (ByPid pid)).inject
+            pure ()
+          Nothing -> pure ()
+        killChild supervisor first
+        pure (blockedPid /= Nothing, before)
+      afterKill <- placement
+      recovery <- startWorker 1 "dead-recovery"
+      recovered <- timeout 15000000 waitRecovered
+      afterRecovery <- placement
+      killChild supervisor recovery
+      let count (mainCount, dlqCount) = mainCount + dlqCount
+          cells =
+            [ ("schedule-realised", blocked && beforeKill == (1, 0)),
+              ("exactly-one-place", count afterKill == 1 && count afterRecovery == 1),
+              ("recovers-to-dlq", recovered == Just (0, 1) && afterRecovery == (0, 1)),
+              ("never-nowhere", count beforeKill >= 1 && count afterKill >= 1 && count afterRecovery >= 1)
+            ]
+      recordMessagingCells context (Map.fromList [("beforeMain", fst beforeKill), ("beforeDlq", snd beforeKill), ("afterKillMain", fst afterKill), ("afterKillDlq", snd afterKill), ("finalMain", fst afterRecovery), ("finalDlq", snd afterRecovery)]) (object ["blockedOnLock" .= blocked]) cells
 
 deadLetterWindowDrainPath :: Scenario
 deadLetterWindowDrainPath =
