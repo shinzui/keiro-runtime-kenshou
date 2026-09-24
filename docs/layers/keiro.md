@@ -395,7 +395,9 @@ The outbox scenarios use Keiro's publisher against a synthetic broker. The
 single-process broker stores wire records in memory; crash and competing-worker
 scenarios store them in `kenshou_fx.broker_log` through a separate PostgreSQL
 pool. Both use `Keiro.Outbox.Kafka.outboxRowToKafkaRecord` for the published
-envelope. List the current scenarios with
+envelope. The table broker allocates offsets per topic and partition; the
+multi-process scenario checks that each partition's offsets remain contiguous
+under competing publishers. List the current scenarios with
 `cabal run kenshou -- list 'keiro/outbox/**'`.
 
 The correctness runs cover terminal `sent`, `rejected`, and `dead` states,
@@ -420,7 +422,13 @@ default passed with three kills on durable PostgreSQL. The run writes
 `reclaimed-only-by-maintenance.json` with counts and killed process IDs. The
 four-process publisher scenario passed with 20,000 rows and 200 keys: each
 outbox row had one broker record and one consumed attempt, and first-record
-order held within each key. Both concurrency scenarios require
+order held within each key. A strengthened 2,000-row run observed records from
+two publishers, with no loss or duplicate records. The inline enqueue ordering
+scenario uses an advisory lock to start one transaction before another but
+commit it later. Its durable run published `second` before `first` as documented
+in `mori://shinzui/keiro/okf/user-documentation/concepts/DOC-16`; the schedule
+and no-loss contract verdicts held, while the scoped per-key-order verdict was
+violated under the known-defect reference. These concurrency scenarios require
 `pg.durability=durable`.
 
 ## Inbox
