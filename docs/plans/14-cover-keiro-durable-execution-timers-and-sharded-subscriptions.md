@@ -69,10 +69,11 @@ Milestone 2 — Timer scenarios
 
 Milestone 3 — Sharded subscription scenarios
 
-- [ ] Add `Kenshou.Suite.Keiro.Shard.Knobs`, `.Roles` and complete `.Oracle`. Pure coverage/disjointness, deadline arithmetic and checkpoint monotonicity checkers are implemented with doctored-input tests; process roles and knobs remain. Use the delivered kernel's slash-form role names.
+- [ ] Add `Kenshou.Suite.Keiro.Shard.Knobs` and complete `.Roles` and `.Oracle`. Pure coverage/disjointness, deadline arithmetic and checkpoint monotonicity checkers have doctored-input tests. A registered `keiro/shard-worker` now validates shard-count startup in its own process, but its subscription delivery loop and knob plumbing remain.
 - [x] (2026-09-24 05:33Z) Registered an incremental `keiro/shard/correctness/lease-coverage-smoke` scenario. Runs under both PostgreSQL durability modes passed five verdicts for one-bucket-per-pass ownership, complete coverage, relinquish and immediate transfer.
 - [x] (2026-09-24 13:43Z) Added `keiro/shard/correctness/shard-count-mismatch`, exercising the same `ensureShards` startup path as a worker. Both PostgreSQL durability modes reproduced two contract failures: extra rows remained after a larger misconfigured caller, and a fresh correct caller failed. The scenario exits zero as a reported known defect with `mori://shinzui/keiro/okf/improvement-requests/concepts/IR-49`.
-- [ ] Finish process-role startup and delivery assertions for the shard-count mismatch scenario; add the other two shard correctness scenarios.
+- [x] (2026-09-24 13:48Z) Changed the shard-count mismatch probe to start count-two, count-six and fresh count-four worker processes. Both PostgreSQL durability modes reproduced the same two contract failures and no other failures.
+- [ ] Add delivery assertions for the shard-count mismatch scenario; add the other two shard correctness scenarios.
 - [ ] Add the shard concurrency and crash scenarios (six).
 - [ ] Extend the bundle; confirm `kenshou list`.
 
@@ -522,6 +523,7 @@ Database-backed workflow oracles and the remaining scenarios remain open.
 ## Revision Note — 2026-09-24 (shard mismatch)
 
 The shard count mismatch probe now documents and reproduces a released Keiro
-defect, with an upstream improvement request. Its first version invokes the
-worker's public startup path directly. A later revision must add the planned
-process-role and delivery evidence before Milestone 3 is complete.
+defect, with an upstream improvement request. Separate worker processes run
+the same startup path and confirm rejection plus table poisoning. The shard
+role still needs its subscription delivery loop, and the mismatch probe needs
+delivery evidence before Milestone 3 is complete.

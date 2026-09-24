@@ -57,9 +57,9 @@ arm, rearm, ordered claims, stuck recovery, repeated callback execution, and
 the post-claim dead-letter ceiling. The
 `keiro/shard/correctness/lease-coverage-smoke` scenario claims four buckets
 one per pass, relinquishes them, and checks that another owner can claim them
-without overlap. `keiro/shard/correctness/shard-count-mismatch` attempts
-smaller and larger shard counts against a four-bucket subscription, then tries
-another correctly configured startup. Keiro 0.17.0.0 rejects the larger caller
+without overlap. `keiro/shard/correctness/shard-count-mismatch` starts
+separate workers with smaller and larger shard counts against a four-bucket
+subscription, then starts another correctly configured worker. Keiro 0.17.0.0 rejects the larger caller
 after inserting two extra rows, so the scenario reports a reproduced known
 defect at `mori://shinzui/keiro/okf/improvement-requests/concepts/IR-49`.
 These correctness probes support both PostgreSQL durability modes. The remaining workflow kinds, process concurrency cases,
