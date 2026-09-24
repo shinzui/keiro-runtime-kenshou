@@ -612,6 +612,11 @@ Queue-specific Shibuya metrics are not yet connected to this benchmark.
 The `enqueue` benchmark records single, batch-10, batch-100, and, when tracing
 is active, `enqueueTraced` call latency. Its 1,100-cycle durable traced run
 passed at benchmark grade, with 123,424 accepted rows and the same queue depth.
+The `idle-poll-cost` benchmark uses PostgreSQL statement deltas over an empty
+queue. Equal eight-second local arms measured 80 PGMQ reads under 100 ms
+polling and two under three-second long polling. Both held the empty-queue
+check and produced histograms and time series; they were exploratory under
+the generic sample-count gate.
 `consumption-config-rejections` checks invalid tuning, ordering mismatch,
 unsafe legacy FIFO batch size, and error precedence. Direct SQL confirms that
 the queued row still has `read_ct = 0` after all rejections; valid tuning then

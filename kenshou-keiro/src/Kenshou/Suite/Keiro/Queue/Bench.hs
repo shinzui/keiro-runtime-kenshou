@@ -1,7 +1,7 @@
 module Kenshou.Suite.Keiro.Queue.Bench (scenarios) where
 
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async (async, cancel)
+import Control.Concurrent.Async (async, cancel, poll)
 import Control.Exception (finally)
 import Control.Monad (forM, unless)
 import Data.Aeson (object, (.=))
@@ -21,7 +21,7 @@ import Hasql.Pool qualified as Pool
 import Hasql.Session qualified as Session
 import Hasql.Statement qualified as Statement
 import Keiro.PGMQ.Codec (aesonJobCodec)
-import Keiro.PGMQ.Job (Job (..), JobOrdering (..), JobOutcome (..), JobTuning (..), defaultJobTuning, defaultRetryPolicy, enqueue, enqueueBatch, enqueueToGroup, enqueueTraced, ensureJobQueue, runJobOnceWithContext, withOrdering)
+import Keiro.PGMQ.Job (Job (..), JobOrdering (..), JobOutcome (..), JobPolling (..), JobTuning (..), defaultJobTuning, defaultRetryPolicy, enqueue, enqueueBatch, enqueueToGroup, enqueueTraced, ensureJobQueue, jobProcessorWithContext, runJobOnceWithContext, runJobWorkers, withOrdering)
 import Keiro.PGMQ.Runtime (JobRuntime (..), QueueRef (..), queueRef, runJobEff, withJobRuntime)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary, requirePostgres)
 import Kenshou.Core.Dimension
@@ -40,9 +40,85 @@ import Kenshou.Suite.Keiro.Command.Correctness (recordCells)
 import Kenshou.Suite.Keiro.Outbox.Workload (sourceName)
 import Kenshou.Telemetry (TelemetryHandles (..), telemetryKnobs, telemetrySpecFromContext, withTelemetry)
 import Pgmq.Types (MessageHeaders (..), queueNameToText)
+import Shibuya.App (SupervisionStrategy (..), waitApp)
 
 scenarios :: [Scenario]
-scenarios = [jobThroughput, enqueueBenchmark]
+scenarios = [jobThroughput, enqueueBenchmark, idlePollCost]
+
+idlePollCost :: Scenario
+idlePollCost =
+  jobThroughput
+    { id = either (error . show) id (parseScenarioId "keiro/queue/benchmark/idle-poll-cost"),
+      summary = "Measures PostgreSQL read statements per second for an idle job worker.",
+      knobs =
+        telemetryKnobs
+          <> measureKnobs Benchmark
+          <> [ intKnob "queue.duration-seconds" 30 8 3600,
+               textKnob "queue.polling" "poll-every" ["long-poll"],
+               doubleKnob "queue.poll-interval-seconds" 0.1 0.01 10,
+               intKnob "queue.long-poll-seconds" 3 1 30,
+               intKnob "queue.long-poll-interval-ms" 100 1 1000
+             ],
+      run = runIdlePollCost
+    }
+
+runIdlePollCost :: RunContext -> IO ScenarioReport
+runIdlePollCost context
+  | knobText context.knobs (name "queue.polling") == "long-poll"
+      && duration < 2 * fromIntegral (knobInt context.knobs (name "queue.long-poll-seconds")) =
+      pure (failedWith ["invalid-poll-window"] "Idle observation must cover at least two complete long polls")
+  | otherwise = case (measureConfigFromKnobs context (phasePlanFromCore (CorePhase.PhasePlan 0 duration 1)), telemetrySpecFromContext context) of
+      (Left reason, _) -> pure (failedWith ["invalid-measure-config"] reason)
+      (_, Left reason) -> pure (failedWith ["invalid-telemetry-config"] reason)
+      (Right config, Right telemetrySpec) -> withTelemetry telemetrySpec \telemetry ->
+        withJobRuntime (requirePostgres context).connectionString telemetry.tracer \runtime -> do
+          let job = Job "idle-poll-job" (queueRef (sourceName context "idle-poll")) (aesonJobCodec @Text) Unordered defaultRetryPolicy
+              mode = knobText context.knobs (name "queue.polling")
+              pollingMode =
+                if mode == "long-poll"
+                  then LongPoll (fromIntegral (knobInt context.knobs (name "queue.long-poll-seconds"))) (fromIntegral (knobInt context.knobs (name "queue.long-poll-interval-ms")))
+                  else PollEvery (realToFrac (knobDouble context.knobs (name "queue.poll-interval-seconds")))
+              tuning = defaultJobTuning {polling = pollingMode}
+              query = Statement.preparable "SELECT coalesce(sum(calls),0)::bigint FROM pg_stat_statements(true) WHERE dbid=(SELECT oid FROM pg_database WHERE datname=current_database()) AND query ILIKE '%from pgmq.read%'" Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
+              readCalls = Pool.use runtime.runtimePool (Session.statement () query) >>= either (fail . show) pure
+              table = "pgmq.q_" <> queueNameToText job.jobQueue.physicalName
+              countStatement = Statement.preparable ("SELECT count(*) FROM " <> table) Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
+              queueCount = Pool.use runtime.runtimePool (Session.statement () countStatement) >>= either (fail . show) pure
+              runWorker = runJobEff runtime do
+                started <- runJobWorkers StopAllOnFailure 16 [jobProcessorWithContext tuning job (\_ _ -> pure Done)]
+                case started of
+                  Left err -> liftIO (fail (show err))
+                  Right app -> waitApp app
+          _ <- runJobEff runtime (ensureJobQueue job) >>= either (fail . show) pure
+          Pool.use runtime.runtimePool (Session.script "CREATE EXTENSION IF NOT EXISTS pg_stat_statements") >>= either (fail . show) pure
+          before <- readCalls
+          ((elapsed, after), report) <- withMeasurement context config \measurement -> do
+            started <- getMonotonicTimeNSec
+            worker <- async runWorker
+            after <-
+              ( do
+                  _ <- runLoad measurement (ClosedLoop (ClosedConfig 1 0 0)) (Operation (OpName "queue.idle-observation") (\_ _ -> threadDelay 100000 >> pure (OpOk 1)))
+                  status <- poll worker
+                  case status of
+                    Just (Left err) -> fail (show err)
+                    Just (Right _) -> fail "idle worker exited during measurement"
+                    Nothing -> readCalls
+              )
+                `finally` cancel worker
+            ended <- getMonotonicTimeNSec
+            pure (fromIntegral (ended - started) / 1000000000 :: Double, after)
+          depth <- queueCount
+          let calls = after - before
+              callsPerSecond = fromIntegral calls / max 0.000001 elapsed :: Double
+              cells =
+                [ ("idle-poll-statements-observed", calls > 0),
+                  ("empty-queue", depth == (0 :: Int64))
+                ]
+          putSummary context Measurements "queue-idle-poll-cost" (object ["mode" .= mode, "seconds" .= elapsed, "pgmqReadCalls" .= calls, "callsPerSecond" .= callsPerSecond, "queueDepth" .= depth])
+          base <- recordCells context cells
+          pure (base {outcome = measuredOutcome report base.outcome})
+  where
+    duration = fromIntegral (knobInt context.knobs (name "queue.duration-seconds"))
 
 enqueueBenchmark :: Scenario
 enqueueBenchmark =
