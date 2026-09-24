@@ -100,6 +100,12 @@ Ten transfers use both input
 orders; each saga has one debit and one announcement observation, and each
 transfer has one credit and confirmation. The run reports the share of sagas
 whose announcement arrived first.
+For duplicate subscribers and consumer groups, the process-manager worker can
+optionally replay a successfully acknowledged signal through the manager and
+report whether the manager state result is `PMStateDuplicate`. The topology
+scenario requires that reported fact and the unchanged exact SQL effects.
+Both topologies passed with seven checks; the shard topology passed its six
+SQL and process checks without the acknowledgement probe.
 The router's `sigkill-mid-fanout` scenario checks a partial durable fanout
 before killing the worker and exact recovery after restart. The router
 correctness scenarios check fanout under redelivery and selection drift, independent

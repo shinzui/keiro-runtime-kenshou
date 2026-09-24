@@ -214,7 +214,7 @@ runTopology context =
       children <-
         traverse
           ( \index -> do
-              let args = object (["subscription" .= subscription] <> if topology == "consumer-group" then ["groupMember" .= index, "groupSize" .= processCount] else [])
+              let args = object (["subscription" .= subscription, "reportManagerReplay" .= (topology /= "sharded")] <> if topology == "consumer-group" then ["groupMember" .= index, "groupSize" .= processCount] else [])
               spec <- roleProcess check (if topology == "sharded" then "keiro/pm-sharded-worker" else "keiro/pm-worker") index args
               spawn supervisor spec
           )
@@ -223,6 +223,7 @@ runTopology context =
       acquired <- Connection.acquire (Settings.connectionString (requirePostgres context).connectionString <> Settings.applicationName "kenshou-keiro-topology-oracle")
       connection <- either (fail . show) pure acquired
       completed <- timeout 90000000 (awaitTopology connection transferCount)
+      replayObserved <- if topology == "sharded" then pure True else maybe False id <$> timeout 10000000 (awaitReplay children)
       sagaRows <- Oracle.readCategoryLog connection "pm:transferSaga"
       accountRows <- Oracle.readCategoryLog connection "account"
       Connection.release connection
@@ -240,9 +241,18 @@ runTopology context =
               ("exactly-once-target-effects", length credits == transferCount && length confirmations == transferCount),
               ("logs-well-formed", Oracle.logWellFormed accountRows && Oracle.logWellFormed sagaRows)
             ]
+              <> if topology == "sharded" then [] else [("manager-state-duplicate-replay", replayObserved)]
       putSummary context Measurements "topologies" (object ["topology" .= topology, "workers" .= processCount, "transfers" .= transferCount, "announceFirstFraction" .= (fromIntegral (length (filter (== EventType "AnnounceObserved") firstSagaEvents)) / fromIntegral transferCount :: Double)])
       recordCells context cells
   where
+    awaitReplay children = do
+      snapshots <- traverse (atomically . progress) children
+      let duplicate snapshot = case Map.lookup "manager-replay" snapshot.marks of
+            Just value -> parseMaybe (withObject "manager replay" (.: "stateDuplicate")) value == Just True
+            Nothing -> False
+      if any duplicate snapshots
+        then pure True
+        else threadDelay 100000 >> awaitReplay children
     awaitTopology connection transferCount = do
       sagaRows <- Oracle.readCategoryLog connection "pm:transferSaga"
       accountRows <- Oracle.readCategoryLog connection "account"

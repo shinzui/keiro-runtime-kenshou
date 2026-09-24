@@ -14,7 +14,7 @@ import Data.Time.Clock.POSIX (getPOSIXTime)
 import Effectful (liftIO)
 import GHC.Clock (getMonotonicTimeNSec)
 import Keiro.Command (RunCommandOptions (..), defaultRunCommandOptions)
-import Keiro.ProcessManager (PMCommandResult (..), ProcessManagerResult (..), RejectedCommandPolicy (..), WorkerOptions (..), defaultWorkerOptions, runProcessManagerOnce, runProcessManagerWorkerWith)
+import Keiro.ProcessManager (PMCommandResult (..), PMStateResult (..), ProcessManagerResult (..), RejectedCommandPolicy (..), WorkerOptions (..), defaultWorkerOptions, runProcessManagerOnce, runProcessManagerWorkerWith)
 import Keiro.Projection (AsyncApplyOutcome (..))
 import Keiro.Router (runRouterWorkerWith)
 import Keiro.Subscription.Shard.Worker (RetryDelay (..), ShardAck (..), ShardDelivery (..), ShardedWorkerOptions (..), defaultShardedWorkerOptions, runShardedSubscriptionGroupAck)
@@ -34,6 +34,8 @@ import Kenshou.Suite.Keiro.Fixture.Workload qualified as Workload
 import Kiroku.Store (defaultConnectionSettings)
 import Kiroku.Store.Subscription.Types (ConsumerGroup (..), SubscriptionName (..), SubscriptionTarget (..))
 import Kiroku.Store.Types (CategoryName (..), RecordedEvent (..))
+import Shibuya.Core.Ack (AckDecision (..))
+import Shibuya.Core.Types (Envelope (..))
 import System.Directory (createDirectoryIfMissing)
 import System.FilePath ((</>))
 
@@ -193,6 +195,7 @@ data DispatcherArgs = DispatcherArgs
     inlineProjection :: !Bool,
     sampleProcess :: !Bool,
     reportAcks :: !Bool,
+    reportManagerReplay :: !Bool,
     groupMember :: !(Maybe Int),
     groupSize :: !(Maybe Int)
   }
@@ -208,6 +211,7 @@ parseDispatcherArgs = withObject "keiro dispatcher" \value ->
     <*> value .:? "inlineProjection" .!= False
     <*> value .:? "sampleProcess" .!= False
     <*> value .:? "reportAcks" .!= False
+    <*> value .:? "reportManagerReplay" .!= False
     <*> value .:? "groupMember"
     <*> value .:? "groupSize"
 
@@ -242,14 +246,25 @@ processManagerWorker context = case parseMaybe parseDispatcherArgs context.init.
         result <- runFixture do
           let group = ConsumerGroup <$> (fromIntegral <$> args.groupMember) <*> (fromIntegral <$> args.groupSize)
           adapter <- kirokuBridge fixture.store (sagaAdapterConfig (SubscriptionName args.subscription) group)
-          let observed =
+          let manager = transferManager (accountEventStream SnapNever) (const (if args.inlineProjection then [accountBalanceProjection] else []))
+              observed =
                 interposeAck
-                  ( \_ decision -> do
+                  ( \ingested decision -> do
                       if args.reportAcks then liftIO (context.send (WrkCustom "acknowledged" (object ["decision" .= show decision]))) else pure ()
+                      if args.reportManagerReplay && decision == AckOk
+                        then case decodeTransferSignal ingested.payload of
+                          Nothing -> pure ()
+                          Just (recorded, signal) -> do
+                            replayed <- runProcessManagerOnce defaultRunCommandOptions manager recorded signal
+                            let duplicate = case replayed of
+                                  Right result -> case result.managerResult of PMStateDuplicate _ -> True; _ -> False
+                                  Left _ -> False
+                            liftIO (context.send (WrkCustom "manager-replay" (object ["stateDuplicate" .= duplicate])))
+                        else pure ()
                       if args.parkBeforeAck then liftIO (parkForever context "before-ack") else pure ()
                   )
                   adapter
-          runProcessManagerWorkerWith defaultWorkerOptions options (transferManager (accountEventStream SnapNever) (const (if args.inlineProjection then [accountBalanceProjection] else []))) observed decodeTransferSignal
+          runProcessManagerWorkerWith defaultWorkerOptions options manager observed decodeTransferSignal
         case result of
           Left issue -> context.send (WrkError (Text.pack (show issue)))
           Right () -> context.send (WrkDone Nothing)
