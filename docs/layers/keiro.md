@@ -492,7 +492,10 @@ three duplicates, one completed inbox row, and one protected effect.
 The `--set inbox.kill-winner=sigkill` arm waits until the first consumer is
 inside its SQL handler, kills that process and its still-running database
 backend, then starts the peers. One of them commits the effect; the other two
-see a duplicate.
+see a duplicate. `inbox.kill-winner=backend-kill` terminates only the first
+consumer's database backend and checks that its connection error is visible.
+In both fault arms a fresh consumer redelivers the message after the peers
+finish and reports duplicate; the final effect count remains one.
 
 ## Job queue
 

@@ -43,7 +43,7 @@ raceOneKey =
       summary = "Races four consumer processes on one dedupe key with a slow transactional handler.",
       tier = TierStandard,
       placement = PlaceEither,
-      knobs = [KnobSpec (knobName "inbox.kill-winner") "Kill the first handler inside its SQL transaction" KnobText (VText "none") (OneOf (VText "none" :| [VText "sigkill"])) [VText "sigkill"]],
+      knobs = [KnobSpec (knobName "inbox.kill-winner") "Interrupt the first handler inside its SQL transaction" KnobText (VText "none") (OneOf (VText "none" :| [VText "sigkill", VText "backend-kill"])) [VText "sigkill", VText "backend-kill"]],
       dimensions =
         DimensionSupport
           { tracing = Supported (Support (TracingOff :| []) TracingOff),
@@ -66,7 +66,8 @@ runRaceOneKey context =
     withCheck context \check -> withSupervisor check \supervisor -> do
       let KeiroRunner runFixture = fixture.runner
           source = sourceName context "race"
-          killWinner = knobText context.knobs (knobName "inbox.kill-winner") == "sigkill"
+          faultMode = knobText context.knobs (knobName "inbox.kill-winner")
+          killWinner = faultMode /= "none"
       ensureEffectTable fixture
       enqueueInline fixture source [("race-message", Just "key", 1)]
       sourceRows <- runFixture (listOutbox source) >>= either (fail . show) pure
@@ -88,12 +89,13 @@ runRaceOneKey context =
             maybe Nothing id <$> timeout 10000000 waitEntered
           else pure Nothing
       preKillEffects <- if killWinner then runFixture (KirokuTransaction.runTransaction (Tx.statement () effectReadStatement)) >>= either (fail . show) pure else pure []
-      if killWinner then killChild supervisor firstChild else pure ()
+      if faultMode == "sigkill" then killChild supervisor firstChild else pure ()
       case entered of
         Just pid -> do
           _ <- (terminateOneBackend postgres (ByPid pid)).inject
           pure ()
         Nothing -> pure ()
+      if faultMode == "backend-kill" then awaitMark firstChild "finished" 30000 else pure ()
       prePeerRows <- if killWinner then runFixture (listInbox source) >>= either (fail . show) pure else pure []
       let liveChildren = if killWinner then otherChildren else children
       mapM_ (\child -> sendCommand child CtlStart) liveChildren
@@ -105,12 +107,31 @@ runRaceOneKey context =
               pure $ Map.lookup "finished" snapshot.marks >>= (\value -> parseMaybe (withObject "finished" (.: "classification")) value :: Maybe Text)
           )
           liveChildren
+      firstClassification <-
+        if faultMode == "backend-kill"
+          then do
+            snapshot <- atomically (progress firstChild)
+            pure $ Map.lookup "finished" snapshot.marks >>= (\value -> parseMaybe (withObject "finished" (.: "classification")) value :: Maybe Text)
+          else pure Nothing
+      restartedClassification <-
+        if killWinner
+          then do
+            spec <- roleProcess check "keiro/inbox-consumer" 4 (object ["source" .= source, "messageId" .= ("race-message" :: Text), "parkInHandler" .= False])
+            restarted <- spawn supervisor spec
+            awaitReady restarted 10000
+            sendCommand restarted CtlStart
+            awaitMark restarted "finished" 30000
+            snapshot <- atomically (progress restarted)
+            pure $ Map.lookup "finished" snapshot.marks >>= (\value -> parseMaybe (withObject "finished" (.: "classification")) value :: Maybe Text)
+          else pure Nothing
       rows <- runFixture (listInbox source) >>= either (fail . show) pure
       effects <- runFixture (KirokuTransaction.runTransaction (Tx.statement () effectReadStatement)) >>= either (fail . show) pure
       let cells =
             [ ("schedule-realised", length sourceRows == 1 && (not killWinner || entered /= Nothing) && null preKillEffects && null prePeerRows),
               ("one-effect", effects == ["race-message"] && case rows of [row] -> row.status == InboxCompleted; _ -> False),
               ("one-winner", length (filter (== Just "processed") classifications) == 1 && length (filter (== Just "duplicate") classifications) == if killWinner then 2 else 3),
-              ("no-in-progress", Just "in-progress" `notElem` classifications)
+              ("no-in-progress", Just "in-progress" `notElem` classifications),
+              ("backend-interruption-visible", faultMode /= "backend-kill" || maybe False (Text.isPrefixOf "unexpected:") firstClassification),
+              ("restarted-delivery-duplicate", not killWinner || restartedClassification == Just "duplicate")
             ]
-      recordMessagingCells context (Map.fromList [("consumers", 4), ("effects", fromIntegral (length effects)), ("killed", if killWinner then 1 else 0)]) (object ["classifications" .= classifications]) cells
+      recordMessagingCells context (Map.fromList [("consumers", 4), ("effects", fromIntegral (length effects)), ("killed", if killWinner then 1 else 0)]) (object ["classifications" .= classifications, "firstClassification" .= firstClassification, "restartedClassification" .= restartedClassification, "faultMode" .= faultMode]) cells
