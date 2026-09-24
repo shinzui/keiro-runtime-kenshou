@@ -11,13 +11,14 @@ import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
-import Data.Time (getCurrentTime)
+import Data.Time (addUTCTime, getCurrentTime)
+import Data.UUID qualified as UUID
 import Hasql.Decoders qualified as Decoders
 import Hasql.Encoders qualified as Encoders
 import Hasql.Statement qualified as Statement
 import Hasql.Transaction qualified as Tx
-import Keiro.Integration.Event (IntegrationEvent (..), headerMessageId)
-import Keiro.Outbox (BackoffSchedule (..), OutboxMaintenanceOptions (..), OutboxMaintenanceSummary (..), OutboxPublishOptions (..), OutboxPublishSummary (..), OutboxRow (..), OutboxStatus (..), countOutboxBacklog, defaultPublishOptions, enqueueIntegrationEventTx, freshOutboxId, listOutbox, outboxMaintenancePass, publishClaimedOutbox)
+import Keiro.Integration.Event (IntegrationContentType (..), IntegrationEvent (..), headerMessageId)
+import Keiro.Outbox (BackoffSchedule (..), IntegrationEventDraft (..), IntegrationProducer (..), OutboxMaintenanceOptions (..), OutboxMaintenanceSummary (..), OutboxPublishOptions (..), OutboxPublishSummary (..), OutboxRow (..), OutboxStatus (..), ProducerEnqueueOutcome (..), ProducerIdentity (..), countOutboxBacklog, defaultPublishOptions, enqueueIntegrationEventTx, enqueueProducerEventTx, freshOutboxId, listOutbox, mkIntegrationProducer, outboxMaintenancePass, publishClaimedOutbox)
 import Kenshou.Check.Fault (Fault (..), FaultHandle (..))
 import Kenshou.Check.Fault.Postgres (Backend (..), LockTarget (..), holdLock, listBackends)
 import Kenshou.Check.Process (awaitMark, awaitReady, childPid, killChild, roleProcess, sendCommand, spawn, withSupervisor)
@@ -38,6 +39,7 @@ import Kenshou.Suite.Keiro.Outbox.Broker qualified as Broker
 import Kenshou.Suite.Keiro.Outbox.Oracle qualified as Oracle
 import Kenshou.Suite.Keiro.Outbox.Workload (enqueueInline, inlineEvent, sourceName)
 import Kiroku.Store (defaultConnectionSettings, runTransaction)
+import Kiroku.Store.Types (EventId (..), EventType (..), GlobalPosition (..), RecordedEvent (..), StreamId (..), StreamVersion (..))
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
@@ -47,9 +49,9 @@ concurrentInlineEnqueueOrder :: Scenario
 concurrentInlineEnqueueOrder =
   crashBetweenPublishAndMark
     { id = either (error . show) id (parseScenarioId "keiro/outbox/concurrency/concurrent-inline-enqueue-order"),
-      summary = "Stages opposite transaction-start and commit order for two inline events of one key.",
+      summary = "Stages opposite transaction-start and commit order for inline events, with a serialized producer-path control.",
       tier = TierSmoke,
-      knobs = [],
+      knobs = [KnobSpec (knobName "outbox.enqueue-path") "Inline race or serialized producer control" KnobText (VText "inline") (OneOf (VText "inline" :| [VText "producer"])) [VText "producer"]],
       knownDefect = Just (KnownDefect "mori://shinzui/keiro/okf/user-documentation/concepts/DOC-16" "Concurrent inline enqueues can publish one key out of producer order" ["per-key-order"] AllCohorts),
       run = runConcurrentInlineEnqueueOrder
     }
@@ -57,60 +59,125 @@ concurrentInlineEnqueueOrder =
 runConcurrentInlineEnqueueOrder :: RunContext -> IO ScenarioReport
 runConcurrentInlineEnqueueOrder context =
   withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture ->
-    Broker.withTableBroker (requirePostgres context).connectionString \broker -> do
-      let KeiroRunner runFixture = fixture.runner
-          source = sourceName context "inline-order"
-          postgres = requirePostgres context
-          model = Broker.BrokerModel 0 0 4
-          hooks = Broker.PublishHook (const (pure ())) (const (pure ()))
-          callback = Broker.publishScripted broker model (const Broker.Succeed) hooks "inline-order-publisher"
-          lockKey = 735715
-      firstId <- runFixture freshOutboxId >>= either (fail . show) pure
-      secondId <- runFixture freshOutboxId >>= either (fail . show) pure
-      firstTime <- getCurrentTime
-      bracket (holdLock postgres (AdvisoryLock lockKey)).inject (.heal) \handle ->
-        withAsync
-          ( runFixture
-              ( runTransaction do
-                  enqueueIntegrationEventTx firstId (inlineEvent source "first" (Just "shared") 1 firstTime)
-                  Tx.statement () advisoryLockStatement
-              )
+    Broker.withTableBroker (requirePostgres context).connectionString \broker ->
+      if knobText context.knobs (knobName "outbox.enqueue-path") == "producer"
+        then runProducerPathControl context fixture broker
+        else runInlineOrderRace context fixture broker
+
+runInlineOrderRace :: RunContext -> FixtureEnv -> Broker.Broker -> IO ScenarioReport
+runInlineOrderRace context fixture broker = do
+  let KeiroRunner runFixture = fixture.runner
+      source = sourceName context "inline-order"
+      postgres = requirePostgres context
+      model = Broker.BrokerModel 0 0 4
+      hooks = Broker.PublishHook (const (pure ())) (const (pure ()))
+      callback = Broker.publishScripted broker model (const Broker.Succeed) hooks "inline-order-publisher"
+      lockKey = 735715
+  firstId <- runFixture freshOutboxId >>= either (fail . show) pure
+  secondId <- runFixture freshOutboxId >>= either (fail . show) pure
+  firstTime <- getCurrentTime
+  bracket (holdLock postgres (AdvisoryLock lockKey)).inject (.heal) \handle ->
+    withAsync
+      ( runFixture
+          ( runTransaction do
+              enqueueIntegrationEventTx firstId (inlineEvent source "first" (Just "shared") 1 firstTime)
+              Tx.statement () advisoryLockStatement
           )
-          \firstWriter -> do
-            let waitBlocked = do
-                  backends <- listBackends postgres
-                  if any (\backend -> backend.waitEventType == Just "Lock" && "pg_advisory_xact_lock" `Text.isInfixOf` backend.query) backends
-                    then pure True
-                    else threadDelay 10000 >> waitBlocked
-            blocked <- timeout 10000000 waitBlocked
-            case blocked of
-              Nothing -> fail "first inline enqueue never blocked on the advisory lock"
-              Just True -> pure ()
-              Just False -> fail "first inline enqueue did not reach the advisory lock"
-            secondTime <- getCurrentTime
-            runFixture (runTransaction (enqueueIntegrationEventTx secondId (inlineEvent source "second" (Just "shared") 2 secondTime))) >>= either (fail . show) pure
-            _ <- runFixture (publishClaimedOutbox callback defaultPublishOptions Nothing) >>= either (fail . show) pure
-            beforeRelease <- Broker.readBroker broker
-            handle.heal
-            _ <- wait firstWriter >>= either (fail . show) pure
-            _ <- runFixture (publishClaimedOutbox callback defaultPublishOptions Nothing) >>= either (fail . show) pure
-            rows <- runFixture (listOutbox source) >>= either (fail . show) pure
-            records <- Broker.readBroker broker
-            let ids = [TextEncoding.decodeUtf8 value | record <- records, (name, value) <- record.headers, name == TextEncoding.encodeUtf8 headerMessageId]
-                beforeIds = [TextEncoding.decodeUtf8 value | record <- beforeRelease, (name, value) <- record.headers, name == TextEncoding.encodeUtf8 headerMessageId]
-                firstCreated = [row.createdAt | row <- rows, row.event.messageId == "first"]
-                secondCreated = [row.createdAt | row <- rows, row.event.messageId == "second"]
-                schedule =
-                  beforeIds == ["second"] && ids == ["second", "first"] && case (firstCreated, secondCreated) of
-                    ([a], [b]) -> a < b
-                    _ -> False
-                cells =
-                  [ ("schedule-realised", Contract, schedule),
-                    ("no-loss", Contract, length rows == 2 && all ((== OutboxSent) . (.status)) rows && sort ids == ["first", "second"]),
-                    ("per-key-order", Implementation, ids == ["first", "second"])
-                  ]
-            report <- recordMessagingCellsClassified context (Map.fromList [("enqueued", 2), ("brokerRecords", fromIntegral (length records))]) (object ["brokerMessageIds" .= ids, "firstCreatedAt" .= firstCreated, "secondCreatedAt" .= secondCreated]) cells
-            pure (if schedule then report else inconclusiveBecause "the inline enqueue inversion was not observed")
+      )
+      \firstWriter -> do
+        let waitBlocked = do
+              backends <- listBackends postgres
+              if any (\backend -> backend.waitEventType == Just "Lock" && "pg_advisory_xact_lock" `Text.isInfixOf` backend.query) backends
+                then pure True
+                else threadDelay 10000 >> waitBlocked
+        blocked <- timeout 10000000 waitBlocked
+        case blocked of
+          Nothing -> fail "first inline enqueue never blocked on the advisory lock"
+          Just True -> pure ()
+          Just False -> fail "first inline enqueue did not reach the advisory lock"
+        secondTime <- getCurrentTime
+        runFixture (runTransaction (enqueueIntegrationEventTx secondId (inlineEvent source "second" (Just "shared") 2 secondTime))) >>= either (fail . show) pure
+        _ <- runFixture (publishClaimedOutbox callback defaultPublishOptions Nothing) >>= either (fail . show) pure
+        beforeRelease <- Broker.readBroker broker
+        handle.heal
+        _ <- wait firstWriter >>= either (fail . show) pure
+        _ <- runFixture (publishClaimedOutbox callback defaultPublishOptions Nothing) >>= either (fail . show) pure
+        rows <- runFixture (listOutbox source) >>= either (fail . show) pure
+        records <- Broker.readBroker broker
+        let ids = [TextEncoding.decodeUtf8 value | record <- records, (name, value) <- record.headers, name == TextEncoding.encodeUtf8 headerMessageId]
+            beforeIds = [TextEncoding.decodeUtf8 value | record <- beforeRelease, (name, value) <- record.headers, name == TextEncoding.encodeUtf8 headerMessageId]
+            firstCreated = [row.createdAt | row <- rows, row.event.messageId == "first"]
+            secondCreated = [row.createdAt | row <- rows, row.event.messageId == "second"]
+            schedule =
+              beforeIds == ["second"] && ids == ["second", "first"] && case (firstCreated, secondCreated) of
+                ([a], [b]) -> a < b
+                _ -> False
+            cells =
+              [ ("schedule-realised", Contract, schedule),
+                ("no-loss", Contract, length rows == 2 && all ((== OutboxSent) . (.status)) rows && sort ids == ["first", "second"]),
+                ("per-key-order", Implementation, ids == ["first", "second"])
+              ]
+        report <- recordMessagingCellsClassified context (Map.fromList [("enqueued", 2), ("brokerRecords", fromIntegral (length records))]) (object ["brokerMessageIds" .= ids, "firstCreatedAt" .= firstCreated, "secondCreatedAt" .= secondCreated]) cells
+        pure (if schedule then report else inconclusiveBecause "the inline enqueue inversion was not observed")
+
+runProducerPathControl :: RunContext -> FixtureEnv -> Broker.Broker -> IO ScenarioReport
+runProducerPathControl context fixture broker = do
+  let KeiroRunner runFixture = fixture.runner
+      source = sourceName context "producer-order"
+      producer :: IntegrationProducer ()
+      producer = either (error . show) id (mkIntegrationProducer (IntegrationProducer "ordering-control" source "kenshou" (\_ _ -> Nothing)))
+      model = Broker.BrokerModel 0 0 4
+      hooks = Broker.PublishHook (const (pure ())) (const (pure ()))
+      callback = Broker.publishScripted broker model (const Broker.Succeed) hooks "producer-order-publisher"
+      recorded eventId version position now =
+        RecordedEvent
+          { eventId,
+            eventType = EventType "OrderingControl",
+            streamVersion = StreamVersion version,
+            globalPosition = GlobalPosition position,
+            originalStreamId = StreamId 1,
+            originalVersion = StreamVersion version,
+            payload = object [],
+            metadata = Nothing,
+            causationId = Nothing,
+            correlationId = Nothing,
+            createdAt = now
+          }
+      draft now sequenceNo =
+        IntegrationEventDraft
+          { destination = "kenshou.outbox.v1",
+            key = Just "shared",
+            eventType = "OrderingControl",
+            schemaVersion = 1,
+            contentType = ApplicationJson,
+            schemaReference = Nothing,
+            sourceEventId = Nothing,
+            sourceGlobalPosition = Nothing,
+            payloadBytes = TextEncoding.encodeUtf8 (Text.pack (show sequenceNo)),
+            occurredAt = now,
+            causationId = Nothing,
+            correlationId = Nothing,
+            traceContext = Nothing,
+            attributes = Just (object ["sequence" .= sequenceNo])
+          }
+      enqueue event sequenceNo = runFixture (runTransaction (enqueueProducerEventTx producer event 0 (draft event.createdAt sequenceNo))) >>= either (fail . show) pure
+      inserted = \case ProducerInserted identity -> Just identity.messageId; _ -> Nothing
+  now <- getCurrentTime
+  first <- enqueue (recorded (EventId UUID.nil) 1 1 now) (1 :: Int)
+  second <- enqueue (recorded (EventId (read "00000000-0000-0000-0000-000000000001")) 2 2 (addUTCTime 0.001 now)) (2 :: Int)
+  _ <- runFixture (publishClaimedOutbox callback defaultPublishOptions Nothing) >>= either (fail . show) pure
+  rows <- runFixture (listOutbox source) >>= either (fail . show) pure
+  records <- Broker.readBroker broker
+  let ids = [TextEncoding.decodeUtf8 value | record <- records, (name, value) <- record.headers, name == TextEncoding.encodeUtf8 headerMessageId]
+      expected = [messageId | Just messageId <- [inserted first, inserted second]]
+      created = [row.createdAt | row <- rows]
+      schedule = length expected == 2 && ids == expected && case created of [a, b] -> a < b; _ -> False
+      cells =
+        [ ("schedule-realised", Contract, schedule),
+          ("no-loss", Contract, length rows == 2 && all ((== OutboxSent) . (.status)) rows && sort ids == sort expected),
+          ("per-key-order", Implementation, ids == expected)
+        ]
+  recordMessagingCellsClassified context (Map.fromList [("enqueued", 2), ("brokerRecords", fromIntegral (length records))]) (object ["brokerMessageIds" .= ids, "producerMessageIds" .= expected]) cells
 
 advisoryLockStatement :: Statement.Statement () Int32
 advisoryLockStatement =
