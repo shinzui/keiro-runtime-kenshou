@@ -12,6 +12,9 @@ module Kenshou.Suite.Keiro.Workflow.Definitions
     sleeperWorkflow,
     rotatedSleeperWorkflow,
     sleeperRegistry,
+    approvalName,
+    approvalWorkflow,
+    approvalRegistry,
   )
 where
 
@@ -23,6 +26,7 @@ import Data.Text qualified as Text
 import Effectful (Eff, IOE, liftIO, (:>))
 import Effectful.Error.Static (Error)
 import Keiro.Workflow (StepName (..), Workflow, WorkflowId (..), WorkflowName, continueAsNew, mkWorkflowName, restoreSeed, step)
+import Keiro.Workflow.Awakeable (awakeableIdText, awakeableNamed)
 import Keiro.Workflow.Resume (WorkflowDef (..), WorkflowRegistry)
 import Keiro.Workflow.Sleep (sleep, sleepNamed)
 import Kenshou.Suite.Keiro.Workflow.Effects (BoundaryPoint (..), EffectFact (..), EffectSink (..))
@@ -99,3 +103,22 @@ sleeperRegistry sink =
     [ (sleeperName, WorkflowDef (sleeperWorkflow sink True)),
       (ordinalSleeperName, WorkflowDef (sleeperWorkflow sink False))
     ]
+
+approvalName :: WorkflowName
+approvalName = either (error . show) id (mkWorkflowName "kenshouApproval")
+
+-- | Publish the journaled opaque id as its own step, then wait for a durable
+-- signal. The effect ledger is the external recipient in this fixture.
+approvalWorkflow :: (IOE :> es, Store :> es) => EffectSink -> WorkflowId -> Eff (Workflow : es) Text
+approvalWorkflow sink wid = do
+  (aid, await) <- awakeableNamed (StepName "approval")
+  _ <- step (StepName "publish") do
+    liftIO $ sink.recordEffect (EffectFact "arm" (unWorkflowId wid <> "/approval") "workflow" (object ["awakeableId" .= aid]))
+    pure ()
+  answer <- await
+  step (StepName "accepted") do
+    liftIO $ sink.recordEffect (EffectFact "step" (unWorkflowId wid <> "/accepted") "workflow" (object ["awakeableId" .= awakeableIdText aid]))
+    pure answer
+
+approvalRegistry :: EffectSink -> WorkflowRegistry '[Store, Error StoreError, IOE]
+approvalRegistry sink = Map.singleton approvalName (WorkflowDef (approvalWorkflow sink))

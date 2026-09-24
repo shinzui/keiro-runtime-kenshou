@@ -51,6 +51,8 @@ Milestone 1 — Durable workflow scenarios
 - [x] (2026-09-24 05:17Z) Registered an incremental `keiro/workflow/correctness/linear-replay-smoke` scenario. It passed against provisioned PostgreSQL and wrote seven passing verdicts for replay, effects, journal identity, and step index.
 - [x] (2026-09-24 05:31Z) Added a `keiro/workflow-resume-worker` role and incremental `keiro/workflow/concurrency/linear-self-sigkill-smoke` scenario. A durable PostgreSQL run passed seven verdicts, including one bounded duplicate after a real process self-`SIGKILL` and no consumed attempt.
 - [x] (2026-09-24) Added named, ordinal and rotated sleeper definitions and `keiro/workflow/correctness/sleep-via-timers`. The final form passed both PostgreSQL durability modes with nine verdicts for deterministic timer rows and payloads, stable first-arm deadline and wake hint, due discovery without firing, batched wake, terminal-owner cancellation, generation pinning, completion journals, and single execution of surrounding step effects.
+- [x] (2026-09-24) Added the approval workflow definition and `keiro/workflow/correctness/awakeable-signal-semantics`. Seven verdicts passed in both PostgreSQL durability modes for journaled publication, idempotent signal payload, unknown-ID refusal, terminal-owner settlement without a wake journal, cancellation without a result journal, a cancelled await throwing, and a signal before the await.
+- [ ] Extend awakeable cancellation coverage through the resume worker's attempt ceiling and terminal `WorkflowFailed` state; add compensation-on-cancel coverage.
 - [ ] Add `Kenshou.Suite.Keiro.Workflow.Knobs` and complete `.Roles`. A basic `keiro/workflow-resume-worker` is registered and exercised; knob plumbing, push mode, the driver, and GC worker remain. The delivered kernel requires slash-form role names.
 - [x] (2026-09-24 13:25Z) Added the first shared `Kenshou.Suite.Keiro.Workflow.Oracle` checks for journal step identity, effect coverage bounded by crash windows, and the retry backoff ladder. Doctored duplicate, missing, wrong-ID, and mistimed inputs fail their unit tests; the linear replay and real `SIGKILL` probes use the shared checks and pass.
 - [ ] Complete the workflow oracle with database-backed quiescence and stranded-suspension checks, and wire its full journal/effect verdicts into the remaining scenarios.
@@ -96,6 +98,7 @@ Milestone 4 — Durable-execution benchmarks, soak and telemetry arms
 - The CLI cohort document identifies components by `.id`, not `.name` as the plan's illustrative filter says. `jq '.components[] | select(.id=="keiro")'` confirmed the executed cohort still pins `keiro`, `keiro-core`, `keiro-pgmq`, migrations and test support to 0.17.0.0.
 - A real self-`SIGKILL` produced a ledger file ending inside a JSON line. `foldFacts` raised `Data.ByteString.hGetLine: end of file` before it could apply its existing torn-final-line rule, so the scenario exited 4 without verdicts. The ledger reader now treats that EOF as the torn final fact; the rerun passed all seven verdicts.
 - Keiro 0.17.0.0's `ensureShards` commits bucket insertion before throwing `ShardCountMismatch`. A four-bucket subscription remained at four rows after a count-two caller, but grew to six after a count-six caller; a subsequent count-four caller also threw. The external probe reported only `shard-larger-worker-left-four` and `shard-correct-worker-recovers` as failures in both durability modes. The upstream request is `mori://shinzui/keiro/okf/improvement-requests/concepts/IR-49`; the local Mori registry had not indexed it immediately after creation.
+- When an awakeable is signalled from the approval publication effect, the signal's journal append can cause the publish step action to run again before its own append settles. The first signal returns `True`, the repeated signal returns `False`, and the same workflow run completes from the indexed wake result. This was observed in both durability modes; the scenario judges the stable payload and idempotent return values rather than assuming one execution of the publication action.
 
 
 ## Decision Log
@@ -527,3 +530,11 @@ defect, with an upstream improvement request. Separate worker processes run
 the same startup path and confirm rejection plus table poisoning. The shard
 role still needs its subscription delivery loop, and the mismatch probe needs
 delivery evidence before Milestone 3 is complete.
+
+## Revision Note — 2026-09-24 (awakeable semantics)
+
+The approval definition and its end-to-end scenario now exercise durable
+awakeable publication, signal and cancellation paths. Signal-before-await
+coverage revealed a legitimate repeated publication action; the verdict
+checks idempotence across that repeat. Worker-driven cancellation exhaustion
+and compensation remain open.

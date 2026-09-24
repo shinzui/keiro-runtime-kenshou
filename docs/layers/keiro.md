@@ -49,6 +49,10 @@ sleeps arm deterministic timer rows, replay leaves the deadline and wake hint
 unchanged, due discovery waits for a timer worker, and one drain pass wakes
 both workflows with journaled completions. It also checks terminal-owner timer
 cancellation and the timer generation after workflow rotation.
+`keiro/workflow/correctness/awakeable-signal-semantics` checks a journaled
+approval id, first-signal payload preservation, repeated and unknown signal
+refusals, terminal-owner settlement, cancellation, and a signal that arrives
+before the workflow awaits it.
 
 The two timer correctness scenarios,
 `keiro/timer/correctness/lifecycle-and-at-least-once` and

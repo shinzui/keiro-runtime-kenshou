@@ -2,15 +2,20 @@ module Kenshou.Suite.Keiro.Workflow.Oracle
   ( journalStepIdentity,
     effectCoverage,
     backoffLadder,
+    recordWorkflowCells,
   )
 where
 
+import Data.Aeson (object)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Data.Time (NominalDiffTime, UTCTime, diffUTCTime)
+import Data.Time (NominalDiffTime, UTCTime, diffUTCTime, getCurrentTime)
 import Keiro.Workflow (WorkflowId, WorkflowName, deterministicJournalId)
+import Kenshou.Check.Scenario (CheckEnv, finishWithVerdicts)
+import Kenshou.Check.Verdict (InvariantClass (..), Verdict (..), VerdictStatus (..))
+import Kenshou.Core.Scenario (ScenarioReport)
 import Kiroku.Store.Types (EventId)
 
 -- | Require one journal row per expected step in order, with Keiro's stable
@@ -53,3 +58,25 @@ backoffLadder initialDelay slack observations
        in if actual >= max 0 (expected - slack) && actual <= expected + slack
             then go (attempt + 1) (later : rest)
             else Left ("backoff interval " <> Text.pack (show attempt) <> " was " <> Text.pack (show actual) <> "; expected " <> Text.pack (show expected) <> " +/- " <> Text.pack (show slack))
+
+recordWorkflowCells :: CheckEnv -> [(Text, Bool)] -> IO ScenarioReport
+recordWorkflowCells check cells = do
+  now <- getCurrentTime
+  let verdict (name, held) =
+        Verdict
+          { checker = "workflow-" <> name,
+            invariant = name,
+            cls = Contract,
+            status = if held then Held else Violated,
+            reason = Nothing,
+            summary = if held then "Workflow invariant held" else "Workflow invariant failed",
+            counts = Map.singleton "instances" 1,
+            parameters = object [],
+            counterExamples = [],
+            counterExamplesTruncated = False,
+            inputs = [],
+            replay = Nothing,
+            checkedAt = now,
+            durationMillis = 0
+          }
+  finishWithVerdicts check (map verdict cells)
