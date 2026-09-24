@@ -167,10 +167,18 @@ runDelegatedMatrix context fixture = do
       republish = [event {messageId = event.messageId <> "-republished"} | event <- events]
       doubled = policyName == "message-id" || policyName == "kafka-delivery"
       coordinates = zip3 [1 .. 16 :: Int] events republish
+  firstEvent <- case events of
+    event : _ -> pure event
+    [] -> fail "delegated matrix fixture produced no events"
+  let malformed = case policyName of
+        "source-event" -> firstEvent {sourceEventId = Nothing, sourceGlobalPosition = Nothing, messageId = "malformed"}
+        "custom" -> firstEvent {payloadBytes = ByteString.empty, messageId = "malformed"}
+        _ -> firstEvent {messageId = ""}
   seeded <- traverse (\(index, _, _) -> submitAccountCommand fixture (accountEventStream SnapNever) RunnerPlain defaultRunCommandOptions 0 (EventId (UUID.fromWords 0 1 0 (fromIntegral index))) (OpenAccount (OpenAccountData (account index) 0))) coordinates
   first <- traverse (\(index, event, _) -> intake (account index) event (Just (ref index))) coordinates
   second <- traverse (\(index, event, _) -> intake (account index) event (Just (ref index))) coordinates
   republished <- traverse (\(index, _, event) -> intake (account index) event (Just (ref (index + 16)))) coordinates
+  missing <- intake (account 1) malformed (if policyName == "kafka-delivery" then Nothing else Just (ref 100))
   streamChecks <-
     traverse
       ( \(index, event, republishedEvent) -> do
@@ -207,6 +215,7 @@ runDelegatedMatrix context fixture = do
           ("delegated-redelivery", length second == 16 && all (== Right InboxDuplicate) second),
           ("delegated-republish-policy", length republished == 16 && all (if doubled then processed else (== Right InboxDuplicate)) republished),
           ("delegated-stream-receipts", and streamChecks),
+          ("delegated-missing-policy-field-fails-closed", case missing of Left (DedupePolicyUnsatisfied _) -> True; _ -> False),
           ("delegated-skips-inbox-table", null rows),
           ("delegated-no-op-refused", noOp == Left (DelegatedCommandWithoutReceipt negativeName)),
           ("delegated-rejection-refused", rejected == Left (DelegatedCommandFailed negativeName CommandRejected)),

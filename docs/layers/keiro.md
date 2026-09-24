@@ -480,7 +480,8 @@ deposit on first delivery, no deposit on redelivery, and a second deposit on
 republish only for message-ID and Kafka-delivery identity. The inbox table
 stays empty. A zero-event command and a rejected command return their typed
 delegated errors without changing the target stream. All four delegated arms
-passed on durable PostgreSQL.
+passed on durable PostgreSQL. Each also rejects a delivery missing its
+policy-required identity without adding a receipt.
 `poison-accounting` verifies the default exception path's three-attempt
 ceiling and retention of failed rows. With `inbox.failure-mode=condemn`, two
 deliveries each report processed but roll back; a nontransactional sequence
