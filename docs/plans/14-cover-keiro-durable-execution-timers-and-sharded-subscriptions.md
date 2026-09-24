@@ -67,7 +67,7 @@ Milestone 1 — Durable workflow scenarios
 - [x] (2026-09-24) Extended exact discovery to awakeable, sleep and child parking. All three passed in both durability modes at shakedown size; each passed with the default 2,000 parked workflows on durable PostgreSQL. The idle pass records its duration and the pending-awakeable count query's call and execution-time deltas, and checks exactly one query call.
 - [ ] Add the workflow concurrency and crash scenarios (eleven) and see them pass or report their known defect.
 - [ ] Add the `wake` correctness scenario.
-- [ ] Extend EP-12's bundle module with `Kenshou.Suite.Keiro.Workflow.scenarios` and `.roles`; confirm `kenshou list` shows them.
+- [x] (2026-09-24) Extended EP-12's bundle module with `Kenshou.Suite.Keiro.Workflow.scenarios` and `.roles`; `kenshou list --json` shows the registered workflow scenarios.
 - [ ] For each suspected defect that reproduces, file the improvement request in keiro and attach the `KnownDefect` reference.
 
 Milestone 2 — Timer scenarios
@@ -76,9 +76,9 @@ Milestone 2 — Timer scenarios
 - [x] (2026-09-24 05:35Z) Added both timer correctness scenarios; each passed under both `fsync-off` and `durable`. The attempt-ceiling probe checks two callback executions, post-claim dead-lettering on attempt three, zero-ceiling refusal, persisted reason and invalid options.
 - [x] (2026-09-24) Added `keiro/timer/concurrency/skip-locked-claims-across-processes`. Four real timer-worker processes passed at 100 timers in both PostgreSQL modes and at the default 5,000 timers on durable PostgreSQL, with one claim, effect and event per timer.
 - [x] (2026-09-24) Added `keiro/timer/concurrency/sigkill-between-fire-and-mark`. A worker self-`SIGKILL` after its committed business event leaves the timer firing; a replacement requeues and completes it on attempt two with two bounded fire facts and one business event. Both PostgreSQL durability modes passed.
-- [ ] Add the other two timer concurrency scenarios and random-kill arm to the fire/mark crash scenario.
+- [ ] Add `foreground-resume-tokens` and the random-kill arm to the fire/mark crash scenario.
 - [x] (2026-09-24) Added `keiro/timer/concurrency/slow-fire-double-fires`. The first worker pauses six seconds after its business append; a second worker requeues the stale claim and completes attempt two. Both PostgreSQL durability modes passed checks for two raw fires, one business event, a fired row, and rejection of the first worker's late mark.
-- [ ] Extend the bundle; confirm `kenshou list`.
+- [x] (2026-09-24) The bundle includes timer scenarios and the timer worker role; `kenshou list --json` shows the five implemented timer scenarios.
 
 Milestone 3 — Sharded subscription scenarios
 
@@ -91,7 +91,7 @@ Milestone 3 — Sharded subscription scenarios
 - [ ] Add the shard concurrency and crash scenarios (six).
 - [x] (2026-09-24) Added `keiro/shard/concurrency/late-joiner-gets-no-buckets` with three real delivery workers. Four- and eight-bucket durable runs and a four-bucket fsync-off run reproduced exactly the declared `shard-late-workers-share` known defect; the first owner covered all buckets and coverage persisted after the two joiners started.
 - [x] (2026-09-24) Added `keiro/shard/concurrency/sigkill-failover-vs-graceful-relinquish`. It samples ownership after `SIGKILL` and halfway through the lease, requires transfer to a surviving worker within the calculated failover deadline, then checks immediate release on graceful stop and reownership within the renewal deadline. Four-bucket runs passed in both PostgreSQL modes; the default eight-bucket durable run passed.
-- [ ] Extend the bundle; confirm `kenshou list`.
+- [x] (2026-09-24) The bundle includes shard scenarios and the shard worker role; `kenshou list --json` shows the five implemented shard scenarios.
 
 Milestone 4 — Durable-execution benchmarks, soak and telemetry arms
 
