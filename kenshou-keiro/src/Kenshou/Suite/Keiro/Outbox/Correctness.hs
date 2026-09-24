@@ -11,7 +11,7 @@ import Data.Text.Encoding qualified as TextEncoding
 import Data.Time (getCurrentTime)
 import Data.UUID qualified as UUID
 import Keiro.Integration.Event (IntegrationContentType (..), IntegrationEvent (..), headerMessageId)
-import Keiro.Outbox (BackoffSchedule (..), IntegrationEventDraft (..), IntegrationProducer (..), OrderingPolicy (..), OutboxId (..), OutboxPublishOptions (..), OutboxPublishSummary (..), OutboxRow (..), OutboxStatus (..), ProducerEnqueueOutcome (..), ProducerIdentity (..), PublishOutcome (..), countOutboxBacklog, defaultMaintenanceOptions, defaultPublishOptions, enqueueProducerEventTx, garbageCollectSent, listOutbox, mkIntegrationProducer, mkPublishRejection, outboxMaintenancePass, publishClaimedOutbox, publishRejectionCode)
+import Keiro.Outbox (BackoffSchedule (..), IntegrationEventDraft (..), IntegrationProducer (..), OrderingPolicy (..), OutboxId (..), OutboxPublishOptions (..), OutboxPublishSummary (..), OutboxRow (..), OutboxStatus (..), ProducerEnqueueOutcome (..), PublishOutcome (..), countOutboxBacklog, defaultMaintenanceOptions, defaultPublishOptions, enqueueProducerEventTx, garbageCollectSent, listOutbox, mkIntegrationProducer, mkPublishRejection, outboxMaintenancePass, publishClaimedOutbox, publishRejectionCode)
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
@@ -296,6 +296,7 @@ runTerminalStateMatrix context =
     rows <- runFixture (listOutbox source) >>= either (fail . show) pure
     records <- Broker.readBroker broker
     let brokerIds = Set.fromList [value | record <- records, (name, value) <- record.headers, name == TextEncoding.encodeUtf8 headerMessageId]
+        brokerCounts = Map.fromListWith (+) [(value, 1 :: Int) | record <- records, (name, value) <- record.headers, name == TextEncoding.encodeUtf8 headerMessageId]
         statusMatches row =
           case Broker.decide plan (row {attemptCount = 1}) of
             Broker.AlwaysFail -> row.status == OutboxDead && row.attemptCount == options.maxAttempts
@@ -308,10 +309,21 @@ runTerminalStateMatrix context =
                 OutboxRejected -> not published
                 OutboxDead -> not published
                 _ -> False
+        rejectionMatches row =
+          case row.status of
+            OutboxRejected -> row.rejectedAt /= Nothing && maybe False ((== "synthetic_rejection") . publishRejectionCode) row.rejection
+            _ -> row.rejectedAt == Nothing && row.rejection == Nothing
+        deadMatches row =
+          case row.status of
+            OutboxDead -> row.attemptCount == options.maxAttempts && row.lastError == Just "synthetic permanent failure"
+            _ -> True
         cells =
           [ ("drained-before-deadline", maybe False (const True) drained),
             ("every-row-terminal", length rows == rowCount && all statusMatches rows),
             ("broker-matches-terminal-status", all wireMatches rows),
+            ("one-broker-record-per-sent-row", length records == length [() | row <- rows, row.status == OutboxSent] && all (== 1) (Map.elems brokerCounts)),
+            ("rejection-metadata", all rejectionMatches rows),
+            ("poison-attempt-ceiling", all deadMatches rows),
             ("published-count-matches-summaries", maybe False (\summaries -> sum (map (.published) summaries) == length [() | row <- rows, row.status == OutboxSent]) drained),
             ("rejected-count-matches-summaries", maybe False (\summaries -> sum (map (.rejected) summaries) == length [() | row <- rows, row.status == OutboxRejected]) drained),
             ("dead-count-matches-summaries", maybe False (\summaries -> sum (map (.dead) summaries) == length [() | row <- rows, row.status == OutboxDead]) drained)
