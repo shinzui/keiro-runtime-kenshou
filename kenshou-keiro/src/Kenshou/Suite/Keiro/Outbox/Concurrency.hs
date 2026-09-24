@@ -2,8 +2,11 @@ module Kenshou.Suite.Keiro.Outbox.Concurrency (scenarios) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (wait, withAsync)
-import Control.Exception (bracket)
+import Control.Concurrent.STM (atomically, putTMVar)
+import Control.Exception (bracket, finally)
 import Data.Aeson (Value (..), object, (.=))
+import Data.Aeson qualified as Aeson
+import Data.ByteString.Lazy qualified as LazyByteString
 import Data.Int (Int32)
 import Data.List (sort)
 import Data.List.NonEmpty (NonEmpty (..))
@@ -17,6 +20,8 @@ import Hasql.Decoders qualified as Decoders
 import Hasql.Encoders qualified as Encoders
 import Hasql.Statement qualified as Statement
 import Hasql.Transaction qualified as Tx
+import Keiro.Codec (Codec (..))
+import Keiro.Command (defaultRunCommandOptions)
 import Keiro.Integration.Event (IntegrationContentType (..), IntegrationEvent (..), headerMessageId)
 import Keiro.Outbox (BackoffSchedule (..), IntegrationEventDraft (..), IntegrationProducer (..), OutboxMaintenanceOptions (..), OutboxMaintenanceSummary (..), OutboxPublishOptions (..), OutboxPublishSummary (..), OutboxRow (..), OutboxStatus (..), ProducerEnqueueOutcome (..), ProducerIdentity (..), countOutboxBacklog, defaultPublishOptions, enqueueIntegrationEventTx, enqueueProducerEventTx, freshOutboxId, listOutbox, mkIntegrationProducer, outboxMaintenancePass, publishClaimedOutbox)
 import Kenshou.Check.Fault (Fault (..), FaultHandle (..))
@@ -33,13 +38,18 @@ import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), 
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Role (ControlMessage (..))
 import Kenshou.Core.Scenario (CohortScope (..), KnownDefect (..), Placement (..), Scenario (..), ScenarioReport, Tier (..), inconclusiveBecause)
-import Kenshou.Suite.Keiro.Fixture.Runtime (FixtureEnv (..), KeiroRunner (..), withFixtureEnv)
+import Kenshou.Suite.Keiro.Fixture.Account (AccountSnapshotPolicy (..), accountCodec, accountEventStream)
+import Kenshou.Suite.Keiro.Fixture.Domain (AccountCommand (..), AccountEvent, AccountId (..), DepositData (..), OpenAccountData (..))
+import Kenshou.Suite.Keiro.Fixture.Runtime (CommandRunner (..), FixtureEnv (..), KeiroRunner (..), SubmitOutcome (..), submitAccountCommand, withFixtureEnv)
 import Kenshou.Suite.Keiro.Messaging.Verdict (recordMessagingCells, recordMessagingCellsClassified)
 import Kenshou.Suite.Keiro.Outbox.Broker qualified as Broker
 import Kenshou.Suite.Keiro.Outbox.Oracle qualified as Oracle
 import Kenshou.Suite.Keiro.Outbox.Workload (enqueueInline, inlineEvent, sourceName)
 import Kiroku.Store (defaultConnectionSettings, runTransaction)
-import Kiroku.Store.Types (EventId (..), EventType (..), GlobalPosition (..), RecordedEvent (..), StreamId (..), StreamVersion (..))
+import Kiroku.Store.Subscription.Stream (AckItem (..), subscriptionAckStream)
+import Kiroku.Store.Subscription.Types (SubscriptionName (..), SubscriptionResult (..), SubscriptionTarget (..), defaultSubscriptionConfig)
+import Kiroku.Store.Types (CategoryName (..), EventId (..), EventType (..), GlobalPosition (..), RecordedEvent (..), StreamId (..), StreamVersion (..))
+import Streamly.Data.Stream qualified as Streamly
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
@@ -51,7 +61,7 @@ concurrentInlineEnqueueOrder =
     { id = either (error . show) id (parseScenarioId "keiro/outbox/concurrency/concurrent-inline-enqueue-order"),
       summary = "Stages opposite transaction-start and commit order for inline events, with a serialized producer-path control.",
       tier = TierSmoke,
-      knobs = [KnobSpec (knobName "outbox.enqueue-path") "Inline race or serialized producer control" KnobText (VText "inline") (OneOf (VText "inline" :| [VText "producer"])) [VText "producer"]],
+      knobs = [KnobSpec (knobName "outbox.enqueue-path") "Inline race or serialized producer control" KnobText (VText "inline") (OneOf (VText "inline" :| [VText "producer", VText "producer-direct"])) [VText "producer", VText "producer-direct"]],
       knownDefect = Just (KnownDefect "mori://shinzui/keiro/okf/user-documentation/concepts/DOC-16" "Concurrent inline enqueues can publish one key out of producer order" ["per-key-order"] AllCohorts),
       run = runConcurrentInlineEnqueueOrder
     }
@@ -60,9 +70,76 @@ runConcurrentInlineEnqueueOrder :: RunContext -> IO ScenarioReport
 runConcurrentInlineEnqueueOrder context =
   withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture ->
     Broker.withTableBroker (requirePostgres context).connectionString \broker ->
-      if knobText context.knobs (knobName "outbox.enqueue-path") == "producer"
-        then runProducerPathControl context fixture broker
-        else runInlineOrderRace context fixture broker
+      case knobText context.knobs (knobName "outbox.enqueue-path") of
+        "producer" -> runProducerSubscriptionControl context fixture broker
+        "producer-direct" -> runProducerPathControl context fixture broker
+        _ -> runInlineOrderRace context fixture broker
+
+runProducerSubscriptionControl :: RunContext -> FixtureEnv -> Broker.Broker -> IO ScenarioReport
+runProducerSubscriptionControl context fixture broker = do
+  let KeiroRunner runFixture = fixture.runner
+      source = sourceName context "subscription-order"
+      account = AccountId (sourceName context "account")
+      producer :: IntegrationProducer AccountEvent
+      producer = either (error . show) id (mkIntegrationProducer (IntegrationProducer "ordering-subscription" source "kenshou" mapEvent))
+      mapEvent recorded _ =
+        Just
+          IntegrationEventDraft
+            { destination = "kenshou.outbox.v1",
+              key = Just source,
+              eventType = "AccountOrdering",
+              schemaVersion = 1,
+              contentType = ApplicationJson,
+              schemaReference = Nothing,
+              sourceEventId = Nothing,
+              sourceGlobalPosition = Nothing,
+              payloadBytes = LazyByteString.toStrict (Aeson.encode recorded.payload),
+              occurredAt = recorded.createdAt,
+              causationId = Nothing,
+              correlationId = Nothing,
+              traceContext = Nothing,
+              attributes = Nothing
+            }
+      callback = Broker.publishScripted broker (Broker.BrokerModel 0 0 4) (const Broker.Succeed) (Broker.PublishHook (const (pure ())) (const (pure ()))) "subscription-order-publisher"
+      submit eventId command = submitAccountCommand fixture (accountEventStream SnapNever) RunnerPlain defaultRunCommandOptions 0 eventId command
+      config = defaultSubscriptionConfig (SubscriptionName (sourceName context "ordering-producer")) (Category (CategoryName "account")) (\_ -> pure Continue)
+      consume stream outcomes sourceVersions = do
+        next <- timeout 10000000 (Streamly.uncons stream)
+        case next of
+          Nothing -> fail "producer subscription did not deliver two account events"
+          Just Nothing -> fail "producer subscription stopped before two account events"
+          Just (Just (item, rest)) -> do
+            let recorded = item.ackEvent
+            decoded <- either (fail . Text.unpack) pure (accountCodec.decode recorded.eventType recorded.payload)
+            draft <- maybe (fail "producer mapper skipped account event") pure (producer.mapEvent recorded decoded)
+            outcome <- runFixture (runTransaction (enqueueProducerEventTx producer recorded 0 draft)) >>= either (fail . show) pure
+            let nextVersions = sourceVersions <> [recorded.streamVersion]
+                nextOutcomes = outcomes <> [outcome]
+            atomically (putTMVar item.ackReply (if length nextOutcomes == 2 then Stop else Continue))
+            if length nextOutcomes == 2
+              then do
+                stopped <- timeout 10000000 (Streamly.uncons rest)
+                case stopped of
+                  Just Nothing -> pure (nextOutcomes, nextVersions)
+                  _ -> fail "producer subscription did not stop after the second acknowledgement"
+              else consume rest nextOutcomes nextVersions
+  opened <- submit (EventId (UUID.fromWords 0 0 0 1)) (OpenAccount (OpenAccountData account 0))
+  deposited <- submit (EventId (UUID.fromWords 0 0 0 2)) (Deposit (DepositData account 1 "ordering"))
+  (stream, cancelStream) <- subscriptionAckStream fixture.store config 2
+  (outcomes, sourceVersions) <- finally (consume stream [] []) cancelStream
+  _ <- runFixture (publishClaimedOutbox callback defaultPublishOptions Nothing) >>= either (fail . show) pure
+  rows <- runFixture (listOutbox source) >>= either (fail . show) pure
+  records <- Broker.readBroker broker
+  let brokerIds = [TextEncoding.decodeUtf8 value | record <- records, (name, value) <- record.headers, name == TextEncoding.encodeUtf8 headerMessageId]
+      expected = [identity.messageId | ProducerInserted identity <- outcomes]
+      commandsAppended = [opened, deposited] == [SubmitAppended (StreamVersion 1), SubmitAppended (StreamVersion 2)]
+      schedule = commandsAppended && sourceVersions == [StreamVersion 1, StreamVersion 2] && length expected == 2 && brokerIds == expected
+      cells =
+        [ ("schedule-realised", Contract, schedule),
+          ("no-loss", Contract, length rows == 2 && all ((== OutboxSent) . (.status)) rows && sort brokerIds == sort expected),
+          ("per-key-order", Implementation, brokerIds == expected)
+        ]
+  recordMessagingCellsClassified context (Map.fromList [("enqueued", 2), ("brokerRecords", fromIntegral (length records))]) (object ["sourceVersions" .= [version | StreamVersion version <- sourceVersions], "brokerMessageIds" .= brokerIds, "commandsAppended" .= commandsAppended]) cells
 
 runInlineOrderRace :: RunContext -> FixtureEnv -> Broker.Broker -> IO ScenarioReport
 runInlineOrderRace context fixture broker = do

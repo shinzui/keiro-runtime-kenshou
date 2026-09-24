@@ -440,10 +440,14 @@ in `mori://shinzui/keiro/okf/user-documentation/concepts/DOC-16`; the schedule
 and no-loss contract verdicts held, while the scoped per-key-order verdict was
 violated under the known-defect reference. These concurrency scenarios require
 `pg.durability=durable`.
-With `--set outbox.enqueue-path=producer`, the ordering scenario instead makes
+With `--set outbox.enqueue-path=producer-direct`, the ordering scenario makes
 two serialized calls to `enqueueProducerEventTx`; its durable control run passed
-the schedule, no-loss, and per-key-order verdicts. Subscription-driven producer
-coverage remains in the plan.
+the schedule, no-loss, and per-key-order verdicts. With
+`outbox.enqueue-path=producer`, two durable account events pass
+through Kiroku's ack-coupled subscription. Each event is decoded and enqueued
+before its acknowledgement; the subscription stops after the second
+checkpoint. The durable control run passed the stream-order, no-loss, and
+per-key-order verdicts.
 `producer-identity-race-with-gc` runs four concurrent replayers of 128 stable
 source events while a publisher drains and zero-retention GC deletes sent rows.
 Its durable run deleted 192 rows and observed 106 republications. All 640
