@@ -1,5 +1,6 @@
 module Kenshou.Suite.Keiro.Command.Concurrency (scenarios) where
 
+import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (async, wait)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, readMVar)
 import Control.Concurrent.STM (atomically)
@@ -27,6 +28,7 @@ import Hedgehog qualified
 import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
 import Keiro.Command (CommandError (..), CommandResult (..), RunCommandOptions (..), defaultRunCommandOptions, runCommand)
+import Keiro.Telemetry (newKeiroMetrics)
 import Kenshou.Check.Model (ModelRun (..), runModel)
 import Kenshou.Check.Model.Linearizability (Completion (..), LinResult (..), Operation (..), SeqModel (..), checkLinearizable, defaultLinConfig)
 import Kenshou.Check.Process (ProgressSnapshot (..), awaitMark, awaitReady, childPid, killChild, progress, roleProcess, sendCommand, spawn, withSupervisor)
@@ -40,7 +42,7 @@ import Kenshou.Core.Id (parseScenarioId, unSeed)
 import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobInt, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Role (ControlMessage (..))
-import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..))
+import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith)
 import Kenshou.Suite.Keiro.Command.Correctness (recordCells)
 import Kenshou.Suite.Keiro.Fixture.Account
 import Kenshou.Suite.Keiro.Fixture.Domain
@@ -48,6 +50,7 @@ import Kenshou.Suite.Keiro.Fixture.Model qualified as Model
 import Kenshou.Suite.Keiro.Fixture.Oracle qualified as Oracle
 import Kenshou.Suite.Keiro.Fixture.Runtime
 import Kenshou.Suite.Keiro.Fixture.Workload qualified as Workload
+import Kenshou.Telemetry (TelemetryHandles (..), telemetryKnobs, telemetrySpecFromContext, withTelemetry)
 import Kiroku.Store (defaultConnectionSettings)
 import Kiroku.Store.Error (StoreError (..))
 import Kiroku.Store.Types (StreamVersion (..))
@@ -61,14 +64,22 @@ seedDivergenceDetection =
   identicalCommandsOneBatch
     { id = either (error . show) id (parseScenarioId "keiro/snapshot/correctness/seed-divergence-detection"),
       summary = "Checks sampled snapshot seed verification reports a corrupt seed without rejecting the command.",
-      knobs = [KnobSpec (knobName "snapshot.seed-verify-sample-rate") "Verify one in N snapshot seeds" KnobInt (VInt 1) (IntRange 0 1) []],
+      knobs = [KnobSpec (knobName "snapshot.seed-verify-sample-rate") "Verify one in N snapshot seeds" KnobInt (VInt 1) (IntRange 0 1) []] <> telemetryKnobs,
+      dimensions =
+        DimensionSupport
+          { tracing = Supported (Support (TracingOff :| []) TracingOff),
+            metrics = Supported (Support (MetricsOff :| [MetricsCollect]) MetricsCollect),
+            pgDurability = Supported (Support (PgDurable :| []) PgDurable),
+            pgVersion = Supported (Support (Pg18 :| []) Pg18)
+          },
       run = runSeedDivergence
     }
 
 runSeedDivergence :: RunContext -> IO ScenarioReport
-runSeedDivergence context =
-  withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture ->
-    withCheck context \check -> withSupervisor check \supervisor -> do
+runSeedDivergence context = case telemetrySpecFromContext context of
+  Left reason -> pure (failedWith ["invalid-telemetry-config"] reason)
+  Right telemetrySpec -> withTelemetry telemetrySpec \telemetry ->
+    withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture -> withCheck context \check -> withSupervisor check \supervisor -> do
       let KeiroRunner runFixture = fixture.runner
           seed = unSeed context.seed
           account = AccountId "0"
@@ -92,6 +103,12 @@ runSeedDivergence context =
       sendCommand child CtlStart
       awaitMark child "submission" 30000
       reported <- atomically (progress child)
+      keiroMetrics <- traverse newKeiroMetrics telemetry.meter
+      let probeOptions = defaultRunCommandOptions {seedVerifySampleRate = rate, metrics = keiroMetrics}
+      probe <- runFixture (runCommand probeOptions accountEvents (accountStream account) (Deposit (DepositData account 1 "metric-probe")))
+      threadDelay 1000000
+      _ <- telemetry.flushTelemetry
+      metricSums <- telemetry.readMetricSums
       after <- Oracle.readCategoryLog connection "account"
       Connection.release connection
       stderr <- ByteString.readFile (context.outDir </> "logs" </> "keiro-command-writer-0.0.stderr.log")
@@ -100,11 +117,14 @@ runSeedDivergence context =
             payload <- Map.lookup "submission" reported.marks
             parseMaybe (withObject "submission" (.: "outcomes")) payload :: Maybe [Text]
           hasMarker = "keiro.snapshot.seed.divergence" `ByteString.isInfixOf` stderr
+          divergenceCount = maybe 0 id (lookup "keiro.snapshot.seed.divergence" metricSums)
           cells =
             [ ("snapshot-created", case (opened, Map.lookup snapshotKey before) of (Right (Right result), Just (1, _)) -> result.eventsAppended == 1; _ -> False),
               ("snapshot-corrupted", Map.lookup snapshotKey before /= Map.lookup snapshotKey corrupted),
               ("command-succeeds", case outcome of Just [value] -> "SubmitAppended" `Text.isPrefixOf` value; _ -> False),
               ("sampling-diagnostic", hasMarker == (rate == 1)),
+              ("metric-probe-appended", case probe of Right (Right result) -> result.eventsAppended == 1; _ -> False),
+              ("seed-divergence-metric", divergenceCount == if rate == 1 && telemetry.metricsLive then 1 else 0),
               ("durable-append", length [() | row <- after, row.eventId == eventId] == 1 && Oracle.logWellFormed after)
             ]
       recordCells context cells

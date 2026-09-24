@@ -42,6 +42,9 @@ duplicates, and SQL contains one event. The snapshot seed divergence scenario
 corrupts a persisted balance and runs the writer with
 `snapshot.seed-verify-sample-rate=1` or `0`. The sampled run must log the
 divergence while accepting the command; the unsampled run must omit the marker.
+An instrumented follow-up command checks that
+`keiro.snapshot.seed.divergence` increments once with collection enabled and
+sampling on, and remains zero with sampling off or metrics off.
 
 The process manager scenarios check stable manager and target identities under
 redelivery, timer persistence, and both orders of transfer inputs. The reactive

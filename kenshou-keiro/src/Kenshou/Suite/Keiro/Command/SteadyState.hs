@@ -8,7 +8,6 @@ import Control.Monad (forM, forever)
 import Data.Aeson (encode, object, (.=))
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.Int (Int64)
-import Data.List (foldl')
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
 import Data.Text qualified as Text
