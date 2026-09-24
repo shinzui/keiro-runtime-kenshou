@@ -6,6 +6,10 @@ module Kenshou.Suite.Keiro.Workflow.Definitions
     linearWorkflow,
     expectedLinearSteps,
     expectedLinearResult,
+    sleeperName,
+    ordinalSleeperName,
+    sleeperWorkflow,
+    sleeperRegistry,
   )
 where
 
@@ -18,6 +22,7 @@ import Effectful (Eff, IOE, liftIO, (:>))
 import Effectful.Error.Static (Error)
 import Keiro.Workflow (StepName (..), Workflow, WorkflowId (..), WorkflowName, mkWorkflowName, step)
 import Keiro.Workflow.Resume (WorkflowDef (..), WorkflowRegistry)
+import Keiro.Workflow.Sleep (sleep, sleepNamed)
 import Kenshou.Suite.Keiro.Workflow.Effects (BoundaryPoint (..), EffectFact (..), EffectSink (..))
 import Kiroku.Store (Store)
 import Kiroku.Store.Error (StoreError)
@@ -56,3 +61,29 @@ linearWorkflow sink params wid = do
 
 linearRegistry :: EffectSink -> DefinitionParams -> WorkflowRegistry '[Store, Error StoreError, IOE]
 linearRegistry sink params = Map.singleton linearName (WorkflowDef (linearWorkflow sink params))
+
+sleeperName :: WorkflowName
+sleeperName = either (error . show) id (mkWorkflowName "kenshouSleeper")
+
+ordinalSleeperName :: WorkflowName
+ordinalSleeperName = either (error . show) id (mkWorkflowName "kenshouOrdinalSleeper")
+
+-- | The named form is safe across a code reorder; the ordinal form exposes
+-- its positional step key for the corresponding compatibility probe.
+sleeperWorkflow :: (IOE :> es, Store :> es) => EffectSink -> Bool -> WorkflowId -> Eff (Workflow : es) Int
+sleeperWorkflow sink named wid = do
+  before <- step (StepName "before") $ do
+    liftIO $ sink.recordEffect (EffectFact "step" (unWorkflowId wid <> "/0/before") "workflow" (object []))
+    pure (1 :: Int)
+  if named then sleepNamed (StepName "nap") 0.2 else sleep 0.2
+  after <- step (StepName "after") $ do
+    liftIO $ sink.recordEffect (EffectFact "step" (unWorkflowId wid <> "/0/after") "workflow" (object []))
+    pure (2 :: Int)
+  pure (before + after)
+
+sleeperRegistry :: EffectSink -> WorkflowRegistry '[Store, Error StoreError, IOE]
+sleeperRegistry sink =
+  Map.fromList
+    [ (sleeperName, WorkflowDef (sleeperWorkflow sink True)),
+      (ordinalSleeperName, WorkflowDef (sleeperWorkflow sink False))
+    ]

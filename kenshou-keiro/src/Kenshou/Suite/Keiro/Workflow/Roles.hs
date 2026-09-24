@@ -4,11 +4,12 @@ import Control.Concurrent (threadDelay)
 import Control.Monad (void)
 import Data.Aeson (object, withObject, (.:?), (.=))
 import Data.Aeson.Types (parseMaybe)
+import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Keiro.Workflow.Resume (ResumeSummary (..), WorkflowResumeOptions (..), defaultWorkflowResumeOptions, resumeWorkflowsOnce)
 import Kenshou.Core.Role (ControlMessage (..), PostgresConnInfo (..), RoleContext (..), RoleName, WorkerInit (..), WorkerMessage (..), WorkerRole (..), mkRoleName)
-import Kenshou.Suite.Keiro.Workflow.Definitions (defaultDefinitionParams, linearRegistry)
+import Kenshou.Suite.Keiro.Workflow.Definitions (defaultDefinitionParams, linearRegistry, sleeperRegistry)
 import Kenshou.Suite.Keiro.Workflow.Effects (BoundaryPoint (..), CrashPlan (..), withEffectSink)
 import Kenshou.Suite.Keiro.Workflow.Fixture (durableKirokuStore, withDurableStore)
 import Kiroku.Store (defaultConnectionSettings, runStoreIO)
@@ -31,7 +32,7 @@ resumeWorker context = case context.init.postgres of
         Just CtlStart ->
           withDurableStore (defaultConnectionSettings postgres.connectionString) \fixture ->
             withEffectSink context (maybe [] (\name -> [CrashPlan (AfterStepAction name) 1]) killAfter) \sink -> do
-              let registry = linearRegistry sink defaultDefinitionParams
+              let registry = Map.union (linearRegistry sink defaultDefinitionParams) (sleeperRegistry sink)
                   options = defaultWorkflowResumeOptions {pollInterval = 100000, leaseTtl = 2}
                   loop = do
                     command <- timeout 1000 context.receive

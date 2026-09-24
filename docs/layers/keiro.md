@@ -44,6 +44,11 @@ cabal run kenshou -- run keiro/workflow/concurrency/linear-self-sigkill-smoke \
   --dim pg.durability=durable --out runs
 ```
 
+`keiro/workflow/correctness/sleep-timer-smoke` checks that named and ordinal
+sleeps arm deterministic timer rows, replay leaves the deadline and wake hint
+unchanged, due discovery waits for a timer worker, and one drain pass wakes
+both workflows with journaled completions.
+
 The two timer correctness scenarios,
 `keiro/timer/correctness/lifecycle-and-at-least-once` and
 `keiro/timer/correctness/max-attempts-dead-letters-post-claim`, cover first
@@ -51,7 +56,7 @@ arm, rearm, ordered claims, stuck recovery, repeated callback execution, and
 the post-claim dead-letter ceiling. The
 `keiro/shard/correctness/lease-coverage-smoke` scenario claims four buckets
 one per pass, relinquishes them, and checks that another owner can claim them
-without overlap. All three correctness probes support both PostgreSQL
+without overlap. These correctness probes support both PostgreSQL
 durability modes. The remaining workflow kinds, process concurrency cases,
 subscription delivery checks, benchmarks and soaks remain in the plan's
 Progress section.
