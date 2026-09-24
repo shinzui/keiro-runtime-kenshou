@@ -517,6 +517,16 @@ scenarios reproduced their scoped known defects without a blocking failure.
 
 ## Inbox
 
+`intake-throughput` measures fresh and redelivered intake through the inbox
+table or delegated account-stream command receipts. It varies batch size,
+consumer count, payload size, redelivery ratio, and table persistence, then
+checks durable effects against accepted deliveries. Both modes passed
+benchmark-grade local runs at 1,100 cycles. The table run retained one inbox
+row per effect; the delegated run retained no inbox rows and one stream event
+per fresh delivery. Batch-10 and batch-100 smoke arms held the same oracles.
+Four-consumer delegated intake preserved the receipts but tripped the local
+driver CPU health gate, so its measurement was not benchmark grade.
+
 `keiro/inbox/correctness/envelope-round-trip` passes outbox records through
 the synthetic broker and Keiro's inbox decoder. It checks the reconstructed
 integration events and all six required headers. The table-backed
