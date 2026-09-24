@@ -104,6 +104,9 @@ loop against account-category events, checks the durable sink and flushed
 effect facts, then checks graceful lease relinquish.
 Its sink records first-delivery sequence, so the oracle also verifies strict
 per-stream order. The default 20,000-event durable run passed.
+The `keiro/shard-appender` role now seeds that account-category stream from
+a separate supervised process, with deterministic event IDs and progress
+reports every thousand events.
 `keiro/shard/concurrency/late-joiner-gets-no-buckets` starts two more workers
 after the first owns every bucket. Both durability modes reproduce the declared
 Keiro 0.17.0.0 limitation: healthy ownership remains with the first worker,

@@ -82,7 +82,8 @@ Milestone 2 — Timer scenarios
 
 Milestone 3 — Sharded subscription scenarios
 
-- [ ] Complete `.Roles` and `.Oracle` for all planned handler, failover and checkpoint cases. `Shard.Knobs` maps the settings through `mkShardedWorkerOptions`; the role now runs the acknowledgement-aware delivery loop on demand, records flushed delivery facts and upserts `shard_sink`, and cancels the loop on control stop so leases are relinquished. The existing pure oracle checkers have doctored-input tests. Delivery variants, appender role and cross-process oracles remain.
+- [ ] Complete `.Roles` and `.Oracle` for all planned handler, failover and checkpoint cases. `Shard.Knobs` maps the settings through `mkShardedWorkerOptions`; the role runs the acknowledgement-aware delivery loop on demand, records flushed delivery facts and upserts `shard_sink`, and cancels the loop on control stop so leases are relinquished. The appender role now emits deterministic account-category events in its own process. The existing pure oracle checkers have doctored-input tests. Delivery variants and cross-process checkpoint oracles remain.
+- [x] (2026-09-24) Added `keiro/shard-appender` and used it to seed the single-worker drain scenario. A default 20,000-event durable run and 100-event runs in both PostgreSQL modes passed with the appender and delivery worker as separate processes.
 - [x] (2026-09-24 05:33Z) Registered an incremental `keiro/shard/correctness/lease-coverage-smoke` scenario. Runs under both PostgreSQL durability modes passed five verdicts for one-bucket-per-pass ownership, complete coverage, relinquish and immediate transfer.
 - [x] (2026-09-24 13:43Z) Added `keiro/shard/correctness/shard-count-mismatch`, exercising the same `ensureShards` startup path as a worker. Both PostgreSQL durability modes reproduced two contract failures: extra rows remained after a larger misconfigured caller, and a fresh correct caller failed. The scenario exits zero as a reported known defect with `mori://shinzui/keiro/okf/improvement-requests/concepts/IR-49`.
 - [x] (2026-09-24 13:48Z) Changed the shard-count mismatch probe to start count-two, count-six and fresh count-four worker processes. Both PostgreSQL durability modes reproduced the same two contract failures and no other failures.
@@ -671,3 +672,11 @@ reports the result of its late `markTimerFired`. A second ordinary process
 requeues and completes the timer during that wait. Both durability modes
 passed: the row had two attempts, the effect ledger had two raw fires, the
 business stream had one event, and the late mark returned `False`.
+
+## Revision Note — 2026-09-24 (shard appender process)
+
+The shard appender role now writes deterministic account-category events from
+a supervised process and reports progress each thousand events. The
+single-worker drain scenario uses this role before starting its delivery
+worker, so the source and consumer cross a real process boundary. The
+default-size durable run and smaller runs in both PostgreSQL modes passed.

@@ -2,13 +2,17 @@ module Kenshou.Suite.Keiro.Shard.Roles (roles) where
 
 import Control.Concurrent.Async (race, wait, withAsync)
 import Control.Exception (try)
-import Control.Monad (void)
+import Control.Monad (forM_, void, when)
 import Data.Aeson (Value, object, withObject, (.:), (.:?), (.=))
 import Data.Aeson.Types (parseMaybe)
+import Data.ByteString qualified as ByteString
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Data.Text.Encoding qualified as TextEncoding
+import Data.Time (getCurrentTime)
 import Data.UUID qualified as UUID
+import Data.UUID.V5 qualified as UUID.V5
 import Hasql.Decoders qualified as Decoders
 import Hasql.Encoders qualified as Encoders
 import Hasql.Statement qualified as Statement
@@ -20,14 +24,41 @@ import Kenshou.Core.Role (ControlMessage (..), PostgresConnInfo (..), RoleContex
 import Kenshou.Suite.Keiro.Shard.Knobs (shardKnobName, shardOptionsFrom)
 import Kenshou.Suite.Keiro.Workflow.Effects (EffectFact (..), EffectSink (..), withEffectSink)
 import Kenshou.Suite.Keiro.Workflow.Fixture (DurableStore, durableKirokuStore, ensureDurableTables, fixtureCategory, runDurable, withDurableStore)
-import Kiroku.Store (defaultConnectionSettings, runStoreIO, runTransaction)
+import Kiroku.Store (appendToStream, defaultConnectionSettings, runStoreIO, runTransaction)
 import Kiroku.Store.Subscription.Types (SubscriptionName (..), SubscriptionTarget (..))
-import Kiroku.Store.Types (CategoryName (..), EventId (..), GlobalPosition (..), RecordedEvent (..), StreamId (..))
+import Kiroku.Store.Types (CategoryName (..), EventData (..), EventId (..), EventType (..), ExpectedVersion (..), GlobalPosition (..), RecordedEvent (..), StreamId (..), StreamName (..))
 
 roles :: [WorkerRole]
-roles = [WorkerRole roleName "Validates shard count or runs the acknowledgement-aware sharded delivery loop." shardWorker]
+roles =
+  [ WorkerRole roleName "Validates shard count or runs the acknowledgement-aware sharded delivery loop." shardWorker,
+    WorkerRole appenderName "Appends deterministic account-category events from a separate process." shardAppender
+  ]
   where
     roleName = either (error . Text.unpack) id (mkRoleName "keiro/shard-worker")
+    appenderName = either (error . Text.unpack) id (mkRoleName "keiro/shard-appender")
+
+shardAppender :: RoleContext -> IO ()
+shardAppender context = case context.init.postgres of
+  Nothing -> context.send (WrkError "shard appender requires PostgreSQL")
+  Just postgres -> case parseMaybe (withObject "shard appender args" (\value -> (,,,) <$> value .: "eventCount" <*> value .: "streamCount" <*> value .: "idPrefix" <*> value .: "streamPrefix")) context.init.args of
+    Nothing -> context.send (WrkError "invalid shard appender arguments")
+    Just (eventCount, streamCount, idPrefix, streamPrefix)
+      | eventCount < 0 || streamCount <= (0 :: Int) -> context.send (WrkError "invalid shard appender counts")
+      | otherwise -> do
+          context.send WrkReady
+          context.receive >>= \case
+            Just CtlStart -> withDurableStore (defaultConnectionSettings postgres.connectionString) \fixture -> do
+              forM_ [0 .. eventCount - 1] \index -> do
+                let identity = UUID.V5.generateNamed UUID.V5.namespaceURL (ByteString.unpack (TextEncoding.encodeUtf8 (idPrefix <> Text.pack (show index))))
+                    event = EventData (Just (EventId identity)) (EventType "kenshou.shard.probe") (object []) Nothing Nothing Nothing
+                    stream = StreamName (streamPrefix <> Text.pack (show (index `mod` streamCount)))
+                outcome <- runDurable fixture (appendToStream stream AnyVersion [event])
+                _ <- either (fail . show) pure outcome
+                when (index `mod` 1000 == 999) do
+                  now <- getCurrentTime
+                  context.send (WrkProgress (fromIntegral (index + 1)) now)
+              context.send (WrkDone Nothing)
+            _ -> context.send (WrkDone (Just "not started"))
 
 shardWorker :: RoleContext -> IO ()
 shardWorker context = case context.init.postgres of

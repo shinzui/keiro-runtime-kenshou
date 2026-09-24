@@ -1,7 +1,7 @@
 module Kenshou.Suite.Keiro.Shard.Correctness (scenarios) where
 
 import Control.Concurrent (threadDelay)
-import Control.Monad (forM)
+import Control.Concurrent.STM (atomically, retry)
 import Data.Aeson (object, (.=))
 import Data.ByteString qualified as ByteString
 import Data.Int (Int64)
@@ -22,7 +22,7 @@ import Keiro.Subscription.Shard (ownershipSnapshotFor)
 import Kenshou.Check.Fact (Fact (..), FactKind (..))
 import Kenshou.Check.Ledger (sealLedger)
 import Kenshou.Check.Ledger.Read (discoverLedgers, foldFacts)
-import Kenshou.Check.Process (awaitReady, roleProcess, sendCommand, spawn, stopGracefully, withSupervisor)
+import Kenshou.Check.Process (ProgressSnapshot (..), awaitReady, progress, roleProcess, sendCommand, spawn, stopGracefully, withSupervisor)
 import Kenshou.Check.Scenario (CheckEnv (..), withCheck)
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
@@ -31,14 +31,15 @@ import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (knobInt)
 import Kenshou.Core.Phase (zeroPhases)
-import Kenshou.Core.Role (ControlMessage (..))
+import Kenshou.Core.Role (ControlMessage (..), WorkerMessage (..))
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..))
 import Kenshou.Suite.Keiro.Shard.Knobs (shardKnobName, shardKnobs)
 import Kenshou.Suite.Keiro.Shard.Oracle (recordShardCells)
 import Kenshou.Suite.Keiro.Workflow.Fixture (ensureDurableTables, runDurable, withDurableStore)
-import Kiroku.Store (appendToStream, defaultConnectionSettings, runTransaction)
+import Kiroku.Store (defaultConnectionSettings, runTransaction)
 import Kiroku.Store.Subscription.Types (SubscriptionName (..))
-import Kiroku.Store.Types (EventData (..), EventId (..), EventType (..), ExpectedVersion (..), StreamName (..))
+import Kiroku.Store.Types (EventId (..))
+import System.Timeout (timeout)
 
 scenarios :: [Scenario]
 scenarios = [singleWorkerDrainsAllBuckets]
@@ -74,8 +75,6 @@ runSingleWorker context = withCheck context \check ->
         bucketCount = fromIntegral (knobInt context.knobs (shardKnobName "shard.shard-count")) :: Int
         name = SubscriptionName "kenshouShardSingleWorker"
         eventId n = EventId (UUID.V5.generateNamed UUID.V5.namespaceURL (ByteString.unpack (TextEncoding.encodeUtf8 ("kenshou:shard:single:" <> Text.pack (show n)))))
-        event n = EventData (Just (eventId n)) (EventType "kenshou.shard.probe") (object []) Nothing Nothing Nothing
-        appendOne n = runDurable fixture (appendToStream (StreamName ("account-shard-" <> Text.pack (show (n `mod` streams)))) AnyVersion [event n])
         sinkRows = runDurable fixture (runTransaction (Tx.statement () sinkRowsStatement))
         ownership = runDurable fixture (ownershipSnapshotFor name)
         done = do
@@ -86,9 +85,18 @@ runSingleWorker context = withCheck context \check ->
                 (Right delivered, Right buckets) -> length delivered == eventCount && length buckets == bucketCount && all (\(_, owner, _) -> owner /= Nothing) buckets
                 _ -> False
             )
-    appended <- forM [0 .. eventCount - 1] appendOne
     sealLedger check.ledger
-    (completed, ownedBeforeStop) <- withSupervisor check \supervisor -> do
+    (appended, completed, ownedBeforeStop) <- withSupervisor check \supervisor -> do
+      appenderSpec <- roleProcess check "keiro/shard-appender" 0 (object ["eventCount" .= eventCount, "streamCount" .= streams, "idPrefix" .= ("kenshou:shard:single:" :: Text), "streamPrefix" .= ("account-shard-" :: Text)])
+      appender <- spawn supervisor appenderSpec
+      awaitReady appender 10000
+      sendCommand appender CtlStart
+      appended <- timeout 120000000 $ atomically do
+        state <- progress appender
+        case state.lastMessage of
+          Just (WrkDone Nothing) -> pure True
+          Just (WrkError _) -> pure False
+          _ -> retry
       spec <- roleProcess check "keiro/shard-worker" 0 (object ["subscription" .= ("kenshouShardSingleWorker" :: Text), "shardCount" .= bucketCount, "delivery" .= True])
       worker <- spawn supervisor spec
       awaitReady worker 10000
@@ -96,7 +104,7 @@ runSingleWorker context = withCheck context \check ->
       result <- waitUntil done 240
       snapshot <- ownership
       _ <- stopGracefully supervisor worker 5000
-      pure (result, snapshot)
+      pure (appended == Just True, result, snapshot)
     delivered <- sinkRows
     ownedAfterStop <- ownership
     ledgers <- discoverLedgers check.ledgerDirectory
@@ -112,7 +120,7 @@ runSingleWorker context = withCheck context \check ->
         cells =
           [ ("all-buckets-owned", completed && case ownedBeforeStop of Right buckets -> length buckets == bucketCount && all (\(_, owner, _) -> owner /= Nothing) buckets; Left _ -> False),
             ("graceful-release", case ownedAfterStop of Right buckets -> length buckets == bucketCount && all (\(_, owner, _) -> owner == Nothing) buckets; Left _ -> False),
-            ("all-events-in-sink", length appended == eventCount && all (either (const False) (const True)) appended && Set.size expectedIds == eventCount && actualIds == expectedIds),
+            ("all-events-in-sink", appended && Set.size expectedIds == eventCount && actualIds == expectedIds),
             ("first-delivery-once", case delivered of Right rows -> all (\(_, count, _, _, _) -> count == 1) rows && length rows == eventCount; Left _ -> False),
             ("first-deliveries-in-stream-order", ordered),
             ("one-effect-per-event", Map.keysSet effects == expectedIds && all (== 1) (Map.elems effects))
