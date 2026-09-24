@@ -1,6 +1,6 @@
 module Kenshou.Suite.Keiro.Inbox.Roles (roles) where
 
-import Data.Aeson (object, withObject, (.:), (.=))
+import Data.Aeson (object, withObject, (.!=), (.:), (.:?), (.=))
 import Data.Aeson.Types (parseMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -22,15 +22,15 @@ roleName = either (error . Text.unpack) id . mkRoleName
 consumer :: RoleContext -> IO ()
 consumer context = case context.init.postgres of
   Nothing -> context.send (WrkError "inbox consumer requires PostgreSQL")
-  Just postgres -> case parseMaybe (withObject "inbox consumer args" (\value -> (,) <$> value .: "source" <*> value .: "messageId")) context.init.args of
+  Just postgres -> case parseMaybe (withObject "inbox consumer args" (\value -> (,,) <$> value .: "source" <*> value .: "messageId" <*> (value .:? "parkInHandler" .!= False))) context.init.args of
     Nothing -> context.send (WrkError "invalid inbox consumer arguments")
-    Just (source, messageId) -> do
+    Just (source, messageId, parkInHandler) -> do
       context.send WrkReady
       context.receive >>= \case
         Just CtlStart -> withFixtureEnv (defaultConnectionSettings postgres.connectionString) \fixture -> do
           let KeiroRunner runFixture = fixture.runner
               handler event = do
-                Tx.sql "SELECT pg_sleep(1)"
+                Tx.sql (if parkInHandler then "SELECT pg_sleep(30)" else "SELECT pg_sleep(1)")
                 Tx.statement event.messageId effectInsertStatement
           outboxRows <- runFixture (listOutbox source) >>= either (fail . show) pure
           case [row.event | row <- outboxRows, row.event.messageId == messageId] of

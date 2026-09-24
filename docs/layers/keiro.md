@@ -276,6 +276,10 @@ to per-message processing without duplicating other effects.
 The `race-one-key` no-kill arm starts four real consumer processes against a
 slow transactional handler. Its durable run observed one processed delivery,
 three duplicates, one completed inbox row, and one protected effect.
+The `--set inbox.kill-winner=sigkill` arm waits until the first consumer is
+inside its SQL handler, kills that process and its still-running database
+backend, then starts the peers. One of them commits the effect; the other two
+see a duplicate.
 
 ## Job queue
 
