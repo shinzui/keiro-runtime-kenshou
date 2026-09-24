@@ -28,9 +28,9 @@ import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (parseScenarioId)
-import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobText, mkKnobName)
+import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobInt, knobText, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
-import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..))
+import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith)
 import Kenshou.Suite.Keiro.Command.Correctness (recordCells)
 import Kenshou.Suite.Keiro.Fixture.Account (AccountSnapshotPolicy (..), accountEventStream, accountStream, accountStreamName)
 import Kenshou.Suite.Keiro.Fixture.Domain (AccountCommand (..), AccountId (..), DepositData (..), OpenAccountData (..))
@@ -243,7 +243,8 @@ effectivelyOnceMatrix =
       knobs =
         [ KnobSpec (knobName "inbox.persistence") "Successful inbox row envelope storage" KnobText (VText "full-envelope") (OneOf (VText "full-envelope" :| [VText "dedupe-only"])) [VText "dedupe-only"],
           KnobSpec (knobName "inbox.dedupe-policy") "Inbox dedupe identity" KnobText (VText "message-id") (OneOf (VText "message-id" :| [VText "source-event", VText "kafka-delivery", VText "custom"])) [VText "source-event", VText "kafka-delivery", VText "custom"],
-          KnobSpec (knobName "inbox.idempotence") "Inbox receipt owner" KnobText (VText "inbox-table") (OneOf (VText "inbox-table" :| [VText "delegated"])) [VText "delegated"]
+          KnobSpec (knobName "inbox.idempotence") "Inbox receipt owner" KnobText (VText "inbox-table") (OneOf (VText "inbox-table" :| [VText "delegated"])) [VText "delegated"],
+          KnobSpec (knobName "inbox.handler-effects") "Effect rows written per accepted table-backed delivery (oracle mutation arm)" KnobInt (VInt 1) (IntRange 1 2) [VInt 2]
         ],
       run = runEffectivelyOnceMatrix
     }
@@ -255,7 +256,10 @@ runEffectivelyOnceMatrix :: RunContext -> IO ScenarioReport
 runEffectivelyOnceMatrix context =
   withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture ->
     if knobText context.knobs (knobName "inbox.idempotence") == "delegated"
-      then runDelegatedMatrix context fixture
+      then
+        if knobInt context.knobs (knobName "inbox.handler-effects") /= 1
+          then pure (failedWith ["invalid-inbox-handler-effects"] "inbox.handler-effects applies only to table-backed intake")
+          else runDelegatedMatrix context fixture
       else runTableMatrix context fixture
 
 runTableMatrix :: RunContext -> FixtureEnv -> IO ScenarioReport
@@ -264,13 +268,14 @@ runTableMatrix context fixture = do
       source = sourceName context "matrix"
       persistence = if knobText context.knobs (knobName "inbox.persistence") == "dedupe-only" then PersistDedupeOnly else PersistFullEnvelope
       policyName = knobText context.knobs (knobName "inbox.dedupe-policy")
+      handlerEffects = fromIntegral (knobInt context.knobs (knobName "inbox.handler-effects"))
       policy event = case policyName of
         "source-event" -> PreferSourceEventIdentity
         "kafka-delivery" -> KafkaDeliveryIdentity
         "custom" -> CustomDedupeKey (TextEncoding.decodeUtf8 event.payloadBytes)
         _ -> PreferIntegrationMessageId
       entries = [(Text.pack (show i), Just "key", i) | i <- [1 .. 16 :: Int]]
-      handler event = Tx.statement event.messageId effectInsertStatement
+      handler event = sequence_ (replicate handlerEffects (Tx.statement event.messageId effectInsertStatement))
       intake event deliveryRef = runFixture (runInboxTransactionWith Nothing persistence (policy event) event deliveryRef handler) >>= either (fail . show) pure
       ref :: Int -> KafkaDeliveryRef
       ref index = KafkaDeliveryRef "kenshou.matrix" 0 (fromIntegral index)

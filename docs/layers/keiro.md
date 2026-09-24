@@ -510,7 +510,11 @@ produces 32 total effects under message-ID and Kafka-delivery identity, and 16
 under source-event and custom identity. A missing field required by each
 policy fails without a receipt. Dedupe-only rows have empty payloads and no
 attributes; full-envelope rows retain both. The effect table has no uniqueness
-constraint, so the inbox receipt enforces the one-effect result. The oracle
+constraint, so the inbox receipt enforces the one-effect result. The
+`inbox.handler-effects=2` mutation arm intentionally writes two rows per
+accepted table-backed delivery. It fails only `effect-count-by-policy` while
+the default arm passes, demonstrating that the effect oracle detects a faulty
+handler. The oracle
 compares the complete set of effect message IDs and dedupe keys to the
 expected deliveries.
 With `inbox.idempotence=delegated`, the same four policies use deterministic
