@@ -26,6 +26,7 @@ import Kenshou.Measure.Sampler.Rts (closeRtsSampler, openRtsSampler, sampleRts)
 import Kenshou.Suite.Keiro.Fixture.Account
 import Kenshou.Suite.Keiro.Fixture.Bonus
 import Kenshou.Suite.Keiro.Fixture.Bridge
+import Kenshou.Suite.Keiro.Fixture.Domain (AccountId (..))
 import Kenshou.Suite.Keiro.Fixture.Projection
 import Kenshou.Suite.Keiro.Fixture.Runtime
 import Kenshou.Suite.Keiro.Fixture.Transfer
@@ -104,7 +105,8 @@ data WriterArgs = WriterArgs
     seedVerifySampleRate :: !Int,
     postSubmissionDelayMicros :: !Int,
     reportEvery :: !Int,
-    sampleProcess :: !Bool
+    sampleProcess :: !Bool,
+    depositOnly :: !Bool
   }
 
 parseWriterArgs :: Value -> Parser WriterArgs
@@ -123,6 +125,7 @@ parseWriterArgs = withObject "keiro command writer" \value ->
     <*> value .:? "postSubmissionDelayMicros" .!= 0
     <*> value .:? "reportEvery" .!= 1
     <*> value .:? "sampleProcess" .!= False
+    <*> value .:? "depositOnly" .!= False
 
 commandWriter :: RoleContext -> IO ()
 commandWriter context = case parseMaybe parseWriterArgs context.init.args of
@@ -140,10 +143,15 @@ commandWriter context = case parseMaybe parseWriterArgs context.init.args of
                 Nothing -> writeIORef stopRequested True
                 Just _ -> receiveStop
             spec = Workload.defaultWorkloadSpec {Workload.accounts = args.accounts}
-            operations = take args.count (drop args.startIndex (Workload.workerOps (unSeed context.init.seed) spec args.worker args.workers))
+            operations =
+              if args.depositOnly
+                then [Workload.Op args.worker (fromIntegral index) (Workload.ActDeposit (AccountId (Text.pack (show args.worker))) 1) | index <- [args.startIndex .. args.startIndex + args.count - 1]]
+                else take args.count (drop args.startIndex (Workload.workerOps (unSeed context.init.seed) spec args.worker args.workers))
             eventStream = accountEventStream (SnapEvery 100)
-            loop completed [] = context.send (WrkDone (Just ("completed=" <> Text.pack (show completed))))
-            loop completed (operation : rest) = do
+            loop completed duplicates [] = do
+              context.send (WrkCustom "duplicates" (object ["count" .= duplicates]))
+              context.send (WrkDone (Just ("completed=" <> Text.pack (show completed))))
+            loop completed duplicates (operation : rest) = do
               stopping <- readIORef stopRequested
               if stopping
                 then context.send (WrkDone (Just ("completed=" <> Text.pack (show completed))))
@@ -171,8 +179,8 @@ commandWriter context = case parseMaybe parseWriterArgs context.init.args of
                           now <- getCurrentTime
                           context.send (WrkProgress (fromIntegral operation.index) now)
                         else pure ()
-                      loop (completed + 1) rest
-        withAsync receiveStop \_ -> loop (0 :: Int) operations
+                      loop (completed + 1) (duplicates + length [() | SubmitDuplicate <- outcomes]) rest
+        withAsync receiveStop \_ -> loop (0 :: Int) (0 :: Int) operations
   where
     isFailure = \case SubmitFailed _ -> True; SubmitRejected -> True; _ -> False
 

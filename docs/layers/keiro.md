@@ -32,8 +32,12 @@ checks the persisted snapshot version and register values for all five
 policies. Two concurrency scenarios check simultaneous submission of one
 identifier and sustained writes to one hot stream. The scenario IDs and
 their knobs are available through `cabal run kenshou -- list --layer keiro`.
-The writer crash scenario kills a process after its deposit commits and checks
-that a fresh process reports `SubmitDuplicate` for the same event ID.
+The writer crash scenario runs paced deposit sequences in separate processes,
+kills writers at configured intervals, and restarts each from an overlap with
+its last acknowledged operation. Deterministic IDs make the overlap safe. It
+checks that restarted writers report duplicates and that SQL has exactly one
+event for every submitted operation ID. The default three-process run passed
+with 1,200 operations per writer, twelve kills, and six durable checks.
 The model based parallel scenario generates concurrent account commands over
 three streams and checks their observed versions against the reference model.
 `identical-commands-one-batch` accepts `command.processes=4` to run real

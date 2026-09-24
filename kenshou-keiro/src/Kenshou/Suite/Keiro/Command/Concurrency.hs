@@ -4,7 +4,7 @@ import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (async, wait)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, readMVar)
 import Control.Concurrent.STM (atomically)
-import Control.Monad (replicateM)
+import Control.Monad (forM, replicateM)
 import Data.Aeson (object, withObject, (.:), (.=))
 import Data.Aeson.Types (parseMaybe)
 import Data.ByteString qualified as ByteString
@@ -34,7 +34,7 @@ import Kenshou.Check.Model.Linearizability (Completion (..), LinResult (..), Ope
 import Kenshou.Check.Process (ProgressSnapshot (..), awaitMark, awaitReady, childPid, killChild, progress, roleProcess, sendCommand, spawn, withSupervisor)
 import Kenshou.Check.Scenario (finishWithVerdicts, withCheck)
 import Kenshou.Check.Verdict (InvariantClass (..))
-import Kenshou.Core.Context (RunContext (..), requirePostgres)
+import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary, requirePostgres)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
@@ -55,6 +55,7 @@ import Kiroku.Store (defaultConnectionSettings)
 import Kiroku.Store.Error (StoreError (..))
 import Kiroku.Store.Types (StreamVersion (..))
 import System.FilePath ((</>))
+import System.Timeout (timeout)
 
 scenarios :: [Scenario]
 scenarios = [identicalCommandsOneBatch, hotStreamContention, sigkillIdempotentResubmission, modelBasedParallelCommands, seedDivergenceDetection]
@@ -221,8 +222,14 @@ sigkillIdempotentResubmission :: Scenario
 sigkillIdempotentResubmission =
   identicalCommandsOneBatch
     { id = either (error . show) id (parseScenarioId "keiro/command/concurrency/sigkill-idempotent-resubmission"),
-      summary = "Kills a writer after append and checks the restarted writer confirms its duplicate id.",
-      knobs = [],
+      summary = "Repeatedly kills paced writers and resubmits an acknowledgement window with deterministic event ids.",
+      knobs =
+        [ KnobSpec (knobName "command.processes") "Writer processes" KnobInt (VInt 3) (IntRange 1 8) [],
+          KnobSpec (knobName "fault.kill-interval-seconds") "Seconds between kills" KnobInt (VInt 5) (IntRange 1 120) [],
+          KnobSpec (knobName "command.duration-seconds") "Submission duration" KnobInt (VInt 60) (IntRange 1 3600) [],
+          KnobSpec (knobName "client.resubmit-window") "Acknowledged operations to replay" KnobInt (VInt 8) (IntRange 1 100) [],
+          KnobSpec (knobName "command.rate-per-second") "Aggregate command rate" KnobInt (VInt 60) (IntRange 1 1000) []
+        ],
       dimensions =
         DimensionSupport
           { tracing = Supported (Support (TracingOff :| []) TracingOff),
@@ -239,45 +246,65 @@ runSigkillResubmission context =
     withCheck context \check -> withSupervisor check \supervisor -> do
       let KeiroRunner runFixture = fixture.runner
           seed = unSeed context.seed
-          account = AccountId "0"
           accountEvents = accountEventStream SnapNever
-          workload = take 100 (Workload.workerOps seed Workload.defaultWorkloadSpec {Workload.accounts = 1} 0 1)
-          isDepositOp operation = case operation.action of Workload.ActDeposit {} -> True; _ -> False
-      startIndex <- maybe (fail "no deposit in first 100 seeded operations") pure (findIndex isDepositOp workload)
-      let operation = workload !! startIndex
-          eventId = Workload.opEventId seed operation 0
-          amount = case operation.action of Workload.ActDeposit _ value -> value; _ -> 0
-          writerArgs park = object ["worker" .= (0 :: Int), "workers" .= (1 :: Int), "startIndex" .= startIndex, "count" .= (1 :: Int), "accounts" .= (1 :: Int), "parkAfterIndex" .= park]
-      opened <- runFixture (runCommand defaultRunCommandOptions accountEvents (accountStream account) (OpenAccount (OpenAccountData account 10000)))
-      firstSpec <- roleProcess check "keiro/command-writer" 0 (writerArgs (Just startIndex))
-      first <- spawn supervisor firstSpec
-      awaitReady first 10000
-      sendCommand first CtlStart
-      awaitMark first "parked" 30000
+          processCount = fromIntegral (knobInt context.knobs (knobName "command.processes")) :: Int
+          interval = fromIntegral (knobInt context.knobs (knobName "fault.kill-interval-seconds")) :: Int
+          duration = fromIntegral (knobInt context.knobs (knobName "command.duration-seconds")) :: Int
+          window = fromIntegral (knobInt context.knobs (knobName "client.resubmit-window")) :: Int
+          rate = fromIntegral (knobInt context.knobs (knobName "command.rate-per-second")) :: Int
+          perWriter = max 2 (rate * duration `div` processCount)
+          delayMicros = max 1 (1000000 * processCount `div` rate)
+          account worker = AccountId (Text.pack (show worker))
+          expectedId worker index = Workload.opEventId seed (Workload.Op worker (fromIntegral index) (Workload.ActDeposit (account worker) 1)) 0
+          writerArgs worker first = object ["worker" .= worker, "workers" .= processCount, "startIndex" .= first, "count" .= (perWriter - first + 1), "accounts" .= processCount, "depositOnly" .= True, "postSubmissionDelayMicros" .= delayMicros]
+          spawnWriter generation worker first = do
+            spec <- roleProcess check "keiro/command-writer" generation (writerArgs worker first)
+            child <- spawn supervisor spec
+            awaitReady child 10000
+            sendCommand child CtlStart
+            pure child
+          awaitFinished child = do
+            snapshot <- atomically (progress child)
+            if snapshot.count >= fromIntegral perWriter && Map.member "duplicates" snapshot.marks then pure () else threadDelay 100000 >> awaitFinished child
+      opened <- forM [0 .. processCount - 1] \worker ->
+        runFixture (runCommand defaultRunCommandOptions accountEvents (accountStream (account worker)) (OpenAccount (OpenAccountData (account worker) 0)))
+      initial <- forM [0 .. processCount - 1] \worker -> spawnWriter worker worker 1
+      let killRounds = max 1 (duration `div` interval)
+          restart roundNo children killed
+            | roundNo > killRounds = pure (children, killed)
+            | otherwise = do
+                threadDelay (interval * 1000000)
+                let slot = (roundNo - 1) `mod` processCount
+                    old = children !! slot
+                snapshot <- atomically (progress old)
+                if snapshot.count >= fromIntegral perWriter
+                  then restart (roundNo + 1) children killed
+                  else do
+                    killChild supervisor old
+                    let first = max 1 (fromIntegral snapshot.count - window + 1)
+                    replacement <- spawnWriter (processCount + roundNo) slot first
+                    restart (roundNo + 1) (take slot children <> [replacement] <> drop (slot + 1) children) (killed + 1)
+      (finalChildren, kills) <- restart 1 initial (0 :: Int)
+      completed <- timeout ((duration * 3 + 60) * 1000000) (traverse awaitFinished finalChildren)
+      snapshots <- traverse (atomically . progress) finalChildren
       acquired <- Connection.acquire (Settings.connectionString (requirePostgres context).connectionString <> Settings.applicationName "kenshou-keiro-writer-crash-oracle")
       connection <- either (fail . show) pure acquired
-      beforeRows <- Oracle.readCategoryLog connection "account"
-      killChild supervisor first
-      secondSpec <- roleProcess check "keiro/command-writer" 1 (writerArgs (Nothing :: Maybe Int))
-      second <- spawn supervisor secondSpec
-      awaitReady second 10000
-      sendCommand second CtlStart
-      awaitMark second "submission" 30000
-      acknowledged <- atomically (progress second)
-      afterRows <- Oracle.readCategoryLog connection "account"
+      rows <- Oracle.readCategoryLog connection "account"
       Connection.release connection
-      let duplicateFact = do
-            payload <- Map.lookup "submission" acknowledged.marks
-            outcomes <- parseMaybe (withObject "submission" (.: "outcomes")) payload :: Maybe [Text]
-            pure (outcomes == ["SubmitDuplicate"])
-          occurrences rows = length [() | row <- rows, row.eventId == eventId]
+      let duplicateCount snapshot = do
+            payload <- Map.lookup "duplicates" snapshot.marks
+            parseMaybe (withObject "duplicates" (.: "count")) payload :: Maybe Int
+          occurrences identifier = length [() | row <- rows, row.eventId == identifier]
+          allIdsOnce = and [occurrences (expectedId worker index) == 1 | worker <- [0 .. processCount - 1], index <- [1 .. perWriter]]
           cells =
-            [ ("source-setup", case opened of Right (Right result) -> result.eventsAppended == 1; _ -> False),
-              ("committed-before-kill", occurrences beforeRows == 1),
-              ("restarted-writer-reported-duplicate", childPid first /= childPid second && duplicateFact == Just True),
-              ("one-durable-effect", occurrences afterRows == 1 && length afterRows == 2 && Oracle.logWellFormed afterRows),
-              ("final-balance", case Oracle.modelFromLog afterRows of Right model -> Model.totalMoney model == 10000 + amount; _ -> False)
+            [ ("source-setup", all (\case Right (Right result) -> result.eventsAppended == 1; _ -> False) opened),
+              ("writers-restarted", kills >= 1),
+              ("resubmission-reported-duplicate", any ((> 0) . maybe 0 id . duplicateCount) snapshots),
+              ("all-operations-acknowledged", completed /= Nothing && all (\snapshot -> snapshot.count >= fromIntegral perWriter) snapshots),
+              ("one-durable-effect-per-id", allIdsOnce && length rows == processCount * (perWriter + 1) && Oracle.logWellFormed rows),
+              ("final-balance", case Oracle.modelFromLog rows of Right model -> Model.totalMoney model == processCount * perWriter; _ -> False)
             ]
+      putSummary context Measurements "command-resubmission" (object ["processes" .= processCount, "operationsPerWriter" .= perWriter, "kills" .= kills, "resubmitWindow" .= window, "finalDuplicateCounts" .= map duplicateCount snapshots])
       recordCells context cells
 
 hotStreamContention :: Scenario
