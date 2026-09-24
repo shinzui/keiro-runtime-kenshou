@@ -24,6 +24,8 @@ module Kenshou.Suite.Keiro.Workflow.Definitions
     childWorkflow,
     parentWorkflow,
     childRegistry,
+    rotatedParentName,
+    rotatedParentWorkflow,
   )
 where
 
@@ -202,3 +204,17 @@ childRegistry sink =
     [ (childName, WorkflowDef (childWorkflow sink)),
       (parentName, WorkflowDef (parentWorkflow sink))
     ]
+
+rotatedParentName :: WorkflowName
+rotatedParentName = either (error . show) id (mkWorkflowName "kenshouRotatedParent")
+
+-- | Generation zero registers the child before rotating. Completion then
+-- lands on generation one, where spawning the same id reattaches to it.
+rotatedParentWorkflow :: (IOE :> es, Store :> es) => EffectSink -> WorkflowId -> Eff (Workflow : es) Int
+rotatedParentWorkflow sink wid = do
+  generation <- restoreSeed (0 :: Int)
+  let childId = WorkflowId (unWorkflowId wid <> "-child")
+  handle <- spawnChild childName childId (childWorkflow sink childId)
+  if generation == 0
+    then continueAsNew (1 :: Int)
+    else (+ 1) <$> awaitChild handle

@@ -68,7 +68,8 @@ patch sets share one recorded decision.
 spawned child is discoverable before any child step, that the parent remains
 parked, and that completion writes an `{"ok": …}` result in the parent
 journal. It also checks cancellation markers and a child failure at the
-attempt ceiling.
+attempt ceiling. A rotated parent reattaches to a completed child and reads
+its result from the new generation.
 
 The two timer correctness scenarios,
 `keiro/timer/correctness/lifecycle-and-at-least-once` and

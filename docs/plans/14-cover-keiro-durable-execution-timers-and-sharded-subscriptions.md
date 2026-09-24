@@ -62,8 +62,8 @@ Milestone 1 — Durable workflow scenarios
 - [x] (2026-09-24) Added the awakeable arm of `keiro/workflow/correctness/exact-discovery`. With the planned default 2,000 parked workflows on durable PostgreSQL it reported zero idle discoveries, then exactly ten after ten signals; a 20-workflow shakedown also passed.
 - [x] (2026-09-24) Added `kenshouPatched` and `keiro/workflow/correctness/patch-decisions-are-frozen`. Both durability modes passed six checks for an in-flight false decision, fresh true decision, branch isolation, and two concurrent deployments sharing one recorded decision.
 - [ ] Extend the patch scenario through real process `SIGKILL` and generation rotation.
-- [x] (2026-09-24) Added `kenshouParent` and `kenshouChild` with `keiro/workflow/correctness/children-spawn-await-cancel-fail`. Both durability modes passed fourteen checks for journaled spawn, zero-step child discovery, parked parent, result envelope, completion, idempotent cancellation, and failure at the attempt ceiling.
-- [ ] Extend the child scenario to multiple children and a rotated parent attaching to a completed child.
+- [x] (2026-09-24) Added `kenshouParent`, `kenshouChild`, and `kenshouRotatedParent` with `keiro/workflow/correctness/children-spawn-await-cancel-fail`. Both durability modes passed sixteen checks for journaled spawn, zero-step child discovery, parked parent, result envelope, completion, idempotent cancellation, failure at the attempt ceiling, and a rotated parent attaching to a completed child.
+- [ ] Extend the child scenario to the planned multiple-child fan-out and knob-controlled child count.
 - [ ] Extend exact discovery to parked sleeps and children and record the `pg_stat_statements` deltas in addition to the measured idle-pass duration.
 - [ ] Add the workflow concurrency and crash scenarios (eleven) and see them pass or report their known defect.
 - [ ] Add the `wake` correctness scenario.
@@ -579,5 +579,6 @@ modes passed. Process death and rotation remain open.
 The child workflow probe now checks the spawn and completion path plus
 cancellation and failure propagation. A one-attempt child failure persists its
 reason and delivers a failure envelope; the parent's await throws the recorded
-error. Both durability modes passed. Multiple-child fan-out and rotated-parent
-reattachment remain open.
+error. A parent rotated after spawning the child receives its result in the
+new generation and attaches to the completed child. Both durability modes
+passed. Multiple-child fan-out remains open.

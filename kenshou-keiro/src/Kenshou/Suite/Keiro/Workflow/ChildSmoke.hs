@@ -5,8 +5,8 @@ import Data.Aeson (object, toJSON, (.=))
 import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
-import Keiro.Workflow (WorkflowId (..), WorkflowOutcome (..), loadStepIndex, runWorkflow)
-import Keiro.Workflow.Child (ChildHandle (..), WorkflowChildCancelled, WorkflowChildFailed, cancelChild, childResultStepName, childSpawnStepName)
+import Keiro.Workflow (WorkflowId (..), WorkflowOutcome (..), defaultWorkflowRunOptions, loadStepIndex, runWorkflow)
+import Keiro.Workflow.Child (ChildHandle (..), WorkflowChildCancelled, WorkflowChildFailed, cancelChild, childResultStepName, childSpawnStepName, runChildWorkflow)
 import Keiro.Workflow.Child.Schema (ChildRow (..), ChildStatus (..), lookupChild)
 import Keiro.Workflow.Instance (WorkflowInstanceRow (..), WorkflowStatus (..), lookupInstance)
 import Keiro.Workflow.Resume (ResumeSummary (..), WorkflowResumeOptions (..), defaultWorkflowResumeOptions, resumeWorkflowsOnce)
@@ -60,6 +60,8 @@ runChildren context = withCheck context \check ->
         cancelledChild = WorkflowId "child-cancel-parent-child"
         failedParent = WorkflowId "child-fail-parent"
         failedChild = WorkflowId "child-fail-parent-child"
+        rotatedParent = WorkflowId "child-rotated-parent"
+        rotatedChild = WorkflowId "child-rotated-parent-child"
         sink =
           EffectSink
             { recordEffect = \fact -> atomicModifyIORef' effects (\rows -> (Map.insertWith (+) fact.key (1 :: Int) rows, ())),
@@ -94,6 +96,11 @@ runChildren context = withCheck context \check ->
     failedRow <- runStoreIO store (lookupChild (unWorkflowId failedChild) "kenshouChild")
     failedIndex <- index Definitions.parentName failedParent
     failedAwait <- try @WorkflowChildFailed (runParentFor failedParent)
+    rotated <- runStoreIO store (runWorkflow Definitions.rotatedParentName rotatedParent (Definitions.rotatedParentWorkflow sink rotatedParent))
+    completedBeforeAttachment <- runStoreIO store (runChildWorkflow defaultWorkflowRunOptions Definitions.childName rotatedChild (Definitions.childWorkflow sink rotatedChild))
+    rotatedIndex <- index Definitions.rotatedParentName rotatedParent
+    attached <- runStoreIO store (runWorkflow Definitions.rotatedParentName rotatedParent (Definitions.rotatedParentWorkflow sink rotatedParent))
+    attachedIndex <- runStoreIO store (loadStepIndex Definitions.rotatedParentName rotatedParent 1)
     let has result key = either (const False) (Map.member key) result
         spawnKey = childSpawnStepName cid
         resultKey = childResultStepName cid
@@ -111,6 +118,8 @@ runChildren context = withCheck context \check ->
             ("cancelled-await-throws", either (const True) (const False) cancelledAwait),
             ("failed-child-persisted", failParked == Right Suspended && case (failPass, failedRow) of (Right summary, Right (Just row)) -> summary.failed >= 1 && row.status == ChildFailed && row.failureReason /= Nothing; _ -> False),
             ("failed-result-envelope", case failedIndex of Right rows -> Map.member (childResultStepName failedChild) rows; _ -> False),
-            ("failed-await-throws", either (const True) (const False) failedAwait)
+            ("failed-await-throws", either (const True) (const False) failedAwait),
+            ("rotated-parent-attaches-completed-child", rotated == Right ContinuedAsNew && completedBeforeAttachment == Right (Completed 42) && attached == Right (Completed 43) && has attachedIndex (childSpawnStepName rotatedChild)),
+            ("rotated-generation-receives-result", case (rotatedIndex, attachedIndex) of (Right first, Right second) -> Map.member (childSpawnStepName rotatedChild) first && Map.lookup (childResultStepName rotatedChild) second == Just (object ["ok" .= (42 :: Int)]); _ -> False)
           ]
     recordWorkflowCells check cells
