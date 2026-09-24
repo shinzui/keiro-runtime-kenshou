@@ -127,6 +127,10 @@ repeats the apply-before-checkpoint kill on successive events; a three-kill
 batch-size-one run passed its per-kill activity and deduplication checks.
 Larger batches can replay the whole applied prefix after each kill; a
 five-kill batch-size-ten run passed with one to five reported duplicates.
+Set `projection.random-kill-positions=true` to choose applied-event positions
+from the run seed while keeping each crash before its checkpoint. A five-kill
+batch-size-ten run parked after 3, 5, 8, 10, and 11 cumulative applies and
+passed all six durable checks; replay counts stayed within the batch bound.
 The oracle bounds that count by the batch size. The stronger
 apply/checkpoint atomicity run
 reproduces the known defect at

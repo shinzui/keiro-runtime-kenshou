@@ -322,11 +322,11 @@ routerWorker context = case parseMaybe parseDispatcherArgs context.init.args of
           Left issue -> context.send (WrkError (Text.pack (show issue)))
           Right () -> context.send (WrkDone Nothing)
 
-data ProjectionArgs = ProjectionArgs {batchSize :: !Int, skipDedup :: !Bool, parkAfterApply :: !Bool, sampleProcess :: !Bool}
+data ProjectionArgs = ProjectionArgs {batchSize :: !Int, skipDedup :: !Bool, parkAfterApply :: !Bool, parkAfterAppliedCount :: !Int, sampleProcess :: !Bool}
 
 parseProjectionArgs :: Value -> Parser ProjectionArgs
 parseProjectionArgs = withObject "keiro projection worker" \value ->
-  ProjectionArgs <$> value .:? "batchSize" .!= 100 <*> value .:? "skipDedup" .!= False <*> value .:? "parkAfterApply" .!= False <*> value .:? "sampleProcess" .!= False
+  ProjectionArgs <$> value .:? "batchSize" .!= 100 <*> value .:? "skipDedup" .!= False <*> value .:? "parkAfterApply" .!= False <*> value .:? "parkAfterAppliedCount" .!= 1 <*> value .:? "sampleProcess" .!= False
 
 projectionWorker :: RoleContext -> IO ()
 projectionWorker context = case parseMaybe parseProjectionArgs context.init.args of
@@ -339,6 +339,7 @@ projectionWorker context = case parseMaybe parseProjectionArgs context.init.args
       else withRoleSampler context args.sampleProcess $ withFixtureEnv (defaultConnectionSettings postgres.connectionString) \fixture -> do
         let sabotage = if args.skipDedup then SkipDedup else NoProjectionSabotage
         duplicates <- newIORef (0 :: Int)
+        applied <- newIORef (0 :: Int)
         runAccountActivityWorker fixture.store (fromIntegral args.batchSize) sabotage \recorded outcome -> do
           context.send (WrkFacts [object ["eventId" .= show recorded.eventId, "outcome" .= show outcome]])
           case outcome of
@@ -348,6 +349,7 @@ projectionWorker context = case parseMaybe parseProjectionArgs context.init.args
               context.send (WrkCustom "projection-duplicate-count" (object ["count" .= count]))
             AsyncApplied -> context.send (WrkCustom "projection-applied" (object ["eventId" .= show recorded.eventId]))
             AsyncFenced -> pure ()
-          if args.parkAfterApply && outcome == AsyncApplied
+          appliedCount <- if outcome == AsyncApplied then atomicModifyIORef' applied (\n -> (n + 1, n + 1)) else readIORef applied
+          if args.parkAfterApply && outcome == AsyncApplied && appliedCount == args.parkAfterAppliedCount
             then parkForever context "after-projection-apply"
             else pure ()
