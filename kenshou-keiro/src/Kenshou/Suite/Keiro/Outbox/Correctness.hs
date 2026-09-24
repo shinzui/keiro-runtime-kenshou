@@ -1,6 +1,7 @@
 module Kenshou.Suite.Keiro.Outbox.Correctness (scenarios) where
 
 import Control.Concurrent (threadDelay)
+import Data.Aeson qualified as Aeson
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
@@ -9,8 +10,8 @@ import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
 import Data.Time (getCurrentTime)
 import Data.UUID qualified as UUID
-import Keiro.Integration.Event (IntegrationEvent (..), headerMessageId)
-import Keiro.Outbox (BackoffSchedule (..), OrderingPolicy (..), OutboxId (..), OutboxPublishOptions (..), OutboxPublishSummary (..), OutboxRow (..), OutboxStatus (..), PublishOutcome (..), countOutboxBacklog, defaultMaintenanceOptions, defaultPublishOptions, garbageCollectSent, listOutbox, mkPublishRejection, outboxMaintenancePass, publishClaimedOutbox, publishRejectionCode)
+import Keiro.Integration.Event (IntegrationContentType (..), IntegrationEvent (..), headerMessageId)
+import Keiro.Outbox (BackoffSchedule (..), IntegrationEventDraft (..), IntegrationProducer (..), OrderingPolicy (..), OutboxId (..), OutboxPublishOptions (..), OutboxPublishSummary (..), OutboxRow (..), OutboxStatus (..), ProducerEnqueueOutcome (..), ProducerIdentity (..), PublishOutcome (..), countOutboxBacklog, defaultMaintenanceOptions, defaultPublishOptions, enqueueProducerEventTx, garbageCollectSent, listOutbox, mkIntegrationProducer, mkPublishRejection, outboxMaintenancePass, publishClaimedOutbox, publishRejectionCode)
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
@@ -25,7 +26,8 @@ import Kenshou.Suite.Keiro.Outbox.Broker qualified as Broker
 import Kenshou.Suite.Keiro.Outbox.Knobs qualified as OutboxKnobs
 import Kenshou.Suite.Keiro.Outbox.Oracle qualified as Oracle
 import Kenshou.Suite.Keiro.Outbox.Workload (enqueueInline, sourceName)
-import Kiroku.Store (defaultConnectionSettings)
+import Kiroku.Store (defaultConnectionSettings, runTransaction)
+import Kiroku.Store.Types (EventId (..), EventType (..), GlobalPosition (..), RecordedEvent (..), StreamId (..), StreamVersion (..))
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
@@ -90,6 +92,59 @@ runPublisherMisbehaviour context =
           pure (policySummary.rejected == 1 && policySummary.published == 1 && policySummary.haltedOn == Nothing && maybe False ((== OutboxRejected) . (.status)) (Map.lookup firstId policyById) && maybe False ((== OutboxSent) . (.status)) (Map.lookup secondId policyById) && length policyRecords == 1)
     perSourceRejection <- runRejectionPolicy PerSourceStream "reject-source"
     stopLineRejection <- runRejectionPolicy StopTheLine "reject-stop"
+    producerReplay <- do
+      at <- getCurrentTime
+      let source = sourceName context "reject-producer"
+          producer :: IntegrationProducer ()
+          producer = either (error . show) id (mkIntegrationProducer (IntegrationProducer "reject-producer" source "kenshou" (\_ _ -> Nothing)))
+          recorded =
+            RecordedEvent
+              { eventId = EventId UUID.nil,
+                eventType = EventType "RejectProbe",
+                streamVersion = StreamVersion 1,
+                globalPosition = GlobalPosition 1,
+                originalStreamId = StreamId 1,
+                originalVersion = StreamVersion 1,
+                payload = Aeson.object [],
+                metadata = Nothing,
+                causationId = Nothing,
+                correlationId = Nothing,
+                createdAt = at
+              }
+          draft =
+            IntegrationEventDraft
+              { destination = "kenshou.outbox.v1",
+                key = Just "reject-producer",
+                eventType = "RejectProbe",
+                schemaVersion = 1,
+                contentType = ApplicationJson,
+                schemaReference = Nothing,
+                sourceEventId = Nothing,
+                sourceGlobalPosition = Nothing,
+                payloadBytes = TextEncoding.encodeUtf8 "reject-producer",
+                occurredAt = at,
+                causationId = Nothing,
+                correlationId = Nothing,
+                traceContext = Nothing,
+                attributes = Nothing
+              }
+          enqueue = runFixture (runTransaction (enqueueProducerEventTx producer recorded 0 draft)) >>= either (fail . show) pure
+      baselineBacklog <- runFixture countOutboxBacklog >>= either (fail . show) pure
+      inserted <- enqueue
+      replayBroker <- Broker.newBroker
+      _ <- publish (Broker.publishScripted replayBroker model (const (Broker.RejectWith rejection)) hooks "replay-publisher")
+      beforeReplay <- readCase source
+      _ <- runFixture (outboxMaintenancePass defaultMaintenanceOptions Nothing) >>= either (fail . show) pure
+      gcAt <- getCurrentTime
+      _ <- runFixture (garbageCollectSent 0 gcAt) >>= either (fail . show) pure
+      replayed <- enqueue
+      afterReplay <- readCase source
+      finalBacklog <- runFixture countOutboxBacklog >>= either (fail . show) pure
+      pure
+        ( case (inserted, replayed, beforeReplay, afterReplay) of
+            (ProducerInserted first, ProducerDuplicateIdentical second, [before], [after]) -> first == second && before == after && after.status == OutboxRejected && after.rejectedAt /= Nothing && finalBacklog == baselineBacklog
+            _ -> False
+        )
     let byId rows = Map.fromList [(row.event.messageId, row) | row <- rows]
         throwMap = byId throwRows
         missingMap = byId missingRows
@@ -106,7 +161,8 @@ runPublisherMisbehaviour context =
             ("rejection-does-not-block-successor", maybe False ((== OutboxSent) . (.status)) (Map.lookup "reject2" rejectMap) && length brokerRows == 1),
             ("rejection-survives-maintenance-and-gc", Map.member "reject1" afterGcMap && not (Map.member "reject2" afterGcMap)),
             ("per-source-rejection-unblocks", perSourceRejection),
-            ("stop-line-rejection-does-not-halt", stopLineRejection)
+            ("stop-line-rejection-does-not-halt", stopLineRejection),
+            ("producer-replay-keeps-rejection", producerReplay)
           ]
     recordCells context cells
 

@@ -408,7 +408,10 @@ The identity probe also asserts the literal UUID and message ID vector from
 The failure-skip probe exercises per-key, per-source, and stop-the-line
 ordering, including the summary's halted pivot for stop-the-line.
 Terminal rejection leaves successors publishable under all three ordered
-policies; stop-the-line does not halt on a rejected row.
+policies; stop-the-line does not halt on a rejected row. The producer replay
+probe retains a rejected row through maintenance and zero-retention GC. An
+identical re-enqueue returns `ProducerDuplicateIdentical`, leaves the entire
+row unchanged, and does not add to the outbox backlog.
 The terminal-state probe has passed all four policies with constant and
 exponential backoff at 200 rows. The serialized-order probe passed all three
 ordered policies at 5,000 rows; its per-source broker callback stops dispatch
