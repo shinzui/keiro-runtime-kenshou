@@ -164,6 +164,10 @@ through its retry ceiling, checks the 2, 4, and 8 second spacing at four
 attempts, observes a quiet failed instance for sixteen seconds, then
 resurrects it and completes it with a repaired worker. The failure event
 remains in the journal.
+`keiro/workflow/concurrency/database-faults` terminates a resume worker's
+PostgreSQL backends during an effect pause. The worker survives and two other
+workers finish the cohort. The default 100-instance durable run passed exact
+journals, at-least-once effects, and zero consumed retry attempts.
 
 The registered command scenarios also cover duplicate event identifiers,
 optimistic retry and exhaustion, controlled SQL rollback, and hydration over

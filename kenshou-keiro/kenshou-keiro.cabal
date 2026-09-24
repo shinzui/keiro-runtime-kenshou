@@ -101,6 +101,7 @@ library
     Kenshou.Suite.Keiro.Workflow.ChildSmoke
     Kenshou.Suite.Keiro.Workflow.CrashBackoff
     Kenshou.Suite.Keiro.Workflow.CrashSmoke
+    Kenshou.Suite.Keiro.Workflow.DatabaseFaults
     Kenshou.Suite.Keiro.Workflow.Definitions
     Kenshou.Suite.Keiro.Workflow.DirectRace
     Kenshou.Suite.Keiro.Workflow.Effects
