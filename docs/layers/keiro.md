@@ -192,11 +192,22 @@ because the in-memory tracing arm had a wide confidence interval.
 configured verification sampling rate and stream length. It writes measurement
 series, checks the final account ledger, and produces a leak diagnosis for
 heap, threads, file descriptors, and connections. The reduced duration is 20
-minutes by default. One-minute local probes at stream length 100 completed
-without command failures at rates zero and one. Rate zero had too few major
-collections for a heap verdict. Rate one saturated the local load driver and
+minutes by default. History setup appends batches directly and crosses each
+snapshot boundary through the Keiro command runner. A 10,000-event starting
+stream passed all four durable checks in a one-minute rate-zero probe over
+6,596 timed commands. Set `diagnose.major-gc-interval-ms` to request
+post-major heap samples for a diagnostic soak; this perturbs latency and must
+not be used for performance comparisons. One-minute local probes at stream
+length 100 completed without command failures at rates zero and one. Rate zero
+had too few major collections for a heap verdict. Rate one saturated the local load driver and
 showed a short-window heap-growth signal; a longer controlled run is needed to
 tell whether growth persists.
+Three-minute diagnostic sampling with forced major collections found heap
+growth even with seed verification disabled. A two-minute constant-rate pair
+completed 391 commands in each arm and showed almost identical growth with
+verification on and off. The runs passed the durable checks but had too few
+steady samples for benchmark grading. The evidence and follow-up are in
+`docs/findings/2-keiro-seed-backlog-heap-growth.md`.
 
 `write-side-steady-state` starts two command-writer processes and durable
 process-manager, router, and activity-projection workers. It stops writers at
