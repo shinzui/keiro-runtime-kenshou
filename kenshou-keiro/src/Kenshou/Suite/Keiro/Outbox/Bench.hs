@@ -5,14 +5,16 @@ import Control.Concurrent.Async (async, cancel)
 import Control.Exception (finally)
 import Control.Monad (forM, forM_, unless)
 import Data.Aeson (object, (.=))
+import Data.ByteString qualified as ByteString
 import Data.IORef (atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (diffUTCTime, getCurrentTime)
+import Data.UUID qualified as UUID
 import GHC.Clock (getMonotonicTimeNSec)
-import Keiro.Integration.Event (IntegrationEvent (..))
-import Keiro.Outbox (OrderingPolicy (..), OutboxPublishOptions (..), OutboxPublishSummary (..), OutboxRow (..), OutboxStatus (..), countOutboxBacklog, defaultPublishOptions, enqueueIntegrationEventTx, freshOutboxId, listOutbox, publishClaimedOutbox)
+import Keiro.Integration.Event (IntegrationContentType (..), IntegrationEvent (..))
+import Keiro.Outbox (IntegrationEventDraft (..), IntegrationProducer (IntegrationProducer), OrderingPolicy (..), OutboxPublishOptions (..), OutboxPublishSummary (..), OutboxRow (..), OutboxStatus (..), ProducerEnqueueOutcome (..), countOutboxBacklog, defaultPublishOptions, enqueueIntegrationEventTx, enqueueProducerEventTx, freshOutboxId, listOutbox, mkIntegrationProducer, publishClaimedOutbox)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary, requirePostgres)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
@@ -32,9 +34,102 @@ import Kenshou.Suite.Keiro.Outbox.Broker qualified as Broker
 import Kenshou.Suite.Keiro.Outbox.Workload (enqueueInline, inlineEvent, sourceName)
 import Kenshou.Telemetry (telemetryKnobs, telemetrySpecFromContext, withTelemetry)
 import Kiroku.Store (defaultConnectionSettings, runTransaction)
+import Kiroku.Store.Types (EventId (..), EventType (..), GlobalPosition (..), RecordedEvent (..), StreamId (..), StreamVersion (..))
 
 scenarios :: [Scenario]
-scenarios = [drainThroughput, enqueueToPublish]
+scenarios = [drainThroughput, enqueueToPublish, producerIdentityReplay]
+
+producerIdentityReplay :: Scenario
+producerIdentityReplay =
+  drainThroughput
+    { id = either (error . show) id (parseScenarioId "keiro/outbox/benchmark/producer-identity-replay"),
+      summary = "Measures fresh replay-safe producer enqueue against an identical replay.",
+      knobs = telemetryKnobs <> measureKnobs Benchmark <> [intKnob "outbox.pairs" 2000 1 1000000],
+      run = runProducerIdentityReplay
+    }
+
+runProducerIdentityReplay :: RunContext -> IO ScenarioReport
+runProducerIdentityReplay context = case (measureConfigFromKnobs context (phasePlanFromCore (CorePhase.PhasePlan 0 1 1)), telemetrySpecFromContext context) of
+  (Left reason, _) -> pure (failedWith ["invalid-measure-config"] reason)
+  (_, Left reason) -> pure (failedWith ["invalid-telemetry-config"] reason)
+  (Right config, Right telemetrySpec) -> withTelemetry telemetrySpec \telemetry -> do
+    runtimeTelemetry <- keiroTelemetry telemetry
+    withFixtureTelemetryEnv (defaultConnectionSettings (requirePostgres context).connectionString) runtimeTelemetry \fixture -> do
+      let KeiroRunner runFixture = fixture.runner
+          source = sourceName context "producer-replay-bench"
+          pairs = fromIntegral (knobInt context.knobs (name "outbox.pairs"))
+          measuredConfig = config {defaultPhases = (config.defaultPhases) {steady = SteadyCount pairs}}
+          producer :: IntegrationProducer ()
+          producer = either (error . show) id (mkIntegrationProducer (IntegrationProducer "bench" source "kenshou" (\_ _ -> Nothing)))
+      ((loadReport, inserted, duplicates), report) <- withMeasurement context measuredConfig \measurement -> do
+        freshOp <- registerOp (measurementRecorder measurement) (OpName "outbox.producer-fresh")
+        replayOp <- registerOp (measurementRecorder measurement) (OpName "outbox.producer-replay")
+        freshRecorder <- newWorkerRecorder freshOp 0
+        replayRecorder <- newWorkerRecorder replayOp 0
+        inserted <- newIORef (0 :: Int)
+        duplicates <- newIORef (0 :: Int)
+        let enqueuePair _ sequenceNumber = do
+              now <- getCurrentTime
+              let index = fromIntegral sequenceNumber + 1 :: Int
+                  recorded =
+                    RecordedEvent
+                      { eventId = EventId (UUID.fromWords 0 0 0 (fromIntegral index)),
+                        eventType = EventType "Bench",
+                        streamVersion = StreamVersion (fromIntegral index),
+                        globalPosition = GlobalPosition (fromIntegral index),
+                        originalStreamId = StreamId 1,
+                        originalVersion = StreamVersion (fromIntegral index),
+                        payload = object [],
+                        metadata = Nothing,
+                        causationId = Nothing,
+                        correlationId = Nothing,
+                        createdAt = now
+                      }
+                  draft =
+                    IntegrationEventDraft
+                      { destination = "kenshou.outbox.v1",
+                        key = Just "bench",
+                        eventType = "Bench",
+                        schemaVersion = 1,
+                        contentType = ApplicationJson,
+                        schemaReference = Nothing,
+                        sourceEventId = Nothing,
+                        sourceGlobalPosition = Nothing,
+                        payloadBytes = ByteString.pack [1, 2, 3],
+                        occurredAt = now,
+                        causationId = Nothing,
+                        correlationId = Nothing,
+                        traceContext = Nothing,
+                        attributes = Nothing
+                      }
+                  enqueue = runFixture (runTransaction (enqueueProducerEventTx producer recorded 0 draft))
+              freshStart <- getMonotonicTimeNSec
+              first <- enqueue
+              freshEnd <- getMonotonicTimeNSec
+              recordOp freshRecorder freshStart freshStart freshEnd (case first of Right ProducerInserted {} -> OpOk 1; _ -> OpFailed (ErrorCause "fresh-enqueue"))
+              replayStart <- getMonotonicTimeNSec
+              second <- enqueue
+              replayEnd <- getMonotonicTimeNSec
+              recordOp replayRecorder replayStart replayStart replayEnd (case second of Right ProducerDuplicateIdentical {} -> OpOk 1; _ -> OpFailed (ErrorCause "identical-replay"))
+              case (first, second) of
+                (Right (ProducerInserted firstIdentity), Right (ProducerDuplicateIdentical secondIdentity)) | firstIdentity == secondIdentity -> do
+                  atomicModifyIORef' inserted (\count -> (count + 1, ()))
+                  atomicModifyIORef' duplicates (\count -> (count + 1, ()))
+                  pure (OpOk 1)
+                _ -> pure (OpFailed (ErrorCause "producer-outcome"))
+        generated <- runLoad measurement (ClosedLoop (ClosedConfig 1 0 0)) (Operation (OpName "outbox.producer-pair") enqueuePair)
+        freshCount <- readIORef inserted
+        replayCount <- readIORef duplicates
+        pure (generated, freshCount, replayCount)
+      rows <- runFixture (listOutbox source) >>= either (fail . show) pure
+      let completed = fromIntegral loadReport.completed :: Int
+          cells =
+            [ ("producer-pairs-completed", completed > 0 && loadReport.failed == 0 && inserted == completed && duplicates == completed),
+              ("identical-replay-no-extra-rows", length rows == completed && all ((== OutboxPending) . (.status)) rows)
+            ]
+      putSummary context Measurements "outbox-producer-identity-replay" (object ["pairs" .= completed, "freshInserted" .= inserted, "identicalReplays" .= duplicates, "outboxRows" .= length rows])
+      base <- recordCells context cells
+      pure (base {outcome = measuredOutcome report base.outcome})
 
 enqueueToPublish :: Scenario
 enqueueToPublish =

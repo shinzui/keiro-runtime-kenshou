@@ -1,0 +1,26 @@
+{
+  "schema": "kenshou.comparison-policy/v1",
+  "name": "keiro-local-producer-comparison",
+  "minimumPairs": 3,
+  "confidenceLevel": 0.95,
+  "bootstrapIterations": 1000,
+  "resamplingSeed": 13,
+  "requireInterleaving": true,
+  "requireGrade": "benchmark",
+  "maxCiRelativeWidth": 1,
+  "maxCheckpointAsymmetry": 1,
+  "metrics": [
+    {
+      "match": "outbox.producer-fresh.latency.p99",
+      "direction": "lower-is-better",
+      "relativeLimit": 0.2,
+      "absoluteFloor": 1000000
+    },
+    {
+      "match": "outbox.producer-replay.latency.p99",
+      "direction": "lower-is-better",
+      "relativeLimit": 0.2,
+      "absoluteFloor": 1000000
+    }
+  ]
+}

@@ -433,6 +433,11 @@ enqueues while publisher loops record callback-entry latency from each event's
 `occurredAt`; a 300-per-second durable run passed with no loss and histograms
 for both enqueue and enqueue-to-publish latency. Shorter smoke runs produced
 the same artifact types but were graded exploratory for sample count.
+`producer-identity-replay` times fresh replay-safe inserts and identical
+replays separately, checking that each pair has one retained outbox row. Its
+1,200-pair durable run passed with benchmark-grade histograms and time series.
+A local off-versus-noop tracing comparison with identical knobs was
+inconclusive because the comparison policy requires three pairs.
 
 The crash scenario
 parks a publisher after the broker append, kills its process with `SIGKILL`,
