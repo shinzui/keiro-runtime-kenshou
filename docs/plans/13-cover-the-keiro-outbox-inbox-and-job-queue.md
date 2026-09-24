@@ -59,7 +59,7 @@ Milestone 3 — Job queue scenarios.
 
 - [ ] Add `keiro-pgmq`, `pgmq-core`, `pgmq-effectful`, `shibuya-core`, `shibuya-pgmq-adapter` (and `shibuya-metrics` for the `serve` arm) to the cabal file; the first queue smoke run confirmed the migrated database includes the PGMQ component. `shibuya-metrics` remains.
 - [ ] Implement `Kenshou.Suite.Keiro.Queue.Jobs` (scripted fixture job), `.Runtime`, `.Knobs`, `.Roles`, `.Oracle` with unit tests.
-- [ ] Implement the three queue correctness scenarios: `consumption-config-rejections` passed with a queued row and a direct `read_ct = 0` oracle; `max-retries-before-handler` passed with three handler calls, a fourth-read DLQ wrapper and the zero-ceiling arm; `job-outcome-semantics` passed for Done, explicit/default retry, delayed enqueue, DLQ/archive routing, batch IDs, and group headers. Its worker, malformed/future payload, and thrown-handler arms remain.
+- [ ] Implement the three queue correctness scenarios: `consumption-config-rejections` passed with a queued row and a direct `read_ct = 0` oracle; `max-retries-before-handler` passed with three handler calls, a fourth-read DLQ wrapper and the zero-ceiling arm; `job-outcome-semantics` passed for Done, explicit/default retry, delayed enqueue, DLQ/archive routing, batch IDs, group headers, and a thrown drain handler. Its worker and malformed/future payload arms remain.
 - [ ] Implement the eight queue concurrency and crash scenarios: `workers-survive-transient-polling-error` is registered and reproduces a worker exit after one polling backend termination. The failure is tracked at `mori://shinzui/keiro/issues/4`; its other fault modes, outage arm, knobs, and the other seven scenarios remain.
 - [ ] Splice `Kenshou.Suite.Keiro.Queue.scenarios` and `.roles` into the bundle; run all queue scenarios; record outcomes.
 
@@ -99,6 +99,7 @@ Milestone 4 — Messaging benchmarks, soak and telemetry arms.
 - The continuous queue worker stopped after its first polling backend termination, leaving the next batch queued. The first attempt was interrupted while waiting through later batches; the controller now stops when the role exits. Durable runs `01a0d1a5-1650-76e3-8cd2-4614dd07ff19` and `01a0d1a6-a1b0-7753-abc2-a5b50d1d5b76` failed the survival and no-loss checks. The role log reports `PgmqSessionError` with `UnexpectedRowCountStatementError` for `pgmq.read`. The adapter's `retryingTransient` path consults `Pgmq.Effectful.isTransient`, which classes statement row-count errors as permanent. Reported at `mori://shinzui/keiro/issues/4` ([GitHub issue](https://github.com/shinzui/keiro/issues/4)); Mori does not yet resolve the `issues` artifact kind.
 - With `KnownDefect` attached, run `01a0d1a8-a608-70aa-aca6-8f8272384b92` still reports `outcome=failed` and the three failed contract cells, with `knownDefect.status=reproduced`; the CLI exits zero for this expected failure. Unit tests remain green (15 examples).
 - Expanded `job-outcome-semantics` passed in `01a0d1aa-a16b-7187-b8eb-35f3eb169a81`, adding the default retry delay, archive path, batch IDs and rows, and the `x-pgmq-group` header.
+- The drain-handler exception arm passed in `01a0d1ab-f709-7594-b68c-ad4c861ba02b`: the failed handler counted zero settled jobs, left its row hidden, and the row redelivered after the one-second visibility timeout.
 
 
 ## Decision Log

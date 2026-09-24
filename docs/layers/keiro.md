@@ -294,7 +294,8 @@ with `max_retries_exceeded` and `read_count = 4`. A zero ceiling moves its
 row to the DLQ on the first read without a handler call.
 The `job-outcome-semantics` arms check Done deletion, explicit and default
 retry delays and attempt numbering, delayed enqueue, terminal Dead routing to
-a DLQ or archive, batch ID uniqueness and rows, and FIFO group headers.
+a DLQ or archive, batch ID uniqueness and rows, FIFO group headers, and
+redelivery at the visibility timeout after a thrown drain handler.
 
 `workers-survive-transient-polling-error` runs a continuous supervised job
 worker and terminates its PostgreSQL polling backend. The current released

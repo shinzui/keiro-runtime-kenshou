@@ -54,6 +54,7 @@ runJobOutcomeSemantics context =
         archiveJob = (makeJob "archive") {jobPolicy = defaultRetryPolicy {useDeadLetter = False}}
         batchJob = makeJob "batch"
         groupJob = (makeJob "group") {jobOrdering = FifoHeads}
+        thrownJob = makeJob "thrown"
         doneHandler _ _ = pure Done
         retryHandler jobContext _ = do
           liftIO $ atomicModifyIORef' attempts (\seen -> (seen <> [jobContext.attempt], ()))
@@ -62,7 +63,9 @@ runJobOutcomeSemantics context =
         defaultHandler jobContext _ = do
           liftIO $ atomicModifyIORef' defaultAttempts (\seen -> (seen <> [jobContext.attempt], ()))
           pure $ if jobContext.attempt == Just 0 then RetryDefault else Done
+        throwingHandler _ _ = liftIO (fail "fixture handler failure")
         runOne target handler = runJobEff runtime (runJobOnceWithContext defaultJobTuning 1 target handler) >>= either (fail . show) pure
+        runThrown handler = runJobEff runtime (runJobOnceWithContext defaultJobTuning {visibilityTimeout = 1} 1 thrownJob handler) >>= either (fail . show) pure
         queueCount target = do
           let table = "pgmq.q_" <> queueNameToText target.jobQueue.physicalName
               statement = Statement.preparable ("SELECT count(*) FROM " <> table) Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
@@ -88,6 +91,7 @@ runJobOutcomeSemantics context =
       ensureJobQueue archiveJob
       ensureJobQueue batchJob
       ensureJobQueue groupJob
+      ensureJobQueue thrownJob
       _ <- enqueue doneJob ("done" :: Text)
       _ <- enqueue retryJob ("retry" :: Text)
       _ <- enqueue deadJob ("dead" :: Text)
@@ -96,6 +100,7 @@ runJobOutcomeSemantics context =
       _ <- enqueue archiveJob ("archive" :: Text)
       batchIds <- enqueueBatch batchJob (["one", "two", "three"] :: [Text])
       _ <- enqueueToGroup groupJob "alpha" ("grouped" :: Text)
+      _ <- enqueue thrownJob ("throw" :: Text)
       pure batchIds
     batchIds <- either (fail . show) pure setup
     done <- runOne doneJob doneHandler
@@ -117,8 +122,12 @@ runJobOutcomeSemantics context =
     archived <- archiveCount archiveJob
     groupedHeaders <- groupHeaderCount
     batchDepth <- queueCount batchJob
+    thrownResult <- runThrown throwingHandler
+    thrownEarly <- runThrown doneHandler
+    thrownDepth <- queueCount thrownJob
     threadDelay 1200000
     defaultSecond <- runOne defaultJob defaultHandler
+    thrownRedelivery <- runThrown doneHandler
     observedDefaultAttempts <- readIORef defaultAttempts
     recordCells
       context
@@ -129,7 +138,8 @@ runJobOutcomeSemantics context =
         ("default-retry-delay", defaultFirst == 1 && defaultEarly == 0 && defaultSecond == 1 && observedDefaultAttempts == [Just 0, Just 1]),
         ("archive-when-dlq-disabled", archiveHandled == 1 && archiveDepth == 0 && archived == 1),
         ("batch-ids-and-rows", length batchIds == 3 && length (nub batchIds) == 3 && batchDepth == 3),
-        ("group-header", groupedHeaders == 1)
+        ("group-header", groupedHeaders == 1),
+        ("drain-handler-exception", thrownResult == 0 && thrownEarly == 0 && thrownDepth == 1 && thrownRedelivery == 1)
       ]
 
 maxRetriesBeforeHandler :: Scenario
