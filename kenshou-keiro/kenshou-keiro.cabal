@@ -65,6 +65,7 @@ library
     Kenshou.Suite.Keiro.Outbox.Broker
     Kenshou.Suite.Keiro.Outbox.Concurrency
     Kenshou.Suite.Keiro.Outbox.Correctness
+    Kenshou.Suite.Keiro.Outbox.Knobs
     Kenshou.Suite.Keiro.Outbox.Oracle
     Kenshou.Suite.Keiro.Outbox.ProducerIdentity
     Kenshou.Suite.Keiro.Outbox.Roles

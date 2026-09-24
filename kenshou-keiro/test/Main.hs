@@ -21,14 +21,14 @@ import Keiki.Core (RegFile (..), step)
 import Keiro.Codec (Codec (..))
 import Keiro.EventStream (SnapshotPolicy (..))
 import Keiro.Integration.Event (IntegrationContentType (..), IntegrationEvent (..))
-import Keiro.Outbox (OutboxId (..), OutboxRow (..), OutboxStatus (..))
+import Keiro.Outbox (BackoffSchedule (..), OutboxId (..), OutboxPublishConfigError (..), OutboxPublishOptions (..), OutboxRow (..), OutboxStatus (..))
 import Keiro.ProcessManager (ProcessManager (..), deterministicCommandId)
 import Keiro.Router (deterministicRouterCommandId)
 import Keiro.Subscription.Shard.Worker (ShardedWorkerOptions (..))
 import Keiro.Timer (TimerWorkerOptions (..))
 import Keiro.Workflow (WorkflowId (..), WorkflowRunOptions (..), deterministicJournalId)
 import Keiro.Workflow.Resume (WorkflowResumeOptions (..))
-import Kenshou.Core.Knob (RawKnob (..), resolveKnobs)
+import Kenshou.Core.Knob (RawKnob (..), mkKnobName, resolveKnobs)
 import Kenshou.Suite.Keiro.Fixture.Account
 import Kenshou.Suite.Keiro.Fixture.Bonus
 import Kenshou.Suite.Keiro.Fixture.Bridge
@@ -38,6 +38,7 @@ import Kenshou.Suite.Keiro.Fixture.Oracle qualified as Oracle
 import Kenshou.Suite.Keiro.Fixture.Transfer
 import Kenshou.Suite.Keiro.Fixture.Workload qualified as Workload
 import Kenshou.Suite.Keiro.Outbox.Broker qualified as Broker
+import Kenshou.Suite.Keiro.Outbox.Knobs qualified as OutboxKnobs
 import Kenshou.Suite.Keiro.Outbox.Oracle qualified as OutboxOracle
 import Kenshou.Suite.Keiro.Shard.Knobs qualified as ShardKnobs
 import Kenshou.Suite.Keiro.Shard.Oracle qualified as ShardOracle
@@ -209,6 +210,25 @@ main = hspec do
     it "rejects a duplicate outside every recorded crash window" do
       OutboxOracle.boundedDuplicates (Map.singleton ("in-flight" :: Text) 1) ["in-flight", "in-flight", "outside", "outside"] `shouldBe` False
       OutboxOracle.boundedDuplicates (Map.singleton ("in-flight" :: Text) 1) ["in-flight", "in-flight", "outside"] `shouldBe` True
+  describe "Outbox knobs" do
+    it "decodes the default publisher options through Keiro validation" do
+      case resolveKnobs OutboxKnobs.outboxKnobs [] of
+        Left errors -> expectationFailure (show errors)
+        Right knobs -> case OutboxKnobs.decodePublishOptions knobs Nothing of
+          Left err -> expectationFailure (show err)
+          Right options -> do
+            options.batchSize `shouldBe` 32
+            options.maxAttempts `shouldBe` 10
+            options.backoff `shouldBe` ConstantBackoff 2
+    it "rejects a zero batch size and an invalid exponential schedule" do
+      let knob key = either (error . show) id (mkKnobName key)
+          decode overrides = case resolveKnobs OutboxKnobs.outboxKnobs overrides of
+            Left errors -> expectationFailure (show errors) >> pure Nothing
+            Right knobs -> pure (Just (OutboxKnobs.decodePublishOptions knobs Nothing))
+      zeroBatch <- decode [(knob "outbox.batch-size", RawText "0")]
+      fmap (fmap (const ())) zeroBatch `shouldBe` Just (Left (InvalidOutboxBatchSize 0))
+      invalidBackoff <- decode [(knob "outbox.backoff", RawText "exponential"), (knob "outbox.backoff-seconds", RawText "10"), (knob "outbox.backoff-max-seconds", RawText "1")]
+      fmap (fmap (const ())) invalidBackoff `shouldBe` Just (Left (InvalidExponentialBackoffMaxDelay 10 1))
   describe "account event stream validation" do
     it "accepts every snapshot policy" do
       let accepted = accountEventStream SnapNever `seq` accountEventStream (SnapEvery 1) `seq` accountEventStream (SnapEvery 10) `seq` accountEventStream SnapOnTerminal `seq` True
