@@ -155,6 +155,10 @@ Milestone 5 — Write-side benchmarks, soak and telemetry arms
   Rationale: A one-minute command run produced no eligible post-major heap samples. The accepted heap-leak method permits forced collections for soak diagnosis, while their pauses and ageing effects make performance comparisons invalid. Matched low-rate runs showed similar short-window growth with seed verification on and off; `docs/findings/2-keiro-seed-backlog-heap-growth.md` records the unresolved retention signal.
   Date: 2026-09-24
 
+- Decision: File the two retained-heap signals as separate upstream investigation reports while leaving their scenario outcomes and known-defect status unchanged.
+  Rationale: The user requested Keiro bug reports. The process-manager/router worker signal is tracked under `mori://shinzui/keiro` at [issue #2](https://github.com/shinzui/keiro/issues/2), and the command hydration signal at [issue #3](https://github.com/shinzui/keiro/issues/3); artifact-level Mori issue URIs are pending. Both reports state that the retaining component and long-run behavior remain unproven. The main-process thread signal remains local to this verification project because there is no evidence tying it to Keiro.
+  Date: 2026-09-24
+
 - Decision: The write-side restart arm keeps a failed leak outcome when the harness thread count grows, even though all durable recovery checks pass.
   Rationale: The first one-minute run and a rerun after retiring exited child records each added six counted Haskell threads during six restarts. The root cause remains unknown; `docs/findings/3-keiro-steady-restart-harness-threads.md` separates the verified recovery behavior from the unresolved main-process signal.
   Date: 2026-09-24

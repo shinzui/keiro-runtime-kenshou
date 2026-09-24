@@ -1,8 +1,10 @@
 # Keiro seed-backlog heap growth with verification disabled
 
-Status: investigating. The run establishes retained heap growth in this
-combined command, store, and measurement workload; it does not identify the
-retaining component.
+Status: investigating; filed for upstream triage in
+`mori://shinzui/keiro` as [GitHub issue #3](https://github.com/shinzui/keiro/issues/3)
+(artifact-level Mori issue URI pending). The run establishes retained heap
+growth in this combined command, store, and measurement workload; it does
+not identify the retaining component.
 
 Reduced `keiro/snapshot/soak/seed-verification-backlog-reduced` run
 `01a0d0f6-822c-7427-a4c9-0a84cd11329c` began with 10,000 account events
@@ -51,5 +53,5 @@ plateau.
 
 Next, run a longer controlled pair and isolate the Keiro command runner from
 Kiroku's store and the Kenshou measurement recorder. Heap profiles or a
-retaining-object census are needed before filing an upstream defect in
+retaining-object census are needed before assigning the defect to
 `mori://shinzui/keiro` or `mori://shinzui/kiroku`.

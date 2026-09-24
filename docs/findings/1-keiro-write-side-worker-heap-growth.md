@@ -1,7 +1,9 @@
 # Keiro write-side worker heap growth during a five-minute soak
 
-Status: investigating. The observation is a leak signal, not yet an isolated
-runtime defect.
+Status: investigating; filed for upstream triage in
+`mori://shinzui/keiro` as [GitHub issue #2](https://github.com/shinzui/keiro/issues/2)
+(artifact-level Mori issue URI pending). The observation is a leak signal,
+not yet an isolated runtime defect.
 
 The reduced `keiro/command/soak/write-side-steady-state-reduced` run
 `01a0d0e6-050d-7746-aaf2-bf0c11368618` used sixteen accounts, four router
@@ -49,4 +51,4 @@ cabal run kenshou -- run keiro/command/soak/write-side-steady-state-reduced \
 Next, compare a longer run and an isolated subscription workload with the
 same event rate. If live bytes keep rising after the category size and
 throughput stabilize, capture heap profiles for the two child processes and
-file the isolated defect in its owning upstream repository.
+identify the owning component and update the upstream investigation.
