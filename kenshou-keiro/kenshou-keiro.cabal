@@ -80,6 +80,7 @@ library
     Kenshou.Suite.Keiro.Router.Concurrency
     Kenshou.Suite.Keiro.Router.Correctness
     Kenshou.Suite.Keiro.Shard
+    Kenshou.Suite.Keiro.Shard.Concurrency
     Kenshou.Suite.Keiro.Shard.Correctness
     Kenshou.Suite.Keiro.Shard.Knobs
     Kenshou.Suite.Keiro.Shard.LeaseSmoke

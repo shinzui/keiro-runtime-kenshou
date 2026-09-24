@@ -98,6 +98,10 @@ lease duration, renewal interval, batch and buffer sizes, and retry limits.
 `keiro/shard/correctness/single-worker-drains-all-buckets` runs its delivery
 loop against account-category events, checks the durable sink and flushed
 effect facts, then checks graceful lease relinquish.
+`keiro/shard/concurrency/late-joiner-gets-no-buckets` starts two more workers
+after the first owns every bucket. Both durability modes reproduce the declared
+Keiro 0.17.0.0 limitation: healthy ownership remains with the first worker,
+while complete coverage persists.
 These correctness probes support both PostgreSQL durability modes. The remaining workflow kinds, process concurrency cases,
 subscription delivery checks, benchmarks and soaks remain in the plan's
 Progress section.

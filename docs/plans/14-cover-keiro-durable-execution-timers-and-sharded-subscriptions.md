@@ -88,6 +88,7 @@ Milestone 3 — Sharded subscription scenarios
 - [ ] Add delivery assertions for the shard-count mismatch scenario and the acknowledgement-coupled handler variants scenario.
 - [x] (2026-09-24) Added `keiro/shard/correctness/single-worker-drains-all-buckets`. A real worker claimed four buckets, delivered twenty account-category events exactly once to the sink and effect ledger, then relinquished every bucket on graceful stop. Both durability modes passed; a 100-event, eight-bucket durable run also passed. Stream-order evidence and default-sized run remain.
 - [ ] Add the shard concurrency and crash scenarios (six).
+- [x] (2026-09-24) Added `keiro/shard/concurrency/late-joiner-gets-no-buckets` with three real delivery workers. Four- and eight-bucket durable runs and a four-bucket fsync-off run reproduced exactly the declared `shard-late-workers-share` known defect; the first owner covered all buckets and coverage persisted after the two joiners started.
 - [ ] Extend the bundle; confirm `kenshou list`.
 
 Milestone 4 — Durable-execution benchmarks, soak and telemetry arms
@@ -640,3 +641,12 @@ full ownership before stop, and full relinquish afterwards. A worker JSON
 round-trip test covers the integral decimal knob conversion needed to start
 with the default three-second lease. Stream order and larger populations
 remain open.
+
+## Revision Note — 2026-09-24 (shard late joiners)
+
+The late-joiner probe waits for one worker to own all buckets, starts two more
+workers, and samples the durable ownership table after the redistribution
+deadline. It reports the expected lack of sharing through the plan's declared
+`KnownDefect`, while separately requiring initial and continued coverage.
+The four-bucket runs in both PostgreSQL durability modes and an eight-bucket
+durable run each reproduced only the sharing failure.
