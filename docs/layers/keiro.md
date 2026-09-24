@@ -473,7 +473,9 @@ produces 32 total effects under message-ID and Kafka-delivery identity, and 16
 under source-event and custom identity. A missing field required by each
 policy fails without a receipt. Dedupe-only rows have empty payloads and no
 attributes; full-envelope rows retain both. The effect table has no uniqueness
-constraint, so the inbox receipt enforces the one-effect result.
+constraint, so the inbox receipt enforces the one-effect result. The oracle
+compares the complete set of effect message IDs and dedupe keys to the
+expected deliveries.
 With `inbox.idempotence=delegated`, the same four policies use deterministic
 event IDs on account streams as receipts. Each of 16 accounts receives one
 deposit on first delivery, no deposit on redelivery, and a second deposit on

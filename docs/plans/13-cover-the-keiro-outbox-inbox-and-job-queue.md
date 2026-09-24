@@ -512,6 +512,10 @@ negative oracle, in durable runs `01a0d4a7-8111-7499-b0b3-6e76aa529f2a`,
 `01a0d4a7-8d14-7524-84e8-08233e86e82e`,
 `01a0d4a7-99c5-7506-ae08-2bd18f43325a`, and
 `01a0d4a7-a53c-74f9-ac8e-3cc70de8d5d3`.
+The table-backed matrix now compares exact effect IDs and dedupe keys, so a
+missing republish cannot be offset by an extra effect for another key. All
+eight policy/persistence combinations passed on durable PostgreSQL in the
+`01a0d4aa-*` runs.
 
 The inbox race now includes backend-only termination with a visible connection error, one peer winner, and a fresh redelivery classified duplicate. Durable run `01a0d498-893d-75dc-8e4c-62666a139fd5` passed; the SIGKILL arm passed again in `01a0d498-b9a1-75b0-a5ad-cf8188565639`.
 

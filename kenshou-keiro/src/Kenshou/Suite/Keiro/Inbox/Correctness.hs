@@ -4,6 +4,7 @@ import Data.Aeson (object, (.=))
 import Data.ByteString qualified as ByteString
 import Data.IORef (atomicModifyIORef', modifyIORef', newIORef, readIORef)
 import Data.Int (Int64)
+import Data.List (sort)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
 import Data.Text qualified as Text
@@ -291,16 +292,20 @@ runTableMatrix context fixture = do
   missing <- intake malformed (if policyName == "kafka-delivery" then Nothing else Just (ref 100))
   rows <- runFixture (listInbox source) >>= either (fail . show) pure
   effects <- runFixture (KirokuTransaction.runTransaction (Tx.statement () effectReadStatement)) >>= either (fail . show) pure
+  firstKeys <- traverse (\(index, event) -> either (fail . show) pure (dedupeKeyFor (policy event) event (Just (ref index)))) (zip [1 .. 16 :: Int] events)
+  republishKeys <- traverse (\(index, event) -> either (fail . show) pure (dedupeKeyFor (policy event) event (Just (ref (index + 16))))) (zip [1 .. 16 :: Int] republish)
   let eventIds = map (.messageId) events
       doubled = policyName == "message-id" || policyName == "kafka-delivery"
       expectedEffects = if doubled then 32 else 16
+      expectedMessageIds = eventIds <> (if doubled then map (.messageId) republish else [])
+      expectedKeys = firstKeys <> (if doubled then republishKeys else [])
       processed = \case Right (InboxProcessed _) -> True; _ -> False
       cells =
         [ ("first-delivery-processed", length first == 16 && all processed first),
           ("redelivery-duplicate", length second == 16 && all (== Right InboxDuplicate) second),
           ("republish-policy", length republished == 16 && all (if doubled then processed else (== Right InboxDuplicate)) republished),
-          ("effect-count-by-policy", length effects == expectedEffects && all (\messageId -> length (filter (== messageId) effects) == 1) eventIds),
-          ("one-completed-row-per-key", length rows == expectedEffects && all ((== InboxCompleted) . (.status)) rows),
+          ("effect-count-by-policy", length effects == expectedEffects && sort effects == sort expectedMessageIds),
+          ("one-completed-row-per-key", length rows == expectedEffects && all ((== InboxCompleted) . (.status)) rows && sort (map (.dedupeKey) rows) == sort expectedKeys),
           ("missing-policy-field-fails-closed", case missing of Left (DedupePolicyUnsatisfied _) -> True; _ -> False),
           ("persistence-shape", all (\row -> if persistence == PersistDedupeOnly then ByteString.null row.event.payloadBytes && row.event.attributes == Nothing && row.event.traceContext == Nothing && row.event.schemaReference == Nothing else not (ByteString.null row.event.payloadBytes) && row.event.attributes /= Nothing) rows)
         ]
