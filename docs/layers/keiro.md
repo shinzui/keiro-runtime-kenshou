@@ -466,7 +466,12 @@ integration events and all six required headers. The current
 effect table without a uniqueness constraint; full-envelope and dedupe-only
 storage both passed with one effect per key under redelivery.
 `poison-accounting` verifies the default exception path's three-attempt
-ceiling and retention of failed rows. `batch-fast-path-and-fallback` checks
+ceiling and retention of failed rows. With `inbox.failure-mode=condemn`, two
+deliveries each report processed but roll back; a nontransactional sequence
+confirms that the handler ran twice, while no inbox row or effect remains. With
+`inbox.failure-mode=sql-error`, division by zero returns Keiro's
+`UnexpectedServerError` classification and leaves no completed row or effect.
+`batch-fast-path-and-fallback` checks
 that a clean batch shares one transaction and a throwing delivery falls back
 to per-message processing without duplicating other effects.
 The `race-one-key` no-kill arm starts four real consumer processes against a
