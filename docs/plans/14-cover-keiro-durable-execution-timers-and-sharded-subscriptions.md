@@ -102,7 +102,7 @@ Milestone 3 — Sharded subscription scenarios
 - [x] (2026-09-24) Added `keiro/shard/concurrency/fair-share-shedding`. The second worker joins after the first owns more than its fair share but before coverage is complete. A delayed handler holds an event on the bucket the first worker sheds; the worker ledger records redelivery, ownership rebalances to the fair-share cap, and the sink receives every event. A 100-event, four-bucket run passed in both modes and the default 20,000-event, eight-bucket durable run passed.
 - [x] (2026-09-24) Added `keiro/shard/concurrency/zombie-past-lease-ttl`. A worker paused with `SIGSTOP` beyond twice its lease loses every bucket to a survivor. After `SIGCONT`, the resumed worker does not reclaim, checkpoint samples never decrease, and its effect ledger stops after the next reconciliation window. Both modes passed at 100 events and the default 20,000-event durable run passed.
 - [x] (2026-09-24) Added `keiro/shard/concurrency/database-faults`. It terminates the delivery worker's PostgreSQL backends, immediately shuts down and restarts the run's postmaster, and checks the shard error hook, live worker, recovered coverage and complete sink delivery. A 1,000-event four-bucket run passed in both modes; the default 20,000-event eight-bucket durable run passed. The exact two-pass reader restart timing remains to be measured.
-- [x] (2026-09-24) The bundle includes shard scenarios and the shard worker role; `kenshou list --json` shows the five implemented shard scenarios.
+- [x] (2026-09-24) The bundle includes shard scenarios, the shard worker and the appender roles; `kenshou list --json` shows all ten implemented shard scenarios.
 
 Milestone 4 — Durable-execution benchmarks, soak and telemetry arms
 
@@ -128,6 +128,7 @@ Milestone 4 — Durable-execution benchmarks, soak and telemetry arms
 - `pg_stat_statements(false)` omits query text, so a query-text filter silently matched no rows and initially reported a zero delta. Switching the observer to `pg_stat_statements(true)` produced the expected one pending-awakeable count call per idle pass; the scenario now checks the sample.
 - A whole-number `VDouble` knob is encoded as a JSON number and decoded as `VInt` in a worker init message. This made the shard worker reject its three-second default lease with `knobDouble: missing or wrong type`. The shared `knobDouble` accessor now accepts an integer value as a double; the worker JSON round trip has a regression test.
 - The first shard delivery probe sampled ownership after stopping its worker, so it observed correctly relinquished buckets and falsely failed the ownership verdict. The scenario now samples before stop and separately checks that every bucket is unowned after the control stop.
+- Polling a live resume worker's ledger for its first effect raised an EOF while the next JSON line was being written. The step-boundary probe now waits for a `WrkCustom` mark sent after the effect ledger flush, then sends the random kill during an explicit pause before the step returns. This avoids treating an actively written ledger as a stable artifact.
 
 
 ## Decision Log
@@ -191,13 +192,15 @@ Milestone 4 — Durable-execution benchmarks, soak and telemetry arms
 
 ## Outcomes & Retrospective
 
-Implementation is in progress. The first durable workflow crash probe passed
-against the pinned keiro 0.17.0.0 cohort and observed a single duplicated `s2`
-effect with one journal entry after a self-`SIGKILL`. Both timer correctness
-scenarios passed under `fsync-off` and `durable`. A shard lease probe passed
-coverage and clean transfer in both modes. These results establish the fixture,
-ledger, process, timer and lease integration paths; the full scenario matrix,
-benchmarks, soaks and ADR distillation remain open.
+Implementation is in progress. The six timer scenarios and ten shard scenarios
+are registered; local runs exercised both PostgreSQL durability modes. Shard
+late join and shard-count mismatch report their declared upstream defects.
+The workflow suite covers linear replay, real process kills, timers, awakeables,
+rotation, patches, children, discovery and the first process race cases. A
+100-instance step-boundary run completed after three worker deaths with exact
+journals and three crash-bounded duplicate effects. The remaining workflow
+kinds and concurrency matrix, benchmarks, soaks and ADR distillation remain
+open.
 
 
 ## Context and Orientation
