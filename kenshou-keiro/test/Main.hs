@@ -3,7 +3,7 @@ module Main (main) where
 import Data.Aeson (object)
 import Data.Aeson qualified as Aeson
 import Data.ByteString qualified as ByteString
-import Data.IORef (newIORef, readIORef)
+import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.List (intersect, sort)
 import Data.Map.Strict qualified as Map
 import Data.Proxy (Proxy (..))
@@ -182,6 +182,14 @@ main = hspec do
       let poisonPlan = Broker.FaultPlan 1 0 0 1 0 0
       Broker.decide poisonPlan row `shouldBe` Broker.AlwaysFail
       Broker.decide poisonPlan (row {attemptCount = 7}) `shouldBe` Broker.AlwaysFail
+    it "keeps fault decisions independent of callback order" $ hedgehog do
+      identities <- forAll (Gen.list (Range.linear 1 50) (Gen.int (Range.linear 1 1000000)))
+      attempt <- forAll (Gen.int (Range.linear 1 10))
+      now <- Hedgehog.evalIO getCurrentTime
+      let plan = Broker.FaultPlan 912 0.2 0.1 0.05 0.05 0.05
+          rows = [((brokerRow now (Text.pack (show identity)) (Just "group")) {attemptCount = attempt}) | identity <- identities]
+          decisions = map (Broker.decide plan) rows
+      Hedgehog.assert (decisions == reverse (map (Broker.decide plan) (reverse rows)))
     it "never appends a later row of a failed key in the same callback" do
       now <- getCurrentTime
       broker <- Broker.newBroker
@@ -203,6 +211,16 @@ main = hspec do
       length records `shouldBe` 4
       let partitions = Map.fromListWith (<>) [((record.topic, record.partition), [record.offset]) | record <- records]
       mapM_ (\offsets -> sort offsets `shouldBe` [0 .. fromIntegral (length offsets - 1)]) (Map.elems partitions)
+    it "runs the two crash hooks on opposite sides of the broker append" do
+      now <- getCurrentTime
+      broker <- Broker.newBroker
+      observations <- newIORef []
+      let observe _ = do
+            count <- length <$> Broker.readBroker broker
+            modifyIORef' observations (<> [count])
+          hooks = Broker.PublishHook observe observe
+      _ <- runEff (Broker.publishScripted broker (Broker.BrokerModel 0 0 4) (const Broker.Succeed) hooks "test" [brokerRow now "hooked" (Just "group")])
+      readIORef observations `shouldReturn` [0, 1]
   describe "Outbox oracles" do
     it "rejects a later broker offset carrying an earlier sequence of the same key" do
       OutboxOracle.perKeyOrder [("a" :: Text, 1), ("b", 9), ("a", 3), ("a", 2)] `shouldBe` False
