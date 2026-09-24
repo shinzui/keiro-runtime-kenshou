@@ -12,10 +12,11 @@ import Keiro.Outbox (BackoffSchedule (..), OutboxPublishOptions (..), OutboxPubl
 import Kenshou.Core.Role (ControlMessage (..), PostgresConnInfo (..), RoleContext (..), RoleName, WorkerInit (..), WorkerMessage (..), WorkerRole (..), mkRoleName)
 import Kenshou.Suite.Keiro.Fixture.Runtime (FixtureEnv (..), KeiroRunner (..), withFixtureEnv)
 import Kenshou.Suite.Keiro.Outbox.Broker qualified as Broker
+import Kenshou.Suite.Keiro.Outbox.ProducerReplay qualified as ProducerReplay
 import Kiroku.Store (defaultConnectionSettings)
 
 roles :: [WorkerRole]
-roles = [WorkerRole (roleName "keiro/outbox-publisher") "Publishes one claimed outbox batch, with a controllable acknowledgement window." publisher]
+roles = [WorkerRole (roleName "keiro/outbox-publisher") "Publishes one claimed outbox batch, with a controllable acknowledgement window." publisher, ProducerReplay.role]
 
 roleName :: Text -> RoleName
 roleName = either (error . Text.unpack) id . mkRoleName
