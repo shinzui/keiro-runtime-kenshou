@@ -1,10 +1,11 @@
-module Kenshou.Suite.Keiro.Queue.Concurrency (scenarios) where
+module Kenshou.Suite.Keiro.Queue.Concurrency (scenarios, fifoGroupOrder) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM (atomically)
 import Data.Aeson (object, withObject, (.:), (.=))
 import Data.Aeson.Types (parseMaybe)
 import Data.Int (Int64)
+import Data.List (sortOn)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
@@ -16,7 +17,7 @@ import Hasql.Pool qualified as Pool
 import Hasql.Session qualified as Session
 import Hasql.Statement qualified as Statement
 import Keiro.PGMQ.Codec (aesonJobCodec)
-import Keiro.PGMQ.Job (Job (..), JobOrdering (..), RetryDelay (..), RetryPolicy (..), defaultRetryPolicy, enqueue, enqueueBatch, ensureJobQueue)
+import Keiro.PGMQ.Job (Job (..), JobOrdering (..), RetryDelay (..), RetryPolicy (..), defaultRetryPolicy, enqueue, enqueueBatch, enqueueToGroup, ensureJobQueue)
 import Keiro.PGMQ.Runtime (JobRuntime (..), QueueRef (..), queueRef, runJobEff, withJobRuntime)
 import Kenshou.Check.Fault (Fault (..))
 import Kenshou.Check.Fault.Postgres (Backend (..), BackendSelector (..), listBackends, terminateOneBackend)
@@ -27,7 +28,7 @@ import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (parseScenarioId)
-import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobText, mkKnobName)
+import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobBool, knobInt, knobText, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Role (ControlMessage (..))
 import Kenshou.Core.Scenario (CohortScope (..), KnownDefect (..), Placement (..), Scenario (..), ScenarioReport, Tier (..))
@@ -38,7 +39,105 @@ import System.Timeout (timeout)
 import Text.Read (readMaybe)
 
 scenarios :: [Scenario]
-scenarios = [workersSurviveTransientPollingError, crashRedeliveryCadence, leaseExtension]
+scenarios = [workersSurviveTransientPollingError, crashRedeliveryCadence, leaseExtension, fifoHeadsStrictOrder]
+
+fifoHeadsStrictOrder :: Scenario
+fifoHeadsStrictOrder =
+  workersSurviveTransientPollingError
+    { id = either (error . show) id (parseScenarioId "keiro/queue/concurrency/fifo-heads-strict-order"),
+      summary = "Checks per-group start and finish order with competing FIFO-head workers.",
+      knobs =
+        [ KnobSpec (knobName "queue.groups") "Number of FIFO groups" KnobInt (VInt 32) (IntRange 2 32) [],
+          KnobSpec (knobName "queue.jobs-per-group") "Jobs in each FIFO group" KnobInt (VInt 50) (IntRange 2 50) [],
+          KnobSpec (knobName "queue.workers") "Competing worker processes" KnobInt (VInt 4) (IntRange 2 8) [],
+          KnobSpec (knobName "queue.kill-worker") "Kill the worker holding group zero's head" KnobBool (VBool True) AnyValue [VBool False]
+        ],
+      knownDefect = Nothing,
+      run = runFifoHeadsStrictOrder
+    }
+
+runFifoHeadsStrictOrder :: RunContext -> IO ScenarioReport
+runFifoHeadsStrictOrder context =
+  withJobRuntime (requirePostgres context).connectionString Nothing \runtime ->
+    withCheck context \check -> withSupervisor check \supervisor -> do
+      let groups = fromIntegral (knobInt context.knobs (knobName "queue.groups")) :: Int
+          jobsPerGroup = fromIntegral (knobInt context.knobs (knobName "queue.jobs-per-group")) :: Int
+          workers = fromIntegral (knobInt context.knobs (knobName "queue.workers")) :: Int
+          killWorker = knobBool context.knobs (knobName "queue.kill-worker")
+          expected = groups * jobsPerGroup
+          queue = sourceName context "fifo-heads"
+          job = Job "queue-poll-probe" (queueRef queue) (aesonJobCodec @Text) FifoHeads defaultRetryPolicy
+          spansStatement = Statement.preparable "SELECT payload, started_at, finished_at FROM kenshou_fx.queue_fifo_spans ORDER BY id" Encoders.noParams (Decoders.rowList ((,,) <$> Decoders.column (Decoders.nonNullable Decoders.text) <*> Decoders.column (Decoders.nonNullable Decoders.timestamptz) <*> Decoders.column (Decoders.nullable Decoders.timestamptz)))
+          readSpans = Pool.use runtime.runtimePool (Session.statement () spansStatement) >>= either (fail . show) pure
+          depthStatement = Statement.preparable ("SELECT count(*) FROM pgmq.q_" <> queueNameToText job.jobQueue.physicalName) Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
+          readDepth = Pool.use runtime.runtimePool (Session.statement () depthStatement) >>= either (fail . show) pure
+          waitComplete = do
+            spans <- readSpans
+            if length [() | (_, _, Just _) <- spans] == expected then pure spans else threadDelay 100000 >> waitComplete
+      Pool.use runtime.runtimePool (Session.script "CREATE SCHEMA IF NOT EXISTS kenshou_fx; CREATE TABLE IF NOT EXISTS kenshou_fx.queue_fifo_spans (id bigserial PRIMARY KEY, payload text NOT NULL, started_at timestamptz NOT NULL, finished_at timestamptz)") >>= either (fail . show) pure
+      let enqueueCoordinate (groupIndex, sequenceIndex) = enqueueToGroup job (Text.pack (show groupIndex)) (Text.pack (show groupIndex <> ":" <> show sequenceIndex))
+      setup <- runJobEff runtime do
+        ensureJobQueue job
+        enqueueCoordinate (0, 0)
+      _ <- either (fail . show) pure setup
+      let startWorker index = do
+            child <- roleProcess check "keiro/queue-worker" index (object ["queue" .= queue, "mode" .= ("fifo" :: Text)]) >>= spawn supervisor
+            awaitReady child 10000
+            sendCommand child CtlStart
+            awaitMark child "running" 30000
+            pure child
+          waitHead = do
+            spans <- readSpans
+            if any (\(payload, _, _) -> payload == "0:0") spans then pure () else threadDelay 10000 >> waitHead
+      first <- startWorker 0
+      _ <- maybe (fail "FIFO head did not start") pure =<< timeout 10000000 waitHead
+      secondSetup <- runJobEff runtime (enqueueCoordinate (1, 0))
+      _ <- either (fail . show) pure secondSetup
+      peers <- traverse startWorker [1 .. workers - 1]
+      let waitOtherGroup = do
+            spans <- readSpans
+            if any (\(payload, _, finished) -> payload == "1:0" && finished /= Nothing) spans
+              then pure (any (\(payload, _, finished) -> payload == "0:0" && finished == Nothing) spans)
+              else threadDelay 10000 >> waitOtherGroup
+      blockedAtKill <-
+        if killWorker
+          then do
+            observed <- maybe False id <$> timeout 10000000 waitOtherGroup
+            killChild supervisor first
+            pure observed
+          else pure True
+      let coordinates = [(groupIndex, sequenceIndex) | sequenceIndex <- [0 .. jobsPerGroup - 1], groupIndex <- [0 .. groups - 1], (groupIndex, sequenceIndex) /= (0, 0), (groupIndex, sequenceIndex) /= (1, 0)]
+      restSetup <- runJobEff runtime (traverse enqueueCoordinate coordinates)
+      _ <- either (fail . show) pure restSetup
+      let children = if killWorker then peers else first : peers
+      maybeSpans <- timeout 120000000 waitComplete
+      spans <- maybe readSpans pure maybeSpans
+      depth <- readDepth
+      mapM_ (killChild supervisor) children
+      let parsePayload payload = case Text.splitOn ":" payload of
+            [groupText, sequenceText] -> (,) <$> readMaybe (Text.unpack groupText) <*> readMaybe (Text.unpack sequenceText)
+            _ -> Nothing
+          parsed = [(groupIndex, sequenceIndex, started, finished) | (payload, started, Just finished) <- spans, Just (groupIndex, sequenceIndex) <- [parsePayload payload]]
+          byGroup = Map.fromListWith (<>) [(groupIndex, [(sequenceIndex, started, finished)]) | (groupIndex, sequenceIndex, started, finished) <- parsed]
+          ordered groupIndex = maybe False (fifoGroupOrder jobsPerGroup) (Map.lookup groupIndex byGroup)
+          blockedHead = [finished | (0, 0, _, finished) <- parsed]
+          abandonedHead = length [() | (payload, _, Nothing) <- spans, payload == "0:0"]
+          otherProgress = case blockedHead of
+            [finished] -> any (\(groupIndex, _, _, otherFinished) -> groupIndex /= 0 && otherFinished < finished) parsed
+            _ -> False
+          cells =
+            [ ("schedule-realised", blockedAtKill && (not killWorker || abandonedHead == 1)),
+              ("all-jobs-completed", length parsed == expected && depth == 0),
+              ("strict-group-order", all ordered [0 .. groups - 1]),
+              ("other-groups-progress", otherProgress)
+            ]
+      recordMessagingCells context (Map.fromList [("groups", fromIntegral groups), ("jobs", fromIntegral (length parsed)), ("workers", fromIntegral workers), ("queueDepth", depth), ("abandonedHeads", fromIntegral abandonedHead)]) (object ["timedOut" .= maybe True (const False) maybeSpans, "groupSizes" .= fmap length byGroup, "killWorker" .= killWorker]) cells
+
+fifoGroupOrder :: Int -> [(Int, UTCTime, UTCTime)] -> Bool
+fifoGroupOrder jobsPerGroup groupSpans =
+  let sorted = sortOn (\(sequenceIndex, _, _) -> sequenceIndex) groupSpans
+   in map (\(sequenceIndex, _, _) -> sequenceIndex) sorted == [0 .. jobsPerGroup - 1]
+        && and (zipWith (\(_, _, previousFinished) (_, nextStarted, _) -> previousFinished <= nextStarted) sorted (drop 1 sorted))
 
 leaseExtension :: Scenario
 leaseExtension =

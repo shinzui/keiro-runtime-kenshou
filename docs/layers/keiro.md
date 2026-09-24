@@ -606,6 +606,16 @@ run observed two unextended effects and one extended effect; the extended job
 was delivered once at attempt zero. The worker path also passed that attempt
 check, regardless of which worker claimed the job.
 
+`fifo-heads-strict-order` records handler start and finish times in a harness
+table. Four independent workers consume 50 jobs in each of 32 groups with an
+eight-row FIFO-head batch. One worker is killed while holding group zero's
+head; the visibility timeout permits another worker to finish it. The durable
+default run completed all 1,600 jobs in send order within each group, with no
+overlapping completed handlers for a group and with other groups completing
+while group zero was blocked. The source queue finished empty. Use
+`queue.groups`, `queue.jobs-per-group`, and `queue.workers` for smaller runs;
+`queue.kill-worker=false` omits the interruption.
+
 `write-side-steady-state` starts two command-writer processes and durable
 process-manager, router, and activity-projection workers. It stops writers at
 an operation boundary, waits for dispatch and projection to catch up, then

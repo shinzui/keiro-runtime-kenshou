@@ -40,6 +40,7 @@ import Kenshou.Suite.Keiro.Fixture.Workload qualified as Workload
 import Kenshou.Suite.Keiro.Outbox.Broker qualified as Broker
 import Kenshou.Suite.Keiro.Outbox.Knobs qualified as OutboxKnobs
 import Kenshou.Suite.Keiro.Outbox.Oracle qualified as OutboxOracle
+import Kenshou.Suite.Keiro.Queue.Concurrency qualified as QueueConcurrency
 import Kenshou.Suite.Keiro.Shard.Knobs qualified as ShardKnobs
 import Kenshou.Suite.Keiro.Shard.Oracle qualified as ShardOracle
 import Kenshou.Suite.Keiro.Timer.Knobs qualified as TimerKnobs
@@ -60,6 +61,16 @@ import Test.Hspec.Hedgehog (hedgehog)
 
 main :: IO ()
 main = hspec do
+  describe "FIFO-head oracle" do
+    it "rejects missing, repeated, and overlapping group jobs" do
+      now <- getCurrentTime
+      let first = (0, now, addUTCTime 1 now)
+          second = (1, addUTCTime 1 now, addUTCTime 2 now)
+          overlap = (1, addUTCTime 0.5 now, addUTCTime 2 now)
+      QueueConcurrency.fifoGroupOrder 2 [first, second] `shouldBe` True
+      QueueConcurrency.fifoGroupOrder 2 [first] `shouldBe` False
+      QueueConcurrency.fifoGroupOrder 2 [first, first] `shouldBe` False
+      QueueConcurrency.fifoGroupOrder 2 [first, overlap] `shouldBe` False
   describe "workflow crash schedule" do
     it "arms only the named positive occurrence of a matching boundary" do
       let boundary = WorkflowEffects.AfterStepAction "s3"
