@@ -4,6 +4,7 @@ import Control.Concurrent (threadDelay)
 import Control.Exception (try)
 import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.Int (Int64)
+import Data.List (nub)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -14,7 +15,7 @@ import Hasql.Pool qualified as Pool
 import Hasql.Session qualified as Session
 import Hasql.Statement qualified as Statement
 import Keiro.PGMQ.Codec (aesonJobCodec)
-import Keiro.PGMQ.Job (Job (..), JobConsumptionConfigError (..), JobContext (..), JobOrdering (..), JobOutcome (..), JobPolling (..), JobTuning (..), JobTuningConfigError (..), RetryDelay (..), RetryPolicy (..), defaultJobTuning, defaultRetryPolicy, enqueue, enqueueWithDelay, ensureJobQueue, runJobOnceWithContext, withOrdering)
+import Keiro.PGMQ.Job (Job (..), JobConsumptionConfigError (..), JobContext (..), JobOrdering (..), JobOutcome (..), JobPolling (..), JobTuning (..), JobTuningConfigError (..), RetryDelay (..), RetryPolicy (..), defaultJobTuning, defaultRetryPolicy, enqueue, enqueueBatch, enqueueToGroup, enqueueWithDelay, ensureJobQueue, runJobOnceWithContext, withOrdering)
 import Keiro.PGMQ.Runtime (JobRuntime (..), QueueRef (..), queueRef, runJobEff, withJobRuntime)
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
@@ -43,16 +44,24 @@ runJobOutcomeSemantics :: RunContext -> IO ScenarioReport
 runJobOutcomeSemantics context =
   withJobRuntime (requirePostgres context).connectionString Nothing \runtime -> do
     attempts <- newIORef ([] :: [Maybe Word])
+    defaultAttempts <- newIORef ([] :: [Maybe Word])
     let makeJob name = Job name (queueRef (sourceName context name)) (aesonJobCodec @Text) Unordered defaultRetryPolicy
         doneJob = makeJob "done"
         retryJob = makeJob "retry"
         deadJob = makeJob "dead"
         delayJob = makeJob "delay"
+        defaultJob = (makeJob "default-retry") {jobPolicy = defaultRetryPolicy {defaultRetryDelay = RetryDelay 1}}
+        archiveJob = (makeJob "archive") {jobPolicy = defaultRetryPolicy {useDeadLetter = False}}
+        batchJob = makeJob "batch"
+        groupJob = (makeJob "group") {jobOrdering = FifoHeads}
         doneHandler _ _ = pure Done
         retryHandler jobContext _ = do
           liftIO $ atomicModifyIORef' attempts (\seen -> (seen <> [jobContext.attempt], ()))
           pure $ if jobContext.attempt == Just 0 then Retry (RetryDelay 1) else Done
         deadHandler _ _ = pure (Dead "bad-work")
+        defaultHandler jobContext _ = do
+          liftIO $ atomicModifyIORef' defaultAttempts (\seen -> (seen <> [jobContext.attempt], ()))
+          pure $ if jobContext.attempt == Just 0 then RetryDefault else Done
         runOne target handler = runJobEff runtime (runJobOnceWithContext defaultJobTuning 1 target handler) >>= either (fail . show) pure
         queueCount target = do
           let table = "pgmq.q_" <> queueNameToText target.jobQueue.physicalName
@@ -62,16 +71,33 @@ runJobOutcomeSemantics context =
           let table = "pgmq.q_" <> queueNameToText target.jobQueue.dlqName
               statement = Statement.preparable ("SELECT count(*), coalesce(max(message->>'dead_letter_reason'),'')::text FROM " <> table) Encoders.noParams (Decoders.singleRow ((,) <$> Decoders.column (Decoders.nonNullable Decoders.int8) <*> Decoders.column (Decoders.nonNullable Decoders.text)))
           Pool.use runtime.runtimePool (Session.statement () statement) >>= either (fail . show) pure
+        archiveCount target = do
+          let table = "pgmq.a_" <> queueNameToText target.jobQueue.physicalName
+              statement = Statement.preparable ("SELECT count(*) FROM " <> table) Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
+          Pool.use runtime.runtimePool (Session.statement () statement) >>= either (fail . show) pure
+        groupHeaderCount = do
+          let table = "pgmq.q_" <> queueNameToText groupJob.jobQueue.physicalName
+              statement = Statement.preparable ("SELECT count(*) FROM " <> table <> " WHERE headers->>'x-pgmq-group' = 'alpha'") Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
+          Pool.use runtime.runtimePool (Session.statement () statement) >>= either (fail . show) pure
     setup <- runJobEff runtime do
       ensureJobQueue doneJob
       ensureJobQueue retryJob
       ensureJobQueue deadJob
       ensureJobQueue delayJob
+      ensureJobQueue defaultJob
+      ensureJobQueue archiveJob
+      ensureJobQueue batchJob
+      ensureJobQueue groupJob
       _ <- enqueue doneJob ("done" :: Text)
       _ <- enqueue retryJob ("retry" :: Text)
       _ <- enqueue deadJob ("dead" :: Text)
-      enqueueWithDelay delayJob 1 ("delayed" :: Text)
-    _ <- either (fail . show) pure setup
+      _ <- enqueueWithDelay delayJob 1 ("delayed" :: Text)
+      _ <- enqueue defaultJob ("default" :: Text)
+      _ <- enqueue archiveJob ("archive" :: Text)
+      batchIds <- enqueueBatch batchJob (["one", "two", "three"] :: [Text])
+      _ <- enqueueToGroup groupJob "alpha" ("grouped" :: Text)
+      pure batchIds
+    batchIds <- either (fail . show) pure setup
     done <- runOne doneJob doneHandler
     doneDepth <- queueCount doneJob
     retried <- runOne retryJob retryHandler
@@ -84,12 +110,26 @@ runJobOutcomeSemantics context =
     dead <- runOne deadJob deadHandler
     deadDepth <- queueCount deadJob
     deadLettered <- deadLetter deadJob
+    defaultFirst <- runOne defaultJob defaultHandler
+    defaultEarly <- runOne defaultJob defaultHandler
+    archiveHandled <- runOne archiveJob deadHandler
+    archiveDepth <- queueCount archiveJob
+    archived <- archiveCount archiveJob
+    groupedHeaders <- groupHeaderCount
+    batchDepth <- queueCount batchJob
+    threadDelay 1200000
+    defaultSecond <- runOne defaultJob defaultHandler
+    observedDefaultAttempts <- readIORef defaultAttempts
     recordCells
       context
       [ ("done-deletes", done == 1 && doneDepth == (0 :: Int64)),
         ("retry-delay-and-attempt", retried == 1 && beforeRetry == 0 && afterRetry == 1 && observedAttempts == [Just 0, Just 1]),
         ("enqueue-delay", beforeDelay == 0 && afterDelay == 1),
-        ("dead-letter", dead == 1 && deadDepth == (0 :: Int64) && fst deadLettered == (1 :: Int64) && Text.isPrefixOf "poison_pill" (snd deadLettered))
+        ("dead-letter", dead == 1 && deadDepth == (0 :: Int64) && fst deadLettered == (1 :: Int64) && Text.isPrefixOf "poison_pill" (snd deadLettered)),
+        ("default-retry-delay", defaultFirst == 1 && defaultEarly == 0 && defaultSecond == 1 && observedDefaultAttempts == [Just 0, Just 1]),
+        ("archive-when-dlq-disabled", archiveHandled == 1 && archiveDepth == 0 && archived == 1),
+        ("batch-ids-and-rows", length batchIds == 3 && length (nub batchIds) == 3 && batchDepth == 3),
+        ("group-header", groupedHeaders == 1)
       ]
 
 maxRetriesBeforeHandler :: Scenario

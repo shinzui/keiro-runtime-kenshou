@@ -292,9 +292,9 @@ drains it. `max-retries-before-handler` checks that three immediate retries
 call the handler three times and the fourth read moves the row to the DLQ
 with `max_retries_exceeded` and `read_count = 4`. A zero ceiling moves its
 row to the DLQ on the first read without a handler call.
-The initial `job-outcome-semantics` arms check Done deletion, explicit retry
-delay and attempt numbering, delayed enqueue, and terminal Dead routing to a
-DLQ with a `poison_pill` reason.
+The `job-outcome-semantics` arms check Done deletion, explicit and default
+retry delays and attempt numbering, delayed enqueue, terminal Dead routing to
+a DLQ or archive, batch ID uniqueness and rows, and FIFO group headers.
 
 `workers-survive-transient-polling-error` runs a continuous supervised job
 worker and terminates its PostgreSQL polling backend. The current released
