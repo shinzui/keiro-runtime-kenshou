@@ -239,6 +239,53 @@ Its overall result was `failed` on main-process Haskell thread growth; a
 matching earlier run was inconclusive on that probe. See
 `docs/findings/3-keiro-steady-restart-harness-threads.md` for both observations.
 
+## Outbox
+
+The outbox scenarios use Keiro's publisher against a synthetic broker. The
+single-process broker stores wire records in memory; crash and competing-worker
+scenarios store them in `kenshou_fx.broker_log` through a separate PostgreSQL
+pool. Both use `Keiro.Outbox.Kafka.outboxRowToKafkaRecord` for the published
+envelope. List the current scenarios with
+`cabal run kenshou -- list 'keiro/outbox/**'`.
+
+The correctness runs cover terminal `sent`, `rejected`, and `dead` states,
+ordered publication after a transient failure, skipped successor attempts,
+publisher callback errors, and stable producer identity. The crash scenario
+parks a publisher after the broker append, kills its process with `SIGKILL`,
+and checks that only maintenance reclaims the stranded rows. Its 2,000-row
+default passed with three kills on durable PostgreSQL. The run writes
+`no-loss.json`, `bounded-duplicates.json`, and
+`reclaimed-only-by-maintenance.json` with counts and killed process IDs. The
+four-process publisher scenario passed with 20,000 rows and 200 keys: each
+outbox row had one broker record and one consumed attempt, and first-record
+order held within each key. Both concurrency scenarios require
+`pg.durability=durable`.
+
+## Inbox
+
+`keiro/inbox/correctness/envelope-round-trip` passes outbox records through
+the synthetic broker and Keiro's inbox decoder. It checks the reconstructed
+integration events and all six required headers. The current
+`effectively-once-matrix` arm uses the message-ID dedupe policy and a SQL
+effect table without a uniqueness constraint; full-envelope and dedupe-only
+storage both passed with one effect per key under redelivery.
+`poison-accounting` verifies the default exception path's three-attempt
+ceiling and retention of failed rows. `batch-fast-path-and-fallback` checks
+that a clean batch shares one transaction and a throwing delivery falls back
+to per-message processing without duplicating other effects.
+
+## Job queue
+
+The queue scenarios provision PGMQ through the harness migration and run
+Keiro's typed job API through its separate runtime pool.
+`consumption-config-rejections` checks invalid tuning, ordering mismatch,
+unsafe legacy FIFO batch size, and error precedence. Direct SQL confirms that
+the queued row still has `read_ct = 0` after all rejections; valid tuning then
+drains it. `max-retries-before-handler` checks that three immediate retries
+call the handler three times and the fourth read moves the row to the DLQ
+with `max_retries_exceeded` and `read_count = 4`. A zero ceiling moves its
+row to the DLQ on the first read without a handler call.
+
 `write-side-steady-state` starts two command-writer processes and durable
 process-manager, router, and activity-projection workers. It stops writers at
 an operation boundary, waits for dispatch and projection to catch up, then

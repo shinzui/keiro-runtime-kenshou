@@ -69,7 +69,7 @@ Milestone 4 — Messaging benchmarks, soak and telemetry arms.
 - [ ] Implement the seven benchmarks; run each once locally at smoke scale to prove the measurement files are produced; run one paired comparison with `kenshou compare`.
 - [ ] Implement the three soaks (each registered as a full and a `-reduced` scenario); run the short forms locally and confirm leak verdicts and growth verdicts are emitted.
 - [ ] Run `kenshou overhead` for the outbox and the queue benchmark and keep the two overhead reports as evidence.
-- [ ] Add the Outbox, Inbox and Job queue sections to `docs/layers/keiro.md`.
+- [ ] Add the Outbox, Inbox and Job queue sections to `docs/layers/keiro.md`: initial sections now describe implemented scenarios and durable run evidence; expand them as the remaining arms land.
 - [ ] Create the ADRs named in Context and Orientation, validate the ADR bundle, fill Outcomes & Retrospective.
 
 
@@ -92,6 +92,7 @@ Milestone 4 — Messaging benchmarks, soak and telemetry arms.
 - The crash scenario's first implementation used the command fixture's generic verdict writer, which gave files a `keiro-fixture-` prefix and omitted crash evidence. A messaging verdict writer now emits the plan's exact verdict filenames with enqueue, broker, kill, duplicate counts and the killed PID. The durable rerun passed in `01a0d18b-be3c-7219-a804-c2fae6acf6fa`.
 - The repeated after-append crash arm passed at 32 rows and three kills in `01a0d18e-abf1-7387-b6a9-14177f45550f`, then at its 2,000-row default with 20 keys and three kills in `01a0d18f-117a-7149-9aa8-3c6a5da4939d`. The first kill held maintenance for three stale-row timeouts; later kills reclaimed their 32-row batches after each timeout. The final oracle checked all 2,000 sent rows, bounded duplicate records, and first-record per-key order.
 - The four-process publisher arm passed at 2,000 rows in `01a0d191-2bab-7250-b036-0929cfc66bf6` and at its 20,000-row default in `01a0d191-8636-75b7-a79d-eb8c1e3a0a43`. Each row had one broker record and one attempt; per-key order held. The scenario records each publisher's broker count, but does not yet read callback start/end facts to independently establish non-overlapping ownership intervals.
+- `docs/layers/keiro.md` now has Outbox, Inbox and Job queue sections describing the implemented probes, durable checks, and current CLI selectors. The sections require another pass when the remaining planned scenarios and telemetry arms are implemented.
 
 
 ## Decision Log
