@@ -628,6 +628,11 @@ after backend termination the message is only in the main queue. A replacement
 worker moves it to one DLQ row, so `exactly-one-place` holds throughout the
 observed interruption and recovery.
 
+`runtime-pool-isolation` currently covers independent pool progress: ten live
+kiroku store transactions occupy its pool while a queue worker completes a
+job through the separate PGMQ runtime pool. The long-poll processor-count
+arm remains open.
+
 `write-side-steady-state` starts two command-writer processes and durable
 process-manager, router, and activity-projection workers. It stops writers at
 an operation boundary, waits for dispatch and projection to catch up, then

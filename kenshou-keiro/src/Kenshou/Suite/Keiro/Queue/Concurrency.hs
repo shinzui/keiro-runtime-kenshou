@@ -1,6 +1,7 @@
 module Kenshou.Suite.Keiro.Queue.Concurrency (scenarios, fifoGroupOrder) where
 
 import Control.Concurrent (threadDelay)
+import Control.Concurrent.Async (mapConcurrently, withAsync)
 import Control.Concurrent.STM (atomically)
 import Control.Exception (bracket)
 import Data.Aeson (object, withObject, (.:), (.=))
@@ -17,6 +18,7 @@ import Hasql.Encoders qualified as Encoders
 import Hasql.Pool qualified as Pool
 import Hasql.Session qualified as Session
 import Hasql.Statement qualified as Statement
+import Hasql.Transaction qualified as Tx
 import Keiro.PGMQ.Codec (aesonJobCodec)
 import Keiro.PGMQ.Job (Job (..), JobOrdering (..), RetryDelay (..), RetryPolicy (..), defaultRetryPolicy, enqueue, enqueueBatch, enqueueToGroup, ensureJobQueue)
 import Keiro.PGMQ.Runtime (JobRuntime (..), QueueRef (..), queueRef, runJobEff, withJobRuntime)
@@ -34,14 +36,69 @@ import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), 
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Role (ControlMessage (..))
 import Kenshou.Core.Scenario (CohortScope (..), KnownDefect (..), Placement (..), Scenario (..), ScenarioReport, Tier (..))
+import Kenshou.Suite.Keiro.Fixture.Runtime (FixtureEnv (..), KeiroRunner (..), withFixtureEnv)
 import Kenshou.Suite.Keiro.Messaging.Verdict (recordMessagingCells, recordMessagingCellsClassified)
 import Kenshou.Suite.Keiro.Outbox.Workload (sourceName)
+import Kiroku.Store (defaultConnectionSettings)
+import Kiroku.Store.Transaction qualified as KirokuTransaction
 import Pgmq.Types (queueNameToText)
 import System.Timeout (timeout)
 import Text.Read (readMaybe)
 
 scenarios :: [Scenario]
-scenarios = [workersSurviveTransientPollingError, crashRedeliveryCadence, leaseExtension, fifoHeadsStrictOrder, deadLetterWindowDrainPath, deadLetterAtomicWorkerPath]
+scenarios = [workersSurviveTransientPollingError, crashRedeliveryCadence, leaseExtension, fifoHeadsStrictOrder, deadLetterWindowDrainPath, deadLetterAtomicWorkerPath, runtimePoolIsolation]
+
+runtimePoolIsolation :: Scenario
+runtimePoolIsolation =
+  workersSurviveTransientPollingError
+    { id = either (error . show) id (parseScenarioId "keiro/queue/concurrency/runtime-pool-isolation"),
+      summary = "Checks that queue delivery continues while the kiroku store pool is fully occupied.",
+      knobs = [],
+      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku, SchemaPgmq] [] False)},
+      knownDefect = Nothing,
+      run = runRuntimePoolIsolation
+    }
+
+runRuntimePoolIsolation :: RunContext -> IO ScenarioReport
+runRuntimePoolIsolation context =
+  withFixtureEnv (defaultConnectionSettings postgres.connectionString) \fixture ->
+    withJobRuntime postgres.connectionString Nothing \runtime ->
+      withCheck context \check -> withSupervisor check \supervisor -> do
+        let KeiroRunner runFixture = fixture.runner
+            queue = sourceName context "pool-isolation"
+            payload = "pool-isolation" :: Text
+            job = Job "queue-poll-probe" (queueRef queue) (aesonJobCodec @Text) Unordered defaultRetryPolicy
+            effectStatement = Statement.preparable "SELECT count(*) FROM kenshou_fx.queue_effects WHERE payload = $1" (Encoders.param (Encoders.nonNullable Encoders.text)) (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
+            effectCount = Pool.use runtime.runtimePool (Session.statement payload effectStatement) >>= either (fail . show) pure
+            depthStatement = Statement.preparable ("SELECT count(*) FROM pgmq.q_" <> queueNameToText job.jobQueue.physicalName) Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
+            depth = Pool.use runtime.runtimePool (Session.statement () depthStatement) >>= either (fail . show) pure
+            activeHogs = length . filter (\backend -> backend.state == "active" && "pg_sleep(15)" `Text.isInfixOf` backend.query) <$> listBackends postgres
+            waitHogs = do
+              count <- activeHogs
+              if count >= 10 then pure count else threadDelay 10000 >> waitHogs
+            waitEffect = do
+              count <- effectCount
+              if count >= 1 then pure count else threadDelay 10000 >> waitEffect
+            hog = runFixture (KirokuTransaction.runTransaction (Tx.sql "SELECT pg_sleep(15)"))
+        Pool.use runtime.runtimePool (Session.script "CREATE SCHEMA IF NOT EXISTS kenshou_fx; CREATE TABLE IF NOT EXISTS kenshou_fx.queue_effects (payload text NOT NULL)") >>= either (fail . show) pure
+        setup <- runJobEff runtime (ensureJobQueue job)
+        _ <- either (fail . show) pure setup
+        withAsync (mapConcurrently (const hog) [1 .. 10 :: Int]) \_ -> do
+          observedHogs <- maybe 0 id <$> timeout 10000000 waitHogs
+          spec <- roleProcess check "keiro/queue-worker" 0 (object ["queue" .= queue])
+          child <- spawn supervisor spec
+          awaitReady child 10000
+          sendCommand child CtlStart
+          awaitMark child "running" 30000
+          sent <- runJobEff runtime (enqueue job payload)
+          _ <- either (fail . show) pure sent
+          delivered <- maybe 0 id <$> timeout 5000000 waitEffect
+          hogsAfter <- activeHogs
+          remaining <- depth
+          killChild supervisor child
+          recordMessagingCells context (Map.fromList [("storeConnections", fromIntegral observedHogs), ("storeConnectionsAfterDelivery", fromIntegral hogsAfter), ("effects", delivered), ("queueDepth", remaining)]) (object []) [("store-pool-saturated", observedHogs == 10), ("job-pool-progress", delivered == 1 && hogsAfter == 10), ("queue-empty", remaining == 0)]
+  where
+    postgres = requirePostgres context
 
 deadLetterAtomicWorkerPath :: Scenario
 deadLetterAtomicWorkerPath =
