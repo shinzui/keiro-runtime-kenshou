@@ -8,6 +8,10 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
 import Data.UUID qualified as UUID
+import Hasql.Decoders qualified as Decoders
+import Hasql.Encoders qualified as Encoders
+import Hasql.Statement qualified as Statement
+import Hasql.Transaction qualified as Tx
 import Keiro.Subscription.Shard (ShardLease (..), WorkerId (..), ensureShards, ownershipSnapshotFor)
 import Kenshou.Check.Process (ProgressSnapshot (..), awaitReady, progress, roleProcess, sendCommand, spawn, withSupervisor)
 import Kenshou.Check.Scenario (finishWithVerdicts, withCheck)
@@ -20,9 +24,10 @@ import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Role (ControlMessage (..), WorkerMessage (..))
 import Kenshou.Core.Scenario (CohortScope (..), KnownDefect (..), Placement (..), Scenario (..), ScenarioReport, Tier (..))
-import Kenshou.Suite.Keiro.Workflow.Fixture (durableKirokuStore, withDurableStore)
-import Kiroku.Store (defaultConnectionSettings, runStoreIO)
+import Kenshou.Suite.Keiro.Workflow.Fixture (durableKirokuStore, ensureDurableTables, runDurable, withDurableStore)
+import Kiroku.Store (appendToStream, defaultConnectionSettings, runStoreIO, runTransaction)
 import Kiroku.Store.Subscription.Types (SubscriptionName (..))
+import Kiroku.Store.Types (EventData (..), EventType (..), ExpectedVersion (..), StreamName (..))
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
@@ -56,6 +61,7 @@ mismatchProbe =
 runMismatchProbe :: RunContext -> IO ScenarioReport
 runMismatchProbe context = withCheck context \check ->
   withDurableStore (defaultConnectionSettings (requirePostgres context).connectionString) \fixture -> do
+    ensureDurableTables fixture
     let store = durableKirokuStore fixture
         name = SubscriptionName "kenshouShardMismatch"
         worker = WorkerId UUID.nil
@@ -64,10 +70,11 @@ runMismatchProbe context = withCheck context \check ->
           Just (WrkError message) -> "ShardCountMismatch" `Text.isInfixOf` message
           _ -> False
         succeeded = (== Just (WrkDone Nothing))
+    seeded <- runDurable fixture (appendToStream (StreamName "account-mismatch") AnyVersion [EventData Nothing (EventType "kenshou.shard.mismatch") (object []) Nothing Nothing Nothing])
     initial <- runStoreIO store (ensureShards (lease 4))
     (short, before, large, after, fresh) <- withSupervisor check \supervisor -> do
       let runWorker index count = do
-            spec <- roleProcess check "keiro/shard-worker" index (object ["subscription" .= ("kenshouShardMismatch" :: Text), "shardCount" .= count])
+            spec <- roleProcess check "keiro/shard-worker" index (object ["subscription" .= ("kenshouShardMismatch" :: Text), "shardCount" .= count, "delivery" .= True])
             child <- spawn supervisor spec
             awaitReady child 10000
             sendCommand child CtlStart
@@ -83,16 +90,18 @@ runMismatchProbe context = withCheck context \check ->
       after <- runStoreIO store (ownershipSnapshotFor name)
       fresh <- runWorker 2 (4 :: Int)
       pure (short, before, large, after, fresh)
+    sinkRows <- runDurable fixture (runTransaction (Tx.statement () sinkCountStatement))
     now <- getCurrentTime
     let rowCount = either (const (-1)) length
         observed = rowCount after
         cells =
-          [ ("initial-four", initial == Right ()),
+          [ ("initial-four", initial == Right () && either (const False) (const True) seeded),
             ("smaller-worker-rejected", mismatch short),
             ("smaller-worker-left-four", rowCount before == 4),
             ("larger-worker-rejected", mismatch large),
             ("larger-worker-left-four", observed == 4),
-            ("correct-worker-recovers", succeeded fresh)
+            ("correct-worker-recovers", succeeded fresh),
+            ("mismatched-workers-read-nothing", sinkRows == Right (0 :: Int))
           ]
         verdict (nameText, held) =
           Verdict
@@ -112,3 +121,10 @@ runMismatchProbe context = withCheck context \check ->
               durationMillis = 0
             }
     finishWithVerdicts check (map verdict cells)
+
+sinkCountStatement :: Statement.Statement () Int
+sinkCountStatement =
+  Statement.preparable
+    "SELECT count(*)::int FROM kenshou_durable.shard_sink"
+    Encoders.noParams
+    (fromIntegral <$> Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int4)))

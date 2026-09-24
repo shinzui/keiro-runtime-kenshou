@@ -104,6 +104,8 @@ separate workers with smaller and larger shard counts against a four-bucket
 subscription, then starts another correctly configured worker. Keiro 0.17.0.0 rejects the larger caller
 after inserting two extra rows, so the scenario reports a reproduced known
 defect at `mori://shinzui/keiro/okf/improvement-requests/concepts/IR-49`.
+The mismatch probe also seeds an account event and confirms the rejected
+delivery workers do not consume it.
 The shard worker accepts validated `shard.*` options, including bucket count,
 lease duration, renewal interval, batch and buffer sizes, and retry limits.
 `keiro/shard/correctness/single-worker-drains-all-buckets` runs its delivery

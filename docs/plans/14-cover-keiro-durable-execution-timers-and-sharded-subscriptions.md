@@ -83,15 +83,16 @@ Milestone 2 — Timer scenarios
 
 Milestone 3 — Sharded subscription scenarios
 
-- [ ] Complete `.Roles` and `.Oracle` for all planned handler, failover and checkpoint cases. `Shard.Knobs` maps the settings through `mkShardedWorkerOptions`; the role runs the acknowledgement-aware delivery loop on demand, records flushed delivery facts and upserts `shard_sink`, and cancels the loop on control stop so leases are relinquished. The appender role now emits deterministic account-category events in its own process. The existing pure oracle checkers have doctored-input tests. Delivery variants and cross-process checkpoint oracles remain.
+- [ ] Complete `.Roles` and `.Oracle` for all planned handler, failover and checkpoint cases. `Shard.Knobs` maps the settings through `mkShardedWorkerOptions`; the role runs acknowledgement-aware and plain delivery handlers, records flushed delivery facts and upserts `shard_sink`, and cancels the loop on control stop so leases are relinquished. The appender role emits deterministic account-category events in its own process. The existing pure oracle checkers have doctored-input tests. Cross-process checkpoint histories, exact reader restart timing and the dead-letter metric comparison remain.
 - [x] (2026-09-24) Added `keiro/shard-appender` and used it to seed the single-worker drain scenario. A default 20,000-event durable run and 100-event runs in both PostgreSQL modes passed with the appender and delivery worker as separate processes.
 - [x] (2026-09-24 05:33Z) Registered an incremental `keiro/shard/correctness/lease-coverage-smoke` scenario. Runs under both PostgreSQL durability modes passed five verdicts for one-bucket-per-pass ownership, complete coverage, relinquish and immediate transfer.
 - [x] (2026-09-24 13:43Z) Added `keiro/shard/correctness/shard-count-mismatch`, exercising the same `ensureShards` startup path as a worker. Both PostgreSQL durability modes reproduced two contract failures: extra rows remained after a larger misconfigured caller, and a fresh correct caller failed. The scenario exits zero as a reported known defect with `mori://shinzui/keiro/okf/improvement-requests/concepts/IR-49`.
 - [x] (2026-09-24 13:48Z) Changed the shard-count mismatch probe to start count-two, count-six and fresh count-four worker processes. Both PostgreSQL durability modes reproduced the same two contract failures and no other failures.
-- [ ] Add delivery assertions for the shard-count mismatch scenario and the metrics-collection assertion for acknowledgement-coupled handler variants.
+- [ ] Add the metrics-collection assertion for acknowledgement-coupled handler variants.
+- [x] (2026-09-24) Extended the shard-count mismatch probe through the real delivery worker path with a seeded account event. Both durability modes reported only the same two declared upstream failures; no misconfigured worker delivered the event.
 - [x] (2026-09-24) Added `keiro/shard/correctness/ack-coupled-handler-variants`. Both PostgreSQL modes passed checks for zero-based retry attempts 0, 1, 2, explicit dead-lettering, exhaustion at the configured retry ceiling, a throwing plain handler retried once, and later events delivered after both dead letters. The metrics-collection assertion remains.
 - [x] (2026-09-24) Added `keiro/shard/correctness/single-worker-drains-all-buckets`. A real worker claimed four buckets, delivered twenty account-category events exactly once to the sink and effect ledger, then relinquished every bucket on graceful stop. Both durability modes passed; a 100-event, eight-bucket durable run also passed. The sink now records first-delivery sequence and verifies strict per-stream order. A 100-event, five-stream run passed in both modes, and the default 20,000-event, 500-stream, eight-bucket durable run passed.
-- [ ] Add the shard concurrency and crash scenarios (six).
+- [x] (2026-09-24) Registered all six shard concurrency and crash scenarios; each passed locally under durable PostgreSQL, and four-bucket shakedowns passed in both durability modes. The exact restart timing and shared duplicate-window/checkpoint oracle remain in the preceding oracle item.
 - [x] (2026-09-24) Added `keiro/shard/concurrency/late-joiner-gets-no-buckets` with three real delivery workers. Four- and eight-bucket durable runs and a four-bucket fsync-off run reproduced exactly the declared `shard-late-workers-share` known defect; the first owner covered all buckets and coverage persisted after the two joiners started.
 - [x] (2026-09-24) Added `keiro/shard/concurrency/sigkill-failover-vs-graceful-relinquish`. It samples ownership after `SIGKILL` and halfway through the lease, requires transfer to a surviving worker within the calculated failover deadline, then checks immediate release on graceful stop and reownership within the renewal deadline. Four-bucket runs passed in both PostgreSQL modes; the default eight-bucket durable run passed.
 - [x] (2026-09-24) Added `keiro/shard/concurrency/coverage-after-membership-change`. A separate appender feeds account events while worker membership changes gracefully and by `SIGKILL`; 100 ms ownership samples preserve valid bucket rows, and verdict parameters report the measured recovery gaps. A 100-event, four-bucket run passed in both modes and the default 20,000-event, eight-bucket durable run passed with graceful and killed gaps of 3.54 s and 6.60 s. Per-event duplicate-window and checkpoint monotonicity checks remain.
@@ -758,3 +759,11 @@ acquire or reader error, a live worker, full recovered ownership, and all
 seeded events in the sink. Both durability modes passed at 1,000 events;
 the default 20,000-event durable run passed. Reader restart time relative
 to two reconciliation passes remains to be recorded.
+
+## Revision Note — 2026-09-24 (shard mismatch delivery)
+
+The mismatch probe now seeds an account-category event and runs all three
+callers through the real sharded delivery loop. Neither misconfigured worker
+delivers it, and the only failures remain the two declared consequences of
+the larger worker inserting extra shard rows. Both PostgreSQL modes
+reproduced exactly those known failures.
