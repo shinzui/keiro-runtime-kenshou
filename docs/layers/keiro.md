@@ -233,6 +233,11 @@ completed 391 commands in each arm and showed almost identical growth with
 verification on and off. The runs passed the durable checks but had too few
 steady samples for benchmark grading. The evidence and follow-up are in
 `docs/findings/2-keiro-seed-backlog-heap-growth.md`.
+An in-memory tracing and collected-metrics arm completed 211 commands in one
+minute and passed four durable checks with 211 exported spans and no drops.
+Its overall result was `failed` on main-process Haskell thread growth; a
+matching earlier run was inconclusive on that probe. See
+`docs/findings/3-keiro-steady-restart-harness-threads.md` for both observations.
 
 `write-side-steady-state` starts two command-writer processes and durable
 process-manager, router, and activity-projection workers. It stops writers at

@@ -1,4 +1,4 @@
-# Harness thread growth during write-side worker restarts
+# Harness thread growth during Keiro soaks
 
 Status: investigating. The durable recovery checks passed; the leak signal is
 in the harness process and its retained component is not yet identified.
@@ -26,6 +26,19 @@ therefore needs a more focused harness investigation before it can be
 attributed to a specific retained object or upstream runtime component. The
 worker leak reports also lacked sufficient duration to judge this one-minute
 restart arm.
+
+A separate one-minute `seed-verification-backlog-reduced` run with in-memory
+tracing, collected metrics, and three offered commands per second completed
+211 commands and passed four durable checks without child worker restarts.
+Its main-process Haskell thread probe grew by 13 and was judged
+`leak-suspected`; native bytes, OS threads, file descriptors, and PostgreSQL
+connections were stable, while the heap probe lacked enough post-major
+samples. An otherwise matching earlier run grew by eight counted threads but
+was `insufficient-data` under the statistical policy. These observations show
+that the main-process signal is not confined to the restart arm. They do not
+establish that the two runs retain the same objects. The ignored run data is
+under `runs/01a0d130-aab3-70c7-ad94-0a21d40d45fa/` and
+`runs/01a0d12e-fbc4-7367-b1d0-536a84fcacea/`.
 
 Reproduce with:
 

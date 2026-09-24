@@ -159,6 +159,10 @@ Milestone 5 — Write-side benchmarks, soak and telemetry arms
   Rationale: The first one-minute run and a rerun after retiring exited child records each added six counted Haskell threads during six restarts. The root cause remains unknown; `docs/findings/3-keiro-steady-restart-harness-threads.md` separates the verified recovery behavior from the unresolved main-process signal.
   Date: 2026-09-24
 
+- Decision: The one-minute telemetry-enabled seed backlog run retains its main-process thread leak failure while the durable and span checks are reported separately.
+  Rationale: It completed 211 commands, passed four durable checks, and exported 211 spans without drops. The thread probe grew by 13; a matching earlier run grew by eight but was statistically inconclusive. The shared measurement signal is recorded in `docs/findings/3-keiro-steady-restart-harness-threads.md` without attributing it to worker restarts.
+  Date: 2026-09-24
+
 
 ## Outcomes & Retrospective
 
@@ -195,6 +199,12 @@ durable recovery checks over 1,593 account events and six restarts, but the
 overall leak verdict failed on main-process Haskell thread growth; the
 investigation is recorded in
 `docs/findings/3-keiro-steady-restart-harness-threads.md`.
+
+The seed backlog soak's in-memory tracing and collected-metrics arm passed
+four durable checks over 211 commands and exported 211 spans without drops.
+The one-minute leak verdict failed on main-process Haskell thread growth;
+the prior matching arm was inconclusive on that probe. The fixture runtime
+now supplies shared telemetry options to command and worker paths.
 
 The same three-trial comparison for process-manager dispatch completed all
 18 slots with three valid blocks at

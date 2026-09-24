@@ -7,7 +7,6 @@ import Data.Text qualified as Text
 import Hasql.Connection qualified as Connection
 import Hasql.Connection.Settings qualified as Settings
 import Keiro.Command (CommandResult (..), RunCommandOptions (..), defaultRunCommandOptions, runCommand)
-import Keiro.Telemetry (newKeiroMetrics)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary, requirePostgres)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
@@ -30,7 +29,7 @@ import Kenshou.Suite.Keiro.Fixture.Domain
 import Kenshou.Suite.Keiro.Fixture.Model qualified as Model
 import Kenshou.Suite.Keiro.Fixture.Oracle qualified as Oracle
 import Kenshou.Suite.Keiro.Fixture.Runtime
-import Kenshou.Telemetry (TelemetryHandles (..), telemetryKnobs, telemetrySpecFromContext, withTelemetry)
+import Kenshou.Telemetry (telemetryKnobs, telemetrySpecFromContext, withTelemetry)
 import Kiroku.Store (appendToStream, defaultConnectionSettings)
 import Kiroku.Store.Connection (ConnectionSettingsM (..))
 import Kiroku.Store.Types (EventType (..), ExpectedVersion (..))
@@ -78,8 +77,9 @@ runSeedBacklog context =
       Left reason -> pure (failedWith ["invalid-telemetry-config"] reason)
       Right spec -> withTelemetry spec (runMeasured load config)
   where
-    runMeasured load config telemetry =
-      withFixtureEnv ((defaultConnectionSettings (requirePostgres context).connectionString) {poolSize = 13}) \fixture -> do
+    runMeasured load config telemetry = do
+      runtimeTelemetry <- keiroTelemetry telemetry
+      withFixtureTelemetryEnv ((defaultConnectionSettings (requirePostgres context).connectionString) {poolSize = 13}) runtimeTelemetry \fixture -> do
         let KeiroRunner runFixture = fixture.runner
             account = AccountId "seed-backlog"
             stream = accountEventStream (SnapEvery 100)
@@ -87,8 +87,7 @@ runSeedBacklog context =
             lengthBefore = fromIntegral (knobInt context.knobs (knobName "command.stream-length")) :: Int
             rate = fromIntegral (knobInt context.knobs (knobName "snapshot.seed-verify-sample-rate")) :: Int
             majorGcMs = fromIntegral (knobInt context.knobs (knobName "diagnose.major-gc-interval-ms")) :: Double
-        keiroMetrics <- traverse newKeiroMetrics telemetry.meter
-        let options = defaultRunCommandOptions {tracer = telemetry.tracer, metrics = keiroMetrics, seedVerifySampleRate = rate}
+        let options = (keiroCommandOptions runtimeTelemetry) {seedVerifySampleRate = rate}
             seedOptions = defaultRunCommandOptions {seedVerifySampleRate = 0, verifyReplayOnAppend = False}
             accepted = \case Right (Right result) -> result.eventsAppended == 1; _ -> False
         opened <- runFixture (runCommand seedOptions stream target (OpenAccount (OpenAccountData account 0)))
