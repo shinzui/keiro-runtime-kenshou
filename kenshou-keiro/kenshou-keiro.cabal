@@ -59,6 +59,9 @@ library
     Kenshou.Suite.Keiro.Outbox
     Kenshou.Suite.Keiro.Outbox.Broker
     Kenshou.Suite.Keiro.Outbox.Correctness
+    Kenshou.Suite.Keiro.Outbox.Oracle
+    Kenshou.Suite.Keiro.Outbox.ProducerIdentity
+    Kenshou.Suite.Keiro.Outbox.Workload
     Kenshou.Suite.Keiro.ProcessManager.Bench
     Kenshou.Suite.Keiro.ProcessManager.Concurrency
     Kenshou.Suite.Keiro.ProcessManager.Correctness
@@ -115,6 +118,7 @@ test-suite kenshou-keiro-test
     aeson,
     base,
     bytestring,
+    containers,
     effectful,
     hedgehog,
     hspec,

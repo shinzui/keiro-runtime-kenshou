@@ -82,17 +82,18 @@ readBroker (Broker rows) = toList <$> readTVarIO rows
 -- callback interleaving or a process-local random generator.
 decide :: FaultPlan -> OutboxRow -> FaultDecision
 decide plan row
-  | draw 0 < plan.throwRatio = ThrowInCall
-  | draw 1 < plan.poisonRatio = AlwaysFail
-  | draw 4 < plan.rejectRatio = RejectWith syntheticRejection
-  | draw 2 < plan.failRatio && row.attemptCount <= 1 = FailOnce
-  | draw 3 < plan.dropOutcomeRatio = DropOutcome
+  | drawAttempt 0 < plan.throwRatio = ThrowInCall
+  | drawStable 1 < plan.poisonRatio = AlwaysFail
+  | drawStable 4 < plan.rejectRatio = RejectWith syntheticRejection
+  | drawAttempt 2 < plan.failRatio && row.attemptCount <= 1 = FailOnce
+  | drawAttempt 3 < plan.dropOutcomeRatio = DropOutcome
   | otherwise = Succeed
   where
     identity = Text.unpack row.event.messageId
     mix value char = (value `xor` fromIntegral (fromEnum char)) * 1099511628211
-    base = foldl mix (plan.seed `xor` fromIntegral row.attemptCount) identity
-    draw salt = fromIntegral (foldl mix base (show (salt :: Int)) `mod` 1000000) / 1000000
+    stableBase = foldl mix plan.seed identity
+    drawStable salt = fromIntegral (foldl mix stableBase (show (salt :: Int)) `mod` 1000000) / 1000000
+    drawAttempt salt = fromIntegral (foldl mix stableBase (show (row.attemptCount, salt :: Int)) `mod` 1000000) / 1000000
     syntheticRejection = either (error . show) id (mkPublishRejection "synthetic_rejection" (Just "rejected by the synthetic broker"))
 
 publishCallback :: (IOE :> es) => Broker -> BrokerModel -> FaultPlan -> PublishHook -> Text -> [OutboxRow] -> Eff es [(OutboxId, PublishOutcome)]

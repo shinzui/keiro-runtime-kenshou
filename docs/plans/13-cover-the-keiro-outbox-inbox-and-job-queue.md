@@ -42,8 +42,8 @@ Milestone 1 — Outbox scenarios (includes the shared messaging support used by 
 - [x] (2026-09-24 03:01 UTC) Verify the hard dependencies: the Nix-shell build, Keiro listing, PostgreSQL round trip, backend kill and proxy partition selftests passed. Read the prerequisite plans' interface sections and the fixture milestone; the fixture module names match the completed work.
 - [x] (2026-09-24 02:59 UTC) Add the initial outbox modules and their build dependencies to `kenshou-keiro/kenshou-keiro.cabal`.
 - [ ] Complete `Kenshou.Suite.Keiro.Outbox.Broker`: the in-process broker, model, deterministic fault decisions and callback hooks are implemented and two unit tests pass; the PostgreSQL table backend and stronger determinism and ordering tests remain.
-- [ ] Implement `Kenshou.Suite.Keiro.Outbox.Knobs`, `.Workload`, `.Roles`, `.Oracle`; unit-test every oracle against doctored rows (non-vacuity).
-- [ ] Implement the five outbox correctness scenarios: `failure-skips-successors` is implemented and passed on a durable database at 2026-09-24 02:58 UTC; four remain.
+- [ ] Implement `Kenshou.Suite.Keiro.Outbox.Knobs`, `.Workload`, `.Roles`, `.Oracle`: `.Workload` now enqueues run-namespaced inline events, and `.Oracle` has per-key-order and duplicate-budget checks with doctored unit inputs; knobs, roles, and SQL oracles remain.
+- [ ] Finish the five outbox correctness scenarios: all five are registered and have passed durable PostgreSQL runs; `terminal-state-matrix` passed at its 2,000-row default and `per-key-order-serialized` at its 5,000-row default. The remaining plan-specific arms and frozen identity vector are pending.
 - [ ] Implement the six outbox concurrency and crash scenarios.
 - [ ] Export `Kenshou.Suite.Keiro.Outbox.scenarios` and `.roles` and splice them into the bundle module created by `docs/plans/12-…`.
 - [ ] Run every outbox scenario locally with `pg.durability=durable`; record outcomes and any upstream finding; file upstream reports for unexpected failures and attach `KnownDefect` references.
@@ -78,6 +78,10 @@ Milestone 4 — Messaging benchmarks, soak and telemetry arms.
 - The project shell does not expose `ghc` directly to a plain `cabal` invocation. `nix develop -c cabal build kenshou-keiro kenshou-check kenshou-measure kenshou-diagnose kenshou-telemetry` passed; use `nix develop -c` for the subsequent commands. The completed write-side fixture exports the modules named in Interfaces and Dependencies.
 - The first outbox scenario passed with durable PostgreSQL: `keiro/outbox/correctness/failure-skips-successors` wrote its verdicts under `runs/01a0d15a-0b81-771e-9bea-a08921d97bf2` and the CLI reported `passed`. This establishes the scenario registration and fixture integration, not the other ten outbox scenarios.
 - The implemented `kenshou list` accepts positional scenario selectors and has no `--component` option. The old plan command exited 2 with `Invalid option '--component'`; the plan now uses selectors such as `list 'keiro/outbox/**'`.
+- In the first `publisher-misbehaviour` run, the throw and missing-outcome checks failed when both rows shared one key: the outbox marked the later row as skipped without consuming its attempt after the first failure. The rejection checks passed. The test now uses distinct keys for the throw, missing and unknown-outcome arms, and keeps one key for the rejection arm, which is meant to prove a rejected head does not block its successor.
+- The first `producer-identity` run passed seven of eight checks. For a changed message-ID namespace, `ProducerIdentityConflict` carries the attempted identity: its outbox UUID remains the original UUID while its message ID carries the new namespace. The scenario initially compared that returned identity with the original message ID; the check now compares it with `deriveProducerIdentity` for the changed producer and still demands exactly `IdentityField`.
+- The corrected `publisher-misbehaviour` and `producer-identity` scenarios passed on durable PostgreSQL in runs `01a0d167-23fd-75f0-a9dd-716c6287b9b7` and `01a0d16c-1722-73c2-9e19-ad577f97a48b`.
+- The 5,000-row `per-key-order-serialized` default passed on durable PostgreSQL in run `01a0d16c-bb1b-756e-a4d3-26c6e56a1a6a`.
 
 
 ## Decision Log
@@ -117,6 +121,10 @@ Milestone 4 — Messaging benchmarks, soak and telemetry arms.
 - Decision: `keiro/outbox/concurrency/zombie-publisher-finalization` is included as an exploratory contract check without a `KnownDefect` reference.
   Rationale: Reading `Keiro.Outbox.Schema` shows that finalization statements are conditional on `status = 'publishing'` but carry no claim token, so a publisher that outlives `publishingTimeout` may finalize a row that another publisher has re-claimed. This is unverified. If the scenario fails, the finding is filed upstream and the reference added then.
   Date: 2026-09-20
+
+- Decision: The publisher-misbehaviour scenario gives each row a distinct key when checking callback-wide errors, and uses one shared key only for the rejection subcase.
+  Rationale: Ordered publisher policies skip later same-key rows after a failure, so sharing a key would conflate callback normalization with the intentional skip rule and make the attempt-count assertion wrong.
+  Date: 2026-09-24
 
 
 ## Outcomes & Retrospective

@@ -1,27 +1,225 @@
 module Kenshou.Suite.Keiro.Outbox.Correctness (scenarios) where
 
 import Control.Concurrent (threadDelay)
-import Control.Monad (forM)
-import Data.ByteString qualified as ByteString
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
+import Data.Set qualified as Set
+import Data.Text (Text)
+import Data.Text qualified as Text
+import Data.Text.Encoding qualified as TextEncoding
 import Data.Time (getCurrentTime)
-import Keiro.Integration.Event (IntegrationContentType (..), IntegrationEvent (..))
-import Keiro.Outbox (BackoffSchedule (..), OutboxPublishOptions (..), OutboxPublishSummary (..), OutboxRow (..), OutboxStatus (..), defaultPublishOptions, enqueueIntegrationEventTx, freshOutboxId, listOutbox, publishClaimedOutbox)
+import Data.UUID qualified as UUID
+import Keiro.Integration.Event (IntegrationEvent (..), headerMessageId)
+import Keiro.Outbox (BackoffSchedule (..), ExponentialBackoffOptions (..), OrderingPolicy (..), OutboxId (..), OutboxPublishOptions (..), OutboxPublishSummary (..), OutboxRow (..), OutboxStatus (..), PublishOutcome (..), countOutboxBacklog, defaultMaintenanceOptions, defaultPublishOptions, garbageCollectSent, listOutbox, mkPublishRejection, outboxMaintenancePass, publishClaimedOutbox, publishRejectionCode)
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
-import Kenshou.Core.Id (parseScenarioId)
+import Kenshou.Core.Id (parseScenarioId, unSeed)
+import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobInt, knobText, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..))
 import Kenshou.Suite.Keiro.Command.Correctness (recordCells)
 import Kenshou.Suite.Keiro.Fixture.Runtime (FixtureEnv (..), KeiroRunner (..), withFixtureEnv)
 import Kenshou.Suite.Keiro.Outbox.Broker qualified as Broker
-import Kiroku.Store (defaultConnectionSettings, runTransaction)
+import Kenshou.Suite.Keiro.Outbox.Oracle qualified as Oracle
+import Kenshou.Suite.Keiro.Outbox.Workload (enqueueInline, sourceName)
+import Kiroku.Store (defaultConnectionSettings)
+import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [failureSkipsSuccessors]
+scenarios = [failureSkipsSuccessors, terminalStateMatrix, perKeyOrderSerialized, publisherMisbehaviour]
+
+publisherMisbehaviour :: Scenario
+publisherMisbehaviour =
+  failureSkipsSuccessors
+    { id = either (error . show) id (parseScenarioId "keiro/outbox/correctness/publisher-misbehaviour"),
+      summary = "Checks callback exceptions, missing and unknown outcomes, and terminal rejection.",
+      run = runPublisherMisbehaviour
+    }
+
+runPublisherMisbehaviour :: RunContext -> IO ScenarioReport
+runPublisherMisbehaviour context =
+  withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture -> do
+    let KeiroRunner runFixture = fixture.runner
+        options = defaultPublishOptions {batchSize = 16, backoff = ConstantBackoff 60}
+        enqueueCase suffix = do
+          let source = sourceName context suffix
+              key index = Just (if suffix == "reject" then suffix else suffix <> index)
+          enqueueInline fixture source [(suffix <> "1", key "1", 1), (suffix <> "2", key "2", 2)]
+          pure source
+        readCase source = runFixture (listOutbox source) >>= either (fail . show) pure
+        publish callback = runFixture (publishClaimedOutbox callback options Nothing) >>= either (fail . show) pure
+    throwSource <- enqueueCase "throw"
+    throwSummary <- publish (\_ -> error "synthetic callback threw")
+    throwRows <- readCase throwSource
+
+    missingSource <- enqueueCase "missing"
+    missingSummary <- publish (\_ -> pure [])
+    missingRows <- readCase missingSource
+
+    unknownSource <- enqueueCase "unknown"
+    unknownSummary <- publish (\rows -> pure ([(row.outboxId, PublishSucceeded) | row <- rows] <> [(OutboxId UUID.nil, PublishSucceeded)]))
+    unknownRows <- readCase unknownSource
+
+    rejectionSource <- enqueueCase "reject"
+    rejection <- either (fail . show) pure (mkPublishRejection "synthetic_rejection" (Just "refused by broker"))
+    broker <- Broker.newBroker
+    let model = Broker.BrokerModel 0 0 4
+        hooks = Broker.PublishHook (const (pure ())) (const (pure ()))
+        choose row = if row.event.messageId == "reject1" then Broker.RejectWith rejection else Broker.Succeed
+    rejectSummary <- publish (Broker.publishScripted broker model choose hooks "publisher")
+    rejectRows <- readCase rejectionSource
+    _ <- runFixture (outboxMaintenancePass defaultMaintenanceOptions Nothing) >>= either (fail . show) pure
+    now <- getCurrentTime
+    _ <- runFixture (garbageCollectSent 0 now) >>= either (fail . show) pure
+    afterGc <- readCase rejectionSource
+    brokerRows <- Broker.readBroker broker
+    let byId rows = Map.fromList [(row.event.messageId, row) | row <- rows]
+        throwMap = byId throwRows
+        missingMap = byId missingRows
+        unknownMap = byId unknownRows
+        rejectMap = byId rejectRows
+        afterGcMap = byId afterGc
+        failedWithError expected row = row.status == OutboxFailed && row.attemptCount == 1 && maybe False (Text.isInfixOf expected) row.lastError
+        cells =
+          [ ("throw-fails-all-claimed", throwSummary.retried == 2 && all (failedWithError "synthetic callback threw") throwRows),
+            ("missing-outcome-fails-all-claimed", missingSummary.retried == 2 && all (failedWithError "publisher returned no outcome") missingRows),
+            ("unknown-outcome-ignored", unknownSummary.published == 2 && all ((== OutboxSent) . (.status)) unknownRows),
+            ("all-cases-claimed-own-rows", all ((== 2) . Map.size) [throwMap, missingMap, unknownMap, rejectMap]),
+            ("rejection-terminal", rejectSummary.rejected == 1 && rejectSummary.published == 1 && case Map.lookup "reject1" rejectMap of Just row -> row.status == OutboxRejected && maybe False ((== "synthetic_rejection") . publishRejectionCode) row.rejection && row.rejectedAt /= Nothing; _ -> False),
+            ("rejection-does-not-block-successor", maybe False ((== OutboxSent) . (.status)) (Map.lookup "reject2" rejectMap) && length brokerRows == 1),
+            ("rejection-survives-maintenance-and-gc", Map.member "reject1" afterGcMap && not (Map.member "reject2" afterGcMap))
+          ]
+    recordCells context cells
+
+perKeyOrderSerialized :: Scenario
+perKeyOrderSerialized =
+  terminalStateMatrix
+    { id = either (error . show) id (parseScenarioId "keiro/outbox/correctness/per-key-order-serialized"),
+      summary = "Checks serialized inline enqueues publish in key order despite transient failures.",
+      knobs =
+        [ KnobSpec (knobName "outbox.ordering-policy") "Ordered claim policy" KnobText (VText "per-key-head-of-line") (OneOf (VText "per-key-head-of-line" :| [VText "per-source-stream", VText "stop-the-line"])) [VText "per-source-stream", VText "stop-the-line"],
+          KnobSpec (knobName "outbox.rows") "Number of integration events" KnobInt (VInt 5000) (IntRange 1 20000) []
+        ],
+      run = runPerKeyOrderSerialized
+    }
+
+runPerKeyOrderSerialized :: RunContext -> IO ScenarioReport
+runPerKeyOrderSerialized context =
+  withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture -> do
+    let KeiroRunner runFixture = fixture.runner
+        source = sourceName context "serialized"
+        rowCount = fromIntegral (knobInt context.knobs (knobName "outbox.rows"))
+        entries = [(Text.pack (show i), Just ("key-" <> Text.pack (show (i `mod` (20 :: Int)))), i) | i <- [1 .. rowCount]]
+        policy = case knobText context.knobs (knobName "outbox.ordering-policy") of
+          "per-source-stream" -> PerSourceStream
+          "stop-the-line" -> StopTheLine
+          _ -> PerKeyHeadOfLine
+        options = defaultPublishOptions {batchSize = 32, maxAttempts = 4, backoff = ConstantBackoff 0.01, orderingPolicy = policy}
+        plan = Broker.FaultPlan (unSeed context.seed) 0.05 0 0 0 0
+        model = Broker.BrokerModel 1000 10 4
+        hooks = Broker.PublishHook (const (pure ())) (const (pure ()))
+        expected = Map.fromList [(TextEncoding.encodeUtf8 messageId, (key, sequenceNo)) | (messageId, Just key, sequenceNo) <- entries]
+    enqueueInline fixture source entries
+    broker <- Broker.newBroker
+    let callback = Broker.publishCallback broker model plan hooks "publisher"
+        drain = do
+          backlog <- runFixture countOutboxBacklog >>= either (fail . show) pure
+          if backlog == 0
+            then pure ()
+            else do
+              _ <- runFixture (publishClaimedOutbox callback options Nothing) >>= either (fail . show) pure
+              threadDelay 10000
+              drain
+    drained <- timeout (300 * 1000000) drain
+    rows <- runFixture (listOutbox source) >>= either (fail . show) pure
+    records <- Broker.readBroker broker
+    let observedIds = [value | record <- records, (name, value) <- record.headers, name == TextEncoding.encodeUtf8 headerMessageId]
+        observed = [pair | messageId <- observedIds, Just pair <- [Map.lookup messageId expected]]
+        keyOrder = Oracle.perKeyOrder observed
+        sourceOrder = Oracle.perKeyOrder [(source, sequenceNo) | (_, sequenceNo) <- observed]
+        cells =
+          [ ("drained-before-deadline", maybe False (const True) drained),
+            ("no-loss", length rows == rowCount && all ((== OutboxSent) . (.status)) rows && length observed == rowCount),
+            ("no-duplicates", Oracle.boundedDuplicates Map.empty observedIds),
+            ("per-key-order", keyOrder),
+            ("per-source-order", policy /= PerSourceStream || sourceOrder)
+          ]
+    recordCells context cells
+
+terminalStateMatrix :: Scenario
+terminalStateMatrix =
+  failureSkipsSuccessors
+    { id = either (error . show) id (parseScenarioId "keiro/outbox/correctness/terminal-state-matrix"),
+      summary = "Drains failed, rejected and poison integration events to their terminal states.",
+      tier = TierStandard,
+      knobs =
+        [ KnobSpec (knobName "outbox.ordering-policy") "Claim ordering policy" KnobText (VText "per-key-head-of-line") (OneOf (VText "per-key-head-of-line" :| [VText "per-source-stream", VText "stop-the-line", VText "best-effort"])) [VText "per-source-stream", VText "stop-the-line", VText "best-effort"],
+          KnobSpec (knobName "outbox.backoff") "Retry schedule" KnobText (VText "constant") (OneOf (VText "constant" :| [VText "exponential"])) [VText "exponential"],
+          KnobSpec (knobName "outbox.rows") "Number of integration events" KnobInt (VInt 2000) (IntRange 1 20000) []
+        ],
+      run = runTerminalStateMatrix
+    }
+
+runTerminalStateMatrix :: RunContext -> IO ScenarioReport
+runTerminalStateMatrix context =
+  withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture -> do
+    let KeiroRunner runFixture = fixture.runner
+        source = sourceName context "terminal"
+        rowCount = fromIntegral (knobInt context.knobs (knobName "outbox.rows"))
+        entries = [(Text.pack (show i), Just ("key-" <> Text.pack (show (i `mod` (50 :: Int)))), i `div` 50) | i <- [1 .. rowCount]]
+        policy = case knobText context.knobs (knobName "outbox.ordering-policy") of
+          "per-source-stream" -> PerSourceStream
+          "stop-the-line" -> StopTheLine
+          "best-effort" -> BestEffort
+          _ -> PerKeyHeadOfLine
+        schedule = case knobText context.knobs (knobName "outbox.backoff") of
+          "exponential" -> ExponentialBackoff (ExponentialBackoffOptions 0.01 0.08 2)
+          _ -> ConstantBackoff 0.01
+        options = defaultPublishOptions {batchSize = 32, maxAttempts = 4, backoff = schedule, orderingPolicy = policy}
+        plan = Broker.FaultPlan (unSeed context.seed) 0.1 0.02 0.01 0 0
+        model = Broker.BrokerModel 1000 10 4
+        hooks = Broker.PublishHook (const (pure ())) (const (pure ()))
+    enqueueInline fixture source entries
+    broker <- Broker.newBroker
+    let callback = Broker.publishCallback broker model plan hooks "publisher"
+        drain totals = do
+          backlog <- runFixture countOutboxBacklog >>= either (fail . show) pure
+          if backlog == 0
+            then pure totals
+            else do
+              summary <- runFixture (publishClaimedOutbox callback options Nothing) >>= either (fail . show) pure
+              threadDelay 10000
+              drain (totals <> [summary])
+    drained <- timeout (300 * 1000000) (drain [])
+    rows <- runFixture (listOutbox source) >>= either (fail . show) pure
+    records <- Broker.readBroker broker
+    let brokerIds = Set.fromList [value | record <- records, (name, value) <- record.headers, name == TextEncoding.encodeUtf8 headerMessageId]
+        statusMatches row =
+          case Broker.decide plan (row {attemptCount = 1}) of
+            Broker.AlwaysFail -> row.status == OutboxDead && row.attemptCount == 4
+            Broker.RejectWith _ -> row.status == OutboxRejected
+            _ -> row.status == OutboxSent
+        wireMatches row =
+          let published = Set.member (TextEncoding.encodeUtf8 row.event.messageId) brokerIds
+           in case row.status of
+                OutboxSent -> published
+                OutboxRejected -> not published
+                OutboxDead -> not published
+                _ -> False
+        cells =
+          [ ("drained-before-deadline", maybe False (const True) drained),
+            ("every-row-terminal", length rows == rowCount && all statusMatches rows),
+            ("broker-matches-terminal-status", all wireMatches rows),
+            ("published-count-matches-summaries", maybe False (\summaries -> sum (map (.published) summaries) == length [() | row <- rows, row.status == OutboxSent]) drained),
+            ("rejected-count-matches-summaries", maybe False (\summaries -> sum (map (.rejected) summaries) == length [() | row <- rows, row.status == OutboxRejected]) drained),
+            ("dead-count-matches-summaries", maybe False (\summaries -> sum (map (.dead) summaries) == length [() | row <- rows, row.status == OutboxDead]) drained)
+          ]
+    recordCells context cells
+
+knobName :: Text -> KnobName
+knobName = either (error . show) id . mkKnobName
 
 failureSkipsSuccessors :: Scenario
 failureSkipsSuccessors =
@@ -49,32 +247,9 @@ runFailureSkipsSuccessors :: RunContext -> IO ScenarioReport
 runFailureSkipsSuccessors context =
   withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture -> do
     let KeiroRunner runFixture = fixture.runner
-        source = "kenshou-outbox-failure-skips"
-        entries = [("a" <> suffix, "a") | suffix <- ["1", "2", "3", "4", "5"]] <> [("b" <> suffix, "b") | suffix <- ["1", "2", "3", "4", "5"]]
-    _ <- forM entries \(messageId, key) -> do
-      now <- getCurrentTime
-      outboxId <- runFixture freshOutboxId >>= either (fail . show) pure
-      let event =
-            IntegrationEvent
-              { messageId,
-                source,
-                destination = "kenshou.outbox.v1",
-                key = Just key,
-                eventType = "OutboxProbe",
-                schemaVersion = 1,
-                contentType = ApplicationJson,
-                schemaReference = Nothing,
-                sourceEventId = Nothing,
-                sourceGlobalPosition = Nothing,
-                payloadBytes = ByteString.empty,
-                occurredAt = now,
-                causationId = Nothing,
-                correlationId = Nothing,
-                traceContext = Nothing,
-                attributes = Nothing
-              }
-      runFixture (runTransaction (enqueueIntegrationEventTx outboxId event)) >>= either (fail . show) pure
-      threadDelay 1000
+        source = sourceName context "failure-skips"
+        entries = [("a" <> suffix, Just "a", index) | (suffix, index) <- zip ["1", "2", "3", "4", "5"] [1 :: Int ..]] <> [("b" <> suffix, Just "b", index) | (suffix, index) <- zip ["1", "2", "3", "4", "5"] [1 :: Int ..]]
+    enqueueInline fixture source entries
     broker <- Broker.newBroker
     let model = Broker.BrokerModel 0 0 4
         hooks = Broker.PublishHook (const (pure ())) (const (pure ()))

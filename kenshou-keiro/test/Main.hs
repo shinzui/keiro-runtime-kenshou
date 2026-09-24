@@ -4,6 +4,7 @@ import Data.Aeson (object)
 import Data.ByteString qualified as ByteString
 import Data.IORef (newIORef, readIORef)
 import Data.List (intersect)
+import Data.Map.Strict qualified as Map
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import Data.Time (getCurrentTime)
@@ -29,6 +30,7 @@ import Kenshou.Suite.Keiro.Fixture.Oracle qualified as Oracle
 import Kenshou.Suite.Keiro.Fixture.Transfer
 import Kenshou.Suite.Keiro.Fixture.Workload qualified as Workload
 import Kenshou.Suite.Keiro.Outbox.Broker qualified as Broker
+import Kenshou.Suite.Keiro.Outbox.Oracle qualified as OutboxOracle
 import Kiroku.Store.Types (EventId (..), EventType (..), GlobalPosition (..), RecordedEvent (..), StreamId (..), StreamVersion (..))
 import Shibuya.Adapter (Adapter (..))
 import Shibuya.Core.Ack (AckDecision (..))
@@ -50,7 +52,9 @@ main = hspec do
       Broker.decide plan row `shouldBe` Broker.decide plan (brokerRow now "one" (Just "group"))
       Broker.decide retryPlan row `shouldBe` Broker.FailOnce
       Broker.decide retryPlan (row {attemptCount = 2}) `shouldBe` Broker.Succeed
-      Broker.decide (Broker.FaultPlan 1 0 0 1 0 0) row `shouldBe` Broker.AlwaysFail
+      let poisonPlan = Broker.FaultPlan 1 0 0 1 0 0
+      Broker.decide poisonPlan row `shouldBe` Broker.AlwaysFail
+      Broker.decide poisonPlan (row {attemptCount = 7}) `shouldBe` Broker.AlwaysFail
     it "never appends a later row of a failed key in the same callback" do
       now <- getCurrentTime
       broker <- Broker.newBroker
@@ -61,6 +65,13 @@ main = hspec do
       length outcomes `shouldBe` 2
       records <- Broker.readBroker broker
       records `shouldBe` []
+  describe "Outbox oracles" do
+    it "rejects a later broker offset carrying an earlier sequence of the same key" do
+      OutboxOracle.perKeyOrder [("a" :: Text, 1), ("b", 9), ("a", 3), ("a", 2)] `shouldBe` False
+      OutboxOracle.perKeyOrder [("a" :: Text, 1), ("b", 9), ("a", 2)] `shouldBe` True
+    it "rejects a duplicate outside every recorded crash window" do
+      OutboxOracle.boundedDuplicates (Map.singleton ("in-flight" :: Text) 1) ["in-flight", "in-flight", "outside", "outside"] `shouldBe` False
+      OutboxOracle.boundedDuplicates (Map.singleton ("in-flight" :: Text) 1) ["in-flight", "in-flight", "outside"] `shouldBe` True
   describe "account event stream validation" do
     it "accepts every snapshot policy" do
       let accepted = accountEventStream SnapNever `seq` accountEventStream (SnapEvery 1) `seq` accountEventStream (SnapEvery 10) `seq` accountEventStream SnapOnTerminal `seq` True
