@@ -79,6 +79,9 @@ library
     Kenshou.Suite.Keiro.Router.Bench
     Kenshou.Suite.Keiro.Router.Concurrency
     Kenshou.Suite.Keiro.Router.Correctness
+    Kenshou.Suite.Keiro.Shard
+    Kenshou.Suite.Keiro.Shard.LeaseSmoke
+    Kenshou.Suite.Keiro.Shard.Oracle
     Kenshou.Suite.Keiro.Telemetry
     Kenshou.Suite.Keiro.Timer
     Kenshou.Suite.Keiro.Timer.Correctness

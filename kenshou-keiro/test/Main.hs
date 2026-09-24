@@ -32,6 +32,7 @@ import Kenshou.Suite.Keiro.Fixture.Transfer
 import Kenshou.Suite.Keiro.Fixture.Workload qualified as Workload
 import Kenshou.Suite.Keiro.Outbox.Broker qualified as Broker
 import Kenshou.Suite.Keiro.Outbox.Oracle qualified as OutboxOracle
+import Kenshou.Suite.Keiro.Shard.Oracle qualified as ShardOracle
 import Kenshou.Suite.Keiro.Workflow.Definitions qualified as WorkflowDefinitions
 import Kenshou.Suite.Keiro.Workflow.Effects qualified as WorkflowEffects
 import Kiroku.Store.Types (EventId (..), EventType (..), GlobalPosition (..), RecordedEvent (..), StreamId (..), StreamVersion (..))
@@ -61,6 +62,16 @@ main = hspec do
           wid = WorkflowId "wf-1"
       WorkflowDefinitions.expectedLinearSteps params `shouldBe` ["s0", "s1", "s2"]
       WorkflowDefinitions.expectedLinearResult params wid `shouldBe` 7 * 3 + 31 * 4 * 3 + 3
+  describe "shard oracles" do
+    it "includes one reconciliation pass per lost bucket per survivor" do
+      ShardOracle.failoverDeadline (ShardOracle.ShardTiming 3 0.5) 5 2 `shouldBe` 5.5
+    it "rejects missing and overlapping bucket owners" do
+      ShardOracle.coverageAndDisjointness 2 [(0, ["a"]), (1, ["b"])] `shouldBe` True
+      ShardOracle.coverageAndDisjointness 2 [(0, ["a", "b"]), (1, ["b"])] `shouldBe` False
+      ShardOracle.coverageAndDisjointness 2 [(0, ["a"])] `shouldBe` False
+    it "rejects a regressing checkpoint for one member" do
+      ShardOracle.checkpointsMonotonic [("a", 1), ("b", 5), ("a", 2), ("b", 5)] `shouldBe` True
+      ShardOracle.checkpointsMonotonic [("a", 2), ("b", 5), ("a", 1)] `shouldBe` False
   describe "Outbox broker" do
     it "makes stable decisions from seed, identity and attempt" do
       now <- getCurrentTime

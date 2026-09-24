@@ -62,7 +62,8 @@ Milestone 2 — Timer scenarios
 
 Milestone 3 — Sharded subscription scenarios
 
-- [ ] Add `Kenshou.Suite.Keiro.Shard.Knobs`, `.Roles` (`keiro.shard.worker`, `keiro.shard.appender`) and `.Oracle` (coverage, disjointness, deadline arithmetic, checkpoint monotonicity) with unit tests.
+- [ ] Add `Kenshou.Suite.Keiro.Shard.Knobs`, `.Roles` and complete `.Oracle`. Pure coverage/disjointness, deadline arithmetic and checkpoint monotonicity checkers are implemented with doctored-input tests; process roles and knobs remain. Use the delivered kernel's slash-form role names.
+- [x] (2026-09-24 05:33Z) Registered an incremental `keiro/shard/correctness/lease-coverage-smoke` scenario. Runs under both PostgreSQL durability modes passed five verdicts for one-bucket-per-pass ownership, complete coverage, relinquish and immediate transfer.
 - [ ] Add the shard correctness scenarios (three).
 - [ ] Add the shard concurrency and crash scenarios (six).
 - [ ] Extend the bundle; confirm `kenshou list`.
