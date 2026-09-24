@@ -56,7 +56,7 @@ Milestone 1 — Durable workflow scenarios
 Milestone 2 — Timer scenarios
 
 - [ ] Add `Kenshou.Suite.Keiro.Timer.Knobs`, `.Roles` (`keiro.timer.worker`) and `.Oracle` with unit tests.
-- [ ] Add the timer correctness scenarios (two). `keiro/timer/correctness/lifecycle-and-at-least-once` is registered and passed under both `fsync-off` and `durable` on 2026-09-24; `max-attempts-dead-letters-post-claim` remains.
+- [x] (2026-09-24 05:35Z) Added both timer correctness scenarios; each passed under both `fsync-off` and `durable`. The attempt-ceiling probe checks two callback executions, post-claim dead-lettering on attempt three, zero-ceiling refusal, persisted reason and invalid options.
 - [ ] Add the timer concurrency and crash scenarios (four).
 - [ ] Extend the bundle; confirm `kenshou list`.
 

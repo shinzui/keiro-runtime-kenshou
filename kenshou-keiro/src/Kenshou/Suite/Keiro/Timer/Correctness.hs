@@ -7,7 +7,7 @@ import Data.Time (addUTCTime, getCurrentTime)
 import Data.UUID qualified as UUID
 import Effectful (Eff, IOE, liftIO)
 import Effectful.Error.Static (Error)
-import Keiro.Timer (TimerId (..), TimerRequest (..), TimerRow (..), TimerStatus (..), TimerWorkerOptions (..), cancelTimer, claimDueTimer, deadLetterTimer, defaultTimerWorkerOptions, lookupTimer, markTimerFired, requeueStuckTimers, runTimerWorkerWith, scheduleTimerOnceTx, scheduleTimerTx)
+import Keiro.Timer (TimerId (..), TimerInspection (..), TimerRequest (..), TimerRow (..), TimerStatus (..), TimerWorkerConfigError (..), TimerWorkerOptions (..), cancelTimer, claimDueTimer, deadLetterTimer, defaultTimerWorkerOptions, lookupTimer, lookupTimerInspection, markTimerFired, mkTimerWorkerOptions, requeueStuckTimers, runTimerWorkerWith, scheduleTimerOnceTx, scheduleTimerTx)
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
@@ -23,7 +23,47 @@ import Kiroku.Store.Error (StoreError)
 import Kiroku.Store.Types (EventId (..))
 
 scenarios :: [Scenario]
-scenarios = [lifecycle]
+scenarios = [lifecycle, maxAttemptsDeadLetters]
+
+maxAttemptsDeadLetters :: Scenario
+maxAttemptsDeadLetters =
+  lifecycle
+    { id = either (error . show) id (parseScenarioId "keiro/timer/correctness/max-attempts-dead-letters-post-claim"),
+      summary = "Checks that the post-claim attempt ceiling dead-letters without running the callback and that invalid options are rejected.",
+      run = runMaxAttempts
+    }
+
+runMaxAttempts :: RunContext -> IO ScenarioReport
+runMaxAttempts context = withCheck context \check ->
+  withDurableStore (defaultConnectionSettings (requirePostgres context).connectionString) \fixture -> do
+    now <- getCurrentTime
+    calls <- newIORef (0 :: Int)
+    let store = durableKirokuStore fixture
+        due = addUTCTime (-2) now
+        request number = TimerRequest (TimerId (uuid number)) "kenshou" "attempt-ceiling" due Null
+        timer number = TimerId (uuid number)
+        opts = defaultTimerWorkerOptions {maxAttempts = Just 2, requeueStuckAfter = Just 1}
+        run :: Eff '[Store, Error StoreError, IOE] a -> IO (Either StoreError a)
+        run = runStoreIO store
+        failFire _ = liftIO (atomicModifyIORef' calls (\n -> (n + 1, ()))) >> pure Nothing
+    _ <- run $ runTransaction (scheduleTimerTx (request 4))
+    first <- run $ runTimerWorkerWith Nothing opts now failFire
+    second <- run $ runTimerWorkerWith Nothing opts (addUTCTime 2 now) failFire
+    third <- run $ runTimerWorkerWith Nothing opts (addUTCTime 4 now) failFire
+    dead <- run $ lookupTimerInspection (timer 4)
+    count <- readIORef calls
+    _ <- run $ runTransaction (scheduleTimerTx (request 5))
+    zeroClaim <- run $ runTimerWorkerWith Nothing opts {maxAttempts = Just 0} (addUTCTime 4 now) failFire
+    zeroDead <- run $ lookupTimer (timer 5)
+    afterZero <- readIORef calls
+    let claimed result attempt = case result of Right (Just row) -> row.attempts == attempt; _ -> False
+        cells =
+          [ ("first-two-fire", claimed first 1 && claimed second 2 && count == 2),
+            ("third-claim-dead", claimed third 3 && case dead of Right (Just inspection) -> inspection.timer.status == Dead && inspection.timer.attempts == 3 && inspection.lastError == Just "timer exceeded attempt ceiling of 2"; _ -> False),
+            ("zero-ceiling", claimed zeroClaim 1 && afterZero == 2 && case zeroDead of Right (Just row) -> row.status == Dead && row.attempts == 1; _ -> False),
+            ("invalid-options", mkTimerWorkerOptions opts {maxAttempts = Just (-1)} == Left (InvalidTimerMaxAttempts (-1)) && mkTimerWorkerOptions opts {requeueStuckAfter = Just 0} == Left (InvalidTimerRequeueStuckAfter 0))
+          ]
+    recordTimerCells check cells
 
 lifecycle :: Scenario
 lifecycle =
