@@ -19,6 +19,7 @@ import Kenshou.Core.Run
 import Kenshou.Core.RunResult (RunResult (..))
 import Kenshou.Core.RunSpec
 import Kenshou.Core.RunSpec.Resolve
+import Kenshou.Env.Kafka.Spec (kafkaEnvSpecFromValue)
 import Options.Applicative
 import Settei hiding (optional)
 import Settei.Env (envSnapshot)
@@ -96,13 +97,15 @@ runHandler options environment = case schemaDiagnostic options.config.diagnostic
           input <- loadInput options
           case input >>= applyOverrides options of
             Left err -> Text.IO.hPutStrLn stderr ("kenshou: " <> err) >> pure (ExitFailure 2)
-            Right spec -> do
-              resolved <- resolveRunSpec environment.registry spec
-              case resolved of
-                Left problems -> Text.IO.hPutStrLn stderr (Text.intercalate "\n" [message | SpecError message <- NonEmpty.toList problems]) >> pure (ExitFailure 2)
-                Right (_, effective)
-                  | options.printSpec -> LazyByteString.putStrLn (Aeson.encode effective) >> pure ExitSuccess
-                  | otherwise -> execute defaults spec
+            Right spec -> case kafkaEnvSpecFromValue spec.environment.kafka of
+              Left err -> Text.IO.hPutStrLn stderr ("kenshou: " <> err) >> pure (ExitFailure 2)
+              Right _ -> do
+                resolved <- resolveRunSpec environment.registry spec
+                case resolved of
+                  Left problems -> Text.IO.hPutStrLn stderr (Text.intercalate "\n" [message | SpecError message <- NonEmpty.toList problems]) >> pure (ExitFailure 2)
+                  Right (_, effective)
+                    | options.printSpec -> LazyByteString.putStrLn (Aeson.encode effective) >> pure ExitSuccess
+                    | otherwise -> execute defaults spec
 
     execute defaults spec = do
       cohortResult <- loadCohort options.cohortIdentity

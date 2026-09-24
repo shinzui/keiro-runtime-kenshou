@@ -2,8 +2,12 @@
 # Nix includes it in the flake source.
 { inputs, ... }:
 {
-  perSystem = { pkgs, ... }:
+  perSystem = { pkgs, system, ... }:
     let
+      unfreePkgs = import inputs.nixpkgs {
+        inherit system;
+        config.allowUnfree = true;
+      };
       # PostgreSQL's major version is a run-time dimension. PostgreSQL 18 stays
       # on PATH while both bin directories remain directly addressable. The
       # partitioned-queue scenarios need pg_partman available to each server.
@@ -53,7 +57,7 @@
     in
     {
       haskellProject.extraDevPackages =
-        [ pkgs.git pkgs.dhall pkgs.dhall-json pkgs.check-jsonschema pgEnvHook ]
+        [ pkgs.git pkgs.dhall pkgs.dhall-json pkgs.check-jsonschema unfreePkgs.redpanda-client pgEnvHook ]
         ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.procps pkgs.lsof ];
 
       treefmt.programs.fourmolu.package = pkgs.haskell.packages.ghc9124.fourmolu;

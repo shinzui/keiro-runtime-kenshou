@@ -17,6 +17,11 @@ provenance:
       at: 2026-09-24T22:53:08Z
       mode: "update"
       note: "Consolidated Progress into delivered outcomes and remaining acceptance"
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-24T22:58:33Z
+      mode: "implement"
+      note: "Began broker fixture implementation and reconciled shell dependencies"
 ---
 
 # Cover the Kafka transport edge with a disposable broker
@@ -42,18 +47,30 @@ cabal run kenshou -- run kafka/adapter/concurrency/sigkill-redelivery-window --o
 
 ## Progress
 
+- [x] Milestone 1: private Redpanda fixture, two live fixture scenarios, CLI registration, layer guide, and ADR validated on Apple Container and Docker.
+- [ ] Milestone 2: the live AckOk adapter check and producer modes check pass; the two-topic partition-key scenario reproduces its scoped, nonblocking counterexample. The other adapter, producer, and record-conversion scenarios remain.
 - [ ] Deliver the disposable broker, Kafka adapter correctness and rebalance coverage, real crash/outage/model scenarios, benchmarks, soaks, and telemetry arms; verify the acceptance commands in Validation and Acceptance.
 
 ## Surprises & Discoveries
 
-(None yet.)
+- On 2026-09-24, `pkgs.redpanda-client` failed ordinary Nix evaluation because nixpkgs marks `redpanda-rpk-26.2.2` unfree. The project shell now imports the same pinned nixpkgs with `config.allowUnfree = true` for `rpk`, following the owner's stated project standard. The existing homebrew `rpk` 26.2.3 was used for the first broker probes.
+- The pinned Apache Kafka 4.3.1 package did start in KRaft's static `controller.quorum.voters` form: `kafka-storage.sh format -t "$cluster_id" -c server.properties` printed `Formatting metadata directory ... with metadata.version 4.3-IV0`. Redpanda also started as a private container on both Docker and Apple Container. `rpk -X brokers=127.0.0.1:39094 topic create kenshou-spike-apple -p 3` succeeded on Apple Container. The private container was stopped after the probe; the machine-wide cluster was never addressed.
+- The completed kernel has an `environment.kafka` JSON slot, but `Kenshou.Core.Compat.compatibilityValue` omitted it from the comparison key. The implementation adds that member when present so an external broker setting cannot compare as the default private broker.
+- The head cohort pins the hw-kafka-client fork but does not pin the intended hw-kafka-streamly remediation commit. Head-cohort validation of fatal classification therefore needs the cohort bootstrap plan corrected before it can be interpreted.
+- A stricter fixture oracle exposed a parser defect in the new `rpk group describe --format json` wrapper: this `rpk` returns a one-element array containing `partitions`, so the original parser silently returned an empty offset list. The captured response showed three zero-lag partitions after the parser fix. The oracle now requires exactly the expected number of partition offsets, rather than passing vacuously on an empty list.
+- A new `produceMessageSync` call against the killed broker did not return promptly, even with `message.timeout.ms=1000`, because the pinned hw-kafka-client flush path waits for its outbound queue to drain. The restart fixture uses a five-second bounded `rpk topic produce` outage probe; all acknowledged data before and after the outage still goes through `produceMessageSync`.
+- Apple Container's bind-mount syntax rejected a single-file mount for a Redpanda server override. Mounting the generated configuration directory at `/etc/redpanda` passed a live run with `auto_create_topics_enabled=false`.
 
 
 ## Decision Log
 
-- Decision: The default local broker is Apache Kafka 4.x in KRaft single-node mode, run as a child process from the Nix development shell. Redpanda is supported as an opt-in container backend and as the external broker of a cell.
-  Rationale: The MasterPlan's Integration Point 7 says "a private Redpanda started for the run", but the pinned nixpkgs has no Redpanda server package (`redpanda` is an alias of `redpanda-client`, which is only the `rpk` command-line tool) and Redpanda has no macOS build, so a Redpanda broker needs a container runtime on both operating systems. The house Seihou option `nix.redpanda=true` was verified to be macOS-only (Apple Container). `apacheKafka` 4.3.1 is in the pinned nixpkgs for `aarch64-darwin` and `x86_64-linux`, needs nothing but a JVM, gives the harness a real process id to `SIGKILL`, and binds whatever ports it is told to. The system under test is the client stack, which speaks the same wire protocol to both brokers; the backend and its version are recorded in every result so runs on different brokers are never compared.
-  Date: 2026-09-20
+- Decision: The default local broker is one private Redpanda 26.2.1 container per run, on Apple Container on macOS and Docker on Linux. The external broker backend remains for cells. This supersedes the earlier Apache Kafka default drafted on 2026-09-20.
+  Rationale: The owner explicitly approved Redpanda and the unfree Nix `rpk` package, and pointed to the Apple Container derivation `mori://shinzui/dotfiles.nix/packages/container` for tested local launch details. Disposable Redpanda instances launched with the run's own name and free host ports succeeded on both Apple Container and Docker. Unlike the project's fixed-port `redpanda-local-*` scripts, each test run gets an independent container that can be killed and restarted without touching `127.0.0.1:9092`.
+  Date: 2026-09-24
+
+- Decision: Broker configuration in `environment.kafka` joins the compatibility key, with a missing object representing the default private Redpanda backend.
+  Rationale: The completed kernel omitted `environment.kafka` from comparison inputs. Backend and external broker differences must prevent paired benchmark comparisons.
+  Date: 2026-09-24
 
 - Decision: Topic, group and offset administration goes through the `rpk` command-line tool, always with an explicit `-X brokers=` and a private empty configuration file.
   Rationale: The admin API (`Kafka.Topic`) exists only on the hw-kafka-client fork's base (upstream main); Hackage 5.3.0 has none, and the fixture must work identically under both cohorts. `rpk` uses only Kafka-protocol admin requests, so it works against Apache Kafka and Redpanda, and `rpk group describe --format json` gives committed offsets, log end offsets, lag and members in one call. An explicit broker flag and a private configuration file make it impossible for an operator's `rpk` profile to point the fixture at the shared broker.
@@ -79,8 +96,8 @@ cabal run kenshou -- run kafka/adapter/concurrency/sigkill-redelivery-window --o
   Rationale: keiro has no Kafka dependency; its conversions are pure and only meet a broker at this edge. Depending on a runtime package does not break the rule that layer packages never import one another.
   Date: 2026-09-20
 
-- Decision: This plan edits `flake.module.nix` (two packages added to the development shell) in addition to the three-line registration.
-  Rationale: Integration Point 3 calls the registration "the only file outside its own package that a coverage plan touches", but a broker fixture is useless without a broker binary and `rpk` on `PATH`. The edit is additive and is reported to the MasterPlan.
+- Decision: This plan edits `flake.module.nix` to add the unfree `rpk` package in addition to the CLI registration.
+  Rationale: Integration Point 3 calls the registration "the only file outside its own package that a coverage plan touches", but the broker fixture needs `rpk` on `PATH`. Redpanda's server comes from the pinned container image rather than Nix. The edit is reported to the MasterPlan.
   Date: 2026-09-20
 
 - Decision: The `pg.durability` and `pg.version` dimensions are declared not applicable for every scenario in this layer; benchmarks default `kafka.prop.acks` to `all` and record the broker's flush settings in the result instead.
@@ -139,11 +156,11 @@ Three hazards were inferred from source while drafting and are not recorded upst
 
 ### How a private broker can be provisioned
 
-Verified on 2026-09-20 against the nixpkgs revision the house development shells pin (`d5dfd8e6716dde34398bc14bc87c10dece9c8c68`, through `haskell-nix-dev`): `apacheKafka` is 4.3.1 (Scala 2.13) and available on `aarch64-darwin` and `x86_64-linux`; `redpanda-client` (`rpk`) is 26.2.2 on both; `rdkafka` is 2.15.0; there is no Redpanda server package. The Seihou module `nix-haskell-flake` (`/Users/shinzui/Keikaku/bokuno/seihou-modules/modules/haskell/nix-haskell-flake`) offers `nix.redpanda=true`, which generates `nix/redpanda.nix` with `redpanda-local-{up,down,status,logs,purge}` scripts for a private Redpanda on Apple Container at fixed host ports (Kafka 39092, admin 39644); the module itself states it is macOS-only and contributes nothing elsewhere. The machine-global broker at `127.0.0.1:9092` is a shared Redpanda managed from the owner's dotfiles and must never be used, killed or purged by this suite. `mori://shinzui/load-testing-infra` has no broker role today; `docs/plans/16-provide-leased-verification-cells-in-load-testing-infra.md` adds one.
+The development shell supplies the pinned `redpanda-client` package (`rpk`), which is marked unfree in nixpkgs and is enabled by a separate `inputs.nixpkgs` import with `config.allowUnfree = true` in `flake.module.nix`. Redpanda's server runs as `docker.io/redpandadata/redpanda:v26.2.1` in a run-named container. On macOS, use the owner's Apple Container installation (`mori://shinzui/dotfiles.nix/packages/container`); on Linux, use Docker. Both were probed with isolated names and free host ports on 2026-09-24. The Seihou `redpanda-local-*` scripts use fixed ports and are unsuitable for per-run isolation. The machine-global broker at `127.0.0.1:9092` is shared and must never be used, killed or purged by this suite. `mori://shinzui/load-testing-infra` has no broker role today; `docs/plans/16-provide-leased-verification-cells-in-load-testing-infra.md` adds one.
 
 ### Architecture decision records
 
-There is no local ADR corpus yet; `docs/adr/` is created by `docs/plans/1-bootstrap-the-kenshou-repository-and-pin-the-runtime-cohort.md` as a profile-governed OKF bundle (OKF, the Open Knowledge Format, is a directory of Markdown files with YAML frontmatter validated by the `okf` tool; a profile is the Dhall descriptor that says which fields a record type needs). Scan `docs/adr/` when you start and read anything about layers, cohorts, crash semantics, invariant classes, leak verdicts or telemetry. Relevant cross-repository records: `mori://shinzui/keiro/okf/adrs/concepts/ADR-11` (fatal errors in-band in both poll modes; also states that `max.poll.interval.ms` never evicts an async-mode consumer), `mori://shinzui/keiro-runtime-patterns/okf/adrs/concepts/ADR-3` (Kafka is chosen for cross-context streaming and the application accepts serial consumption, no attempt counter and no built-in dead-letter queue — exactly the limits this plan turns into scenarios), `mori://shinzui/keiro/okf/adrs/concepts/ADR-25` (worker loops survive per-item failures, tested here by outage scenarios), and `mori://shinzui/kiroku/okf/adrs/concepts/ADR-5` (only structural checks and controlled A/B workloads are authoritative performance evidence, which is why benchmarks here are paired). This plan creates one ADR, "The Kafka broker fixture is private to a run: Apache Kafka in KRaft mode locally, the cell's broker on a cell, never the machine-global broker", and contributes evidence to the diagnostics ADR on leak verdicts (the native-memory exception). Allocate the handle with `okf id next docs/adr --profile docs/adr/profile.dhall ADR` and validate with `okf validate docs/adr --strict --profile docs/adr/profile.dhall --profile-enforce --log-enforce`.
+The local ADR corpus is the profile-governed `docs/adr/` OKF bundle. Relevant decisions cover layers, cohorts, crash semantics, invariant classes, leak verdicts and telemetry. Cross-repository records include `mori://shinzui/keiro/okf/adrs/concepts/ADR-11` (fatal errors in-band in both poll modes), `mori://shinzui/keiro-runtime-patterns/okf/adrs/concepts/ADR-3` (Kafka for cross-context streaming), `mori://shinzui/keiro/okf/adrs/concepts/ADR-25` (worker loops survive per-item failures), and `mori://shinzui/kiroku/okf/adrs/concepts/ADR-5` (controlled performance evidence). This plan created `docs/adr/0017-keep-kafka-brokers-private-to-a-run.md`, which accepts private Redpanda locally and the cell's broker on a cell. Validate the bundle with `okf validate docs/adr --strict --profile docs/adr/profile.dhall --profile-enforce --log-enforce`.
 
 
 ## Plan of Work
@@ -152,16 +169,16 @@ There is no local ADR corpus yet; `docs/adr/` is created by `docs/plans/1-bootst
 
 Scope: everything needed to hand a scenario a broker it owns. At the end the package `kenshou-kafka` exists, `Kenshou.Env.Kafka` starts, controls and removes a private broker, two fixture scenarios prove it, and the bundle is registered so `kenshou list` shows the `kafka` layer. Commands: `cabal test kenshou-kafka-test`, then the two `kenshou run` commands in Concrete Steps. Acceptance: both scenarios pass on the implementer's machine, the run's `logs/` contains the broker log, no process survives the run, and the machine-global broker is provably untouched.
 
-Begin with a spike, because nothing in the house has run Apache Kafka before. In the development shell, by hand: generate a cluster id with `kafka-storage.sh random-uuid`, write the properties file shown in Concrete Steps into a scratch directory, format it with `kafka-storage.sh format`, start `kafka-server-start.sh`, create a topic with `rpk topic create t -p 3 -X brokers=127.0.0.1:<port>`, describe a group, and stop it. Record in Surprises & Discoveries the exact `format` invocation that works with the static `controller.quorum.voters` form on 4.3.1 (if it insists on a dynamic quorum, the fallback is `controller.quorum.bootstrap.servers` plus `format --standalone`), the start-up time, and whether the start script replaces itself with the JVM (so that the spawned process id is the broker). If `rpk` misbehaves against Apache Kafka, fall back to the scripts that ship in the same Nix package (`kafka-topics.sh`, `kafka-consumer-groups.sh`) behind the same Haskell interface; they are slower by a JVM start per call. The spike is promoted when a record produced with `kcat` or `rpk topic produce` is consumed back.
+The broker spike is complete. A run-named `redpandadata/redpanda:v26.2.1` container started with free host ports on both Apple Container and Docker, and `rpk` created a topic using an explicit private broker address. Apache Kafka 4.3.1 was also formatted successfully as a fallback investigation, but is not part of the supported fixture after the owner's Redpanda decision.
 
-Add the two binaries to the development shell by extending the unmanaged `flake.module.nix` that the bootstrap plan created, inside its `perSystem` block: `haskellProject.extraDevPackages = [ pkgs.apacheKafka pkgs.redpanda-client ];` (merge with the existing list). This is the only edit outside the package besides the registration and the documents named below.
+Add `rpk` to the development shell by extending unmanaged `flake.module.nix`. Import the pinned `inputs.nixpkgs` with `config.allowUnfree = true` and include `unfreePkgs.redpanda-client` in `haskellProject.extraDevPackages`. This is the only shell edit outside the package besides the registration and the documents named below.
 
 Create `kenshou-kafka/kenshou-kafka.cabal` in the house style (cabal-version 3.0, `default-language: GHC2024`, the `common warnings` stanza and default extensions used by the other `kenshou-*` packages). The library depends on `kenshou-core`, `kenshou-measure`, `kenshou-check`, `kenshou-diagnose`, `kenshou-telemetry`, `shibuya-kafka-adapter`, `kafka-effectful`, `hw-kafka-client`, `hw-kafka-streamly`, `shibuya-core`, `shibuya-metrics`, `keiro`, `keiro-core`, `effectful-core`, `streamly`, `streamly-core`, `hs-opentelemetry-api`, `aeson`, `bytestring`, `containers`, `text`, `time`, `network`, `process`, `directory`, `filepath`, `unix`, `stm`, `async`, `hedgehog`, without version bounds tighter than the cohort's (the cohort project file decides versions). The test suite `kenshou-kafka-test` uses `hspec` and `hspec-hedgehog`.
 
-`kenshou-kafka/src/Kenshou/Env/Kafka/Spec.hs` defines the specification and how it is read from the run specification's `environment.kafka` object (schema `schemas/kenshou.kafka-env.v1.json`, added by this plan). An absent object means the default: private Apache Kafka, one proxied lane. The decoder rejects, with a usage-style error, any broker address whose host is `127.0.0.1`, `localhost` or `::1` and whose port is 9092, for every backend, with no override; the private backends never bind 9092 either. Check the completed kernel plan for how a scenario reads the run specification's environment object and whether its schema admits extension members; if it does not, ask for the member to be reserved through the MasterPlan's Integration Point 5 rather than smuggling the address through a knob.
+`kenshou-kafka/src/Kenshou/Env/Kafka/Spec.hs` defines the specification and reads it from the existing `environment.kafka` slot of the run specification (schema `schemas/kenshou.kafka-env.v1.json`). An absent object means one private Redpanda container with one proxied lane. The decoder rejects any address at `127.0.0.1:9092`, `localhost:9092`, or `[::1]:9092`, with no override. The private backend never binds port 9092. Route a malformed Kafka environment to the kernel's usage-style error before creating a run directory.
 
 ```haskell
-data BrokerBackend = ApacheKafkaProcess | RedpandaContainer | ExternalBrokers
+data BrokerBackend = RedpandaContainer | ExternalBrokers
 
 data BrokerControlHooks = BrokerControlHooks
   { killCommand :: [Text] -- argv that ends the broker process with SIGKILL on its host
@@ -174,7 +191,7 @@ data KafkaEnvSpec = KafkaEnvSpec
   , brokers :: [BrokerAddress] -- ExternalBrokers only
   , controlHooks :: Maybe BrokerControlHooks -- ExternalBrokers only
   , lanes :: Int -- 0 = clients reach the broker directly; 1..4 = that many proxied listeners
-  , brokerProps :: Map Text Text -- server.properties overrides, private backends only
+  , brokerProps :: Map Text Text -- private Redpanda server overrides
   , readyTimeoutSeconds :: Int -- default 90
   , keepData :: Bool -- default False
   }
@@ -184,16 +201,18 @@ kafkaEnvSpecFromRunSpec :: RunContext -> Either Text KafkaEnvSpec
 
 `kenshou-kafka/src/Kenshou/Env/Kafka/Naming.hs` derives the run prefix `kenshou-<run id with dashes removed>` and the helpers `topicName :: KafkaEnv -> Text -> TopicName` and `groupName :: KafkaEnv -> Text -> ConsumerGroupId`, which return `<prefix>-<name>` and reject names outside `[a-z0-9-]` (Kafka warns when topic names mix `.` and `_`, so neither is used). Every topic, group, `transactional.id` and `group.instance.id` a scenario creates must go through these helpers; that is what makes clean-up and isolation on a shared external broker possible.
 
-`kenshou-kafka/src/Kenshou/Env/Kafka/ApacheKafka.hs` is the default backend. It creates a work directory `$TMPDIR/kenshou-kafka-<run id>/` (outside the run directory so broker data never enters the manifest), writes `harness.pid` and later `broker.pid`, and for each lane starts the correctness toolkit's TCP proxy on an ephemeral port first, because the broker must advertise the proxy's address. It allocates the broker's own listener ports by binding port 0 and closing, renders `server.properties` (combined `broker,controller` roles, one listener per lane named `LANE0`…, `advertised.listeners` pointing at the proxy ports or at the listener itself when `lanes = 0`, a `CONTROLLER` listener, `log.dirs` in the work directory, replication factors and minimum in-sync replicas of 1 for the offsets and transaction-state topics with 4 partitions each, `group.initial.rebalance.delay.ms=0`, `auto.create.topics.enable=false`, then `brokerProps` overrides), formats storage, and spawns `kafka-server-start.sh` in its own process group with `KAFKA_HEAP_OPTS=-Xms256m -Xmx768m` and standard output and error redirected to `<run dir>/logs/kafka-broker.log`. If start-up fails with an address-in-use error it reallocates ports and retries up to three times. Readiness is proven in-process through the client stack: create an hw-kafka-client producer against lane 0's advertised address and call `Kafka.Metadata.allTopicsMetadata` until it succeeds or `readyTimeoutSeconds` passes (an `infrastructure-failure`). `kill` sends `SIGKILL` to the process group and waits for exit; `stop` sends `SIGTERM`; `start` spawns again with the same properties, data and ports and waits for readiness. On entry the backend sweeps stale work directories whose `harness.pid` names a dead process and kills their `broker.pid`. On exit it stops the broker (kill after ten seconds), stops the proxies, and deletes the work directory unless `keepData`.
+`kenshou-kafka/src/Kenshou/Env/Kafka/RedpandaContainer.hs` is the default backend. It creates a work directory `$TMPDIR/kenshou-kafka-<run id without dashes>/` outside the run directory, writes `harness.pid`, the container runtime and container name, and starts one TCP proxy per requested lane on an ephemeral port. It publishes one container listener per lane on separate free host ports and advertises each proxy address back to clients; with `lanes = 0`, clients use the direct published port. On macOS it uses the installed Apple Container runtime, and on Linux Docker, with the pinned `docker.io/redpandadata/redpanda:v26.2.1` image. `kill` sends the runtime's container kill operation, `stop` stops it, and `start` resumes the same named container and its data. A subsequent run sweeps stale work directories whose `harness.pid` is dead and deletes only run-marked containers. On exit it captures `logs/kafka-broker.log`, stops and deletes the container, stops proxies, and deletes the work directory unless `keepData`. Readiness must use an explicit private broker address and private `rpk` configuration, with a `readyTimeoutSeconds` deadline. Retry port allocation if a container start reports an address collision.
 
 ```haskell
 data BrokerLane = BrokerLane
   { laneBrokers :: [BrokerAddress] -- what clients on this lane must use
-  , laneFaults :: Maybe NetworkFaults -- the correctness toolkit's proxy handle; substitute its real type
+  , laneFaults :: Maybe TcpProxy -- the correctness toolkit's proxy handle
   }
 
 data BrokerControl = BrokerControl
-  { kill :: IO (), stop :: IO (), start :: IO (), isRunning :: IO Bool }
+  { kill :: IO (), stop :: IO (), start :: IO (), isRunning :: IO Bool
+  , generation :: IO Text -- container start timestamp; changes on restart
+  }
 
 data KafkaEnv = KafkaEnv
   { backend :: BrokerBackend
@@ -207,7 +226,7 @@ data KafkaEnv = KafkaEnv
 withKafkaEnv :: RunContext -> KafkaEnvSpec -> (KafkaEnv -> IO a) -> IO a
 ```
 
-`withKafkaEnv` also registers a summary section named `kafka` in the run result (backend, broker version, effective broker properties, lane count) and merges the same facts into the environment fingerprint; confirm in the completed kernel plan that fingerprint members take part in the compatibility key that gates comparisons, and if they do not, expose the backend additionally as a read-only knob `kafka.broker-backend`.
+`withKafkaEnv` registers `summaries.measurements.kafka` in the run result (backend, broker version, effective broker properties, lane count). `Kenshou.Core.Compat.compatibilityValue` includes explicit `environment.kafka` settings in the comparison key, while a missing object denotes the same default private Redpanda environment in every run.
 
 `kenshou-kafka/src/Kenshou/Env/Kafka/Admin.hs` wraps `rpk`, always invoked as `rpk --config <workDir>/rpk.yaml -X brokers=<lane 0> ...` with an empty configuration file.
 
@@ -228,9 +247,9 @@ deleteRunTopics :: KafkaEnv -> IO Int -- rpk topic delete -r '^<prefix>-.*'
 deleteRunGroups :: KafkaEnv -> IO Int
 ```
 
-`kenshou-kafka/src/Kenshou/Env/Kafka/External.hs` uses the brokers from the specification with a single unproxied lane, builds `BrokerControl` from `controlHooks` when present, and always deletes the run's topics and groups on exit. `kenshou-kafka/src/Kenshou/Env/Kafka/RedpandaContainer.hs` is opt-in (`"backend": "redpanda-container"`): on macOS it requires `redpanda-local-up` on `PATH` (present only if the bootstrap plan applied `nix.redpanda=true`), uses the fixed address `127.0.0.1:39092`, holds a lock file because only one such cluster can exist, and maps kill to the container runtime's kill; on Linux it requires `docker` or `podman` and runs `docker.io/redpandadata/redpanda:v26.2.1` with `redpanda start --mode dev-container --smp 1` on allocated ports. When the prerequisite is missing the outcome is `infrastructure-failure` with a message naming it. Lanes are limited to one. A scenario that needs `control` or a second lane and does not get one finishes `errored` with the reason `broker-control-unavailable` or `lanes-unavailable`.
+`kenshou-kafka/src/Kenshou/Env/Kafka/External.hs` uses the brokers from the specification with a single unproxied lane, builds `BrokerControl` from `controlHooks` when present, and always deletes the run's topics and groups on exit. A scenario that needs `control` or a second lane and does not get one finishes `errored` with the reason `broker-control-unavailable` or `lanes-unavailable`.
 
-Two scenarios prove the fixture. `kafka/broker/correctness/fixture-roundtrip` (tier `smoke`, placement `either`, knob `kafka.partitions` integer default 3 allowed 1–64): create topic `roundtrip`, produce 100 records with `produceMessageSync`, read them with `pollMessage` in a group, commit, then inspect. It passes when all 100 payloads are read exactly once, `describeGroup` reports lag 0 on every partition, no lane address is loopback 9092, and after clean-up `rpk topic list` shows no topic with the run prefix; class `contract`. `kafka/broker/concurrency/kill-and-restart` (tier `standard`, placement `either`, requires `control`; knob `kafka.outage-seconds` integer default 5): produce sequence numbers with `produceMessageSync` and `acks=all`, call `kill` after 500 acknowledgements, keep producing (failures are counted, not fatal), `start` after the outage, produce 500 more, then read everything. It passes when every acknowledged sequence number is present, `isRunning` was false during the outage, and the broker process id changed; class `contract`. This scenario is the non-vacuity check for every later outage scenario.
+Two scenarios prove the fixture. `kafka/broker/correctness/fixture-roundtrip` (tier `smoke`, placement `either`, knob `kafka.partitions` integer default 3 allowed 1–64): create topic `roundtrip`, produce 100 records with `produceMessageSync`, read them with `pollMessage` in a group, commit, then inspect. It passes when all 100 payloads are read exactly once, `describeGroup` reports lag 0 on every partition, no lane address is loopback 9092, and after clean-up `rpk topic list` shows no topic with the run prefix; class `contract`. `kafka/broker/concurrency/kill-and-restart` (tier `standard`, placement `either`, requires `control`; knob `kafka.outage-seconds` integer default 5): produce sequence numbers with `produceMessageSync` and `acks=all`, call `kill` after 500 acknowledgements, attempt to produce during the outage and count failures, `start` after the outage, produce 500 more, then read everything. It passes when every acknowledged sequence number is present, `isRunning` was false during the outage, and the container start timestamp changed; class `contract`. This scenario is the non-vacuity check for every later outage scenario.
 
 Finish the milestone with `kenshou-kafka/src/Kenshou/Suite/Kafka.hs` exporting `bundle :: LayerBundle`, the three-line registration, the first section of `docs/layers/kafka.md` (how the fixture works, the `environment.kafka` object with a local and an external example, how to keep broker data for a post-mortem), and the fixture ADR.
 
@@ -354,49 +373,25 @@ selftest/kernel/correctness/always-pass
 2.15.0
 ```
 
-After editing `flake.module.nix`, reload the shell and confirm the tools.
+After editing `flake.module.nix`, reload the shell and confirm `rpk`.
 
 ```nix
-perSystem = { pkgs, ... }: {
-  haskellProject.extraDevPackages = [ pkgs.apacheKafka pkgs.redpanda-client ];
-};
+perSystem = { system, ... }:
+  let unfreePkgs = import inputs.nixpkgs { inherit system; config.allowUnfree = true; };
+  in { haskellProject.extraDevPackages = [ unfreePkgs.redpanda-client ]; };
 ```
 
 ```bash
-command -v kafka-server-start.sh kafka-storage.sh rpk
+command -v rpk container
 rpk --version
 ```
 
-The spike, by hand, in a scratch directory (replace the three ports with free ones).
-
-```text
-process.roles=broker,controller
-node.id=1
-controller.quorum.voters=1@127.0.0.1:19093
-listeners=LANE0://127.0.0.1:19092,CONTROLLER://127.0.0.1:19093
-advertised.listeners=LANE0://127.0.0.1:19092
-listener.security.protocol.map=LANE0:PLAINTEXT,CONTROLLER:PLAINTEXT
-inter.broker.listener.name=LANE0
-controller.listener.names=CONTROLLER
-log.dirs=/path/to/scratch/data
-offsets.topic.replication.factor=1
-offsets.topic.num.partitions=4
-transaction.state.log.replication.factor=1
-transaction.state.log.min.isr=1
-transaction.state.log.num.partitions=4
-group.initial.rebalance.delay.ms=0
-auto.create.topics.enable=false
-```
-
-```bash
-CLUSTER_ID="$(kafka-storage.sh random-uuid)"
-kafka-storage.sh format -t "$CLUSTER_ID" -c server.properties
-KAFKA_HEAP_OPTS="-Xms256m -Xmx768m" kafka-server-start.sh server.properties &
-touch rpk.yaml
-rpk --config rpk.yaml -X brokers=127.0.0.1:19092 topic create spike -p 3
-rpk --config rpk.yaml -X brokers=127.0.0.1:19092 group describe nobody --format json
-kill %1
-```
+The Redpanda spike used an isolated container named
+`kenshou-redpanda-spike` with a free published host port, an advertised
+private address, and `rpk -X brokers=<private address> topic create`.
+It succeeded on both Docker and Apple Container; both spike containers were
+removed. The fixture performs the same steps with a run-derived name and
+proxies.
 
 Build, unit-test and register.
 
@@ -415,15 +410,15 @@ Run the fixture scenarios and look at the evidence.
 ```bash
 cabal run kenshou -- run kafka/broker/correctness/fixture-roundtrip --out runs; echo "exit=$?"
 cabal run kenshou -- run kafka/broker/concurrency/kill-and-restart --out runs --set kafka.outage-seconds=5; echo "exit=$?"
-RUN="$(ls -t runs | head -1)"; jq '.outcome, .summaries.kafka' "runs/$RUN/run-result.json"; ls "runs/$RUN/logs"
-pgrep -fl 'kenshou-kafka-' || echo "no broker left behind"
+RUN="$(ls -t runs | head -1)"; jq '.outcome, .summaries.measurements.kafka' "runs/$RUN/run-result.json"; ls "runs/$RUN/logs"
+container list --all | rg 'kenshou-rp-' || echo "no private broker left behind"
 ```
 
 ```text
 exit=0
 exit=0
 "passed"
-{ "backend": "apache-kafka", "brokerVersion": "4.3.1", "lanes": 1, ... }
+{ "backend": "redpanda-container", "brokerVersion": "redpanda:v26.2.1", "lanes": 1, ... }
 harness.log  kafka-broker.log  worker-kafka-producer-0.log
 no broker left behind
 ```
@@ -468,7 +463,7 @@ okf validate docs/adr --strict --profile docs/adr/profile.dhall --profile-enforc
 
 ## Validation and Acceptance
 
-Milestone 1 is accepted when `cabal test kenshou-kafka-test` passes (including the test that a specification naming `127.0.0.1:9092`, `localhost:9092` or `[::1]:9092` is rejected for every backend); both fixture scenarios exit 0 on the implementer's operating system and, if available, on the other one; `kafka/broker/concurrency/kill-and-restart` shows a different broker process id after the restart and `isRunning = false` during the outage; the run directory's `logs/kafka-broker.log` is non-empty and listed in `manifest.json`; `pgrep -fl kenshou-kafka-` prints nothing afterwards; and, with the machine-global broker running, `rpk topic list -X brokers=127.0.0.1:9092` shows no topic beginning with `kenshou-` after a full run of the layer. Killing the harness itself with `SIGKILL` in the middle of a run and starting another run must show the sweep removing the orphaned broker.
+Milestone 1 is accepted when `cabal test kenshou-kafka-test` passes (including rejection of `127.0.0.1:9092`, `localhost:9092` and `[::1]:9092`); both fixture scenarios exit 0 on the implementer's operating system and, if available, on the other one; `kafka/broker/concurrency/kill-and-restart` shows a changed container start timestamp and `isRunning = false` during the outage; the run directory's `logs/kafka-broker.log` is non-empty and listed in `manifest.json`; and the container runtime lists no `kenshou-rp-` container afterwards. Killing the harness itself with `SIGKILL` in the middle of a run and starting another run must show the sweep removing the orphaned broker. The suite never contacts the machine-global broker.
 
 Milestones 2 and 3 are accepted when every scenario without a known-defect reference passes three consecutive runs with different seeds on the `released` cohort, and again on `head`; every scenario with a reference fails with a verdict whose counter-example matches the one predicted in this plan, and the run is reported as a known defect rather than a blocking failure; `kafka/consumer/concurrency/static-membership-fencing-is-observable` is red-but-known on `released` and green on `head`; and each oracle has been shown not to be vacuous by one deliberate sabotage recorded in the plan's Surprises section or in a unit test — for example, running the no-loss checker against a ledger with one produced fact removed, or running `retry-redelivers-and-never-commits-past` with a handler that returns `DecideOk` for the failing offset and observing the "handled at least twice" rule fail.
 
@@ -486,7 +481,7 @@ The `flake.module.nix` and registry edits are additive and safe to re-apply. If 
 
 ## Interfaces and Dependencies
 
-Runtime libraries, from the pinned cohort: `shibuya-kafka-adapter` 0.9.0.1 (modules `Shibuya.Adapter.Kafka`, `.Config`, `.Internal`), `kafka-effectful` 0.3.1.0 (`Kafka.Effectful.Consumer`, `.Producer`, `.OpenTelemetry`), `hw-kafka-client` 5.3.0 from Hackage on `released` and the fork at `6caed636898a78e9f6e5a9c93eeb5562cbb2580a` on `head` (`Kafka.Consumer`, `Kafka.Producer`, `Kafka.Metadata`; never `Kafka.Topic`, which the release lacks), `hw-kafka-streamly` 0.2.0.0 or head, `shibuya-core` and `shibuya-metrics` 0.9.0.3, `keiro` and `keiro-core` 0.17.0.0, `effectful-core` (below 2.7 as the cohort requires), `streamly` 0.11, `hs-opentelemetry-api` 1.0. System tools from the development shell: librdkafka 2.15.0 (`rdkafka`), Apache Kafka 4.3.1 (`apacheKafka`), `rpk` 26.2.2 (`redpanda-client`). Test libraries: `hspec`, `hspec-hedgehog`, `hedgehog`.
+Runtime libraries, from the pinned cohort: `shibuya-kafka-adapter` 0.9.0.1 (modules `Shibuya.Adapter.Kafka`, `.Config`, `.Internal`), `kafka-effectful` 0.3.1.0 (`Kafka.Effectful.Consumer`, `.Producer`, `.OpenTelemetry`), `hw-kafka-client` 5.3.0 from Hackage on `released` and the fork at `6caed636898a78e9f6e5a9c93eeb5562cbb2580a` on `head` (`Kafka.Consumer`, `Kafka.Producer`, `Kafka.Metadata`; never `Kafka.Topic`, which the release lacks), `hw-kafka-streamly` 0.2.0.0 or head, `shibuya-core` and `shibuya-metrics` 0.9.0.3, `keiro` and `keiro-core` 0.17.0.0, `effectful-core` (below 2.7 as the cohort requires), `streamly` 0.11, `hs-opentelemetry-api` 1.0. System tools from the development shell: librdkafka 2.15.0 (`rdkafka`) and `rpk` from the unfree `redpanda-client` package. Test libraries: `hspec`, `hspec-hedgehog`, `hedgehog`.
 
 Consumed from the kernel (`docs/plans/2-…`): `Kenshou.Core.Scenario` (`Scenario`, `ScenarioId`, `Tier`, `Placement`, `KnownDefect`), `Kenshou.Core.Knob` (`KnobSpec`), `Kenshou.Core.Dimension`, `Kenshou.Core.Bundle` (`LayerBundle`), `Kenshou.Core.Role` (`WorkerRole`, `RoleContext`), `Kenshou.Core.Run` (`RunContext`: resolved knobs and dimensions, seed, output directory, logger, summary sections, phase markers, the run specification's environment object, the resolved `CohortIdentity`). From measurement (`docs/plans/4-…`): the latency recorder, closed-loop and open-loop generators, the runtime and process samplers that write `series/rts.csv` and `series/proc.csv`, summaries and `kenshou compare`. From correctness (`docs/plans/5-…`): the bounded ledger, the checkers for no-loss, windowed duplicates, per-key and monotonic order, disjoint ownership and monotonic checkpoints, `Kenshou.Check.Process` (spawn, control channel, `SIGTERM`/`SIGKILL`, crash-window bookkeeping, log capture), the in-process TCP proxy with latency, stall, blackhole and reset, and the model-based support that writes seed and shrunk counter-example into a verdict. From diagnostics (`docs/plans/6-…`): the leak verdict over named series, including a caller-supplied derived series. From telemetry (`docs/plans/7-…`): `Kenshou.Telemetry.withTelemetry`, endpoint registration, the scraper, trace-continuity helpers and `kenshou overhead`.
 

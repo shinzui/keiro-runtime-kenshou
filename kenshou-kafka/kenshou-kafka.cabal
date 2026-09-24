@@ -1,0 +1,89 @@
+cabal-version: 3.0
+name: kenshou-kafka
+version: 0.1.0.0
+synopsis: Disposable Kafka broker and runtime verification scenarios
+license: BSD-3-Clause
+author: Nadeem Bitar
+maintainer: Nadeem Bitar
+category: Testing
+build-type: Simple
+tested-with: ghc >=9.12 && <9.13
+
+common warnings
+  ghc-options:
+    -Wall
+    -Wcompat
+    -Widentities
+    -Wincomplete-record-updates
+    -Wincomplete-uni-patterns
+    -Wpartial-fields
+    -Wredundant-constraints
+
+  default-language: GHC2024
+  default-extensions:
+    BlockArguments
+    DeriveAnyClass
+    DeriveGeneric
+    DuplicateRecordFields
+    ImportQualifiedPost
+    LambdaCase
+    NoFieldSelectors
+    OverloadedLabels
+    OverloadedRecordDot
+    OverloadedStrings
+    TypeApplications
+
+library
+  import: warnings
+  hs-source-dirs: src
+  exposed-modules:
+    Kenshou.Env.Kafka
+    Kenshou.Env.Kafka.Admin
+    Kenshou.Env.Kafka.External
+    Kenshou.Env.Kafka.Naming
+    Kenshou.Env.Kafka.RedpandaContainer
+    Kenshou.Env.Kafka.Spec
+    Kenshou.Env.Kafka.Types
+    Kenshou.Suite.Kafka
+    Kenshou.Suite.Kafka.Correctness.Ack
+    Kenshou.Suite.Kafka.Correctness.MultiTopic
+    Kenshou.Suite.Kafka.Fixture
+    Kenshou.Suite.Kafka.Producer
+
+  build-depends:
+    aeson,
+    base,
+    bytestring,
+    containers,
+    directory,
+    effectful-core,
+    filepath,
+    hw-kafka-client,
+    kafka-effectful,
+    kenshou-check,
+    kenshou-core,
+    network,
+    process,
+    scientific,
+    shibuya-core,
+    shibuya-kafka-adapter,
+    streamly,
+    streamly-core,
+    text,
+    time,
+    unix,
+    vector,
+
+test-suite kenshou-kafka-test
+  import: warnings
+  type: exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is: Main.hs
+  build-depends:
+    aeson,
+    base,
+    containers,
+    hspec,
+    hw-kafka-client,
+    kenshou-kafka,
+    text,

@@ -1,6 +1,7 @@
 # Bundle Update Log
 
 ## 2026-09-24
+* **Decision**: Accepted a run-owned Redpanda broker locally and provisioned, prefixed resources on cells.
 * **Changed**: Require versioned owner-repository OKF bug reports and local canonical-URI tracking for confirmed runtime failures.
 
 ## 2026-09-23

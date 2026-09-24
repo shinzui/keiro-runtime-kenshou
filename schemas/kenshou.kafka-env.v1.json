@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "kenshou.kafka-env/v1",
+  "type": "object",
+  "properties": {
+    "backend": {"enum": ["redpanda-container", "external"]},
+    "brokers": {"type": "array", "items": {"type": "string"}},
+    "control": {
+      "type": ["object", "null"],
+      "properties": {
+        "kill": {"type": "array", "items": {"type": "string"}},
+        "stop": {"type": "array", "items": {"type": "string"}},
+        "start": {"type": "array", "items": {"type": "string"}}
+      },
+      "required": ["kill", "stop", "start"],
+      "additionalProperties": false
+    },
+    "lanes": {"type": "integer", "minimum": 0, "maximum": 4},
+    "brokerProps": {"type": "object", "additionalProperties": {"type": "string"}},
+    "readyTimeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 600},
+    "keepData": {"type": "boolean"}
+  },
+  "additionalProperties": false
+}

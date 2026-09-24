@@ -77,6 +77,7 @@ compatibilityValue includeCohort inputs =
       "postgresProfile" .= inputs.postgres,
       "schemas" .= fmap schemaText inputs.schemas
     ]
+      <> maybe [] (pure . ("kafka" .=)) inputs.spec.environment.kafka
       <> ["cohortPlanHash" .= inputs.cohortPlanHash | includeCohort]
   where
     schemaText schema = case show schema of "SchemaKiroku" -> ("kiroku" :: Text); "SchemaKeiro" -> "keiro"; _ -> "pgmq"
