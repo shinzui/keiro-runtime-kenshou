@@ -1,6 +1,7 @@
 module Kenshou.Suite.Keiro.Inbox.Correctness (scenarios) where
 
 import Data.ByteString qualified as ByteString
+import Data.Int (Int64)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
@@ -8,7 +9,7 @@ import Hasql.Decoders qualified as Decoders
 import Hasql.Encoders qualified as Encoders
 import Hasql.Statement qualified as Statement
 import Hasql.Transaction qualified as Tx
-import Keiro.Inbox (InboxDedupePolicy (..), InboxPersistence (..), InboxResult (..), InboxRow (..), InboxStatus (..), garbageCollectCompleted, listInbox, runInboxTransactionWith, runInboxTransactionWithRetries)
+import Keiro.Inbox (InboxDedupePolicy (..), InboxPersistence (..), InboxResult (..), InboxRow (..), InboxStatus (..), garbageCollectCompleted, listInbox, runInboxTransactionBatch, runInboxTransactionWith, runInboxTransactionWithRetries)
 import Keiro.Inbox.Kafka (KafkaDecodeError (..), KafkaInboundRecord (..), integrationEventFromKafka)
 import Keiro.Integration.Event (IntegrationEvent (..), headerContentType, headerDestination, headerEventType, headerMessageId, headerSchemaVersion, headerSource)
 import Keiro.Outbox (OutboxPublishOptions (..), OutboxRow (..), defaultPublishOptions, listOutbox, publishClaimedOutbox)
@@ -28,7 +29,56 @@ import Kiroku.Store (defaultConnectionSettings)
 import Kiroku.Store.Transaction qualified as KirokuTransaction
 
 scenarios :: [Scenario]
-scenarios = [envelopeRoundTrip, poisonAccounting, effectivelyOnceMatrix]
+scenarios = [envelopeRoundTrip, poisonAccounting, effectivelyOnceMatrix, batchFastPathAndFallback]
+
+batchFastPathAndFallback :: Scenario
+batchFastPathAndFallback =
+  envelopeRoundTrip
+    { id = either (error . show) id (parseScenarioId "keiro/inbox/correctness/batch-fast-path-and-fallback"),
+      summary = "Checks one-transaction batch intake and isolated fallback after a poisoned handler.",
+      run = runBatchFastPathAndFallback
+    }
+
+runBatchFastPathAndFallback :: RunContext -> IO ScenarioReport
+runBatchFastPathAndFallback context =
+  withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture -> do
+    let KeiroRunner runFixture = fixture.runner
+        source = sourceName context "batch"
+        handler event
+          | event.messageId == "poison" = pure $! error "synthetic batch poison"
+          | otherwise = Tx.statement event.messageId effectInsertStatement
+        runBatch events = runFixture (runInboxTransactionBatch Nothing 3 PreferIntegrationMessageId PersistFullEnvelope [(event, Nothing) | event <- events] handler) >>= either (fail . show) pure
+    ensureEffectTable fixture
+    enqueueInline fixture source [("clean-a", Just "key", 1), ("clean-b", Just "key", 2), ("good-c", Just "key", 3), ("poison", Just "key", 4), ("good-d", Just "key", 5)]
+    events <- map (.event) <$> (runFixture (listOutbox source) >>= either (fail . show) pure)
+    let byId name = case [event | event <- events, event.messageId == name] of
+          [event] -> event
+          _ -> error "batch fixture event missing"
+        clean = [byId "clean-a", byId "clean-b", byId "clean-a"]
+        poisoned = [byId "good-c", byId "poison", byId "good-d"]
+    cleanResults <- runBatch clean
+    cleanTxnCount <- runFixture (KirokuTransaction.runTransaction (Tx.statement () effectTxnCountStatement)) >>= either (fail . show) pure
+    fallbackResults <- runBatch poisoned
+    effects <- runFixture (KirokuTransaction.runTransaction (Tx.statement () effectReadStatement)) >>= either (fail . show) pure
+    rows <- runFixture (listInbox source) >>= either (fail . show) pure
+    let cells =
+          [ ("clean-batch-positional", cleanResults == [Right (InboxProcessed ()), Right (InboxProcessed ()), Right InboxDuplicate]),
+            ("clean-batch-one-transaction", cleanTxnCount == (1 :: Int64)),
+            ("fallback-isolates-poison", case fallbackResults of [Right (InboxProcessed ()), Right (InboxHandlerFailed _ 1), Right (InboxProcessed ())] -> True; _ -> False),
+            ("effects-once", all (\name -> length (filter (== name) effects) == 1) ["clean-a", "clean-b", "good-c", "good-d"] && length effects == 4),
+            ("poison-failed-row", case [row | row <- rows, row.event.messageId == "poison"] of [row] -> row.status == InboxFailed && row.attemptCount == 1; _ -> False)
+          ]
+    recordCells context cells
+
+effectTxnCountStatement :: Statement.Statement () Int64
+effectTxnCountStatement = Statement.preparable "SELECT count(DISTINCT txid) FROM kenshou_fx.inbox_effects" Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
+
+ensureEffectTable :: FixtureEnv -> IO ()
+ensureEffectTable fixture = do
+  let KeiroRunner runFixture = fixture.runner
+  _ <- runFixture (KirokuTransaction.runTransaction (Tx.sql "CREATE SCHEMA IF NOT EXISTS kenshou_fx")) >>= either (fail . show) pure
+  _ <- runFixture (KirokuTransaction.runTransaction (Tx.sql "CREATE TABLE IF NOT EXISTS kenshou_fx.inbox_effects (message_id text NOT NULL, txid bigint NOT NULL)")) >>= either (fail . show) pure
+  pure ()
 
 effectivelyOnceMatrix :: Scenario
 effectivelyOnceMatrix =
@@ -52,8 +102,7 @@ runEffectivelyOnceMatrix context =
         entries = [(Text.pack (show i), Just "key", i) | i <- [1 .. 16 :: Int]]
         handler event = Tx.statement event.messageId effectInsertStatement
         intake event = runFixture (runInboxTransactionWith Nothing persistence PreferIntegrationMessageId event Nothing handler) >>= either (fail . show) pure
-    _ <- runFixture (KirokuTransaction.runTransaction (Tx.sql "CREATE SCHEMA IF NOT EXISTS kenshou_fx")) >>= either (fail . show) pure
-    _ <- runFixture (KirokuTransaction.runTransaction (Tx.sql "CREATE TABLE IF NOT EXISTS kenshou_fx.inbox_effects (message_id text NOT NULL)")) >>= either (fail . show) pure
+    ensureEffectTable fixture
     enqueueInline fixture source entries
     events <- map (.event) <$> (runFixture (listOutbox source) >>= either (fail . show) pure)
     first <- traverse intake events
@@ -72,7 +121,7 @@ runEffectivelyOnceMatrix context =
     recordCells context cells
 
 effectInsertStatement :: Statement.Statement Text.Text ()
-effectInsertStatement = Statement.preparable "INSERT INTO kenshou_fx.inbox_effects (message_id) VALUES ($1)" (Encoders.param (Encoders.nonNullable Encoders.text)) Decoders.noResult
+effectInsertStatement = Statement.preparable "INSERT INTO kenshou_fx.inbox_effects (message_id, txid) VALUES ($1, txid_current())" (Encoders.param (Encoders.nonNullable Encoders.text)) Decoders.noResult
 
 effectReadStatement :: Statement.Statement () [Text.Text]
 effectReadStatement = Statement.preparable "SELECT message_id FROM kenshou_fx.inbox_effects" Encoders.noParams (Decoders.rowList (Decoders.column (Decoders.nonNullable Decoders.text)))

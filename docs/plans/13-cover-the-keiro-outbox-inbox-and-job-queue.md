@@ -51,7 +51,7 @@ Milestone 1 — Outbox scenarios (includes the shared messaging support used by 
 Milestone 2 — Inbox scenarios.
 
 - [ ] Implement `Kenshou.Suite.Keiro.Inbox.Effects` (harness-owned effect table and invocation sequence), `.Delivery`, `.Knobs`, `.Roles`, `.Oracle` with unit tests.
-- [ ] Implement the four inbox correctness scenarios: envelope round trip passed; the initial message-ID/table-backed arms of the matrix passed with both persistence modes; the default exception arm of poison accounting passed. Other policy, delegated, batch, and failure-mode arms remain.
+- [ ] Implement the four inbox correctness scenarios: envelope round trip passed; the initial message-ID/table-backed arms of the matrix passed with both persistence modes; the default exception arm of poison accounting passed; the clean and throwing-handler arms of batch intake passed. Other policy, delegated, condemnation, and SQL-error arms remain.
 - [ ] Implement the two inbox concurrency scenarios (race on one key with optional kill of the winner; staged GC-versus-insert race).
 - [ ] Splice `Kenshou.Suite.Keiro.Inbox.scenarios` and `.roles` into the bundle; run all inbox scenarios; record outcomes.
 
@@ -88,6 +88,7 @@ Milestone 4 — Messaging benchmarks, soak and telemetry arms.
 - The first effectively-once matrix run failed only its persistence-shape check: the shared outbox workload generated empty payloads, so full-envelope and dedupe-only were indistinguishable. Giving each probe a nonempty message-ID payload made the check meaningful. Full-envelope and dedupe-only then passed in `01a0d17e-6446-724d-925d-11f61af93d59` and `01a0d17f-3e26-7551-be30-a1eca5575c8b`. The CLI uses `--set` for a knob override, not `--knob`.
 - The PGMQ migration is available under `SchemaPgmq` in the environment. The first queue validation run passed in `01a0d182-5dea-740f-9266-42f966963458`; the stronger SQL read-count check initially hit a decoder mismatch because `read_ct` is narrower than `bigint`, and an explicit SQL cast fixed it. The full scenario passed in `01a0d184-2021-7578-bab7-766c6e1a7b12`.
 - The queue retry ceiling scenario passed in `01a0d186-b8df-704a-bfd1-51c82cee2701`. Its DLQ query checks `dead_letter_reason=max_retries_exceeded` and wrapper read counts of four and one for the three-attempt and zero-attempt policies respectively.
+- The inbox batch scenario passed in `01a0d188-bf5b-7211-9fd4-0504b828a6d8`: clean deliveries shared one PostgreSQL transaction, a repeated key stayed positional, and a throwing delivery triggered per-message fallback without double effects. The matrix still passed after adding a transaction ID to the shared effect table in `01a0d189-681c-7193-9195-552fb32500ec`.
 
 
 ## Decision Log
