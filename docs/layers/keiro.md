@@ -151,6 +151,10 @@ its declared nonblocking known defect. The plan executor exited zero.
 linear runs with a polling resume process. Journals and replay results stay
 exact; the default durable run measured 61 duplicate step effects over 100
 instances without a crash.
+`keiro/workflow/concurrency/resume-workers-race` seeds deferred instances
+and starts multiple resume processes. A durable run with 100 instances, four
+workers, four store connections per process, and sixteen concurrent advances
+per worker completed with one journal entry and one effect per step.
 
 The registered command scenarios also cover duplicate event identifiers,
 optimistic retry and exhaustion, controlled SQL rollback, and hydration over
