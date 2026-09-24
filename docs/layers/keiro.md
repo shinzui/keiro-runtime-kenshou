@@ -174,6 +174,10 @@ separate summaries for fresh-only and redelivered inputs. SQL checks the bonus
 source count, target credit count, and total money. A 40-second one-recipient
 local run passed. The ten-recipient two-worker run had correct durable effects
 but exceeded the local driver CPU gate, so the default uses one worker.
+`router.source=kiroku-adapter` runs the production durable bridge and injects
+one immediate retry for the configured redelivery share. A 40-second
+one-recipient run completed 1,368 fanouts, including 350 redeliveries, with a
+benchmark grade and all four durable checks passing.
 
 `write-side-signals` exercises a command conflict and retry, a repeated event
 ID, snapshot hydration, router redelivery, a poison input, and a rejected
