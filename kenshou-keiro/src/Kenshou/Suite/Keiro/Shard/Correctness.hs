@@ -4,6 +4,8 @@ import Control.Concurrent (threadDelay)
 import Control.Monad (forM)
 import Data.Aeson (object, (.=))
 import Data.ByteString qualified as ByteString
+import Data.Int (Int64)
+import Data.List (sortOn)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
@@ -101,12 +103,18 @@ runSingleWorker context = withCheck context \check ->
     effects <- foldFacts ledgers Map.empty \counts fact ->
       pure if fact.kind == Effect then Map.insertWith (+) fact.key (1 :: Int) counts else counts
     let expectedIds = Set.fromList [UUID.toText identifier | n <- [0 .. eventCount - 1], let EventId identifier = eventId n]
-        actualIds = case delivered of Right rows -> Set.fromList (map fst rows); Left _ -> Set.empty
+        actualIds = case delivered of Right rows -> Set.fromList [identifier | (identifier, _, _, _, _) <- rows]; Left _ -> Set.empty
+        ordered = case delivered of
+          Left _ -> False
+          Right rows -> snd (foldl checkOrder (Map.empty, True) (sortOn (\(_, _, _, _, sequenceNumber) -> sequenceNumber) rows))
+        checkOrder (positions, valid) (_, _, stream, position, _) =
+          (Map.insert stream position positions, valid && maybe True (< position) (Map.lookup stream positions))
         cells =
           [ ("all-buckets-owned", completed && case ownedBeforeStop of Right buckets -> length buckets == bucketCount && all (\(_, owner, _) -> owner /= Nothing) buckets; Left _ -> False),
             ("graceful-release", case ownedAfterStop of Right buckets -> length buckets == bucketCount && all (\(_, owner, _) -> owner == Nothing) buckets; Left _ -> False),
             ("all-events-in-sink", length appended == eventCount && all (either (const False) (const True)) appended && Set.size expectedIds == eventCount && actualIds == expectedIds),
-            ("first-delivery-once", case delivered of Right rows -> all ((== 1) . snd) rows && length rows == eventCount; Left _ -> False),
+            ("first-delivery-once", case delivered of Right rows -> all (\(_, count, _, _, _) -> count == 1) rows && length rows == eventCount; Left _ -> False),
+            ("first-deliveries-in-stream-order", ordered),
             ("one-effect-per-event", Map.keysSet effects == expectedIds && all (== 1) (Map.elems effects))
           ]
     recordShardCells check cells
@@ -117,9 +125,9 @@ waitUntil predicate remaining = do
   complete <- predicate
   if complete then pure True else threadDelay 250000 >> waitUntil predicate (remaining - 1)
 
-sinkRowsStatement :: Statement.Statement () [(Text, Int)]
+sinkRowsStatement :: Statement.Statement () [(Text, Int, Int64, Int64, Int64)]
 sinkRowsStatement =
   Statement.preparable
-    "SELECT event_id::text, deliveries FROM kenshou_durable.shard_sink ORDER BY event_id"
+    "SELECT event_id::text, deliveries, stream_id, global_position, first_delivery_seq FROM kenshou_durable.shard_sink ORDER BY event_id"
     Encoders.noParams
-    (Decoders.rowList ((,) <$> Decoders.column (Decoders.nonNullable Decoders.text) <*> (fromIntegral <$> Decoders.column (Decoders.nonNullable Decoders.int4))))
+    (Decoders.rowList ((,,,,) <$> Decoders.column (Decoders.nonNullable Decoders.text) <*> (fromIntegral <$> Decoders.column (Decoders.nonNullable Decoders.int4)) <*> Decoders.column (Decoders.nonNullable Decoders.int8) <*> Decoders.column (Decoders.nonNullable Decoders.int8) <*> Decoders.column (Decoders.nonNullable Decoders.int8)))

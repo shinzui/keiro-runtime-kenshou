@@ -39,5 +39,5 @@ ensureDurableTables fixture = do
   outcome <- runDurable fixture $ runTransaction do
     Tx.sql "CREATE SCHEMA IF NOT EXISTS kenshou_durable"
     Tx.sql "CREATE TABLE IF NOT EXISTS kenshou_durable.awakeable_publications (workflow_name text NOT NULL, workflow_id text NOT NULL, generation integer NOT NULL, label text NOT NULL, awakeable_id uuid NOT NULL, PRIMARY KEY (workflow_name, workflow_id, generation, label))"
-    Tx.sql "CREATE TABLE IF NOT EXISTS kenshou_durable.shard_sink (event_id uuid PRIMARY KEY, stream_id bigint NOT NULL, global_position bigint NOT NULL, bucket integer NOT NULL, first_worker text NOT NULL, deliveries integer NOT NULL DEFAULT 1)"
+    Tx.sql "CREATE TABLE IF NOT EXISTS kenshou_durable.shard_sink (event_id uuid PRIMARY KEY, stream_id bigint NOT NULL, global_position bigint NOT NULL, bucket integer NOT NULL, first_worker text NOT NULL, deliveries integer NOT NULL DEFAULT 1, first_delivery_seq bigint GENERATED ALWAYS AS IDENTITY)"
   either (fail . show) pure outcome

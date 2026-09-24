@@ -86,7 +86,7 @@ Milestone 3 — Sharded subscription scenarios
 - [x] (2026-09-24 13:43Z) Added `keiro/shard/correctness/shard-count-mismatch`, exercising the same `ensureShards` startup path as a worker. Both PostgreSQL durability modes reproduced two contract failures: extra rows remained after a larger misconfigured caller, and a fresh correct caller failed. The scenario exits zero as a reported known defect with `mori://shinzui/keiro/okf/improvement-requests/concepts/IR-49`.
 - [x] (2026-09-24 13:48Z) Changed the shard-count mismatch probe to start count-two, count-six and fresh count-four worker processes. Both PostgreSQL durability modes reproduced the same two contract failures and no other failures.
 - [ ] Add delivery assertions for the shard-count mismatch scenario and the acknowledgement-coupled handler variants scenario.
-- [x] (2026-09-24) Added `keiro/shard/correctness/single-worker-drains-all-buckets`. A real worker claimed four buckets, delivered twenty account-category events exactly once to the sink and effect ledger, then relinquished every bucket on graceful stop. Both durability modes passed; a 100-event, eight-bucket durable run also passed. Stream-order evidence and default-sized run remain.
+- [x] (2026-09-24) Added `keiro/shard/correctness/single-worker-drains-all-buckets`. A real worker claimed four buckets, delivered twenty account-category events exactly once to the sink and effect ledger, then relinquished every bucket on graceful stop. Both durability modes passed; a 100-event, eight-bucket durable run also passed. The sink now records first-delivery sequence and verifies strict per-stream order. A 100-event, five-stream run passed in both modes, and the default 20,000-event, 500-stream, eight-bucket durable run passed.
 - [ ] Add the shard concurrency and crash scenarios (six).
 - [x] (2026-09-24) Added `keiro/shard/concurrency/late-joiner-gets-no-buckets` with three real delivery workers. Four- and eight-bucket durable runs and a four-bucket fsync-off run reproduced exactly the declared `shard-late-workers-share` known defect; the first owner covered all buckets and coverage persisted after the two joiners started.
 - [ ] Extend the bundle; confirm `kenshou list`.
@@ -639,8 +639,9 @@ fact and an idempotent sink row. The single-worker scenario passed twenty
 events in both durability modes with one effect and sink delivery per event,
 full ownership before stop, and full relinquish afterwards. A worker JSON
 round-trip test covers the integral decimal knob conversion needed to start
-with the default three-second lease. Stream order and larger populations
-remain open.
+with the default three-second lease. The sink now records a first-delivery
+sequence. The scenario checks strict per-stream position order and passed
+again at its default 20,000-event, 500-stream size on durable PostgreSQL.
 
 ## Revision Note — 2026-09-24 (shard late joiners)
 
