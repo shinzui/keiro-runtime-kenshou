@@ -174,12 +174,12 @@ rationale that will matter later, and deliberate exclusions.
 
 ## Progress
 
-Track milestone-level progress across all child plans. Each entry names the child plan
-and the milestone. This section provides an at-a-glance view of the entire initiative.
+Summarize the current initiative state, blocked child plans, and remaining integration
+or acceptance gates. The Exec-Plan Registry owns child-plan status, and each child plan
+owns its milestone progress. Do not duplicate those milestones as checkboxes here.
+Use a checkbox only for a cross-plan gate that has its own observable acceptance.
 
-- [ ] EP-1: <first milestone description>
-- [ ] EP-1: <second milestone description>
-- [ ] EP-2: <first milestone description>
+(No child plans started.)
 
 
 ## Surprises & Discoveries
@@ -192,8 +192,8 @@ interactions between child plans. Provide concise evidence.
 
 ## Decision Log
 
-Record every decomposition or coordination decision made while working on the master
-plan.
+Record material decomposition or coordination decisions that affect dependencies,
+interfaces, acceptance, or the path future contributors should follow.
 
 - Decision: ...
   Rationale: ...
