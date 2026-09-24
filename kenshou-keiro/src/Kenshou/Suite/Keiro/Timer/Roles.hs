@@ -73,9 +73,9 @@ resumeWorker context = case context.init.postgres of
 timerWorker :: RoleContext -> IO ()
 timerWorker context = case context.init.postgres of
   Nothing -> context.send (WrkError "timer worker requires PostgreSQL")
-  Just postgres -> case parseMaybe (withObject "timer worker args" (\value -> (,) <$> value .:? "killAfterFire" <*> value .:? "slowFireMicros")) context.init.args of
+  Just postgres -> case parseMaybe (withObject "timer worker args" (\value -> (,,) <$> value .:? "killAfterFire" <*> value .:? "slowFireMicros" <*> value .:? "fireDelayMicros")) context.init.args of
     Nothing -> context.send (WrkError "invalid timer worker arguments")
-    Just (killAfterFire, slowFireMicros) -> case timerOptionsFrom context.init.knobs of
+    Just (killAfterFire, slowFireMicros, fireDelayMicros) -> case timerOptionsFrom context.init.knobs of
       Left err -> context.send (WrkError (Text.pack (show err)))
       Right options -> do
         context.send WrkReady
@@ -88,8 +88,8 @@ timerWorker context = case context.init.postgres of
                     result <-
                       runStoreIO store $
                         if drainLimit == 1
-                          then maybe 0 (const 1) <$> runTimerWorkerWith Nothing options now (fire sink)
-                          else drainDueTimersWith Nothing options now drainLimit (fire sink)
+                          then maybe 0 (const 1) <$> runTimerWorkerWith Nothing options now (fireWithDelay sink fireDelayMicros)
+                          else drainDueTimersWith Nothing options now drainLimit (fireWithDelay sink fireDelayMicros)
                     case result of
                       Left err -> context.send (WrkError (Text.pack (show err)))
                       Right count -> context.send (WrkCustom "timer-pass" (object ["claimed" .= count]))
@@ -136,6 +136,12 @@ fire sink row =
         other -> Error.throwError other
       liftIO $ sink.boundary AfterTimerFire
       pure (Just eid)
+
+fireWithDelay :: EffectSink -> Maybe Int -> TimerRow -> Eff '[Store, Error StoreError, IOE] (Maybe EventId)
+fireWithDelay sink delay row = do
+  result <- fire sink row
+  liftIO (maybe (pure ()) threadDelay delay)
+  pure result
 
 businessEventId :: TimerId -> EventId
 businessEventId timerId =

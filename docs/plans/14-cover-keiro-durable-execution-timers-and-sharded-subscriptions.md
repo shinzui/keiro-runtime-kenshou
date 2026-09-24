@@ -76,7 +76,7 @@ Milestone 2 — Timer scenarios
 - [x] (2026-09-24 05:35Z) Added both timer correctness scenarios; each passed under both `fsync-off` and `durable`. The attempt-ceiling probe checks two callback executions, post-claim dead-lettering on attempt three, zero-ceiling refusal, persisted reason and invalid options.
 - [x] (2026-09-24) Added `keiro/timer/concurrency/skip-locked-claims-across-processes`. Four real timer-worker processes passed at 100 timers in both PostgreSQL modes and at the default 5,000 timers on durable PostgreSQL, with one claim, effect and event per timer.
 - [x] (2026-09-24) Added `keiro/timer/concurrency/sigkill-between-fire-and-mark`. A worker self-`SIGKILL` after its committed business event leaves the timer firing; a replacement requeues and completes it on attempt two with two bounded fire facts and one business event. Both PostgreSQL durability modes passed.
-- [ ] Add the random-kill arm to the fire/mark crash scenario.
+- [x] (2026-09-24) Extended `sigkill-between-fire-and-mark` with a seeded random-delay arm. Three worker processes are killed during a 50-timer workload, a replacement completes the population, and the oracle checks every row fired, raw fire counts bounded by persisted attempts, and one deterministic business event per timer. Both PostgreSQL durability modes passed.
 - [x] (2026-09-24) Added `keiro/timer/concurrency/foreground-resume-tokens` and `keiro/timer-resume-claimer`. Four processes race for one dead row. Both PostgreSQL modes passed checks for one claimant, one added attempt, successful renewal, refusal of four guarded lifecycle operations, expiry recovery by an ordinary pass with stuck requeue disabled, retained reason and attempts, no due claim, and rejection of a former owner's late completion.
 - [x] (2026-09-24) Added `keiro/timer/concurrency/slow-fire-double-fires`. The first worker pauses six seconds after its business append; a second worker requeues the stale claim and completes attempt two. Both PostgreSQL durability modes passed checks for two raw fires, one business event, a fired row, and rejection of the first worker's late mark.
 - [x] (2026-09-24) The bundle includes timer scenarios and the timer worker role; `kenshou list --json` shows the five implemented timer scenarios.
@@ -691,3 +691,13 @@ row, kills the owner, and drives expiry recovery through an ordinary timer
 pass with `requeueStuckAfter = Nothing`. It also holds a second token past
 expiry and verifies that its former owner cannot complete afterward. Both
 durability modes passed, including retained reason and attempt count.
+
+## Revision Note — 2026-09-24 (timer random process kills)
+
+The fire/mark crash scenario now adds fifty timers and kills three worker
+processes after seeded delays while each callback has a short post-fire
+pause. A replacement drains the population. The oracle requires all rows
+fired, one business event per timer, and no more raw fires than recorded
+attempts. Waiting for each worker's first pass before signalling also makes
+its ledger header durable enough to read after a torn final fact. Both
+PostgreSQL durability modes passed.

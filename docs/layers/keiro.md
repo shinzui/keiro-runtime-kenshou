@@ -85,6 +85,9 @@ one claim, one flushed effect, and one deterministic business event. Its
 `keiro/timer/concurrency/sigkill-between-fire-and-mark` kills a worker after
 the business event append. A replacement requeues the firing row and marks it
 fired on attempt two while the business stream still has one event.
+That scenario also runs a fifty-timer seeded random-delay kill arm: three
+workers die, a replacement drains the work, and the oracle bounds raw fires
+by recorded attempts while requiring one business event per timer.
 `keiro/timer/concurrency/slow-fire-double-fires` pauses the first worker after
 its business append while a second worker requeues and completes the stale
 claim. The probe confirms two fire attempts, one business event, and refusal

@@ -23,13 +23,13 @@ import Keiro.Timer (TimerId (..), TimerRequest (..), TimerRow (..), TimerStatus 
 import Kenshou.Check.Fact (Fact (..), FactKind (..))
 import Kenshou.Check.Ledger (sealLedger)
 import Kenshou.Check.Ledger.Read (discoverLedgers, foldFacts)
-import Kenshou.Check.Process (ProgressSnapshot (..), awaitMark, awaitReady, killChild, progress, roleProcess, sendCommand, spawn, stopGracefully, withSupervisor)
+import Kenshou.Check.Process (ProgressSnapshot (..), awaitMark, awaitReady, childPid, killChild, progress, roleProcess, sendCommand, spawn, stopGracefully, withSupervisor)
 import Kenshou.Check.Scenario (CheckEnv (..), withCheck)
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
-import Kenshou.Core.Id (parseScenarioId)
+import Kenshou.Core.Id (parseScenarioId, unSeed)
 import Kenshou.Core.Knob (knobInt)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Role (ControlMessage (..))
@@ -37,9 +37,10 @@ import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tie
 import Kenshou.Suite.Keiro.Timer.Knobs (timerKnobName, timerKnobs)
 import Kenshou.Suite.Keiro.Timer.Oracle (recordTimerCells)
 import Kenshou.Suite.Keiro.Timer.Roles (businessEventId)
-import Kenshou.Suite.Keiro.Workflow.Fixture (durableKirokuStore, withDurableStore)
+import Kenshou.Suite.Keiro.Workflow.Fixture (DurableStore, durableKirokuStore, withDurableStore)
 import Kiroku.Store (defaultConnectionSettings, readStreamForward, runStoreIO, runTransaction)
 import Kiroku.Store.Types (RecordedEvent (..), StreamName (..), StreamVersion (..))
+import System.Posix.Signals (sigKILL, signalProcessGroup)
 
 scenarios :: [Scenario]
 scenarios = [skipLocked, sigkillBetweenFireAndMark, slowFireDoubleFires, foregroundResumeTokens]
@@ -251,7 +252,58 @@ runSigkillBetweenFireAndMark context = withCheck context \check ->
                 Left _ -> False
             )
           ]
-    recordTimerCells check cells
+    randomCells <- randomKillArm context check fixture
+    recordTimerCells check (cells <> randomCells)
+
+randomKillArm :: RunContext -> CheckEnv -> DurableStore -> IO [(Text.Text, Bool)]
+randomKillArm context check fixture = do
+  now <- getCurrentTime
+  let store = durableKirokuStore fixture
+      timerIds = map fixtureTimerId [910000 .. 910049]
+      request tid = TimerRequest tid "kenshou" "timer-random-kill" (addUTCTime (-1) now) Null
+      delay index = 10000 + fromIntegral ((unSeed context.seed + fromIntegral index * 1103515245) `mod` 30000)
+      done = do
+        remaining <- runStoreIO store (runTransaction (Tx.statement () remainingTimerCount))
+        pure (remaining == Right 0)
+  seeded <- traverse (\tid -> runStoreIO store (runTransaction (scheduleTimerTx (request tid)))) timerIds
+  completed <- withSupervisor check \supervisor -> do
+    forM_ [0 .. 2 :: Int] \index -> do
+      spec <- roleProcess check "keiro/timer-worker" (index + 2) (object ["fireDelayMicros" .= (50000 :: Int)])
+      worker <- spawn supervisor spec
+      awaitReady worker 10000
+      sendCommand worker CtlStart
+      awaitMark worker "timer-pass" 10000
+      threadDelay (delay index)
+      signalProcessGroup sigKILL (childPid worker)
+      threadDelay 50000
+    replacementSpec <- roleProcess check "keiro/timer-worker" 5 (object ["fireDelayMicros" .= (50000 :: Int)])
+    replacement <- spawn supervisor replacementSpec
+    awaitReady replacement 10000
+    sendCommand replacement CtlStart
+    result <- waitUntil done 160
+    _ <- stopGracefully supervisor replacement 2000
+    pure result
+  rows <- traverse (runStoreIO store . lookupTimer) timerIds
+  streams <- traverse (\tid -> runStoreIO store (readStreamForward (StreamName ("kenshouTimer-" <> timerText tid)) (StreamVersion 0) 3)) timerIds
+  ledgers <- discoverLedgers check.ledgerDirectory
+  effects <- foldFacts ledgers Map.empty \counts fact ->
+    pure if fact.kind == Effect then Map.insertWith (+) fact.key (1 :: Int) counts else counts
+  let fired tid result = case result of
+        Right (Just row) -> row.status == Fired && row.attempts >= 1 && row.firedEventId == Just (businessEventId tid)
+        _ -> False
+      bounded tid result = case result of
+        Right (Just row) -> maybe False (\count -> count >= 1 && count <= row.attempts) (Map.lookup (timerText tid) effects)
+        _ -> False
+      oneEvent tid result = case result of
+        Right events -> case Vector.toList events of
+          [event] -> event.eventId == businessEventId tid
+          _ -> False
+        Left _ -> False
+  pure
+    [ ("random-kills-recovered-all-timers", length seeded == length timerIds && all (== Right ()) seeded && completed && and (zipWith fired timerIds rows)),
+      ("random-kill-effects-bounded-by-attempts", and (zipWith bounded timerIds rows)),
+      ("random-kill-business-events-once", and (zipWith oneEvent timerIds streams))
+    ]
 
 awaitCrashArm :: CheckEnv -> Int -> IO Bool
 awaitCrashArm _ 0 = pure False
