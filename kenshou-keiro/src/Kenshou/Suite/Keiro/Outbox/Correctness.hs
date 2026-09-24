@@ -2,16 +2,19 @@ module Kenshou.Suite.Keiro.Outbox.Correctness (scenarios) where
 
 import Control.Concurrent (threadDelay)
 import Data.Aeson qualified as Aeson
+import Data.IORef (modifyIORef', newIORef, readIORef)
+import Data.List (sortOn)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
-import Data.Time (getCurrentTime)
+import Data.Time (UTCTime, diffUTCTime, getCurrentTime)
 import Data.UUID qualified as UUID
+import Effectful (liftIO)
 import Keiro.Integration.Event (IntegrationContentType (..), IntegrationEvent (..), headerMessageId)
-import Keiro.Outbox (BackoffSchedule (..), IntegrationEventDraft (..), IntegrationProducer (..), OrderingPolicy (..), OutboxId (..), OutboxPublishOptions (..), OutboxPublishSummary (..), OutboxRow (..), OutboxStatus (..), ProducerEnqueueOutcome (..), PublishOutcome (..), countOutboxBacklog, defaultMaintenanceOptions, defaultPublishOptions, enqueueProducerEventTx, garbageCollectSent, listOutbox, mkIntegrationProducer, mkPublishRejection, outboxMaintenancePass, publishClaimedOutbox, publishRejectionCode)
+import Keiro.Outbox (BackoffSchedule (..), IntegrationEventDraft (..), IntegrationProducer (..), OrderingPolicy (..), OutboxId (..), OutboxPublishOptions (..), OutboxPublishSummary (..), OutboxRow (..), OutboxStatus (..), ProducerEnqueueOutcome (..), PublishOutcome (..), countOutboxBacklog, defaultMaintenanceOptions, defaultPublishOptions, enqueueProducerEventTx, garbageCollectSent, listOutbox, mkIntegrationProducer, mkPublishRejection, nextDelay, outboxMaintenancePass, publishClaimedOutbox, publishRejectionCode)
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
@@ -272,6 +275,7 @@ terminalKnob spec = case renderKnobName spec.name of
 runTerminalStateMatrix :: RunContext -> IO ScenarioReport
 runTerminalStateMatrix context =
   withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture -> do
+    attemptLog <- newIORef []
     options <- either (fail . show) pure (OutboxKnobs.decodePublishOptions context.knobs Nothing)
     let KeiroRunner runFixture = fixture.runner
         source = sourceName context "terminal"
@@ -283,7 +287,19 @@ runTerminalStateMatrix context =
         hooks = Broker.PublishHook (const (pure ())) (const (pure ()))
     enqueueInline fixture source entries
     broker <- Broker.newBroker
-    let callback = Broker.publishCallback broker model plan hooks "publisher"
+    let publishSource [] _ = pure []
+        publishSource (row : rest) blocked
+          | Set.member row.event.source blocked = publishSource rest blocked
+          | otherwise = do
+              outcome <- Broker.publishScripted broker model (Broker.decide plan) hooks "publisher" [row]
+              let failed = any (\(_, result) -> case result of PublishFailed _ -> True; _ -> False) outcome
+              (outcome <>) <$> publishSource rest (if failed then Set.insert row.event.source blocked else blocked)
+        callback claimed = do
+          started <- liftIO getCurrentTime
+          outcomes <- if options.orderingPolicy == PerSourceStream then publishSource claimed Set.empty else Broker.publishCallback broker model plan hooks "publisher" claimed
+          ended <- liftIO getCurrentTime
+          liftIO (modifyIORef' attemptLog (<> [CallbackAttempt started ended claimed outcomes]))
+          pure outcomes
         drain totals = do
           backlog <- runFixture countOutboxBacklog >>= either (fail . show) pure
           if backlog == 0
@@ -295,6 +311,7 @@ runTerminalStateMatrix context =
     drained <- timeout (300 * 1000000) (drain [])
     rows <- runFixture (listOutbox source) >>= either (fail . show) pure
     records <- Broker.readBroker broker
+    callbacks <- readIORef attemptLog
     let brokerIds = Set.fromList [value | record <- records, (name, value) <- record.headers, name == TextEncoding.encodeUtf8 headerMessageId]
         brokerCounts = Map.fromListWith (+) [(value, 1 :: Int) | record <- records, (name, value) <- record.headers, name == TextEncoding.encodeUtf8 headerMessageId]
         statusMatches row =
@@ -317,6 +334,11 @@ runTerminalStateMatrix context =
           case row.status of
             OutboxDead -> row.attemptCount == options.maxAttempts && row.lastError == Just "synthetic permanent failure"
             _ -> True
+        effective = concatMap (effectiveAttempts options.orderingPolicy) callbacks
+        effectiveCounts = Map.fromListWith (+) [(row.outboxId, 1 :: Int) | (row, _, _, _) <- effective]
+        attemptAccounting = all (\row -> row.attemptCount == Map.findWithDefault 0 row.outboxId effectiveCounts) rows
+        retryTiming = all (retryWaitsLongEnough options.backoff) (Map.elems (Map.fromListWith (<>) [(row.outboxId, [(row.attemptCount, started, ended, outcome)]) | (row, started, ended, outcome) <- effective]))
+        retriedAccounting = maybe False (\summaries -> sum (map (.retried) summaries) == sum [row.attemptCount - 1 | row <- rows] + sum (map (.claimed) summaries) - length effective) drained
         cells =
           [ ("drained-before-deadline", maybe False (const True) drained),
             ("every-row-terminal", length rows == rowCount && all statusMatches rows),
@@ -324,11 +346,53 @@ runTerminalStateMatrix context =
             ("one-broker-record-per-sent-row", length records == length [() | row <- rows, row.status == OutboxSent] && all (== 1) (Map.elems brokerCounts)),
             ("rejection-metadata", all rejectionMatches rows),
             ("poison-attempt-ceiling", all deadMatches rows),
+            ("attempt-count-matches-callbacks", attemptAccounting),
+            ("backoff-respected", retryTiming),
+            ("retried-count-matches-attempts-and-skips", retriedAccounting),
             ("published-count-matches-summaries", maybe False (\summaries -> sum (map (.published) summaries) == length [() | row <- rows, row.status == OutboxSent]) drained),
             ("rejected-count-matches-summaries", maybe False (\summaries -> sum (map (.rejected) summaries) == length [() | row <- rows, row.status == OutboxRejected]) drained),
             ("dead-count-matches-summaries", maybe False (\summaries -> sum (map (.dead) summaries) == length [() | row <- rows, row.status == OutboxDead]) drained)
           ]
     recordCells context cells
+
+data CallbackAttempt = CallbackAttempt
+  { started :: !UTCTime,
+    ended :: !UTCTime,
+    claimed :: ![OutboxRow],
+    outcomes :: ![(OutboxId, PublishOutcome)]
+  }
+
+-- Keiro restores the attempt of rows after the first failed row in an
+-- ordering group. Those rows were claimed and passed to the callback, but
+-- were not effective publish attempts.
+effectiveAttempts :: OrderingPolicy -> CallbackAttempt -> [(OutboxRow, UTCTime, UTCTime, PublishOutcome)]
+effectiveAttempts policy callback = reverse accepted
+  where
+    outcomeById = Map.fromList callback.outcomes
+    (_, accepted) = foldl' step (Set.empty, []) callback.claimed
+    step (failedGroups, prior) row =
+      let group = case policy of
+            BestEffort -> Left row.outboxId
+            PerSourceStream -> Right (row.event.source, Nothing)
+            StopTheLine -> Right (row.event.source, Nothing)
+            PerKeyHeadOfLine -> maybe (Left row.outboxId) (\key -> Right (row.event.source, Just key)) row.event.key
+          outcome = Map.findWithDefault (PublishFailed "publisher returned no outcome") row.outboxId outcomeById
+       in if Set.member group failedGroups
+            then (failedGroups, prior)
+            else
+              ( case outcome of PublishFailed _ -> Set.insert group failedGroups; _ -> failedGroups,
+                (row, callback.started, callback.ended, outcome) : prior
+              )
+
+retryWaitsLongEnough :: BackoffSchedule -> [(Int, UTCTime, UTCTime, PublishOutcome)] -> Bool
+retryWaitsLongEnough schedule attempts =
+  and (zipWith check ordered (drop 1 ordered))
+  where
+    ordered = sortOn (\(number, _, _, _) -> number) attempts
+    check (number, _, ended, outcome) (_, nextStarted, _, _) =
+      case outcome of
+        PublishFailed _ -> diffUTCTime nextStarted ended >= nextDelay schedule number
+        _ -> False
 
 knobName :: Text -> KnobName
 knobName = either (error . show) id . mkKnobName
