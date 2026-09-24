@@ -7,7 +7,7 @@ import Data.List (intersect)
 import Data.Map.Strict qualified as Map
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
-import Data.Time (addUTCTime, getCurrentTime)
+import Data.Time (NominalDiffTime, addUTCTime, getCurrentTime)
 import Data.Time.Clock (UTCTime)
 import Data.UUID qualified as UUID
 import Effectful (runEff)
@@ -22,6 +22,7 @@ import Keiro.Integration.Event (IntegrationContentType (..), IntegrationEvent (.
 import Keiro.Outbox (OutboxId (..), OutboxRow (..), OutboxStatus (..))
 import Keiro.ProcessManager (ProcessManager (..), deterministicCommandId)
 import Keiro.Router (deterministicRouterCommandId)
+import Keiro.Subscription.Shard.Worker (ShardedWorkerOptions (..))
 import Keiro.Timer (TimerWorkerOptions (..))
 import Keiro.Workflow (WorkflowId (..), WorkflowRunOptions (..), deterministicJournalId)
 import Keiro.Workflow.Resume (WorkflowResumeOptions (..))
@@ -36,12 +37,14 @@ import Kenshou.Suite.Keiro.Fixture.Transfer
 import Kenshou.Suite.Keiro.Fixture.Workload qualified as Workload
 import Kenshou.Suite.Keiro.Outbox.Broker qualified as Broker
 import Kenshou.Suite.Keiro.Outbox.Oracle qualified as OutboxOracle
+import Kenshou.Suite.Keiro.Shard.Knobs qualified as ShardKnobs
 import Kenshou.Suite.Keiro.Shard.Oracle qualified as ShardOracle
 import Kenshou.Suite.Keiro.Timer.Knobs qualified as TimerKnobs
 import Kenshou.Suite.Keiro.Workflow.Definitions qualified as WorkflowDefinitions
 import Kenshou.Suite.Keiro.Workflow.Effects qualified as WorkflowEffects
 import Kenshou.Suite.Keiro.Workflow.Knobs qualified as WorkflowKnobs
 import Kenshou.Suite.Keiro.Workflow.Oracle qualified as WorkflowOracle
+import Kiroku.Store.Subscription.Types (SubscriptionTarget (..))
 import Kiroku.Store.Types (EventId (..), EventType (..), GlobalPosition (..), RecordedEvent (..), StreamId (..), StreamVersion (..))
 import Shibuya.Adapter (Adapter (..))
 import Shibuya.Core.Ack (AckDecision (..))
@@ -139,6 +142,23 @@ main = hspec do
     it "rejects a regressing checkpoint for one member" do
       ShardOracle.checkpointsMonotonic [("a", 1), ("b", 5), ("a", 2), ("b", 5)] `shouldBe` True
       ShardOracle.checkpointsMonotonic [("a", 2), ("b", 5), ("a", 1)] `shouldBe` False
+  describe "shard knobs" do
+    it "maps resolved defaults to valid short leases" do
+      case resolveKnobs ShardKnobs.shardKnobs [] of
+        Left errors -> expectationFailure (show errors)
+        Right knobs -> case ShardKnobs.shardOptionsFrom AllStreams knobs of
+          Left err -> expectationFailure (show err)
+          Right options -> do
+            options.shardCount `shouldBe` 8
+            options.leaseTtl `shouldBe` (3 :: NominalDiffTime)
+            options.renewInterval `shouldBe` (0.5 :: NominalDiffTime)
+    it "rejects a renew interval at the lease deadline" do
+      let override = [(ShardKnobs.shardKnobName "shard.renew-interval-seconds", RawText "3")]
+      case resolveKnobs ShardKnobs.shardKnobs override of
+        Left errors -> expectationFailure (show errors)
+        Right knobs -> case ShardKnobs.shardOptionsFrom AllStreams knobs of
+          Left _ -> pure ()
+          Right _ -> expectationFailure "renew interval at the lease deadline was accepted"
   describe "Outbox broker" do
     it "makes stable decisions from seed, identity and attempt" do
       now <- getCurrentTime

@@ -93,6 +93,9 @@ separate workers with smaller and larger shard counts against a four-bucket
 subscription, then starts another correctly configured worker. Keiro 0.17.0.0 rejects the larger caller
 after inserting two extra rows, so the scenario reports a reproduced known
 defect at `mori://shinzui/keiro/okf/improvement-requests/concepts/IR-49`.
+The shard startup role accepts validated `shard.*` options, including bucket
+count, lease duration, renewal interval, batch and buffer sizes, and retry
+limits. Its delivery loop is still tracked in the ExecPlan.
 These correctness probes support both PostgreSQL durability modes. The remaining workflow kinds, process concurrency cases,
 subscription delivery checks, benchmarks and soaks remain in the plan's
 Progress section.

@@ -81,7 +81,7 @@ Milestone 2 — Timer scenarios
 
 Milestone 3 — Sharded subscription scenarios
 
-- [ ] Add `Kenshou.Suite.Keiro.Shard.Knobs` and complete `.Roles` and `.Oracle`. Pure coverage/disjointness, deadline arithmetic and checkpoint monotonicity checkers have doctored-input tests. A registered `keiro/shard-worker` now validates shard-count startup in its own process, but its subscription delivery loop and knob plumbing remain.
+- [ ] Complete `.Roles` delivery and `.Oracle` database checks. `Shard.Knobs` now maps the planned settings through `mkShardedWorkerOptions`, with valid defaults and an invalid lease interval covered by unit tests. Pure coverage/disjointness, deadline arithmetic and checkpoint monotonicity checkers have doctored-input tests. The `keiro/shard-worker` validates the resolved options before its existing shard-count startup path, but its subscription delivery loop remains.
 - [x] (2026-09-24 05:33Z) Registered an incremental `keiro/shard/correctness/lease-coverage-smoke` scenario. Runs under both PostgreSQL durability modes passed five verdicts for one-bucket-per-pass ownership, complete coverage, relinquish and immediate transfer.
 - [x] (2026-09-24 13:43Z) Added `keiro/shard/correctness/shard-count-mismatch`, exercising the same `ensureShards` startup path as a worker. Both PostgreSQL durability modes reproduced two contract failures: extra rows remained after a larger misconfigured caller, and a fresh correct caller failed. The scenario exits zero as a reported known defect with `mori://shinzui/keiro/okf/improvement-requests/concepts/IR-49`.
 - [x] (2026-09-24 13:48Z) Changed the shard-count mismatch probe to start count-two, count-six and fresh count-four worker processes. Both PostgreSQL durability modes reproduced the same two contract failures and no other failures.
@@ -108,6 +108,7 @@ Milestone 4 — Durable-execution benchmarks, soak and telemetry arms
 - The CLI cohort document identifies components by `.id`, not `.name` as the plan's illustrative filter says. `jq '.components[] | select(.id=="keiro")'` confirmed the executed cohort still pins `keiro`, `keiro-core`, `keiro-pgmq`, migrations and test support to 0.17.0.0.
 - A real self-`SIGKILL` produced a ledger file ending inside a JSON line. `foldFacts` raised `Data.ByteString.hGetLine: end of file` before it could apply its existing torn-final-line rule, so the scenario exited 4 without verdicts. The ledger reader now treats that EOF as the torn final fact; the rerun passed all seven verdicts.
 - Keiro 0.17.0.0's `ensureShards` commits bucket insertion before throwing `ShardCountMismatch`. A four-bucket subscription remained at four rows after a count-two caller, but grew to six after a count-six caller; a subsequent count-four caller also threw. The external probe reported only `shard-larger-worker-left-four` and `shard-correct-worker-recovers` as failures in both durability modes. The upstream request is `mori://shinzui/keiro/okf/improvement-requests/concepts/IR-49`; the local Mori registry had not indexed it immediately after creation.
+- The worker dispatcher sends `WrkDone` when a role returns normally, even after the role has sent `WrkError`; the shard mismatch probe's last-message check sometimes observed `Done` instead of the expected mismatch error. The shard role now exits through the dispatcher's exception path on `ShardCountMismatch`, so the only terminal message is the error. The known-defect probe again reproduced exactly its two declared failures.
 - When an awakeable is signalled from the approval publication effect, the signal's journal append can cause the publish step action to run again before its own append settles. The first signal returns `True`, the repeated signal returns `False`, and the same workflow run completes from the indexed wake result. This was observed in both durability modes; the scenario judges the stable payload and idempotent return values rather than assuming one execution of the publication action.
 - `pg_stat_statements(false)` omits query text, so a query-text filter silently matched no rows and initially reported a zero delta. Switching the observer to `pg_stat_statements(true)` produced the expected one pending-awakeable count call per idle pass; the scenario now checks the sample.
 
@@ -616,3 +617,12 @@ child and parent discovery counts. It reports idle-pass duration and the
 `pg_stat_statements` call and execution-time deltas for Keiro's pending
 awakeable count query; the query must be observed once. Default 2,000-instance
 durable runs passed for all three arms.
+
+## Revision Note — 2026-09-24 (shard options)
+
+The planned shard settings now map to validated Keiro worker options. Two unit
+tests cover default lease timing and refusal when renewal reaches the lease
+deadline. The startup role consumes those options when declared; its prior
+count-mismatch probe again reproduces only the two known failures after its
+error reporting was adjusted for the dispatcher contract. Delivery remains to
+be implemented.
