@@ -306,6 +306,13 @@ the next batch stays queued. The scenario records contract verdicts and tracks
 the upstream finding at `mori://shinzui/keiro/issues/4` (Mori issue resolution
 is pending).
 
+`crash-redelivery-cadence` kills three worker processes while their handlers
+hold the same job. With ordinary polling, deliveries occur about three seconds
+apart, attempts increase from zero through two, and the next read moves the job
+to the DLQ even though the retry policy delay is 60 seconds. The long-poll arm
+currently consumes an extra read attempt without a matching handler delivery;
+the failing verdicts are tracked at `mori://shinzui/keiro/issues/5`.
+
 `write-side-steady-state` starts two command-writer processes and durable
 process-manager, router, and activity-projection workers. It stops writers at
 an operation boundary, waits for dispatch and projection to catch up, then

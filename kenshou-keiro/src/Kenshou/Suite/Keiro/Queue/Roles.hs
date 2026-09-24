@@ -1,6 +1,6 @@
 module Kenshou.Suite.Keiro.Queue.Roles (roles) where
 
-import Data.Aeson (object, withObject, (.:))
+import Data.Aeson (object, withObject, (.:), (.:?), (.=))
 import Data.Aeson.Types (parseMaybe)
 import Data.IORef (atomicModifyIORef', newIORef)
 import Data.Text (Text)
@@ -13,7 +13,7 @@ import Hasql.Pool qualified as Pool
 import Hasql.Session qualified as Session
 import Hasql.Statement qualified as Statement
 import Keiro.PGMQ.Codec (aesonJobCodec)
-import Keiro.PGMQ.Job (Job (..), JobOrdering (..), JobOutcome (..), defaultJobTuning, defaultRetryPolicy, jobProcessorWithContext, runJobWorkers)
+import Keiro.PGMQ.Job (Job (..), JobContext (..), JobOrdering (..), JobOutcome (..), JobPolling (..), JobTuning (..), RetryDelay (..), RetryPolicy (..), defaultJobTuning, defaultRetryPolicy, jobProcessorWithContext, runJobWorkers)
 import Keiro.PGMQ.Runtime (JobRuntime (..), queueRef, runJobEff, withJobRuntime)
 import Kenshou.Core.Role (ControlMessage (..), PostgresConnInfo (..), RoleContext (..), RoleName, WorkerInit (..), WorkerMessage (..), WorkerRole (..), mkRoleName)
 import Shibuya.App (SupervisionStrategy (..), waitApp)
@@ -30,24 +30,34 @@ effectInsertStatement = Statement.preparable "INSERT INTO kenshou_fx.queue_effec
 worker :: RoleContext -> IO ()
 worker context = case context.init.postgres of
   Nothing -> context.send (WrkError "queue worker requires PostgreSQL")
-  Just postgres -> case parseMaybe (withObject "queue worker args" (.: "queue")) context.init.args of
+  Just postgres -> case parseMaybe (withObject "queue worker args" (\o -> (,,) <$> o .: "queue" <*> o .:? "mode" <*> o .:? "polling")) context.init.args of
     Nothing -> context.send (WrkError "invalid queue worker arguments")
-    Just queue -> do
+    Just (queue, mode, pollingMode) -> do
       context.send WrkReady
       context.receive >>= \case
         Just CtlStart -> withJobRuntime postgres.connectionString Nothing \runtime -> do
           counter <- newIORef (0 :: Int)
-          let job = Job "queue-poll-probe" (queueRef queue) (aesonJobCodec @Text) Unordered defaultRetryPolicy
-              handler _ payload = do
+          let holding = mode == Just ("hold" :: Text)
+              policy = if holding then RetryPolicy 3 (RetryDelay 60) True else defaultRetryPolicy
+              tuning = if holding then defaultJobTuning {visibilityTimeout = 3, polling = if pollingMode == Just ("long-poll" :: Text) then LongPoll 5 100 else PollEvery 1} else defaultJobTuning
+              job = Job "queue-poll-probe" (queueRef queue) (aesonJobCodec @Text) Unordered policy
+              handler jobContext payload = do
                 liftIO do
-                  result <- Pool.use runtime.runtimePool (Session.statement payload effectInsertStatement)
-                  either (fail . show) pure result
-                  count <- atomicModifyIORef' counter (\value -> (value + 1, value + 1))
-                  now <- getCurrentTime
-                  context.send (WrkProgress (fromIntegral count) now)
+                  if holding
+                    then do
+                      now <- getCurrentTime
+                      context.send (WrkCustom "delivery" (object ["attempt" .= jobContext.attempt, "payload" .= payload, "at" .= show now]))
+                      _ <- context.receive
+                      pure ()
+                    else do
+                      result <- Pool.use runtime.runtimePool (Session.statement payload effectInsertStatement)
+                      either (fail . show) pure result
+                      count <- atomicModifyIORef' counter (\value -> (value + 1, value + 1))
+                      now <- getCurrentTime
+                      context.send (WrkProgress (fromIntegral count) now)
                 pure Done
           result <- runJobEff runtime do
-            started <- runJobWorkers StopAllOnFailure 16 [jobProcessorWithContext defaultJobTuning job handler]
+            started <- runJobWorkers StopAllOnFailure 16 [jobProcessorWithContext tuning job handler]
             case started of
               Left err -> liftIO (context.send (WrkError (Text.pack (show err))))
               Right app -> do
