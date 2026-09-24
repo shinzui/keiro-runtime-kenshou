@@ -1,11 +1,16 @@
 module Kenshou.Suite.Keiro.Fixture.Runtime
   ( KeiroEff,
     KeiroRunner (..),
+    KeiroTelemetry (..),
     FixtureEnv (..),
     CommandRunner (..),
     SubmitOutcome (..),
     keiroRunner,
+    keiroTelemetry,
+    keiroCommandOptions,
+    keiroWorkerOptions,
     withFixtureEnv,
+    withFixtureTelemetryEnv,
     submitAccountCommand,
     submitBonusCommand,
   )
@@ -13,19 +18,23 @@ where
 
 import Effectful (Eff, IOE, runEff)
 import Effectful.Error.Static (Error, runErrorNoCallStack)
-import Keiro.Command (CommandError (..), CommandResult (..), RunCommandOptions (..), runCommand, runCommandWithSql)
+import Keiro.Command (CommandError (..), CommandResult (..), RunCommandOptions (..), defaultRunCommandOptions, runCommand, runCommandWithSql)
 import Keiro.ProcessManager (confirmBenignDuplicate)
+import Keiro.ProcessManager qualified as ProcessManager
 import Keiro.Projection (InlineProjection, runCommandWithProjections)
 import Keiro.Stream qualified as Stream
+import Keiro.Telemetry (KeiroMetrics, newKeiroMetrics)
 import Kenshou.Suite.Keiro.Fixture.Account
 import Kenshou.Suite.Keiro.Fixture.Bonus
 import Kenshou.Suite.Keiro.Fixture.Domain
+import Kenshou.Telemetry (TelemetryHandles (..))
 import Kiroku.Store (ConnectionSettings, KirokuStore, Store, withStore)
 import Kiroku.Store.Effect (runStoreResource)
 import Kiroku.Store.Effect.Resource (KirokuStoreResource, runKirokuStoreWith)
 import Kiroku.Store.Error (StoreError (..))
 import Kiroku.Store.Read (eventExistsInStream)
 import Kiroku.Store.Types (EventId, StreamVersion)
+import OpenTelemetry.Trace.Core (Tracer)
 
 type KeiroEff = Eff '[Store, Error StoreError, KirokuStoreResource, IOE]
 
@@ -33,9 +42,15 @@ newtype KeiroRunner = KeiroRunner
   { run :: forall a. KeiroEff a -> IO (Either StoreError a)
   }
 
+data KeiroTelemetry = KeiroTelemetry
+  { keiroTracer :: !(Maybe Tracer),
+    keiroMetrics :: !(Maybe KeiroMetrics)
+  }
+
 data FixtureEnv = FixtureEnv
   { store :: !KirokuStore,
-    runner :: !KeiroRunner
+    runner :: !KeiroRunner,
+    telemetry :: !KeiroTelemetry
   }
 
 data CommandRunner
@@ -55,8 +70,23 @@ keiroRunner :: KirokuStore -> KeiroRunner
 keiroRunner store =
   KeiroRunner (runEff . runKirokuStoreWith store . runErrorNoCallStack . runStoreResource)
 
+keiroTelemetry :: TelemetryHandles -> IO KeiroTelemetry
+keiroTelemetry handles =
+  KeiroTelemetry handles.tracer <$> traverse newKeiroMetrics handles.meter
+
+keiroCommandOptions :: KeiroTelemetry -> RunCommandOptions
+keiroCommandOptions telemetry =
+  defaultRunCommandOptions {tracer = telemetry.keiroTracer, metrics = telemetry.keiroMetrics}
+
+keiroWorkerOptions :: KeiroTelemetry -> ProcessManager.WorkerOptions es msg
+keiroWorkerOptions telemetry =
+  ProcessManager.defaultWorkerOptions {ProcessManager.metrics = telemetry.keiroMetrics}
+
 withFixtureEnv :: ConnectionSettings -> (FixtureEnv -> IO a) -> IO a
-withFixtureEnv settings action = withStore settings \store -> action (FixtureEnv store (keiroRunner store))
+withFixtureEnv settings = withFixtureTelemetryEnv settings (KeiroTelemetry Nothing Nothing)
+
+withFixtureTelemetryEnv :: ConnectionSettings -> KeiroTelemetry -> (FixtureEnv -> IO a) -> IO a
+withFixtureTelemetryEnv settings telemetry action = withStore settings \store -> action (FixtureEnv store (keiroRunner store) telemetry)
 
 submitAccountCommand :: FixtureEnv -> ValidatedAccountEventStream -> CommandRunner -> RunCommandOptions -> Int -> EventId -> AccountCommand -> IO SubmitOutcome
 submitAccountCommand fixture accountEvents runnerKind options clientBudget eventId command = attempt (max 0 clientBudget)

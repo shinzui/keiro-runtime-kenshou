@@ -316,8 +316,8 @@ routerWorker context = case parseMaybe parseDispatcherArgs context.init.args of
               recipients bonus = do
                 selected <- directoryRecipients bonus
                 pure (if args.reverseRecipients then reverse selected else selected)
-              workerOptions = defaultWorkerOptions {rejectedCommandPolicy = if args.rejectedDeadLetter then RejectedDeadLetter else RejectedHalt}
-          runRouterWorkerWith workerOptions options (bonusRouterWith bonusRouterName (accountEventStream SnapNever) recipients) observed decodeBonusDeclared
+              routerOptions = defaultWorkerOptions {rejectedCommandPolicy = if args.rejectedDeadLetter then RejectedDeadLetter else RejectedHalt}
+          runRouterWorkerWith routerOptions options (bonusRouterWith bonusRouterName (accountEventStream SnapNever) recipients) observed decodeBonusDeclared
         case result of
           Left issue -> context.send (WrkError (Text.pack (show issue)))
           Right () -> context.send (WrkDone Nothing)

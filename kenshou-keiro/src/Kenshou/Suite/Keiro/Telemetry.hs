@@ -8,11 +8,10 @@ import Data.Vector qualified as Vector
 import Hasql.Connection qualified as Connection
 import Hasql.Connection.Settings qualified as Settings
 import Keiro.Command (CommandError (..), CommandResult (..), RunCommandOptions (..), commandErrorClass, defaultRunCommandOptions, runCommand)
-import Keiro.ProcessManager (PoisonPolicy (..), RejectedCommandPolicy (..), defaultWorkerOptions)
+import Keiro.ProcessManager (PoisonPolicy (..), RejectedCommandPolicy (..))
 import Keiro.ProcessManager qualified as ProcessManager
 import Keiro.Router (runRouterWorkerWith)
 import Keiro.Stream qualified as Stream
-import Keiro.Telemetry (newKeiroMetrics)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary, requirePostgres)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
@@ -66,16 +65,16 @@ writeSideSignals =
 runWriteSideSignals :: RunContext -> IO ScenarioReport
 runWriteSideSignals context = case telemetrySpecFromContext context of
   Left reason -> pure (failedWith ["invalid-telemetry-config"] reason)
-  Right spec -> withTelemetry spec \telemetry ->
-    withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture -> do
+  Right spec -> withTelemetry spec \telemetry -> do
+    runtimeTelemetry <- keiroTelemetry telemetry
+    withFixtureTelemetryEnv (defaultConnectionSettings (requirePostgres context).connectionString) runtimeTelemetry \fixture -> do
       let KeiroRunner runFixture = fixture.runner
           account = AccountId "telemetry-account"
           target = accountStream account
           accountEvents = accountEventStream SnapNever
           depositId = Workload.opEventId (unSeed context.seed) (Workload.Op 0 0 (Workload.ActDeposit account 2)) 0
-      keiroMetrics <- traverse newKeiroMetrics telemetry.meter
       _ <- runFixture ensureFixtureReadModels >>= either (fail . show) pure
-      let options = defaultRunCommandOptions {tracer = telemetry.tracer, metrics = keiroMetrics}
+      let options = keiroCommandOptions runtimeTelemetry
           depositOptions = options {eventIds = [depositId]}
       opened <- runFixture (runCommand options accountEvents target (OpenAccount (OpenAccountData account 10)))
       deposited <- runFixture (runCommand depositOptions accountEvents target (Deposit (DepositData account 2 "telemetry")))
@@ -109,9 +108,9 @@ runWriteSideSignals context = case telemetrySpecFromContext context of
         (Right poisonEvents, Right bonusEvents) -> case (Vector.toList poisonEvents, Vector.toList bonusEvents) of
           ([poison], [source]) -> do
             let router = bonusRouterWith bonusRouterName accountEvents (\_ -> pure [closedAccount])
-                workerOptions = defaultWorkerOptions {ProcessManager.poisonPolicy = PoisonSkip (const (pure ())), ProcessManager.rejectedCommandPolicy = RejectedDeadLetter, ProcessManager.metrics = keiroMetrics}
+                routerOptions = (keiroWorkerOptions runtimeTelemetry) {ProcessManager.poisonPolicy = PoisonSkip (const (pure ())), ProcessManager.rejectedCommandPolicy = RejectedDeadLetter}
                 adapter = listAdapter "telemetry-router" ackLog [(poison, Nothing), (source, Nothing)]
-            Just <$> runFixture (runRouterWorkerWith workerOptions defaultRunCommandOptions router adapter decodeBonusDeclared)
+            Just <$> runFixture (runRouterWorkerWith routerOptions defaultRunCommandOptions router adapter decodeBonusDeclared)
           _ -> pure Nothing
         _ -> pure Nothing
       duplicateAckLog <- newIORef []
@@ -119,9 +118,9 @@ runWriteSideSignals context = case telemetrySpecFromContext context of
         Right events -> case Vector.toList events of
           [source] -> do
             let router = bonusRouterWith bonusRouterName accountEvents (\_ -> pure [account])
-                workerOptions = defaultWorkerOptions {ProcessManager.metrics = keiroMetrics}
+                routerOptions = keiroWorkerOptions runtimeTelemetry
                 adapter = listAdapter "telemetry-router-repeat" duplicateAckLog [(source, Nothing), (source, Just 1)]
-            Just <$> runFixture (runRouterWorkerWith workerOptions defaultRunCommandOptions router adapter decodeBonusDeclared)
+            Just <$> runFixture (runRouterWorkerWith routerOptions defaultRunCommandOptions router adapter decodeBonusDeclared)
           _ -> pure Nothing
         _ -> pure Nothing
       _ <- telemetry.flushTelemetry

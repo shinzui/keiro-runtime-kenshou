@@ -202,6 +202,8 @@ names, internal kind, stream and database attributes, retry attempts, append
 counts, and error class. It compares nine counter totals with the durable
 account and dead-letter rows. With both telemetry dimensions off, the same
 durable outcomes pass and no spans or metric sums are exported.
+The fixture runtime supplies the shared tracer and Keiro metrics handles to
+command and worker options in this scenario.
 The command telemetry overhead comparison produced a three-trial report with
 18 successful slots and three valid paired blocks. The overall result was
 inconclusive because the scraped-metrics and in-memory-tracing comparisons
