@@ -296,6 +296,8 @@ The `job-outcome-semantics` arms check Done deletion, explicit and default
 retry delays and attempt numbering, delayed enqueue, terminal Dead routing to
 a DLQ or archive, batch ID uniqueness and rows, FIFO group headers, and
 redelivery at the visibility timeout after a thrown drain handler.
+Malformed payloads move to the DLQ; future-version payloads stay queued and
+consume delivery attempts while the worker waits for a compatible version.
 
 `workers-survive-transient-polling-error` runs a continuous supervised job
 worker and terminates its PostgreSQL polling backend. The current released

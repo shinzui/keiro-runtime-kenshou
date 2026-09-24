@@ -2,6 +2,7 @@ module Kenshou.Suite.Keiro.Queue.Correctness (scenarios) where
 
 import Control.Concurrent (threadDelay)
 import Control.Exception (try)
+import Data.Aeson (object, (.=))
 import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.Int (Int64)
 import Data.List (nub)
@@ -14,7 +15,7 @@ import Hasql.Encoders qualified as Encoders
 import Hasql.Pool qualified as Pool
 import Hasql.Session qualified as Session
 import Hasql.Statement qualified as Statement
-import Keiro.PGMQ.Codec (aesonJobCodec)
+import Keiro.PGMQ.Codec (JobCodec (..), JobDecodeError (..), aesonJobCodec)
 import Keiro.PGMQ.Job (Job (..), JobConsumptionConfigError (..), JobContext (..), JobOrdering (..), JobOutcome (..), JobPolling (..), JobTuning (..), JobTuningConfigError (..), RetryDelay (..), RetryPolicy (..), defaultJobTuning, defaultRetryPolicy, enqueue, enqueueBatch, enqueueToGroup, enqueueWithDelay, ensureJobQueue, runJobOnceWithContext, withOrdering)
 import Keiro.PGMQ.Runtime (JobRuntime (..), QueueRef (..), queueRef, runJobEff, withJobRuntime)
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
@@ -55,6 +56,8 @@ runJobOutcomeSemantics context =
         batchJob = makeJob "batch"
         groupJob = (makeJob "group") {jobOrdering = FifoHeads}
         thrownJob = makeJob "thrown"
+        malformedJob = makeJob "malformed"
+        futureJob = Job "future" (queueRef (sourceName context "future")) (JobCodec (const (object ["future" .= True])) (const (Left (JobPayloadFromFuture 2 1)))) Unordered defaultRetryPolicy {defaultRetryDelay = RetryDelay 1}
         doneHandler _ _ = pure Done
         retryHandler jobContext _ = do
           liftIO $ atomicModifyIORef' attempts (\seen -> (seen <> [jobContext.attempt], ()))
@@ -78,10 +81,17 @@ runJobOutcomeSemantics context =
           let table = "pgmq.a_" <> queueNameToText target.jobQueue.physicalName
               statement = Statement.preparable ("SELECT count(*) FROM " <> table) Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
           Pool.use runtime.runtimePool (Session.statement () statement) >>= either (fail . show) pure
+        queueReadCount target = do
+          let table = "pgmq.q_" <> queueNameToText target.jobQueue.physicalName
+              statement = Statement.preparable ("SELECT coalesce(max(read_ct),0)::bigint FROM " <> table) Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
+          Pool.use runtime.runtimePool (Session.statement () statement) >>= either (fail . show) pure
         groupHeaderCount = do
           let table = "pgmq.q_" <> queueNameToText groupJob.jobQueue.physicalName
               statement = Statement.preparable ("SELECT count(*) FROM " <> table <> " WHERE headers->>'x-pgmq-group' = 'alpha'") Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
           Pool.use runtime.runtimePool (Session.statement () statement) >>= either (fail . show) pure
+        corruptMessage = do
+          let table = "pgmq.q_" <> queueNameToText malformedJob.jobQueue.physicalName
+          Pool.use runtime.runtimePool (Session.script ("UPDATE " <> table <> " SET message = '{\"unexpected\":true}'::jsonb")) >>= either (fail . show) pure
     setup <- runJobEff runtime do
       ensureJobQueue doneJob
       ensureJobQueue retryJob
@@ -92,6 +102,8 @@ runJobOutcomeSemantics context =
       ensureJobQueue batchJob
       ensureJobQueue groupJob
       ensureJobQueue thrownJob
+      ensureJobQueue malformedJob
+      ensureJobQueue futureJob
       _ <- enqueue doneJob ("done" :: Text)
       _ <- enqueue retryJob ("retry" :: Text)
       _ <- enqueue deadJob ("dead" :: Text)
@@ -101,8 +113,11 @@ runJobOutcomeSemantics context =
       batchIds <- enqueueBatch batchJob (["one", "two", "three"] :: [Text])
       _ <- enqueueToGroup groupJob "alpha" ("grouped" :: Text)
       _ <- enqueue thrownJob ("throw" :: Text)
+      _ <- enqueue malformedJob ("malformed" :: Text)
+      _ <- enqueue futureJob ("future" :: Text)
       pure batchIds
     batchIds <- either (fail . show) pure setup
+    corruptMessage
     done <- runOne doneJob doneHandler
     doneDepth <- queueCount doneJob
     retried <- runOne retryJob retryHandler
@@ -125,9 +140,18 @@ runJobOutcomeSemantics context =
     thrownResult <- runThrown throwingHandler
     thrownEarly <- runThrown doneHandler
     thrownDepth <- queueCount thrownJob
+    malformedHandled <- runOne malformedJob doneHandler
+    malformedDepth <- queueCount malformedJob
+    malformedDead <- deadLetter malformedJob
+    futureHandled <- runOne futureJob doneHandler
+    futureEarly <- runOne futureJob doneHandler
+    futureDepth <- queueCount futureJob
+    futureFirstReadCount <- queueReadCount futureJob
     threadDelay 1200000
     defaultSecond <- runOne defaultJob defaultHandler
     thrownRedelivery <- runThrown doneHandler
+    futureSecond <- runOne futureJob doneHandler
+    futureSecondReadCount <- queueReadCount futureJob
     observedDefaultAttempts <- readIORef defaultAttempts
     recordCells
       context
@@ -139,7 +163,9 @@ runJobOutcomeSemantics context =
         ("archive-when-dlq-disabled", archiveHandled == 1 && archiveDepth == 0 && archived == 1),
         ("batch-ids-and-rows", length batchIds == 3 && length (nub batchIds) == 3 && batchDepth == 3),
         ("group-header", groupedHeaders == 1),
-        ("drain-handler-exception", thrownResult == 0 && thrownEarly == 0 && thrownDepth == 1 && thrownRedelivery == 1)
+        ("drain-handler-exception", thrownResult == 0 && thrownEarly == 0 && thrownDepth == 1 && thrownRedelivery == 1),
+        ("malformed-payload", malformedHandled == 1 && malformedDepth == 0 && fst malformedDead == 1 && Text.isPrefixOf "invalid_payload" (snd malformedDead)),
+        ("future-payload-retries", futureHandled == 1 && futureEarly == 0 && futureDepth == 1 && futureFirstReadCount == 1 && futureSecond == 1 && futureSecondReadCount == 2)
       ]
 
 maxRetriesBeforeHandler :: Scenario
