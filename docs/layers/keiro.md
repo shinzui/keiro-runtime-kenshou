@@ -44,10 +44,11 @@ cabal run kenshou -- run keiro/workflow/concurrency/linear-self-sigkill-smoke \
   --dim pg.durability=durable --out runs
 ```
 
-`keiro/workflow/correctness/sleep-timer-smoke` checks that named and ordinal
+`keiro/workflow/correctness/sleep-via-timers` checks that named and ordinal
 sleeps arm deterministic timer rows, replay leaves the deadline and wake hint
 unchanged, due discovery waits for a timer worker, and one drain pass wakes
-both workflows with journaled completions.
+both workflows with journaled completions. It also checks terminal-owner timer
+cancellation and the timer generation after workflow rotation.
 
 The two timer correctness scenarios,
 `keiro/timer/correctness/lifecycle-and-at-least-once` and

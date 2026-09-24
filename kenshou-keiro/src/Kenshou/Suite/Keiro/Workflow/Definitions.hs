@@ -8,7 +8,9 @@ module Kenshou.Suite.Keiro.Workflow.Definitions
     expectedLinearResult,
     sleeperName,
     ordinalSleeperName,
+    rotatedSleeperName,
     sleeperWorkflow,
+    rotatedSleeperWorkflow,
     sleeperRegistry,
   )
 where
@@ -20,7 +22,7 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Effectful (Eff, IOE, liftIO, (:>))
 import Effectful.Error.Static (Error)
-import Keiro.Workflow (StepName (..), Workflow, WorkflowId (..), WorkflowName, mkWorkflowName, step)
+import Keiro.Workflow (StepName (..), Workflow, WorkflowId (..), WorkflowName, continueAsNew, mkWorkflowName, restoreSeed, step)
 import Keiro.Workflow.Resume (WorkflowDef (..), WorkflowRegistry)
 import Keiro.Workflow.Sleep (sleep, sleepNamed)
 import Kenshou.Suite.Keiro.Workflow.Effects (BoundaryPoint (..), EffectFact (..), EffectSink (..))
@@ -68,6 +70,9 @@ sleeperName = either (error . show) id (mkWorkflowName "kenshouSleeper")
 ordinalSleeperName :: WorkflowName
 ordinalSleeperName = either (error . show) id (mkWorkflowName "kenshouOrdinalSleeper")
 
+rotatedSleeperName :: WorkflowName
+rotatedSleeperName = either (error . show) id (mkWorkflowName "kenshouRotatedSleeper")
+
 -- | The named form is safe across a code reorder; the ordinal form exposes
 -- its positional step key for the corresponding compatibility probe.
 sleeperWorkflow :: (IOE :> es, Store :> es) => EffectSink -> Bool -> WorkflowId -> Eff (Workflow : es) Int
@@ -80,6 +85,13 @@ sleeperWorkflow sink named wid = do
     liftIO $ sink.recordEffect (EffectFact "step" (unWorkflowId wid <> "/0/after") "workflow" (object []))
     pure (2 :: Int)
   pure (before + after)
+
+rotatedSleeperWorkflow :: (IOE :> es, Store :> es) => WorkflowId -> Eff (Workflow : es) Int
+rotatedSleeperWorkflow _ = do
+  generation <- restoreSeed (0 :: Int)
+  if generation == 0
+    then continueAsNew (1 :: Int)
+    else sleepNamed (StepName "nap") 0.2 >> pure generation
 
 sleeperRegistry :: EffectSink -> WorkflowRegistry '[Store, Error StoreError, IOE]
 sleeperRegistry sink =
