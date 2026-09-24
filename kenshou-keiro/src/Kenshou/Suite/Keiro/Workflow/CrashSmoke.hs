@@ -8,7 +8,7 @@ import Data.Text (Text)
 import Data.Time (getCurrentTime)
 import Data.Vector qualified as Vector
 import Keiro.Codec (decodeRecorded)
-import Keiro.Workflow (WorkflowId (..), WorkflowJournalEvent (..), WorkflowName (..), completedStepName, deterministicJournalId, loadStepIndex, workflowJournalCodec, workflowStreamName)
+import Keiro.Workflow (WorkflowId (..), WorkflowJournalEvent (..), WorkflowName (..), completedStepName, loadStepIndex, workflowJournalCodec, workflowStreamName)
 import Keiro.Workflow.Instance (WorkflowInstanceRow (..), WorkflowStatus (..), lookupInstance, upsertInstanceTx)
 import Kenshou.Check.Fact (Fact (..), FactKind (..))
 import Kenshou.Check.Ledger (sealLedger)
@@ -26,6 +26,7 @@ import Kenshou.Core.Role (ControlMessage (..))
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..))
 import Kenshou.Suite.Keiro.Workflow.Definitions (defaultDefinitionParams, expectedLinearSteps, linearName)
 import Kenshou.Suite.Keiro.Workflow.Fixture (durableKirokuStore, withDurableStore)
+import Kenshou.Suite.Keiro.Workflow.Oracle (effectCoverage, journalStepIdentity)
 import Kiroku.Store (KirokuStore, defaultConnectionSettings, readStreamForward, runStoreIO, runTransaction)
 import Kiroku.Store.Types (RecordedEvent (..), StreamVersion (..))
 
@@ -93,9 +94,9 @@ runLinearSelfKillSmoke context = withCheck context \check ->
             ("replacement-completed", completed),
             ("terminal-no-attempt", case instanceRow of Right (Just row) -> row.status == WfCompleted && row.attempts == 0; _ -> False),
             ("one-journal-entry-per-step", map fst steps == expected && length events == length expected + 1),
-            ("journal-ids", all (\(name, event) -> event.eventId == deterministicJournalId linearName wid 0 name) steps),
+            ("journal-ids", journalStepIdentity linearName wid 0 expected [(name, event.eventId) | (name, event) <- steps]),
             ("index-matches", case index of Right rows -> all (`Map.member` rows) expected && Map.member completedStepName rows && Map.size rows == length expected + 1; _ -> False),
-            ("one-bounded-duplicate", all (\name -> Map.lookup (unWorkflowId wid <> "/0/" <> name) effects == Just (if name == "s2" then 2 else 1)) expected && Map.size effects == length expected)
+            ("one-bounded-duplicate", effectCoverage (map (\name -> unWorkflowId wid <> "/0/" <> name) expected) effects (Map.singleton (unWorkflowId wid <> "/0/s2") 1) && Map.lookup (unWorkflowId wid <> "/0/s2") effects == Just 2)
           ]
         verdict (name, held) =
           Verdict

@@ -9,7 +9,7 @@ import Data.Text (Text)
 import Data.Time (getCurrentTime)
 import Data.Vector qualified as Vector
 import Keiro.Codec (decodeRecorded)
-import Keiro.Workflow (WorkflowId (..), WorkflowJournalEvent (..), WorkflowOutcome (..), completedStepName, deterministicJournalId, loadStepIndex, runWorkflow, workflowJournalCodec, workflowStreamName)
+import Keiro.Workflow (WorkflowId (..), WorkflowJournalEvent (..), WorkflowOutcome (..), completedStepName, loadStepIndex, runWorkflow, workflowJournalCodec, workflowStreamName)
 import Kenshou.Check.Fact (FactKind (..))
 import Kenshou.Check.Ledger (recordDurable)
 import Kenshou.Check.Scenario (CheckEnv (..), finishWithVerdicts, withCheck)
@@ -24,6 +24,7 @@ import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tie
 import Kenshou.Suite.Keiro.Workflow.Definitions
 import Kenshou.Suite.Keiro.Workflow.Effects (EffectFact (..), EffectSink (..))
 import Kenshou.Suite.Keiro.Workflow.Fixture (durableKirokuStore, withDurableStore)
+import Kenshou.Suite.Keiro.Workflow.Oracle (effectCoverage, journalStepIdentity)
 import Kiroku.Store (defaultConnectionSettings, readStreamForward, runStoreIO)
 import Kiroku.Store.Types (RecordedEvent (..), StreamVersion (..))
 
@@ -90,10 +91,10 @@ runLinearReplaySmoke context = withCheck context \check ->
         cells =
           [ ("first-run-result", first == result),
             ("replay-result", second == result),
-            ("one-effect-per-step", all (\name -> Map.lookup ("linear-replay-smoke/0/" <> name) effects == Just 1) expected && Map.size effects == length expected),
+            ("one-effect-per-step", effectCoverage (map ("linear-replay-smoke/0/" <>) expected) effects Map.empty),
             ("journal-decodes", either (const False) (const True) decoded),
             ("one-journal-event-per-step", map fst stepEvents == expected && length events == length expected + 1),
-            ("journal-ids", all (\(name, event) -> event.eventId == deterministicJournalId linearName wid 0 name) stepEvents),
+            ("journal-ids", journalStepIdentity linearName wid 0 expected [(name, event.eventId) | (name, event) <- stepEvents]),
             ("index-matches-journal", either (const False) (\rows -> all (`Map.member` rows) expected && Map.member completedStepName rows && Map.size rows == length expected + 1) stepIndex)
           ]
         verdict (name, held) =

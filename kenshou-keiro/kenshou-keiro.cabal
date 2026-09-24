@@ -92,6 +92,7 @@ library
     Kenshou.Suite.Keiro.Workflow.Effects
     Kenshou.Suite.Keiro.Workflow.Fixture
     Kenshou.Suite.Keiro.Workflow.LinearSmoke
+    Kenshou.Suite.Keiro.Workflow.Oracle
     Kenshou.Suite.Keiro.Workflow.Roles
     Kenshou.Suite.Keiro.Workflow.SleepSmoke
 

@@ -17,6 +17,11 @@ provenance:
       at: 2026-09-24T05:09:17Z
       mode: "implement"
       note: "Started implementation; verified dependency seam and discovered role-name contract"
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-24T13:20:57Z
+      mode: "implement"
+      note: "Added shared workflow journal, effect and retry oracles with doctored-input tests"
 ---
 
 # Cover keiro durable execution, timers and sharded subscriptions
@@ -47,7 +52,8 @@ Milestone 1 — Durable workflow scenarios
 - [x] (2026-09-24 05:31Z) Added a `keiro/workflow-resume-worker` role and incremental `keiro/workflow/concurrency/linear-self-sigkill-smoke` scenario. A durable PostgreSQL run passed seven verdicts, including one bounded duplicate after a real process self-`SIGKILL` and no consumed attempt.
 - [x] (2026-09-24) Added named, ordinal and rotated sleeper definitions and `keiro/workflow/correctness/sleep-via-timers`. The final form passed both PostgreSQL durability modes with nine verdicts for deterministic timer rows and payloads, stable first-arm deadline and wake hint, due discovery without firing, batched wake, terminal-owner cancellation, generation pinning, completion journals, and single execution of surrounding step effects.
 - [ ] Add `Kenshou.Suite.Keiro.Workflow.Knobs` and complete `.Roles`. A basic `keiro/workflow-resume-worker` is registered and exercised; knob plumbing, push mode, the driver, and GC worker remain. The delivered kernel requires slash-form role names.
-- [ ] Add `Kenshou.Suite.Keiro.Workflow.Oracle` (journal, effect, quiescence, stranding, backoff-ladder checkers) with unit tests on doctored inputs.
+- [x] (2026-09-24 13:25Z) Added the first shared `Kenshou.Suite.Keiro.Workflow.Oracle` checks for journal step identity, effect coverage bounded by crash windows, and the retry backoff ladder. Doctored duplicate, missing, wrong-ID, and mistimed inputs fail their unit tests; the linear replay and real `SIGKILL` probes use the shared checks and pass.
+- [ ] Complete the workflow oracle with database-backed quiescence and stranded-suspension checks, and wire its full journal/effect verdicts into the remaining scenarios.
 - [ ] Add the workflow correctness scenarios (seven) and see them pass locally.
 - [ ] Add the workflow concurrency and crash scenarios (eleven) and see them pass or report their known defect.
 - [ ] Add the `wake` correctness scenario.
@@ -86,6 +92,7 @@ Milestone 4 — Durable-execution benchmarks, soak and telemetry arms
 - `Keiro.Workflow.Journal` is a hidden package module in the released cohort; the public `Keiro.Workflow` module re-exports `deterministicJournalId` and `loadStepIndex`. A direct hidden-module import failed compilation and was replaced by the public import.
 - Reading the correctness toolkit's ledger directory while `withCheck` still held the harness ledger open failed on macOS with `withBinaryFile: resource busy (file is locked)`. The crash probe seals the harness ledger before polling worker ledgers; its rerun passed with the `crash-armed` fact and both `s2` effect facts present.
 - The CLI cohort document identifies components by `.id`, not `.name` as the plan's illustrative filter says. `jq '.components[] | select(.id=="keiro")'` confirmed the executed cohort still pins `keiro`, `keiro-core`, `keiro-pgmq`, migrations and test support to 0.17.0.0.
+- A real self-`SIGKILL` produced a ledger file ending inside a JSON line. `foldFacts` raised `Data.ByteString.hGetLine: end of file` before it could apply its existing torn-final-line rule, so the scenario exited 4 without verdicts. The ledger reader now treats that EOF as the torn final fact; the rerun passed all seven verdicts.
 
 
 ## Decision Log
@@ -501,3 +508,11 @@ plan records their actual CLI JSON and worker-role naming contracts and the
 passing incremental workflow, timer and shard probes. Remaining acceptance
 criteria and unfinished work stay in Progress so implementation can resume
 without mistaking a green slice for the completed initiative.
+
+## Revision Note — 2026-09-24 (workflow oracle)
+
+The two incremental workflow probes now share pure journal and effect checks, and
+the test suite rejects doctored evidence. The retry spacing check follows
+keiro's persisted 2, 4, 8, …, 64 second gate. A process kill exposed a torn
+ledger-line reader error; the reader now discards that incomplete final fact.
+Database-backed workflow oracles and the remaining scenarios remain open.

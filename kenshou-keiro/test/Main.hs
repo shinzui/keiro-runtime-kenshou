@@ -7,7 +7,7 @@ import Data.List (intersect)
 import Data.Map.Strict qualified as Map
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
-import Data.Time (getCurrentTime)
+import Data.Time (addUTCTime, getCurrentTime)
 import Data.Time.Clock (UTCTime)
 import Data.UUID qualified as UUID
 import Effectful (runEff)
@@ -21,7 +21,7 @@ import Keiro.Integration.Event (IntegrationContentType (..), IntegrationEvent (.
 import Keiro.Outbox (OutboxId (..), OutboxRow (..), OutboxStatus (..))
 import Keiro.ProcessManager (ProcessManager (..), deterministicCommandId)
 import Keiro.Router (deterministicRouterCommandId)
-import Keiro.Workflow (WorkflowId (..))
+import Keiro.Workflow (WorkflowId (..), deterministicJournalId)
 import Kenshou.Suite.Keiro.Fixture.Account
 import Kenshou.Suite.Keiro.Fixture.Bonus
 import Kenshou.Suite.Keiro.Fixture.Bridge
@@ -35,6 +35,7 @@ import Kenshou.Suite.Keiro.Outbox.Oracle qualified as OutboxOracle
 import Kenshou.Suite.Keiro.Shard.Oracle qualified as ShardOracle
 import Kenshou.Suite.Keiro.Workflow.Definitions qualified as WorkflowDefinitions
 import Kenshou.Suite.Keiro.Workflow.Effects qualified as WorkflowEffects
+import Kenshou.Suite.Keiro.Workflow.Oracle qualified as WorkflowOracle
 import Kiroku.Store.Types (EventId (..), EventType (..), GlobalPosition (..), RecordedEvent (..), StreamId (..), StreamVersion (..))
 import Shibuya.Adapter (Adapter (..))
 import Shibuya.Core.Ack (AckDecision (..))
@@ -62,6 +63,29 @@ main = hspec do
           wid = WorkflowId "wf-1"
       WorkflowDefinitions.expectedLinearSteps params `shouldBe` ["s0", "s1", "s2"]
       WorkflowDefinitions.expectedLinearResult params wid `shouldBe` 7 * 3 + 31 * 4 * 3 + 3
+  describe "workflow oracles" do
+    it "rejects a duplicated or wrong-ID journal step" do
+      let name = WorkflowDefinitions.linearName
+          wid = WorkflowId "oracle"
+          first = deterministicJournalId name wid 0 "s0"
+          second = deterministicJournalId name wid 0 "s1"
+          expected = ["s0", "s1"]
+      WorkflowOracle.journalStepIdentity name wid 0 expected [("s0", first), ("s1", second)] `shouldBe` True
+      WorkflowOracle.journalStepIdentity name wid 0 expected [("s0", first), ("s0", first), ("s1", second)] `shouldBe` False
+      WorkflowOracle.journalStepIdentity name wid 0 expected [("s0", second), ("s1", second)] `shouldBe` False
+    it "allows duplicate effects only under a recorded crash window" do
+      let keys = ["s0", "s1"]
+          effects = Map.fromList [("s0", 2), ("s1", 1)]
+      WorkflowOracle.effectCoverage keys effects (Map.singleton "s0" 1) `shouldBe` True
+      WorkflowOracle.effectCoverage keys effects Map.empty `shouldBe` False
+      WorkflowOracle.effectCoverage keys (Map.insert "s2" 1 effects) (Map.singleton "s0" 1) `shouldBe` False
+      WorkflowOracle.effectCoverage keys (Map.delete "s1" effects) (Map.singleton "s0" 1) `shouldBe` False
+    it "rejects retry gaps that are too short or too long" do
+      now <- getCurrentTime
+      let good = [now, addUTCTime 2 now, addUTCTime 6 now, addUTCTime 14 now]
+      WorkflowOracle.backoffLadder 2 0.2 good `shouldBe` Right ()
+      WorkflowOracle.backoffLadder 2 0.2 [now, addUTCTime 1 now] `shouldSatisfy` either (const True) (const False)
+      WorkflowOracle.backoffLadder 2 0.2 [now, addUTCTime 3 now] `shouldSatisfy` either (const True) (const False)
   describe "shard oracles" do
     it "includes one reconciliation pass per lost bucket per survivor" do
       ShardOracle.failoverDeadline (ShardOracle.ShardTiming 3 0.5) 5 2 `shouldBe` 5.5

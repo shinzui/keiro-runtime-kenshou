@@ -9,7 +9,7 @@ module Kenshou.Check.Ledger.Read
   )
 where
 
-import Control.Exception (Exception, throwIO)
+import Control.Exception (Exception, catch, throwIO)
 import Control.Monad (foldM)
 import Data.Aeson (eitherDecodeStrict')
 import Data.ByteString qualified as ByteString
@@ -23,6 +23,7 @@ import Kenshou.Core.Canonical (sha256Hex)
 import System.Directory (doesDirectoryExist, doesFileExist, listDirectory)
 import System.FilePath (makeRelative, takeExtension, (</>))
 import System.IO
+import System.IO.Error (isEOFError)
 
 newtype FactSource = FactSource {next :: IO (Maybe Fact)}
 
@@ -46,7 +47,7 @@ openSegment path = do
   handle <- openBinaryFile path ReadMode
   hSetBuffering handle (BlockBuffering (Just (64 * 1024)))
   endsWithNewline <- fileEndsWithNewline handle
-  headerLine <- ByteString.hGetLine handle
+  headerLine <- ByteString.Char8.hGetLine handle
   header <- either (throwIO . LedgerReadError . Text.pack) pure (eitherDecodeStrict' headerLine)
   pure (header, FactSource (readNext handle endsWithNewline))
   where
@@ -55,13 +56,18 @@ openSegment path = do
       if done
         then hClose handle >> pure Nothing
         else do
-          line <- ByteString.hGetLine handle
-          atEnd <- hIsEOF handle
-          if atEnd && not endsWithNewline
-            then hClose handle >> pure Nothing
-            else case eitherDecodeStrict' line of
-              Right fact -> pure (Just fact)
-              Left err -> hClose handle >> throwIO (LedgerReadError (Text.pack path <> ": " <> Text.pack err))
+          let readLine = do
+                line <- ByteString.Char8.hGetLine handle
+                atEnd <- hIsEOF handle
+                if atEnd && not endsWithNewline
+                  then hClose handle >> pure Nothing
+                  else case eitherDecodeStrict' line of
+                    Right fact -> pure (Just fact)
+                    Left err -> hClose handle >> throwIO (LedgerReadError (Text.pack path <> ": " <> Text.pack err))
+          readLine `catch` \err ->
+            if isEOFError err && not endsWithNewline
+              then hClose handle >> pure Nothing
+              else throwIO (err :: IOError)
 
 discoverLedgers :: FilePath -> IO LedgerSet
 discoverLedgers root = do
