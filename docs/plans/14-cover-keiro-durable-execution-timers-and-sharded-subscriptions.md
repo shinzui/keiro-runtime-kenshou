@@ -109,7 +109,7 @@ Milestone 3 — Sharded subscription scenarios
 Milestone 4 — Durable-execution benchmarks, soak and telemetry arms
 
 - [ ] Add the six benchmarks and run each once locally at shakedown size with `pg.durability=durable`.
-- [x] (2026-09-24) Added the awakeable arm of `keiro/workflow/benchmark/parked-population-pass-cost` using the measurement toolkit's closed-loop recorder. Three-second durable runs with 100 and 2,000 parked instances passed, generated raw samples and latency histograms, and recorded 13,632 and 7,381 idle passes respectively with zero failures. Sleep and child parking arms remain.
+- [x] (2026-09-24) Added `keiro/workflow/benchmark/parked-population-pass-cost` using the measurement toolkit's closed-loop recorder. Three-second durable runs with 0 and 100 parked instances and all three wake sources (awakeable, sleep and child) passed; a 2,000-awakeable run recorded 7,381 idle passes. The benchmark generates raw samples and latency histograms and reports the pending-awakeable count statement's call and execution-time deltas. One extra call is allowed at drain when the last in-flight pass finishes after the load counter closes. The planned 10,000 and 100,000 population sweeps remain.
 - [ ] Add the two soaks (each as a `soak`-tier id and an `extended`-tier `-reduced` id) and pass the short forms locally with a leak verdict per worker process.
 - [ ] Wire `telemetry.tracing` and `telemetry.metrics` through the roles and add `keiro/workflow/benchmark/telemetry-overhead`.
 - [ ] Add the durable-execution section to `docs/layers/keiro.md`. An initial section documents the runnable workflow, timer and shard probes; extend it with the remaining scenario identifiers and knobs as they land.

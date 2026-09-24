@@ -175,10 +175,11 @@ whose `kiroku-listener` backend is terminated before the signal. At a one-second
 fallback interval, both PostgreSQL modes completed within the interval plus
 two seconds. The resume role uses Keiro's notifier for `push` mode.
 `keiro/workflow/benchmark/parked-population-pass-cost` measures repeated idle
-resume passes over parked awakeable workflows. The `workflow.population.parked`
-and `workflow.benchmark-duration-seconds` knobs control the population and
-measurement window. A three-second durable run at 2,000 parked instances
-recorded 7,381 idle passes and wrote raw samples and latency histograms.
+resume passes over workflows parked on awakeables, sleeps or children. The
+`workflow.population.parked`, `workflow.parked-on` and
+`workflow.benchmark-duration-seconds` knobs control the shape. A three-second
+durable run at 2,000 awakeables recorded 7,381 idle passes and wrote raw
+samples, latency histograms and the pending-awakeable count statement delta.
 
 The registered command scenarios also cover duplicate event identifiers,
 optimistic retry and exhaustion, controlled SQL rollback, and hydration over

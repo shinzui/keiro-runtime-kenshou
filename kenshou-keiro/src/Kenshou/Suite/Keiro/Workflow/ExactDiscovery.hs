@@ -1,4 +1,4 @@
-module Kenshou.Suite.Keiro.Workflow.ExactDiscovery (scenarios) where
+module Kenshou.Suite.Keiro.Workflow.ExactDiscovery (scenarios, awakeableCountStats, statsDelta) where
 
 import Control.Monad (forM)
 import Data.Aeson (object, withObject, (.:), (.=))

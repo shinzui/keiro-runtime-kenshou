@@ -3,24 +3,27 @@ module Kenshou.Suite.Keiro.Workflow.ParkedPassBench (scenarios) where
 import Control.Monad (forM)
 import Data.Aeson (object, (.=))
 import Data.List.NonEmpty (NonEmpty (..))
+import Data.Map.Strict qualified as Map
 import Data.Text qualified as Text
-import Keiro.Workflow (WorkflowId (..), WorkflowOutcome (..), runWorkflow)
-import Keiro.Workflow.Resume (ResumeSummary (..), WorkflowResumeOptions (..), defaultWorkflowResumeOptions, resumeWorkflowsOnce)
+import Keiro.Workflow (WorkflowId (..), WorkflowOutcome (..), defaultWorkflowRunOptions, runWorkflow)
+import Keiro.Workflow.Child (runChildWorkflow)
+import Keiro.Workflow.Resume (ResumeSummary (..), WorkflowDef (..), WorkflowResumeOptions (..), defaultWorkflowResumeOptions, resumeWorkflowsOnce)
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary, requirePostgres)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (Kind (..), parseScenarioId)
-import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), knobInt)
+import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), knobInt, knobText)
 import Kenshou.Core.Phase (PhasePlan (..))
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport (..), Tier (..))
 import Kenshou.Measure.Knobs (measureKnobs)
 import Kenshou.Measure.Load (ClosedConfig (..), LoadModel (..), LoadReport (..), Operation (..), runLoad)
 import Kenshou.Measure.Recorder (ErrorCause (..), OpName (..), OpResult (..))
 import Kenshou.Measure.Session (measureConfigFromKnobs, measuredOutcome, phasePlanFromCore, withMeasurement)
-import Kenshou.Suite.Keiro.Workflow.Definitions (approvalName, approvalRegistry, approvalWorkflow)
+import Kenshou.Suite.Keiro.Workflow.Definitions (approvalName, approvalRegistry, approvalWorkflow, discoveryParentName, discoveryParentWorkflowWithDelay, sleeperName, sleeperWorkflowWithDelay)
 import Kenshou.Suite.Keiro.Workflow.Effects (EffectSink (..))
+import Kenshou.Suite.Keiro.Workflow.ExactDiscovery (awakeableCountStats, statsDelta)
 import Kenshou.Suite.Keiro.Workflow.Fixture (durableKirokuStore, withDurableStore)
 import Kenshou.Suite.Keiro.Workflow.Knobs (workflowKnobName, workflowKnobs)
 import Kenshou.Suite.Keiro.Workflow.Oracle (recordWorkflowCells)
@@ -34,7 +37,7 @@ parkedPassCost =
   Scenario
     { id = either (error . show) id (parseScenarioId "keiro/workflow/benchmark/parked-population-pass-cost"),
       revision = 1,
-      summary = "Measures idle resume-pass latency across a parked awakeable population.",
+      summary = "Measures idle resume-pass latency across workflows parked on awakeables, sleeps or children.",
       tier = TierStandard,
       placement = PlaceEither,
       knobs = workflowKnobs <> measureKnobs Benchmark <> [durationKnob],
@@ -60,11 +63,27 @@ runParkedPassCost context = withCheck context \check ->
     let store = durableKirokuStore fixture
         population = fromIntegral (knobInt context.knobs (workflowKnobName "workflow.population.parked")) :: Int
         durationSeconds = fromIntegral (knobInt context.knobs (workflowKnobName "workflow.benchmark-duration-seconds")) :: Int
+        parkedOn = knobText context.knobs (workflowKnobName "workflow.parked-on")
         sink = EffectSink {recordEffect = \_ -> pure (), boundary = \_ -> pure ()}
         options = defaultWorkflowResumeOptions {pollInterval = 100000, leaseTtl = 3}
         wid index = WorkflowId ("parked-bench-" <> Text.pack (show index))
+        longDelay = fromIntegral (durationSeconds + 3600)
+        sleeper idValue = sleeperWorkflowWithDelay sink True longDelay idValue
+        parent idValue = discoveryParentWorkflowWithDelay sink longDelay idValue
+        registry = case parkedOn of
+          "sleep" -> Map.singleton sleeperName (WorkflowDef sleeper)
+          "child" -> Map.fromList [(discoveryParentName, WorkflowDef parent), (sleeperName, WorkflowDef sleeper)]
+          _ -> approvalRegistry sink
     parked <- forM [0 .. population - 1] \index ->
-      runStoreIO store (runWorkflow approvalName (wid index) (approvalWorkflow sink (wid index)))
+      case parkedOn of
+        "sleep" -> fmap (== Suspended) <$> runStoreIO store (runWorkflow sleeperName (wid index) (sleeper (wid index)))
+        "child" -> do
+          let childId = WorkflowId ("parked-bench-" <> Text.pack (show index) <> "-child")
+          parentResult <- runStoreIO store (runWorkflow discoveryParentName (wid index) (parent (wid index)))
+          childResult <- runStoreIO store (runChildWorkflow defaultWorkflowRunOptions sleeperName childId (sleeper childId))
+          pure (Right (parentResult == Right Suspended && childResult == Right Suspended))
+        _ -> fmap (== Suspended) <$> runStoreIO store (runWorkflow approvalName (wid index) (approvalWorkflow sink (wid index)))
+    statsBefore <- awakeableCountStats store
     let configResult = measureConfigFromKnobs context (phasePlanFromCore (PhasePlan 0 (fromIntegral durationSeconds) 0))
     case configResult of
       Left reason -> fail (Text.unpack reason)
@@ -76,12 +95,17 @@ runParkedPassCost context = withCheck context \check ->
             ( Operation
                 (OpName "parked-resume-pass")
                 ( \_ _ -> do
-                    result <- runStoreIO store (resumeWorkflowsOnce options (approvalRegistry sink))
+                    result <- runStoreIO store (resumeWorkflowsOnce options registry)
                     pure case result of
                       Right summary | summary.discovered == 0 && summary.advanced == 0 -> OpOk 1
                       _ -> OpFailed (ErrorCause "non-idle-pass")
                 )
             )
-        putSummary context Measurements "parked-pass-cost" (object ["parked" .= population, "completed" .= loadReport.completed, "failed" .= loadReport.failed, "durationSeconds" .= durationSeconds])
-        base <- recordWorkflowCells check [("population-parked", length parked == population && all (== Right Suspended) parked), ("all-passes-idle", loadReport.completed > 0 && loadReport.failed == 0)]
+        statsAfter <- awakeableCountStats store
+        let statementDelta = statsDelta statsBefore statsAfter
+            statementPerPass = case statementDelta of
+              Just (calls, millis) -> calls >= fromIntegral loadReport.completed && calls <= fromIntegral loadReport.completed + 1 && millis >= 0
+              Nothing -> False
+        putSummary context Measurements "parked-pass-cost" (object ["parked" .= population, "parkedOn" .= parkedOn, "completed" .= loadReport.completed, "failed" .= loadReport.failed, "durationSeconds" .= durationSeconds, "awakeableCountStatements" .= statementDelta])
+        base <- recordWorkflowCells check [("population-parked", length parked == population && all (== Right True) parked), ("all-passes-idle", loadReport.completed > 0 && loadReport.failed == 0), ("one-awakeable-count-query-per-pass", statementPerPass)]
         pure (base {outcome = measuredOutcome report base.outcome})

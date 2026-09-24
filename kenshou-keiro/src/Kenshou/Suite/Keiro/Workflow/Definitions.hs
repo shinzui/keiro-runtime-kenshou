@@ -29,6 +29,7 @@ module Kenshou.Suite.Keiro.Workflow.Definitions
     rotatedParentWorkflow,
     discoveryParentName,
     discoveryParentWorkflow,
+    discoveryParentWorkflowWithDelay,
     flakyName,
     flakyWorkflow,
     flakyRegistry,
@@ -233,9 +234,12 @@ discoveryParentName :: WorkflowName
 discoveryParentName = either (error . show) id (mkWorkflowName "kenshouDiscoveryParent")
 
 discoveryParentWorkflow :: (IOE :> es, Store :> es) => EffectSink -> WorkflowId -> Eff (Workflow : es) Int
-discoveryParentWorkflow sink wid = do
+discoveryParentWorkflow sink = discoveryParentWorkflowWithDelay sink 60
+
+discoveryParentWorkflowWithDelay :: (IOE :> es, Store :> es) => EffectSink -> NominalDiffTime -> WorkflowId -> Eff (Workflow : es) Int
+discoveryParentWorkflowWithDelay sink delay wid = do
   let childId = WorkflowId (unWorkflowId wid <> "-child")
-  handle <- spawnChild sleeperName childId (sleeperWorkflowWithDelay sink True 60 childId)
+  handle <- spawnChild sleeperName childId (sleeperWorkflowWithDelay sink True delay childId)
   awaitChild handle
 
 flakyName :: WorkflowName
