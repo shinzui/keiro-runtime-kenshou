@@ -542,6 +542,13 @@ see a duplicate. `inbox.kill-winner=backend-kill` terminates only the first
 consumer's database backend and checks that its connection error is visible.
 In both fault arms a fresh consumer redelivers the message after the peers
 finish and reports duplicate; the final effect count remains one.
+With `--set inbox.idempotence=delegated`, the four processes instead send one
+deposit command to the same account stream using a deterministic event receipt.
+The no-kill, `SIGKILL`, and backend-only arms passed on durable PostgreSQL.
+The fault arms park the first command inside its SQL transaction, then verify
+that killing the process or its backend leaves only the opening event before
+the peers run. One peer appends the deposit marker, the others and a restarted
+consumer see duplicates, and `keiro_inbox` stays empty.
 `gc-vs-insert-race` is registered with the documented inbox GC limitation.
 The current staged proxy runs delete the old receipt and observe a second
 handler effect, but the consumer leaves a replacement receipt. The strict
