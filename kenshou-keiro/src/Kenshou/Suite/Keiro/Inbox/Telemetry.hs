@@ -1,6 +1,10 @@
 module Kenshou.Suite.Keiro.Inbox.Telemetry (runInboxSignals) where
 
+import Data.Functor.Contravariant (contramap)
 import Data.Text (Text)
+import Hasql.Decoders qualified as Decoders
+import Hasql.Encoders qualified as Encoders
+import Hasql.Statement qualified as Statement
 import Hasql.Transaction qualified as Tx
 import Keiro.Inbox (InboxDedupePolicy (..), InboxPersistence (..), InboxResult (..), InboxRow (..), InboxStatus (..), countInboxBacklog, listInbox, runInboxTransactionWith, sampleInboxBacklog)
 import Keiro.Inbox.Kafka (integrationEventFromKafka)
@@ -23,8 +27,17 @@ runInboxSignals fixture telemetry brokerRecord = do
       handle delivered = Tx.statement delivered.messageId effectInsertStatement
       intake = withConsumerSpan telemetry.tracer (Just "kenshou-telemetry") inbound (Just event) \_ ->
         runFixture (runInboxTransactionWith fixture.telemetry.keiroMetrics PersistFullEnvelope PreferIntegrationMessageId event (Just reference) handle) >>= either (fail . show) pure
+      processingId = event.messageId <> "-processing"
+      processingEvent = event {messageId = processingId}
+      insertProcessing =
+        Statement.preparable
+          "INSERT INTO keiro.keiro_inbox (source,dedupe_key,message_id,content_type,payload_bytes,status) VALUES ($1,$2,$2,'application/json',''::bytea,'processing')"
+          (contramap fst (Encoders.param (Encoders.nonNullable Encoders.text)) <> contramap snd (Encoders.param (Encoders.nonNullable Encoders.text)))
+          Decoders.noResult
   first <- intake
   duplicate <- intake
+  _ <- runFixture (runTransaction (Tx.statement (event.source, processingId) insertProcessing)) >>= either (fail . show) pure
+  inProgress <- runFixture (runInboxTransactionWith fixture.telemetry.keiroMetrics PersistFullEnvelope PreferIntegrationMessageId processingEvent Nothing handle) >>= either (fail . show) pure
   _ <- runFixture (sampleInboxBacklog fixture.telemetry.keiroMetrics) >>= either (fail . show) pure
   backlog <- runFixture countInboxBacklog >>= either (fail . show) pure
   rows <- runFixture (listInbox event.source) >>= either (fail . show) pure
@@ -39,8 +52,9 @@ runInboxSignals fixture telemetry brokerRecord = do
       hasText spanValue key value = lookupAttribute spanValue.attributes key == Just (AttributeValue (TextAttribute value))
       spanValid spanValue = show spanValue.kind == "Consumer" && hasText spanValue "messaging.system" "kafka" && hasText spanValue "messaging.operation.type" "process" && hasText spanValue "messaging.message.id" event.messageId
   pure
-    [ ("inbox-durable-duplicate", first == Right (InboxProcessed ()) && duplicate == Right InboxDuplicate && case rows of [row] -> row.status == InboxCompleted && row.event.messageId == event.messageId; _ -> False),
-      ("inbox-single-effect", effects == [event.messageId] && backlog == 0),
+    [ ("inbox-durable-duplicate", first == Right (InboxProcessed ()) && duplicate == Right InboxDuplicate && case [row | row <- rows, row.event.messageId == event.messageId] of [row] -> row.status == InboxCompleted; _ -> False),
+      ("inbox-in-progress-unrecorded", inProgress == Right InboxInProgress && case [row | row <- rows, row.event.messageId == processingId] of [row] -> row.status == InboxProcessing; _ -> False),
+      ("inbox-single-effect", effects == [event.messageId] && backlog == 1),
       ("consumer-spans", if maybe True (const False) telemetry.tracer then null consumerSpans else length consumerSpans == 2 && all spanValid consumerSpans),
       ("inbox-metrics", if telemetry.metricsLive then metric "keiro.inbox.processed" == 1 && metric "keiro.inbox.duplicates" == 1 && metric "keiro.inbox.failed" == 0 && gauge "keiro.inbox.backlog" == [fromIntegral backlog] else metric "keiro.inbox.processed" == 0 && null (gauge "keiro.inbox.backlog"))
     ]

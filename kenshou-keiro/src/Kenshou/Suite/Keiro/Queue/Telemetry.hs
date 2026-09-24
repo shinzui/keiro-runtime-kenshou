@@ -10,7 +10,8 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Effectful (liftIO)
 import Keiro.PGMQ.Codec (aesonJobCodec)
-import Keiro.PGMQ.Job (Job (..), JobOrdering (..), JobOutcome (..), JobPolling (..), JobTuning (..), defaultJobTuning, defaultRetryPolicy, enqueue, enqueueTraced, ensureJobQueue, jobProcessorWithContext, runJobOnceWithContext, runJobWorkers, withOrdering)
+import Keiro.PGMQ.Dlq (readDlq)
+import Keiro.PGMQ.Job (Job (..), JobOrdering (..), JobOutcome (..), JobPolling (..), JobTuning (..), RetryPolicy (..), defaultJobTuning, defaultRetryPolicy, enqueue, enqueueTraced, ensureJobQueue, jobProcessorWithContext, runJobOnceWithContext, runJobWorkers, withOrdering)
 import Keiro.PGMQ.Runtime (queueRef, runJobEff, withJobRuntime)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary, requirePostgres)
 import Kenshou.Core.Dimension
@@ -60,6 +61,7 @@ runQueueSignals context = case telemetrySpecFromContext context of
     withJobRuntime (requirePostgres context).connectionString telemetry.tracer \runtime -> do
       let job = Job "telemetry-job" (queueRef (sourceName context "telemetry-job")) (aesonJobCodec @Text) FifoHeads defaultRetryPolicy
           workerJob = Job "telemetry-worker" (queueRef (sourceName context "telemetry-worker")) (aesonJobCodec @Text) Unordered defaultRetryPolicy
+          preHandlerJob = Job "telemetry-pre-handler" (queueRef (sourceName context "telemetry-pre-handler")) (aesonJobCodec @Text) Unordered defaultRetryPolicy {maxRetries = 0}
           tuning = withOrdering FifoHeads defaultJobTuning
           headers = MessageHeaders (object ["x-pgmq-group" .= ("telemetry-group" :: Text)])
           enqueueOne target payload = runJobEff runtime (enqueue target payload) >>= either (fail . show) pure
@@ -77,13 +79,18 @@ runQueueSignals context = case telemetrySpecFromContext context of
       _ <- enqueueWithTrace job "throw"
       thrown <- runJobEff runtime (runJobOnceWithContext tuning {visibilityTimeout = 1} 1 job (\_ _ -> liftIO (fail "telemetry handler threw"))) >>= either (fail . show) pure
       _ <- runJobEff runtime (ensureJobQueue workerJob) >>= either (fail . show) pure
+      _ <- runJobEff runtime (ensureJobQueue preHandlerJob) >>= either (fail . show) pure
       workerCalls <- newIORef (0 :: Int)
+      preHandlerCalls <- newIORef (0 :: Int)
       let workerHandler _ payload = do
             liftIO (atomicModifyIORef' workerCalls (\count -> (count + 1, ())))
             pure (if payload == "worker-dead" then Dead "worker telemetry dead" else Done)
           workerTuning = defaultJobTuning {polling = PollEvery 0.1}
+          preHandlerHandler _ _ = do
+            liftIO (atomicModifyIORef' preHandlerCalls (\count -> (count + 1, ())))
+            pure Done
           runWorker = runJobEff runtime do
-            started <- runJobWorkers StopAllOnFailure 16 [jobProcessorWithContext workerTuning workerJob workerHandler]
+            started <- runJobWorkers StopAllOnFailure 16 [jobProcessorWithContext workerTuning workerJob workerHandler, jobProcessorWithContext workerTuning preHandlerJob preHandlerHandler]
             case started of
               Left err -> liftIO (fail (show err))
               Right app -> waitApp app
@@ -100,11 +107,27 @@ runQueueSignals context = case telemetrySpecFromContext context of
                 then pure ()
                 else threadDelay 100000 >> awaitWorkerSpans (remaining - 1)
       workerTask <- async runWorker
-      completedWorkerCalls <- (enqueueWithTrace workerJob "worker-done" >> enqueueWithTrace workerJob "worker-dead" >> awaitCalls (100 :: Int) <* awaitWorkerSpans (100 :: Int)) `finally` cancel workerTask
+      let awaitPreHandlerDlq 0 = fail "pre-handler job did not reach the DLQ"
+          awaitPreHandlerDlq remaining = do
+            rows <- runJobEff runtime (readDlq preHandlerJob 1) >>= either (fail . show) pure
+            if length rows == 1 then pure rows else threadDelay 100000 >> awaitPreHandlerDlq (remaining - 1)
+      (completedWorkerCalls, preHandlerDlq) <-
+        ( do
+            _ <- enqueueWithTrace workerJob "worker-done"
+            _ <- enqueueWithTrace workerJob "worker-dead"
+            _ <- enqueueWithTrace preHandlerJob "pre-handler-dead"
+            calls <- awaitCalls (100 :: Int)
+            awaitWorkerSpans (100 :: Int)
+            rows <- awaitPreHandlerDlq (100 :: Int)
+            pure (calls, rows)
+        )
+          `finally` cancel workerTask
+      observedPreHandlerCalls <- readIORef preHandlerCalls
       _ <- telemetry.flushTelemetry
       spans <- maybe (pure []) readSpans telemetry.spans
       let processSpans = [spanValue | spanValue <- spans, spanValue.name == "telemetry-job process"]
           workerSpans = [spanValue | spanValue <- spans, spanValue.name == "telemetry-worker process"]
+          preHandlerSpans = [spanValue | spanValue <- spans, spanValue.name == "telemetry-pre-handler process"]
           roots = [spanValue | spanValue <- spans, "queue-source-" `Text.isPrefixOf` spanValue.name]
           hasText spanValue key value = lookupAttribute spanValue.attributes key == Just (AttributeValue (TextAttribute value))
           validCommon spanValue = show spanValue.kind == "Consumer" && hasText spanValue "messaging.system" "shibuya" && hasText spanValue "messaging.destination.name" "telemetry-job" && hasText spanValue "messaging.operation.type" "process" && hasText spanValue "shibuya.partition" "telemetry-group" && lookupAttribute spanValue.attributes "shibuya.inflight.count" == Nothing
@@ -116,9 +139,10 @@ runQueueSignals context = case telemetrySpecFromContext context of
           cells =
             [ ("drain-deliveries", handled == 2 && thrown == 0),
               ("drain-process-spans", if maybe True (const False) telemetry.tracer then null processSpans else length processSpans == 3 && all validCommon processSpans && acknowledged),
-              ("traced-enqueue-parentage", if maybe True (const False) telemetry.tracer then null roots else length roots == 5 && parented),
+              ("traced-enqueue-parentage", if maybe True (const False) telemetry.tracer then null roots else length roots == 6 && parented),
               ("worker-deliveries", completedWorkerCalls == 2),
+              ("pre-handler-dead-letter", observedPreHandlerCalls == 0 && length preHandlerDlq == 1),
               ("worker-process-spans", if maybe True (const False) telemetry.tracer then null workerSpans else length workerSpans == 2 && all (\spanValue -> show spanValue.kind == "Consumer" && hasText spanValue "messaging.system" "shibuya" && lookupAttribute spanValue.attributes "shibuya.inflight.count" /= Nothing && lookupAttribute spanValue.attributes "shibuya.inflight.max" /= Nothing) workerSpans && workerAcknowledged)
             ]
-      putSummary context Measurements "queue-telemetry" (object ["handled" .= handled, "workerCalls" .= completedWorkerCalls, "processSpanCount" .= length processSpans, "workerSpanCount" .= length workerSpans, "sourceSpanCount" .= length roots])
+      putSummary context Measurements "queue-telemetry" (object ["handled" .= handled, "workerCalls" .= completedWorkerCalls, "preHandlerCalls" .= observedPreHandlerCalls, "preHandlerDlqRows" .= length preHandlerDlq, "preHandlerSpanCount" .= length preHandlerSpans, "processSpanCount" .= length processSpans, "workerSpanCount" .= length workerSpans, "sourceSpanCount" .= length roots])
       recordCells context cells
