@@ -444,6 +444,14 @@ With `--set outbox.enqueue-path=producer`, the ordering scenario instead makes
 two serialized calls to `enqueueProducerEventTx`; its durable control run passed
 the schedule, no-loss, and per-key-order verdicts. Subscription-driven producer
 coverage remains in the plan.
+`producer-identity-race-with-gc` runs four concurrent replayers of 128 stable
+source events while a publisher drains and zero-retention GC deletes sent rows.
+Its durable run deleted 192 rows and observed 106 republications. All 640
+enqueue calls returned inserted or identical-duplicate outcomes within the
+bound; retained identities stayed unique, and every broker record carried the
+derived message ID for its source event. Use `outbox.enqueuers` and
+`outbox.source-events` to change the contention size. Republications are
+expected because suppression ends when GC removes a sent row.
 
 ## Inbox
 
