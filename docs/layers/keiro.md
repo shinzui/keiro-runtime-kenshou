@@ -76,7 +76,9 @@ The `sigkill-crash-windows` scenario runs a separate process-manager worker,
 parks it at one of four append or acknowledgement boundaries, kills it, and
 checks the durable saga and target effects for that transfer and its neighbour
 after a fresh worker resumes the same subscription. Select a boundary with
-`--set pm.kill-window=between-targets`.
+`--set pm.kill-window=between-targets`. The resumed worker also replays an
+acknowledged signal through the manager and reports `PMStateDuplicate`; all
+four crash windows passed this fact and the durable oracle.
 `random-kill-exactly-once` paces debit and announcement commands while
 restarting the real saga worker at a configured interval. An optional arm
 terminates one of its PostgreSQL backends before alternating restarts. A

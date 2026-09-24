@@ -332,11 +332,12 @@ runCrashWindow context =
       beforeSaga <- Oracle.readCategoryLog connection "pm:transferSaga"
       beforeAccounts <- Oracle.readCategoryLog connection "account"
       killChild supervisor armed
-      resumedSpec <- roleProcess check "keiro/pm-worker" 1 (object ["subscription" .= subscription])
+      resumedSpec <- roleProcess check "keiro/pm-worker" 1 (object ["subscription" .= subscription, "reportManagerReplay" .= True])
       resumed <- spawn supervisor resumedSpec
       awaitReady resumed 10000
       sendCommand resumed CtlStart
       completed <- timeout 90000000 (awaitEffects connection)
+      replaySeen <- timeout 10000000 (awaitReplay resumed)
       sagaRows <- Oracle.readCategoryLog connection "pm:transferSaga"
       accountRows <- Oracle.readCategoryLog connection "account"
       Connection.release connection
@@ -352,12 +353,18 @@ runCrashWindow context =
             [ ("source-setup", all accepted seeded),
               ("parked-at-window", Map.member "parked" parked.marks && observedBefore == expectedBefore),
               ("killed-and-restarted", childPid armed /= childPid resumed && completed == Just True),
+              ("manager-state-duplicate-replay", replaySeen == Just True),
               ("exactly-once-target-effects", length sagaRows == 2 && count "TransferCredited" accountRows == 2 && count "TransferConfirmed" accountRows == 2),
               ("neighbour-completed", length [() | row <- accountRows, row.streamName == accountStreamName neighbourDestination, row.eventType == EventType "TransferCredited"] == 1),
               ("log-is-well-formed", Oracle.logWellFormed accountRows && Oracle.logWellFormed sagaRows)
             ]
       recordCells context cells
   where
+    awaitReplay child = do
+      snapshot <- atomically (progress child)
+      case Map.lookup "manager-replay" snapshot.marks of
+        Just value | parseMaybe (withObject "manager replay" (.: "stateDuplicate")) value == Just True -> pure True
+        _ -> threadDelay 100000 >> awaitReplay child
     awaitEffects connection = do
       sagaRows <- Oracle.readCategoryLog connection "pm:transferSaga"
       accountRows <- Oracle.readCategoryLog connection "account"
