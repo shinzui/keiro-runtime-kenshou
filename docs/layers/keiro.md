@@ -162,7 +162,10 @@ source append to worker completion time, then checks that each destination
 was credited once and each saga appended one event. Its summary separates
 fresh-only and redelivery handling times. A 15-second local two-worker run
 passed with 1,181 steady samples, and another passed with in-memory traces
-and collected metrics. The Kiroku adapter arm remains to be exercised.
+and collected metrics. `pm.source=kiroku-adapter` runs the production durable
+bridge, injecting one immediate retry for the selected redelivery share. A
+15-second local run completed 1,399 transfers, including 350 redeliveries,
+with a benchmark grade and all three durable checks passing.
 
 The router `fanout-dispatch` benchmark preopens a fixed recipient set, creates
 one bonus declaration per operation, and sends it through the list worker.
