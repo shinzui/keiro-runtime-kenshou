@@ -2,11 +2,13 @@ module Kenshou.Suite.Keiro.Command.SteadyState (scenarios) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (poll, withAsync)
+import Control.Concurrent.MVar (modifyMVar_, newMVar, readMVar)
 import Control.Concurrent.STM (atomically)
-import Control.Exception (throwIO)
+import Control.Exception (mask_, throwIO)
 import Control.Monad (forM, forever)
 import Data.Aeson (encode, object, (.=))
 import Data.ByteString.Lazy qualified as LazyByteString
+import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.Int (Int64)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
@@ -71,6 +73,7 @@ steadyState reduced =
                intKnob "command.rate-per-second" 200 1 2000,
                intKnob "command.accounts" 100 4 1000,
                intKnob "router.fanout" 4 1 100,
+               intKnob "soak.kill-interval-seconds" 0 0 3600,
                intKnob "projection.prune-interval-seconds" 300 0 3600,
                intKnob "projection.dedup-retention-seconds" 3600 600 86400
              ],
@@ -97,6 +100,7 @@ runSteadyState context = case measureConfigFromKnobs context (phasePlanFromCore 
             accounts = fromIntegral (knobInt context.knobs (knobName "command.accounts")) :: Int
             fanout = fromIntegral (knobInt context.knobs (knobName "router.fanout")) :: Int
             rate = fromIntegral (knobInt context.knobs (knobName "command.rate-per-second")) :: Int
+            killInterval = fromIntegral (knobInt context.knobs (knobName "soak.kill-interval-seconds")) :: Int
             pruneInterval = fromIntegral (knobInt context.knobs (knobName "projection.prune-interval-seconds")) :: Int
             retention = fromIntegral (knobInt context.knobs (knobName "projection.dedup-retention-seconds")) :: Int
             account index = AccountId (Text.pack (show index))
@@ -118,12 +122,34 @@ runSteadyState context = case measureConfigFromKnobs context (phasePlanFromCore 
               awaitReady child 10000
               sendCommand child CtlStart
               pure child
+            spawnProjection index = do
+              spec <- roleProcess check "keiro/projection-worker" index (object ["batchSize" .= (100 :: Int), "sampleProcess" .= True])
+              child <- spawn supervisor spec
+              awaitReady child 10000
+              sendCommand child CtlStart
+              pure child
         manager <- dispatcher "keiro/pm-worker" 0 "kenshou-keiro-steady-pm" ["inlineProjection" .= True]
         router <- dispatcher "keiro/router-worker" 0 "kenshou-keiro-steady-router" []
-        projectionSpec <- roleProcess check "keiro/projection-worker" 0 (object ["batchSize" .= (100 :: Int), "sampleProcess" .= True])
-        projection <- spawn supervisor projectionSpec
-        awaitReady projection 10000
-        sendCommand projection CtlStart
+        projection <- spawnProjection 0
+        currentManager <- newMVar manager
+        currentRouter <- newMVar router
+        currentProjection <- newMVar projection
+        workerKills <- newIORef (0 :: Int)
+        let restartLoop generation = do
+              threadDelay (killInterval * 1000000)
+              mask_ do
+                let slot = (generation - 1) `mod` 3
+                    index = (generation - 1) `div` 3 + 1
+                    restart current spawnNext = modifyMVar_ current \old -> do
+                      killChild supervisor old
+                      replacement <- spawnNext index
+                      modifyIORef' workerKills (+ 1)
+                      pure replacement
+                case slot of
+                  0 -> restart currentManager (\i -> dispatcher "keiro/pm-worker" i "kenshou-keiro-steady-pm" ["inlineProjection" .= True])
+                  1 -> restart currentRouter (\i -> dispatcher "keiro/router-worker" i "kenshou-keiro-steady-router" [])
+                  _ -> restart currentProjection spawnProjection
+              restartLoop (generation + 1)
         writers <- forM [0, 1 :: Int] \index -> do
           let delay = max 1 (2000000 `div` rate)
               args = object ["worker" .= index, "workers" .= (2 :: Int), "count" .= (100000000 :: Int), "accounts" .= accounts, "inlineProjection" .= True, "reportEvery" .= (1000 :: Int), "postSubmissionDelayMicros" .= delay, "sampleProcess" .= True]
@@ -132,11 +158,13 @@ runSteadyState context = case measureConfigFromKnobs context (phasePlanFromCore 
           awaitReady child 10000
           sendCommand child CtlStart
           pure child
-        (_, _) <- withAsync (if pruneInterval == 0 then pure () else pruneLoop) \pruner -> do
-          measured <- withMeasurement context config \measurement ->
-            runLoad measurement (ClosedLoop (ClosedConfig 1 10000000 0)) (Operation (OpName "soak-heartbeat") (\_ _ -> pure (OpOk 1)))
-          poll pruner >>= maybe (pure ()) (either throwIO (const (pure ())))
-          pure measured
+        (_, _) <- withAsync (if pruneInterval == 0 then pure () else pruneLoop) \pruner ->
+          withAsync (if killInterval == 0 then pure () else restartLoop 1) \killer -> do
+            measured <- withMeasurement context config \measurement ->
+              runLoad measurement (ClosedLoop (ClosedConfig 1 10000000 0)) (Operation (OpName "soak-heartbeat") (\_ _ -> pure (OpOk 1)))
+            poll pruner >>= maybe (pure ()) (either throwIO (const (pure ())))
+            poll killer >>= maybe (pure ()) (either throwIO (const (pure ())))
+            pure measured
         writerExits <- traverse (\child -> stopGracefully supervisor child 30000) writers
         quiescent <- timeout 120000000 (awaitQuiescence connection fanout)
         accountRows <- Oracle.readCategoryLog connection "account"
@@ -156,7 +184,11 @@ runSteadyState context = case measureConfigFromKnobs context (phasePlanFromCore 
               runFixture (countAsyncProjectionDedupForBefore accountActivityReadModelName dedupCutoff) >>= either (fail . show) pure
         dedupCount <- Connection.use connection (Session.statement () projectionDedupCount) >>= either (fail . show) pure
         Connection.release connection
-        mapM_ (killChild supervisor) [manager, router, projection]
+        finalManager <- readMVar currentManager
+        finalRouter <- readMVar currentRouter
+        finalProjection <- readMVar currentProjection
+        mapM_ (killChild supervisor) [finalManager, finalRouter, finalProjection]
+        killCount <- readIORef workerKills
         writerStates <- traverse (atomically . progress) writers
         latencySamples <- fmap concat $ forM [0, 1 :: Int] \index -> do
           let relative = "children/keiro-command-writer-" <> show index <> "/latency.csv"
@@ -187,11 +219,12 @@ runSteadyState context = case measureConfigFromKnobs context (phasePlanFromCore 
           LazyByteString.writeFile path (encode named)
           Core.declareMediaType context relative "application/json"
           pure (label, named)
-        putSummary context Measurements "write-side-steady" (object ["accounts" .= accounts, "fanout" .= fanout, "transfers" .= transfers, "bonuses" .= bonuses, "accountEvents" .= length accountRows, "prunedDedupRowsFinal" .= pruned, "oldDedupRows" .= oldDedup, "dedupRows" .= dedupCount, "commandLatency" .= object ["firstDecileP99Ns" .= earlyP99, "lastDecileP99Ns" .= lateP99, "firstDecileSamples" .= earlyCount, "lastDecileSamples" .= lateCount, "verdict" .= show latencyVerdict], "leakVerdict" .= show leak.verdict, "childLeakVerdicts" .= [(label, show report.verdict) | (label, report) <- childLeaks], "coverageStatus" .= ("partial: periodic kills and full telemetry arms pending" :: Text.Text)])
+        putSummary context Measurements "write-side-steady" (object ["accounts" .= accounts, "fanout" .= fanout, "workerKills" .= killCount, "transfers" .= transfers, "bonuses" .= bonuses, "accountEvents" .= length accountRows, "prunedDedupRowsFinal" .= pruned, "oldDedupRows" .= oldDedup, "dedupRows" .= dedupCount, "commandLatency" .= object ["firstDecileP99Ns" .= earlyP99, "lastDecileP99Ns" .= lateP99, "firstDecileSamples" .= earlyCount, "lastDecileSamples" .= lateCount, "verdict" .= show latencyVerdict], "leakVerdict" .= show leak.verdict, "childLeakVerdicts" .= [(label, show report.verdict) | (label, report) <- childLeaks], "coverageStatus" .= ("partial: full telemetry arms pending" :: Text.Text)])
         base <-
           recordCells
             context
             [ ("writers-stopped", all (== ExitSuccess) writerExits && noWriterError && case writers of [left, right] -> childPid left /= childPid right; _ -> False),
+              ("scheduled-worker-kills", killInterval == 0 || killCount > 0),
               ("source-setup", all (\case Right (Right result) -> result.eventsAppended == 1; _ -> False) seeded),
               ("exactly-once-target-effects", quiescent == Just True && count "TransferCredited" accountRows == transfers && count "TransferConfirmed" accountRows == transfers && count "BonusCredited" accountRows == bonuses * fanout && length sagaRows == 2 * transfers),
               ("inline-balances", modelMatches),

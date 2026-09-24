@@ -232,7 +232,15 @@ because the probe was too short. A follow-up one-minute probe passed nine SQL
 checks over 868 account events and wrote both writer latency series and
 application-specific connection probes. Its first and last tenth had 64 and
 63 latency samples, below the minimum for a decided drift comparison.
-Periodic kills, telemetry arms, and longer runs remain pending.
+Set `soak.kill-interval-seconds` to rotate SIGKILL and restart across the saga,
+router, and projection workers while writers continue. A one-minute run with
+ten-second intervals recorded six restarts and passed all ten checks over
+1,593 account events. Its overall outcome was `failed`: the harness process's
+Haskell thread probe rose by six, while its native memory, OS threads,
+descriptors, and database connections were stable. Retiring exited children
+from the supervisor did not remove the signal. The finding is recorded in
+`docs/findings/3-keiro-steady-restart-harness-threads.md`. Telemetry arms and
+longer runs remain pending.
 A five-minute sixteen-account run passed all nine durable checks over 9,250
 account events. The process-manager and router child reports flagged growing
 post-GC live heaps, while their native memory, threads, descriptors, and

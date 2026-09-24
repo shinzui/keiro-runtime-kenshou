@@ -189,11 +189,13 @@ killChild :: Supervisor -> Child -> IO ()
 killChild supervisor child = do
   signalChild supervisor child Kill
   void (waitExit child)
+  retireChild supervisor child
 
 terminateChild :: Supervisor -> Child -> IO ()
 terminateChild supervisor child = do
   signalChild supervisor child Term
   void (waitExit child)
+  retireChild supervisor child
 
 restartChild :: Supervisor -> Child -> IO Child
 restartChild supervisor child = do
@@ -209,7 +211,7 @@ stopGracefully :: Supervisor -> Child -> Int -> IO ExitCode
 stopGracefully supervisor child graceMillis = do
   sendCommand child (CtlStop graceMillis)
   finished <- timeout (graceMillis * 1000) (waitExit child)
-  case finished of
+  result <- case finished of
     Just code -> pure code
     Nothing -> do
       signalChild supervisor child Term
@@ -217,6 +219,12 @@ stopGracefully supervisor child graceMillis = do
       case terminated of
         Just code -> pure code
         Nothing -> signalChild supervisor child Kill >> waitExit child
+  retireChild supervisor child
+  pure result
+
+retireChild :: Supervisor -> Child -> IO ()
+retireChild supervisor child =
+  modifyMVar_ supervisor.children (pure . filter ((/= child.pid) . (.pid)))
 
 withRestartLoop :: Supervisor -> RestartPolicy -> ProcessSpec -> (IO Child -> IO value) -> IO value
 withRestartLoop supervisor _policy spec action = action (spawn supervisor spec)
