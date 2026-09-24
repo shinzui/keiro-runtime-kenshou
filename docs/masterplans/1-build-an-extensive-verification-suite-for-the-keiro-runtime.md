@@ -71,6 +71,11 @@ provenance:
       at: 2026-09-24T02:32:57Z
       mode: "update"
       note: "Defined upstream OKF bug reports and local Mori URI issue tracking for discovered runtime failures."
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-24T16:33:52Z
+      mode: "update"
+      note: "Recorded EP-14 implementation progress and completed timer milestone."
 ---
 
 # Build an extensive verification suite for the keiro runtime
@@ -123,7 +128,7 @@ There is no local ADR corpus yet: `docs/adr/` does not exist in this repository,
 | 11 | Cover the Kafka transport edge with a disposable broker | docs/plans/11-cover-the-kafka-transport-edge-with-a-disposable-broker.md | EP-2, EP-4, EP-5, EP-6, EP-7 | EP-3, EP-10 | Not Started |
 | 12 | Cover the keiro command processor, process managers and routers | docs/plans/12-cover-the-keiro-command-processor-process-managers-and-routers.md | EP-2, EP-4, EP-5, EP-6, EP-7 | EP-3, EP-9 | Not Started |
 | 13 | Cover the keiro outbox, inbox and job queue | docs/plans/13-cover-the-keiro-outbox-inbox-and-job-queue.md | EP-12 | EP-3, EP-8, EP-10 | Not Started |
-| 14 | Cover keiro durable execution, timers and sharded subscriptions | docs/plans/14-cover-keiro-durable-execution-timers-and-sharded-subscriptions.md | EP-12 | EP-3, EP-9 | Not Started |
+| 14 | Cover keiro durable execution, timers and sharded subscriptions | docs/plans/14-cover-keiro-durable-execution-timers-and-sharded-subscriptions.md | EP-12 | EP-3, EP-9 | In Progress |
 | 15 | Verify the assembled runtime end to end and under soak | docs/plans/15-verify-the-assembled-runtime-end-to-end-and-under-soak.md | EP-11, EP-12 | EP-3, EP-13, EP-14, EP-17 | Not Started |
 | 16 | Provide leased verification cells in load-testing-infra | docs/plans/16-provide-leased-verification-cells-in-load-testing-infra.md | None | EP-2 | Not Started |
 | 17 | Run kenshou on leased cells with payloads, submission and retrieval | docs/plans/17-run-kenshou-on-leased-cells-with-payloads-submission-and-retrieval.md | EP-2, EP-3, EP-4, EP-7, EP-16 | EP-5 | Not Started |
@@ -297,7 +302,7 @@ Track milestone-level progress across all child plans. Each entry names the chil
 - [ ] EP-13: Job queue scenarios
 - [ ] EP-13: Messaging benchmarks, soak and telemetry arms
 - [ ] EP-14: Durable workflow scenarios
-- [ ] EP-14: Timer scenarios
+- [x] EP-14: Timer scenarios — six registered probes passed locally in both PostgreSQL durability modes, including process claims, real kills, slow duplicate fire, and foreground resume tokens.
 - [ ] EP-14: Sharded subscription scenarios
 - [ ] EP-14: Durable-execution benchmarks, soak and telemetry arms
 - [ ] EP-15: The two-context reference system
@@ -479,3 +484,5 @@ Revision note (2026-09-20): Added Settei 0.2.0.0 as the required implementation 
 Revision note (2026-09-23): Defined the owner-repository OKF bug-report protocol for confirmed runtime failures, including exact affected versions, reproduction evidence and a canonical origin link to this MasterPlan. Added a local issue register that records each upstream bug concept's Mori URI, and a catch-up audit for findings already discovered while avoiding duplicate Keiro reports from the concurrent session.
 
 Revision note (2026-09-23): Cascaded the catch-up audit into EP-8, EP-9 and EP-10 with explicit completion checks for report ownership, versioned reproduction, local Mori URI tracking and non-bug dispositions. Split the aggregate progress item by owning child plan so each audit remains visible until resolved.
+
+Revision note (2026-09-24): Marked EP-14 in progress after its workflow, timer and shard scenario registration. Checked off the timer milestone because all six planned timer scenarios passed in both PostgreSQL durability modes; workflow, shard and benchmark/soak work remain active.
