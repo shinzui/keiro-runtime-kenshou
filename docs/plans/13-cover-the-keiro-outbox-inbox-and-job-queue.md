@@ -66,6 +66,7 @@ Milestone 1 — Outbox scenarios (includes the shared messaging support used by 
 - [x] (2026-09-24 19:12 UTC) Register `zombie-publisher-finalization` and run all three outcomes on durable PostgreSQL. Each run realised the maintenance/reclaim schedule and reproduced a stale finalization: `failed` left a successful P2 publish as `failed`, `dead` left it `dead`, and `succeeded` allowed P1 to mark P2's claim `sent`. Filed upstream `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-5`, added scoped `KnownDefect` coverage, and reran all three arms with exit 0 and `knownDefect.status=reproduced`. Subscription crash replay remains.
 - [x] (2026-09-24 19:13 UTC) Run `nix develop -c cabal test kenshou-keiro-test` after the zombie scenario and role changes: 35 examples passed with zero failures.
 - [x] (2026-09-24 19:22 UTC) Strengthen `multi-process-publishers` with callback start/end marks per claimed row and reject overlapping ownership intervals or incomplete interval coverage. The 2,000-row durable run passed in `runs/01a0d4dd-4973-75ed-8de1-29264806b6ad`: 63 callback intervals covered all rows, four publishers participated, and `disjoint-ownership` held. `nix develop -c cabal test kenshou-keiro-test` passed 36 examples, including a doctored interval-overlap oracle. The remaining outbox concurrency arms are still open.
+- [x] (2026-09-24 19:26 UTC) Run the strengthened `multi-process-publishers` at its planned 20,000-row default on durable PostgreSQL. `runs/01a0d4e0-fd0a-76aa-91a5-623739770404` passed: all 625 callback intervals covered the 20,000 rows, all four publishers contributed records, and `disjoint-ownership` held.
 - [x] (2026-09-24 03:35 UTC) Export `Kenshou.Suite.Keiro.Outbox.scenarios` and `.roles` and splice them into the bundle module created by `docs/plans/12-…`.
 - [ ] Run every outbox scenario locally with `pg.durability=durable`; record outcomes and any upstream finding; file upstream reports for unexpected failures and attach `KnownDefect` references.
 
@@ -524,6 +525,8 @@ Consumers of this plan: `docs/plans/15-verify-the-assembled-runtime-end-to-end-a
 ## Revision note — 2026-09-24
 
 The four-publisher outbox oracle now reads every callback start and end mark from each worker's retained control log, checks that each row belongs to exactly one complete interval, and checks intervals for the same row do not overlap. The 2,000-row durable run passed with 63 intervals and four participating publishers; the package's 36 unit examples also passed. This replaces the earlier count-only interpretation of `disjoint-ownership`.
+
+The same strengthened oracle passed at the scenario's planned 20,000-row default in `runs/01a0d4e0-fd0a-76aa-91a5-623739770404`. Its 625 complete intervals covered every row, and all four publisher processes contributed broker records.
 
 The delegated inbox matrix now passes all four dedupe policies on durable
 PostgreSQL. It uses deterministic account-stream event IDs as receipts,
