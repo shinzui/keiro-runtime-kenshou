@@ -296,6 +296,13 @@ The initial `job-outcome-semantics` arms check Done deletion, explicit retry
 delay and attempt numbering, delayed enqueue, and terminal Dead routing to a
 DLQ with a `poison_pill` reason.
 
+`workers-survive-transient-polling-error` runs a continuous supervised job
+worker and terminates its PostgreSQL polling backend. The current released
+cohort stops after the first termination with an unexpected row-count error;
+the next batch stays queued. The scenario records contract verdicts and tracks
+the upstream finding at `mori://shinzui/keiro/issues/4` (Mori issue resolution
+is pending).
+
 `write-side-steady-state` starts two command-writer processes and durable
 process-manager, router, and activity-projection workers. It stops writers at
 an operation boundary, waits for dispatch and projection to catch up, then
