@@ -70,7 +70,10 @@ worker context = case context.init.postgres of
                       count <- atomicModifyIORef' counter (\value -> (value + 1, value + 1))
                       now <- getCurrentTime
                       context.send (WrkProgress (fromIntegral count) now)
-                pure Done
+                pure $ case mode of
+                  Just "retry-once" | jobContext.attempt == Just 0 -> Retry (RetryDelay 1)
+                  Just "dead" -> Dead "worker-poison"
+                  _ -> Done
           result <-
             if draining
               then do

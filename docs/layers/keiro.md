@@ -539,6 +539,9 @@ Malformed payloads move to the DLQ; future-version payloads stay queued and
 consume delivery attempts while the worker waits for a compatible version.
 The worker Done arm confirms attempt zero, an absent arbitrary-headers context,
 one effect, and source-row deletion.
+The worker Retry arm checks a second handler effect after its one-second delay
+and eventual source-row deletion. The worker Dead arm checks one handler effect,
+source-row deletion, and a poison-pill wrapper in the DLQ.
 
 `workers-survive-transient-polling-error` runs a continuous supervised job
 worker and terminates its PostgreSQL polling backend. The current released

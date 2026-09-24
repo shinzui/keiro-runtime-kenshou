@@ -66,6 +66,8 @@ runJobOutcomeSemantics context =
         malformedJob = makeJob "malformed"
         futureJob = Job "future" (queueRef (sourceName context "future")) (JobCodec (const (object ["future" .= True])) (const (Left (JobPayloadFromFuture 2 1)))) Unordered defaultRetryPolicy {defaultRetryDelay = RetryDelay 1}
         workerJob = Job "queue-poll-probe" (queueRef (sourceName context "worker-done")) (aesonJobCodec @Text) Unordered defaultRetryPolicy
+        workerRetryJob = workerJob {jobQueue = queueRef (sourceName context "worker-retry")}
+        workerDeadJob = workerJob {jobQueue = queueRef (sourceName context "worker-dead")}
         doneHandler _ _ = pure Done
         retryHandler jobContext _ = do
           liftIO $ atomicModifyIORef' attempts (\seen -> (seen <> [jobContext.attempt], ()))
@@ -97,6 +99,9 @@ runJobOutcomeSemantics context =
           let table = "pgmq.q_" <> queueNameToText groupJob.jobQueue.physicalName
               statement = Statement.preparable ("SELECT count(*) FROM " <> table <> " WHERE headers->>'x-pgmq-group' = 'alpha'") Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
           Pool.use runtime.runtimePool (Session.statement () statement) >>= either (fail . show) pure
+        effectCount payload = do
+          let statement = Statement.preparable "SELECT count(*) FROM kenshou_fx.queue_effects WHERE payload = $1" (Encoders.param (Encoders.nonNullable Encoders.text)) (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
+          Pool.use runtime.runtimePool (Session.statement payload statement) >>= either (fail . show) pure
         corruptMessage = do
           let table = "pgmq.q_" <> queueNameToText malformedJob.jobQueue.physicalName
           Pool.use runtime.runtimePool (Session.script ("UPDATE " <> table <> " SET message = '{\"unexpected\":true}'::jsonb")) >>= either (fail . show) pure
@@ -113,6 +118,8 @@ runJobOutcomeSemantics context =
       ensureJobQueue malformedJob
       ensureJobQueue futureJob
       ensureJobQueue workerJob
+      ensureJobQueue workerRetryJob
+      ensureJobQueue workerDeadJob
       _ <- enqueue doneJob ("done" :: Text)
       _ <- enqueue retryJob ("retry" :: Text)
       _ <- enqueue deadJob ("dead" :: Text)
@@ -181,6 +188,29 @@ runJobOutcomeSemantics context =
       killChild supervisor child
       let delivery = Map.lookup "delivery" snapshot.marks >>= parseMaybe (withObject "worker delivery" (\o -> (,) <$> o .: "attempt" <*> o .: "headers"))
       pure (completed, delivery == Just (Just (0 :: Word), Nothing :: Maybe Value))
+    workerOutcomes <- withCheck context \check -> withSupervisor check \supervisor -> do
+      let runArm index target mode payload expectedEffects terminal = do
+            spec <- roleProcess check "keiro/queue-worker" index (object ["queue" .= target.jobQueue.logicalName, "mode" .= (mode :: Text)])
+            child <- spawn supervisor spec
+            awaitReady child 10000
+            sendCommand child CtlStart
+            awaitMark child "running" 30000
+            sent <- runJobEff runtime (enqueue target payload)
+            _ <- either (fail . show) pure sent
+            let awaitTerminal = do
+                  effects <- effectCount payload
+                  depth <- queueCount target
+                  dlq <- deadLetter target
+                  if effects >= expectedEffects && depth == 0 && terminal dlq
+                    then pure (effects, dlq)
+                    else threadDelay 100000 >> awaitTerminal
+            result <- timeout 15000000 awaitTerminal
+            snapshot <- atomically (progress child)
+            killChild supervisor child
+            pure (result, snapshot.count)
+      retryResult <- runArm 1 workerRetryJob "retry-once" "worker-retry" 2 (const True)
+      deadResult <- runArm 2 workerDeadJob "dead" "worker-dead" 1 (\(count, reason) -> count == 1 && Text.isPrefixOf "poison_pill" reason)
+      pure (retryResult, deadResult)
     recordCells
       context
       [ ("done-deletes", done == 1 && doneDepth == (0 :: Int64)),
@@ -194,7 +224,9 @@ runJobOutcomeSemantics context =
         ("drain-handler-exception", thrownResult == 0 && thrownEarly == 0 && thrownDepth == 1 && thrownRedelivery == 1),
         ("malformed-payload", malformedHandled == 1 && malformedDepth == 0 && fst malformedDead == 1 && Text.isPrefixOf "invalid_payload" (snd malformedDead)),
         ("future-payload-retries", futureHandled == 1 && futureEarly == 0 && futureDepth == 1 && futureFirstReadCount == 1 && futureSecond == 1 && futureSecondReadCount == 2),
-        ("worker-done-and-context", fst workerDelivery && snd workerDelivery)
+        ("worker-done-and-context", fst workerDelivery && snd workerDelivery),
+        ("worker-retry", case fst workerOutcomes of (Just (effects, _), _) -> effects == 2; _ -> False),
+        ("worker-dead-letter", case snd workerOutcomes of (Just (effects, (count, reason)), _) -> effects == 1 && count == 1 && Text.isPrefixOf "poison_pill" reason; _ -> False)
       ]
 
 maxRetriesBeforeHandler :: Scenario
