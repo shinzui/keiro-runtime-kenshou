@@ -37,10 +37,14 @@ publisher context = case context.init.postgres of
                   )
                   ( \rows -> do
                       context.send (WrkCustom "broker-appended" (object ["rows" .= length rows]))
-                      if parkAfterAppend then forever (threadDelay 1000000) else pure ()
+                      if parkAfterAppend then awaitContinue else pure ()
                   )
               callback = Broker.publishScripted broker model (const Broker.Succeed) hooks context.init.instanceName
               options = defaultPublishOptions {batchSize = 32, backoff = ConstantBackoff 0}
+              awaitContinue =
+                context.receive >>= \case
+                  Just (CtlCustom "continue" _) -> pure ()
+                  _ -> awaitContinue
               drive published idleMicros = do
                 result <- runFixture (publishClaimedOutbox callback options Nothing)
                 case result of

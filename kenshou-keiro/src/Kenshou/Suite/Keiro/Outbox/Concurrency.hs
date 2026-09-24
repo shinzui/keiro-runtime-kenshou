@@ -3,7 +3,7 @@ module Kenshou.Suite.Keiro.Outbox.Concurrency (scenarios) where
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (wait, withAsync)
 import Control.Exception (bracket)
-import Data.Aeson (object, (.=))
+import Data.Aeson (Value (..), object, (.=))
 import Data.Int (Int32)
 import Data.List (sort)
 import Data.List.NonEmpty (NonEmpty (..))
@@ -20,7 +20,7 @@ import Hasql.Transaction qualified as Tx
 import Keiro.Integration.Event (IntegrationContentType (..), IntegrationEvent (..), headerMessageId)
 import Keiro.Outbox (BackoffSchedule (..), IntegrationEventDraft (..), IntegrationProducer (..), OutboxMaintenanceOptions (..), OutboxMaintenanceSummary (..), OutboxPublishOptions (..), OutboxPublishSummary (..), OutboxRow (..), OutboxStatus (..), ProducerEnqueueOutcome (..), ProducerIdentity (..), countOutboxBacklog, defaultPublishOptions, enqueueIntegrationEventTx, enqueueProducerEventTx, freshOutboxId, listOutbox, mkIntegrationProducer, outboxMaintenancePass, publishClaimedOutbox)
 import Kenshou.Check.Fault (Fault (..), FaultHandle (..))
-import Kenshou.Check.Fault.Postgres (Backend (..), LockTarget (..), holdLock, listBackends)
+import Kenshou.Check.Fault.Postgres (Backend (..), BackendSelector (..), LockTarget (..), holdLock, listBackends, terminateOneBackend)
 import Kenshou.Check.Process (awaitMark, awaitReady, childPid, killChild, roleProcess, sendCommand, spawn, withSupervisor)
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Check.Verdict (InvariantClass (..))
@@ -245,7 +245,7 @@ crashBetweenPublishAndMark =
         [ KnobSpec (knobName "outbox.rows") "Number of integration events" KnobInt (VInt 2000) (IntRange 32 20000) [],
           KnobSpec (knobName "outbox.kills") "Number of publisher processes killed" KnobInt (VInt 3) (IntRange 1 8) [],
           KnobSpec (knobName "outbox.key-cardinality") "Number of partition keys" KnobInt (VInt 20) (IntRange 1 200) [],
-          KnobSpec (knobName "outbox.crash-point") "Publisher interruption point" KnobText (VText "after-broker-append") (OneOf (VText "after-broker-append" :| [VText "after-claim"])) [VText "after-claim"],
+          KnobSpec (knobName "outbox.crash-point") "Publisher interruption point" KnobText (VText "after-broker-append") (OneOf (VText "after-broker-append" :| [VText "after-claim", VText "backend-kill-during-mark"])) [VText "after-claim", VText "backend-kill-during-mark"],
           KnobSpec (knobName "outbox.exhaust-attempts") "Make the last kill consume the attempt ceiling" KnobBool (VBool False) (OneOf (VBool False :| [VBool True])) []
         ],
       dimensions =
@@ -274,6 +274,7 @@ runCrashBetweenPublishAndMark context =
             rowCount = fromIntegral (knobInt context.knobs (knobName "outbox.rows"))
             killCount = fromIntegral (knobInt context.knobs (knobName "outbox.kills"))
             afterClaim = knobText context.knobs (knobName "outbox.crash-point") == "after-claim"
+            backendKill = knobText context.knobs (knobName "outbox.crash-point") == "backend-kill-during-mark"
             exhaustAttempts = knobBool context.knobs (knobName "outbox.exhaust-attempts")
             keyCardinality = fromIntegral (knobInt context.knobs (knobName "outbox.key-cardinality"))
             entries = [(Text.pack (show index), Just ("key-" <> Text.pack (show (index `mod` keyCardinality))), index) | index <- [1 .. rowCount :: Int]]
@@ -283,6 +284,24 @@ runCrashBetweenPublishAndMark context =
             readRows = runFixture (listOutbox source) >>= either (fail . show) pure
         enqueueInline fixture source entries
         let recordIds records = [value | record <- records, (name, value) <- record.headers, name == TextEncoding.encodeUtf8 headerMessageId]
+            killBackendDuringMark child =
+              bracket (holdLock (requirePostgres context) (TableLock "keiro" "keiro_outbox")).inject (.heal) \_ -> do
+                let waitFor predicate = do
+                      backends <- listBackends (requirePostgres context)
+                      case filter predicate backends of
+                        backend : _ -> pure backend
+                        [] -> threadDelay 10000 >> waitFor predicate
+                holder <- timeout 10000000 (waitFor (\backend -> backend.applicationName == "kenshou-fault-lock" && backend.waitEvent == Just "PgSleep"))
+                case holder of
+                  Nothing -> fail "table lock holder did not reach its sleep point"
+                  Just _ -> pure ()
+                sendCommand child (CtlCustom "continue" Null)
+                victim <- timeout 10000000 (waitFor (\backend -> backend.applicationName /= "kenshou-fault-lock" && backend.waitEventType == Just "Lock" && "keiro_outbox" `Text.isInfixOf` backend.query))
+                case victim of
+                  Nothing -> fail "publisher did not block while finalizing the claimed rows"
+                  Just backend -> do
+                    _ <- (terminateOneBackend (requirePostgres context) (ByPid backend.pid)).inject
+                    pure ()
             killOne index = do
               before <- Broker.readBroker broker
               spec <- roleProcess check "keiro/outbox-publisher" index (object ["parkBeforeAppend" .= afterClaim, "parkAfterAppend" .= not afterClaim])
@@ -291,7 +310,8 @@ runCrashBetweenPublishAndMark context =
               sendCommand child CtlStart
               awaitMark child (if afterClaim then "batch-claimed" else "broker-appended") 30000
               after <- Broker.readBroker broker
-              killChild supervisor child
+              if backendKill then killBackendDuringMark child else pure ()
+              if backendKill then pure () else killChild supervisor child
               stranded <- readRows
               threadDelay (if index == 0 then 6000000 else 1500000)
               stillStranded <- readRows
