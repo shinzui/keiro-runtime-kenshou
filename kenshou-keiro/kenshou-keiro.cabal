@@ -79,6 +79,7 @@ library
     Kenshou.Suite.Keiro.ProcessManager.Concurrency
     Kenshou.Suite.Keiro.ProcessManager.Correctness
     Kenshou.Suite.Keiro.Queue
+    Kenshou.Suite.Keiro.Queue.Bench
     Kenshou.Suite.Keiro.Queue.Concurrency
     Kenshou.Suite.Keiro.Queue.Correctness
     Kenshou.Suite.Keiro.Queue.Roles

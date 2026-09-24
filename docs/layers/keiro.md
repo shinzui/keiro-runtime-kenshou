@@ -438,6 +438,11 @@ replays separately, checking that each pair has one retained outbox row. Its
 1,200-pair durable run passed with benchmark-grade histograms and time series.
 A local off-versus-noop tracing comparison with identical knobs was
 inconclusive because the comparison policy requires three pairs.
+The three-block local telemetry overhead matrix completed without a failed
+child run. Metrics collection, served and scraped metrics, and SDK OTLP tracing
+passed the comparison policy; the off-versus-noop tracing arm was inconclusive.
+The benchmark waits for active publisher passes before shutdown, since Keiro's
+backlog gauge excludes rows while they are publishing.
 
 The crash scenario
 parks a publisher after the broker append, kills its process with `SIGKILL`,
@@ -594,6 +599,16 @@ thrown drain handler; the acknowledgement and status mapping, source trace
 parent, FIFO partition, and worker-only inflight attributes are checked against
 the actual deliveries. The contract passes with in-memory tracing and collected
 metrics, and with both disabled.
+`job-throughput` drives open-loop enqueues into concurrent bounded drainers,
+measuring enqueue and enqueue-to-handler-start latency. It checks that every
+accepted job reached the handler exactly once and the queue emptied. Its
+250-per-second durable runs passed with benchmark-grade histograms in both
+unordered and FIFO group modes. The scenario currently covers the bounded
+drain execution shape; continuous worker and polling-mode comparisons remain.
+The three-block local telemetry overhead matrix completed without a failed
+child run. Served and scraped metrics, noop tracing, and SDK OTLP tracing
+passed its comparison policy; the metrics collection arm was inconclusive.
+Queue-specific Shibuya metrics are not yet connected to this benchmark.
 `consumption-config-rejections` checks invalid tuning, ordering mismatch,
 unsafe legacy FIFO batch size, and error precedence. Direct SQL confirms that
 the queued row still has `read_ct = 0` after all rejections; valid tuning then

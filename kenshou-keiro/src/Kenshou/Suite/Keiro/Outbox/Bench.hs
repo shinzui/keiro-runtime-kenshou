@@ -175,6 +175,7 @@ runEnqueueToPublish context = case (measureConfigFromKnobs context (phasePlanFro
           load = OpenLoop (OpenConfig (ConstantRate rate) 128 1 (OverloadConfig 1000000000 3 30000000000))
       broker <- Broker.newBroker
       stop <- newIORef False
+      inFlight <- newIORef (0 :: Int)
       publisherErrors <- newIORef (0 :: Int)
       let enqueueOne _ sequenceNumber = do
             now <- getCurrentTime
@@ -194,7 +195,8 @@ runEnqueueToPublish context = case (measureConfigFromKnobs context (phasePlanFro
           awaitBacklog 0 = pure False
           awaitBacklog remaining = do
             backlog <- runFixture countOutboxBacklog >>= either (fail . show) pure
-            if backlog == 0 then pure True else threadDelay 10000 >> awaitBacklog (remaining - 1)
+            active <- readIORef inFlight
+            if backlog == 0 && active == 0 then pure True else threadDelay 10000 >> awaitBacklog (remaining - 1)
       ((loadReport, drained), report) <- withMeasurement context config \measurement -> do
         callbackOp <- registerOp (measurementRecorder measurement) (OpName "outbox.enqueue-to-publish")
         workers <- forM [0 .. publishers - 1] \workerNumber -> do
@@ -210,7 +212,10 @@ runEnqueueToPublish context = case (measureConfigFromKnobs context (phasePlanFro
               publishLoop = do
                 halted <- readIORef stop
                 unless halted do
-                  result <- runFixture (publishClaimedOutbox callback options runtimeTelemetry.keiroMetrics)
+                  atomicModifyIORef' inFlight (\count -> (count + 1, ()))
+                  result <-
+                    runFixture (publishClaimedOutbox callback options runtimeTelemetry.keiroMetrics)
+                      `finally` atomicModifyIORef' inFlight (\count -> (count - 1, ()))
                   case result of
                     Left _ -> atomicModifyIORef' publisherErrors (\count -> (count + 1, ())) >> threadDelay 10000
                     Right summary | summary.claimed == 0 -> threadDelay 1000
