@@ -1,8 +1,7 @@
 # Keiro write-side worker heap growth during a five-minute soak
 
-Status: investigating; filed for upstream triage in
-`mori://shinzui/keiro` as [GitHub issue #2](https://github.com/shinzui/keiro/issues/2)
-(artifact-level Mori issue URI pending). The observation is a leak signal,
+Status: investigating; filed for upstream triage as
+`mori://shinzui/keiro/okf/bug-reports/concepts/BUG-1`. The observation is a leak signal,
 not yet an isolated runtime defect.
 
 The reduced `keiro/command/soak/write-side-steady-state-reduced` run

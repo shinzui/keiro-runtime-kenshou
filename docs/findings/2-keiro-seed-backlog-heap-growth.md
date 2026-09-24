@@ -1,8 +1,7 @@
 # Keiro seed-backlog heap growth with verification disabled
 
-Status: investigating; filed for upstream triage in
-`mori://shinzui/keiro` as [GitHub issue #3](https://github.com/shinzui/keiro/issues/3)
-(artifact-level Mori issue URI pending). The run establishes retained heap
+Status: investigating; filed for upstream triage as
+`mori://shinzui/keiro/okf/bug-reports/concepts/BUG-2`. The run establishes retained heap
 growth in this combined command, store, and measurement workload; it does
 not identify the retaining component.
 
