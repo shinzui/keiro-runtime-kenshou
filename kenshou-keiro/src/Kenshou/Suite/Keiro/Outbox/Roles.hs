@@ -1,25 +1,66 @@
 module Kenshou.Suite.Keiro.Outbox.Roles (roles) where
 
 import Control.Concurrent (threadDelay)
-import Control.Monad (forever)
+import Control.Monad (forM_, forever)
 import Data.Aeson (object, withObject, (.!=), (.:?), (.=))
 import Data.Aeson.Types (parseMaybe)
 import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
-import Keiro.Outbox (BackoffSchedule (..), OutboxPublishOptions (..), OutboxPublishSummary (..), OutboxRow (..), defaultPublishOptions, publishClaimedOutbox)
+import Keiro.Outbox (BackoffSchedule (..), OutboxMaintenanceOptions (..), OutboxMaintenanceSummary (..), OutboxPublishOptions (..), OutboxPublishSummary (..), OutboxRow (..), defaultPublishOptions, garbageCollectSent, outboxMaintenancePass, publishClaimedOutbox)
 import Kenshou.Core.Role (ControlMessage (..), PostgresConnInfo (..), RoleContext (..), RoleName, WorkerInit (..), WorkerMessage (..), WorkerRole (..), mkRoleName)
 import Kenshou.Suite.Keiro.Fixture.Runtime (FixtureEnv (..), KeiroRunner (..), withFixtureEnv)
 import Kenshou.Suite.Keiro.Outbox.Broker qualified as Broker
 import Kenshou.Suite.Keiro.Outbox.ProducerReplay qualified as ProducerReplay
+import Kenshou.Suite.Keiro.Outbox.Workload (enqueueInline)
 import Kiroku.Store (defaultConnectionSettings)
 
 roles :: [WorkerRole]
-roles = [WorkerRole (roleName "keiro/outbox-publisher") "Publishes one claimed outbox batch, with a controllable acknowledgement window." publisher, ProducerReplay.role]
+roles = [WorkerRole (roleName "keiro/outbox-enqueuer") "Enqueues a serial, run-namespaced integration-event workload." enqueuer, WorkerRole (roleName "keiro/outbox-maintenance") "Reclaims stale publisher claims and optionally collects sent rows." maintenance, WorkerRole (roleName "keiro/outbox-publisher") "Publishes one claimed outbox batch, with a controllable acknowledgement window." publisher, ProducerReplay.role]
 
 roleName :: Text -> RoleName
 roleName = either (error . Text.unpack) id . mkRoleName
+
+enqueuer :: RoleContext -> IO ()
+enqueuer context = case context.init.postgres of
+  Nothing -> context.send (WrkError "outbox enqueuer requires PostgreSQL")
+  Just postgres -> case parseMaybe (withObject "enqueuer args" (\value -> (,,) <$> value .:? "source" <*> value .:? "rows" <*> value .:? "keyCardinality")) context.init.args of
+    Just (Just source, Just rowCount, Just keyCardinality)
+      | rowCount > 0 && keyCardinality > 0 -> do
+          context.send WrkReady
+          context.receive >>= \case
+            Just CtlStart -> withFixtureEnv (defaultConnectionSettings postgres.connectionString) \fixture -> do
+              let entries = [(Text.pack (show index), Just ("key-" <> Text.pack (show (index `mod` keyCardinality))), index) | index <- [1 .. rowCount :: Int]]
+              enqueueInline fixture source entries
+              context.send (WrkCustom "finished" (object ["rows" .= rowCount]))
+            _ -> pure ()
+    _ -> context.send (WrkError "invalid outbox enqueuer arguments")
+
+maintenance :: RoleContext -> IO ()
+maintenance context = case context.init.postgres of
+  Nothing -> context.send (WrkError "outbox maintenance requires PostgreSQL")
+  Just postgres -> case parseMaybe (withObject "maintenance args" (\value -> (,,,,,) <$> (value .:? "maxAttempts" .!= (10 :: Int)) <*> (value .:? "publishingTimeoutSeconds" .!= (300 :: Double)) <*> (value .:? "gc" .!= False) <*> (value .:? "retentionSeconds" .!= (3600 :: Double)) <*> (value .:? "passes" .!= (1 :: Int)) <*> (value .:? "intervalMillis" .!= (500 :: Int)))) context.init.args of
+    Just (maxAttempts, timeoutSeconds, gc, retentionSeconds, passes, intervalMillis)
+      | maxAttempts > 0 && timeoutSeconds > 0 && retentionSeconds >= 0 && passes > 0 && intervalMillis >= 0 -> do
+          context.send WrkReady
+          context.receive >>= \case
+            Just CtlStart -> withFixtureEnv (defaultConnectionSettings postgres.connectionString) \fixture -> do
+              let KeiroRunner runFixture = fixture.runner
+                  options = OutboxMaintenanceOptions maxAttempts (realToFrac timeoutSeconds)
+              forM_ [1 .. passes] \index -> do
+                result <- runFixture (outboxMaintenancePass options Nothing) >>= either (fail . show) pure
+                collected <-
+                  if gc
+                    then do
+                      now <- getCurrentTime
+                      runFixture (garbageCollectSent (realToFrac retentionSeconds) now) >>= either (fail . show) pure
+                    else pure 0
+                context.send (WrkCustom "maintenance-pass" (object ["pass" .= index, "requeued" .= result.requeued, "deadLettered" .= result.deadLettered, "backlog" .= result.backlog, "collected" .= collected]))
+                if index < passes then threadDelay (intervalMillis * 1000) else pure ()
+              context.send (WrkCustom "finished" (object ["passes" .= passes]))
+            _ -> pure ()
+    _ -> context.send (WrkError "invalid outbox maintenance arguments")
 
 publisher :: RoleContext -> IO ()
 publisher context = case context.init.postgres of

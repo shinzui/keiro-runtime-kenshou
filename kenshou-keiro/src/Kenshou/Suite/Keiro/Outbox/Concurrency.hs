@@ -96,7 +96,13 @@ runZombiePublisherFinalization context =
         firstClaim <- readSingle
         Process.signalChild supervisor first Process.Stop
         threadDelay 1500000
-        maintenance <- runFixture (outboxMaintenancePass (OutboxMaintenanceOptions maxAttempts 1) Nothing) >>= either (fail . show) pure
+        maintenanceSpec <- roleProcess check "keiro/outbox-maintenance" 0 (object ["maxAttempts" .= maxAttempts, "publishingTimeoutSeconds" .= (1 :: Double)])
+        maintainer <- spawn supervisor maintenanceSpec
+        awaitReady maintainer 10000
+        sendCommand maintainer CtlStart
+        awaitMark maintainer "finished" 30000
+        maintenanceMessages <- readChildMessages maintainer
+        let requeued = [count | WrkCustom "maintenance-pass" payload <- maintenanceMessages, Just count <- [parseMaybe (withObject "maintenance pass" (\value -> value .: "requeued")) payload]]
         reclaimed <- readSingle
         second <- startPublisher 1 ("succeeded" :: Text.Text)
         secondClaim <- readSingle
@@ -106,7 +112,7 @@ runZombiePublisherFinalization context =
         finishPublisher second
         finalRow <- readSingle
         records <- Broker.readBroker broker
-        let schedule = firstClaim.status == OutboxPublishing && maintenance.requeued == 1 && reclaimed.status == OutboxFailed && secondClaim.status == OutboxPublishing && secondClaim.attemptCount == 2
+        let schedule = firstClaim.status == OutboxPublishing && requeued == [1 :: Int] && reclaimed.status == OutboxFailed && secondClaim.status == OutboxPublishing && secondClaim.attemptCount == 2
             staleDidNothing = afterStale.status == OutboxPublishing && afterStale.attemptCount == 2
             terminalConsistent = finalRow.status == OutboxSent && length records == (if outcome == "succeeded" then 2 else 1)
         recordMessagingCellsClassified
@@ -345,7 +351,11 @@ runMultiProcessPublishers context =
             rowCount = fromIntegral (knobInt context.knobs (knobName "outbox.rows"))
             keyCardinality = fromIntegral (knobInt context.knobs (knobName "outbox.key-cardinality"))
             entries = [(Text.pack (show index), Just ("key-" <> Text.pack (show (index `mod` keyCardinality))), index) | index <- [1 .. rowCount :: Int]]
-        enqueueInline fixture source entries
+        enqueuerSpec <- roleProcess check "keiro/outbox-enqueuer" 0 (object ["source" .= source, "rows" .= rowCount, "keyCardinality" .= keyCardinality])
+        enqueuer <- spawn supervisor enqueuerSpec
+        awaitReady enqueuer 10000
+        sendCommand enqueuer CtlStart
+        awaitMark enqueuer "finished" 120000
         children <- traverse (\index -> roleProcess check "keiro/outbox-publisher" index (object ["loop" .= True, "pauseMicros" .= (1000 :: Int)]) >>= spawn supervisor) [0 .. 3 :: Int]
         mapM_ (\child -> awaitReady child 10000) children
         mapM_ (\child -> sendCommand child CtlStart) children

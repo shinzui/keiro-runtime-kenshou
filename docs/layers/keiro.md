@@ -436,8 +436,14 @@ reached the broker. The dead rows remain visible for operator action.
 The four-process publisher scenario passed with 20,000 rows and 200 keys: each
 outbox row had one broker record and one consumed attempt, and first-record
 order held within each key. A strengthened 2,000-row run observed records from
-two publishers, with no loss or duplicate records. The inline enqueue ordering
-scenario uses an advisory lock to start one transaction before another but
+two publishers, with no loss or duplicate records. The four-publisher
+workload is now preloaded by a separate `keiro/outbox-enqueuer` worker. The
+20,000-row durable run still passed with complete callback interval coverage
+and participation from all four publishers. A separate
+`keiro/outbox-maintenance` worker performs bounded reclaim passes and optional
+sent-row GC; its reclaim pass is exercised in the zombie publisher scenario.
+The inline enqueue ordering scenario uses an advisory lock to start one
+transaction before another but
 commit it later. Its durable run published `second` before `first` as documented
 in `mori://shinzui/keiro/okf/user-documentation/concepts/DOC-16`; the schedule
 and no-loss contract verdicts held, while the scoped per-key-order verdict was
@@ -451,6 +457,12 @@ through Kiroku's ack-coupled subscription. Each event is decoded and enqueued
 before its acknowledgement; the subscription stops after the second
 checkpoint. The durable control run passed the stream-order, no-loss, and
 per-key-order verdicts.
+`producer-subscription-crash-replay` drives eight fixture account events
+through an ack-coupled producer worker. It kills that worker three times after
+the outbox enqueue commits but before Kiroku receives the acknowledgement.
+Each restart replays unacknowledged events; durable runs observed one inserted
+outbox identity per source event, identical-duplicate outcomes on replay,
+eight sent rows, and eight broker records in account-stream order.
 `producer-identity-race-with-gc` runs four concurrent replayers of 128 stable
 source events while a publisher drains and zero-retention GC deletes sent rows.
 Its durable run deleted 192 rows and observed 106 republications. All 640
@@ -471,6 +483,10 @@ verdicts are scoped to upstream
 `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-5` and are reported as a
 known defect, while a missed schedule remains a blocking failure. Select the
 arm with `outbox.zombie-outcome=failed|succeeded|dead`.
+
+All eleven registered outbox scenarios completed at their default settings on
+durable PostgreSQL. Nine passed. The inline-order and zombie-finalization
+scenarios reproduced their scoped known defects without a blocking failure.
 
 ## Inbox
 
