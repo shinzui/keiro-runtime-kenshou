@@ -93,7 +93,9 @@ library
     Kenshou.Suite.Keiro.Workflow.CrashSmoke
     Kenshou.Suite.Keiro.Workflow.Definitions
     Kenshou.Suite.Keiro.Workflow.Effects
+    Kenshou.Suite.Keiro.Workflow.ExactDiscovery
     Kenshou.Suite.Keiro.Workflow.Fixture
+    Kenshou.Suite.Keiro.Workflow.Knobs
     Kenshou.Suite.Keiro.Workflow.LinearSmoke
     Kenshou.Suite.Keiro.Workflow.Oracle
     Kenshou.Suite.Keiro.Workflow.Roles
@@ -163,6 +165,7 @@ test-suite kenshou-keiro-test
     keiki,
     keiro,
     keiro-core,
+    kenshou-core,
     kenshou-keiro,
     kiroku-store,
     shibuya-core,

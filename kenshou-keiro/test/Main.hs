@@ -17,11 +17,14 @@ import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
 import Keiki.Core (RegFile (..), step)
 import Keiro.Codec (Codec (..))
+import Keiro.EventStream (SnapshotPolicy (..))
 import Keiro.Integration.Event (IntegrationContentType (..), IntegrationEvent (..))
 import Keiro.Outbox (OutboxId (..), OutboxRow (..), OutboxStatus (..))
 import Keiro.ProcessManager (ProcessManager (..), deterministicCommandId)
 import Keiro.Router (deterministicRouterCommandId)
-import Keiro.Workflow (WorkflowId (..), deterministicJournalId)
+import Keiro.Workflow (WorkflowId (..), WorkflowRunOptions (..), deterministicJournalId)
+import Keiro.Workflow.Resume (WorkflowResumeOptions (..))
+import Kenshou.Core.Knob (RawKnob (..), resolveKnobs)
 import Kenshou.Suite.Keiro.Fixture.Account
 import Kenshou.Suite.Keiro.Fixture.Bonus
 import Kenshou.Suite.Keiro.Fixture.Bridge
@@ -35,6 +38,7 @@ import Kenshou.Suite.Keiro.Outbox.Oracle qualified as OutboxOracle
 import Kenshou.Suite.Keiro.Shard.Oracle qualified as ShardOracle
 import Kenshou.Suite.Keiro.Workflow.Definitions qualified as WorkflowDefinitions
 import Kenshou.Suite.Keiro.Workflow.Effects qualified as WorkflowEffects
+import Kenshou.Suite.Keiro.Workflow.Knobs qualified as WorkflowKnobs
 import Kenshou.Suite.Keiro.Workflow.Oracle qualified as WorkflowOracle
 import Kiroku.Store.Types (EventId (..), EventType (..), GlobalPosition (..), RecordedEvent (..), StreamId (..), StreamVersion (..))
 import Shibuya.Adapter (Adapter (..))
@@ -86,6 +90,26 @@ main = hspec do
       WorkflowOracle.backoffLadder 2 0.2 good `shouldBe` Right ()
       WorkflowOracle.backoffLadder 2 0.2 [now, addUTCTime 1 now] `shouldSatisfy` either (const True) (const False)
       WorkflowOracle.backoffLadder 2 0.2 [now, addUTCTime 3 now] `shouldSatisfy` either (const True) (const False)
+  describe "workflow knobs" do
+    it "maps resolved defaults to short lease and polling options" do
+      case resolveKnobs WorkflowKnobs.workflowKnobs [] of
+        Left errors -> expectationFailure (show errors)
+        Right knobs -> case WorkflowKnobs.resumeOptionsFrom knobs of
+          Left err -> expectationFailure (show err)
+          Right options -> do
+            options.leaseTtl `shouldBe` 3
+            options.pollInterval `shouldBe` 100000
+            options.maxConcurrentAdvances `shouldBe` 1
+            case options.runOptions.snapshotPolicy of
+              Never -> pure ()
+              _ -> expectationFailure "default workflow snapshot policy was not Never"
+    it "rejects a nonpositive snapshot interval after parsing" do
+      let override = [(WorkflowKnobs.workflowKnobName "workflow.snapshot-policy", RawText "every-0")]
+      case resolveKnobs WorkflowKnobs.workflowKnobs override of
+        Left errors -> expectationFailure (show errors)
+        Right knobs -> case WorkflowKnobs.runOptionsFrom knobs of
+          Left _ -> pure ()
+          Right _ -> expectationFailure "every-0 snapshot policy was accepted"
   describe "shard oracles" do
     it "includes one reconciliation pass per lost bucket per survivor" do
       ShardOracle.failoverDeadline (ShardOracle.ShardTiming 3 0.5) 5 2 `shouldBe` 5.5

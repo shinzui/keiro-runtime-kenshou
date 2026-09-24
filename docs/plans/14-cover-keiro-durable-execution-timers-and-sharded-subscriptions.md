@@ -54,10 +54,13 @@ Milestone 1 — Durable workflow scenarios
 - [x] (2026-09-24) Added the approval workflow definition and `keiro/workflow/correctness/awakeable-signal-semantics`. Seven verdicts passed in both PostgreSQL durability modes for journaled publication, idempotent signal payload, unknown-ID refusal, terminal-owner settlement without a wake journal, cancellation without a result journal, a cancelled await throwing, and a signal before the await.
 - [x] (2026-09-24) Added `keiro/workflow/correctness/continue-as-new-abandons-awakeable-ids` and a rotating approval definition. Seven implementation verdicts passed in both durability modes: bounded generation journals, fresh IDs, old-row settlement without waking or writing an old-ID result in the new generation, and completion from the new ID.
 - [ ] Extend awakeable cancellation coverage through the resume worker's attempt ceiling and terminal `WorkflowFailed` state; add compensation-on-cancel coverage.
-- [ ] Add `Kenshou.Suite.Keiro.Workflow.Knobs` and complete `.Roles`. A basic `keiro/workflow-resume-worker` is registered and exercised; knob plumbing, push mode, the driver, and GC worker remain. The delivered kernel requires slash-form role names.
+- [x] (2026-09-24) Added `Kenshou.Suite.Keiro.Workflow.Knobs` with the planned workflow settings and validated snapshot parsing; unit tests cover default resume options and invalid `every-0`. The resume role now reads these options and pool size when a scenario declares them; its prior no-knob crash probe still passes.
+- [ ] Complete workflow role support for push modes, driver and GC roles, and telemetry handles. The delivered kernel requires slash-form role names.
 - [x] (2026-09-24 13:25Z) Added the first shared `Kenshou.Suite.Keiro.Workflow.Oracle` checks for journal step identity, effect coverage bounded by crash windows, and the retry backoff ladder. Doctored duplicate, missing, wrong-ID, and mistimed inputs fail their unit tests; the linear replay and real `SIGKILL` probes use the shared checks and pass.
 - [ ] Complete the workflow oracle with database-backed quiescence and stranded-suspension checks, and wire its full journal/effect verdicts into the remaining scenarios.
 - [ ] Add the workflow correctness scenarios (seven) and see them pass locally.
+- [x] (2026-09-24) Added the awakeable arm of `keiro/workflow/correctness/exact-discovery`. With the planned default 2,000 parked workflows on durable PostgreSQL it reported zero idle discoveries, then exactly ten after ten signals; a 20-workflow shakedown also passed.
+- [ ] Extend exact discovery to parked sleeps and children and record the `pg_stat_statements` deltas in addition to the measured idle-pass duration.
 - [ ] Add the workflow concurrency and crash scenarios (eleven) and see them pass or report their known defect.
 - [ ] Add the `wake` correctness scenario.
 - [ ] Extend EP-12's bundle module with `Kenshou.Suite.Keiro.Workflow.scenarios` and `.roles`; confirm `kenshou list` shows them.
@@ -103,6 +106,10 @@ Milestone 4 — Durable-execution benchmarks, soak and telemetry arms
 
 
 ## Decision Log
+
+- Decision: Validate exact discovery first with journaled awakeable promises, keeping sleep and child parking as explicit remaining arms of the same scenario.
+  Rationale: The approval fixture already exposes durable wake identifiers, so the 2,000-instance default and exact `k` wake count can be tested without conflating discovery with timer or child-worker behavior. The scenario summary and Progress state its current scope.
+  Date: 2026-09-24
 
 - Decision: Begin EP-14 against EP-12's delivered fixture modules while EP-12 finishes unrelated benchmark and soak acceptance. Use the working build and required registered scenarios as the dependency gate. Register new worker roles with the delivered `keiro/<name>` format and keep the intended workflow/timer/shard suffixes.
   Rationale: The fixture domain and CLI bundle already compile and expose the interfaces EP-14 consumes. `mkRoleName` rejects the dotted role names proposed before the kernel implementation existed.
@@ -546,3 +553,11 @@ The documented awakeable limitation now has an executable scenario. It records
 the two published IDs and generation step indexes, then verifies that the old
 ID can settle without advancing the rotated workflow. Both durability modes
 passed; no upstream defect was observed.
+
+## Revision Note — 2026-09-24 (workflow knobs and discovery)
+
+Workflow knobs now map to Keiro's run and resume options, with positive snapshot
+interval validation. The resume role consumes them when declared. The exact
+discovery scenario covers the awakeable population at its planned default
+size and records an idle-pass duration; sleep, child and statement-delta arms
+remain to complete the planned scenario.

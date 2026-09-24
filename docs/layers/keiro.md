@@ -56,6 +56,10 @@ before the workflow awaits it.
 `keiro/workflow/correctness/continue-as-new-abandons-awakeable-ids` records
 that rotation publishes a new approval id; an old signal settles its original
 row without waking the new generation, and the new id completes it.
+`keiro/workflow/correctness/exact-discovery` parks an awakeable population,
+measures an idle resume pass that finds no candidates, then signals ten and
+checks that the next pass finds exactly ten. Its
+`workflow.population.parked` knob defaults to 2,000.
 
 The two timer correctness scenarios,
 `keiro/timer/correctness/lifecycle-and-at-least-once` and
