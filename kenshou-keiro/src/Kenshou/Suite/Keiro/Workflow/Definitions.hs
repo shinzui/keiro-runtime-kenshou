@@ -17,6 +17,8 @@ module Kenshou.Suite.Keiro.Workflow.Definitions
     approvalRegistry,
     rotatingApprovalName,
     rotatingApprovalWorkflow,
+    patchedName,
+    patchedWorkflow,
   )
 where
 
@@ -27,7 +29,7 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Effectful (Eff, IOE, liftIO, (:>))
 import Effectful.Error.Static (Error)
-import Keiro.Workflow (StepName (..), Workflow, WorkflowId (..), WorkflowName, continueAsNew, mkWorkflowName, restoreSeed, step)
+import Keiro.Workflow (PatchId (..), StepName (..), Workflow, WorkflowId (..), WorkflowName, continueAsNew, mkWorkflowName, patch, restoreSeed, step)
 import Keiro.Workflow.Awakeable (awakeableIdText, awakeableNamed)
 import Keiro.Workflow.Resume (WorkflowDef (..), WorkflowRegistry)
 import Keiro.Workflow.Sleep (sleep, sleepNamed)
@@ -140,3 +142,26 @@ rotatingApprovalWorkflow sink wid = do
   if generation == 0
     then continueAsNew (1 :: Int)
     else await
+
+patchedName :: WorkflowName
+patchedName = either (error . show) id (mkWorkflowName "kenshouPatched")
+
+-- | A gate lets one generation begin before a patch is deployed. A fresh
+-- instance can omit it so competing deployments race on the first decision.
+patchedWorkflow :: (IOE :> es, Store :> es) => EffectSink -> Bool -> WorkflowId -> Eff (Workflow : es) Text
+patchedWorkflow sink gated wid = do
+  _ <- step (StepName "start") (pure ())
+  if gated
+    then do
+      (aid, await) <- awakeableNamed (StepName "gate")
+      _ <- step (StepName "publishGate") do
+        liftIO $ sink.recordEffect (EffectFact "arm" (unWorkflowId wid <> "/gate") "workflow" (object ["awakeableId" .= aid]))
+        pure ()
+      (_ :: Text) <- await
+      pure ()
+    else pure ()
+  enabled <- patch (PatchId "p1")
+  let branch = if enabled then "new" else "old"
+  step (StepName branch) do
+    liftIO $ sink.recordEffect (EffectFact "step" (unWorkflowId wid <> "/" <> branch) "workflow" (object []))
+    pure branch

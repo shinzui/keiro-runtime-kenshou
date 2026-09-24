@@ -60,6 +60,8 @@ Milestone 1 — Durable workflow scenarios
 - [ ] Complete the workflow oracle with database-backed quiescence and stranded-suspension checks, and wire its full journal/effect verdicts into the remaining scenarios.
 - [ ] Add the workflow correctness scenarios (seven) and see them pass locally.
 - [x] (2026-09-24) Added the awakeable arm of `keiro/workflow/correctness/exact-discovery`. With the planned default 2,000 parked workflows on durable PostgreSQL it reported zero idle discoveries, then exactly ten after ten signals; a 20-workflow shakedown also passed.
+- [x] (2026-09-24) Added `kenshouPatched` and `keiro/workflow/correctness/patch-decisions-are-frozen`. Both durability modes passed six checks for an in-flight false decision, fresh true decision, branch isolation, and two concurrent deployments sharing one recorded decision.
+- [ ] Extend the patch scenario through real process `SIGKILL` and generation rotation.
 - [ ] Extend exact discovery to parked sleeps and children and record the `pg_stat_statements` deltas in addition to the measured idle-pass duration.
 - [ ] Add the workflow concurrency and crash scenarios (eleven) and see them pass or report their known defect.
 - [ ] Add the `wake` correctness scenario.
@@ -561,3 +563,11 @@ interval validation. The resume role consumes them when declared. The exact
 discovery scenario covers the awakeable population at its planned default
 size and records an idle-pass duration; sleep, child and statement-delta arms
 remain to complete the planned scenario.
+
+## Revision Note — 2026-09-24 (patch decisions)
+
+The patch definition and scenario now show that a generation begun with no
+active patch retains its false branch when resumed with the patch enabled. A
+fresh generation records the enabled set, and two concurrent runs with
+different sets share a single recorded decision. Both PostgreSQL durability
+modes passed. Process death and rotation remain open.

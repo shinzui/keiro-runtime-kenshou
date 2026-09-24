@@ -60,6 +60,10 @@ row without waking the new generation, and the new id completes it.
 measures an idle resume pass that finds no candidates, then signals ten and
 checks that the next pass finds exactly ten. Its
 `workflow.population.parked` knob defaults to 2,000.
+`keiro/workflow/correctness/patch-decisions-are-frozen` parks an instance
+before enabling patch `p1`, then checks that its old branch is preserved while
+a fresh instance takes the new branch. Two concurrent runs with different
+patch sets share one recorded decision.
 
 The two timer correctness scenarios,
 `keiro/timer/correctness/lifecycle-and-at-least-once` and
