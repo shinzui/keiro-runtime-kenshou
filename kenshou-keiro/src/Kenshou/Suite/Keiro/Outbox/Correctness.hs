@@ -10,18 +10,19 @@ import Data.Text.Encoding qualified as TextEncoding
 import Data.Time (getCurrentTime)
 import Data.UUID qualified as UUID
 import Keiro.Integration.Event (IntegrationEvent (..), headerMessageId)
-import Keiro.Outbox (BackoffSchedule (..), ExponentialBackoffOptions (..), OrderingPolicy (..), OutboxId (..), OutboxPublishOptions (..), OutboxPublishSummary (..), OutboxRow (..), OutboxStatus (..), PublishOutcome (..), countOutboxBacklog, defaultMaintenanceOptions, defaultPublishOptions, garbageCollectSent, listOutbox, mkPublishRejection, outboxMaintenancePass, publishClaimedOutbox, publishRejectionCode)
+import Keiro.Outbox (BackoffSchedule (..), OrderingPolicy (..), OutboxId (..), OutboxPublishOptions (..), OutboxPublishSummary (..), OutboxRow (..), OutboxStatus (..), PublishOutcome (..), countOutboxBacklog, defaultMaintenanceOptions, defaultPublishOptions, garbageCollectSent, listOutbox, mkPublishRejection, outboxMaintenancePass, publishClaimedOutbox, publishRejectionCode)
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (parseScenarioId, unSeed)
-import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobInt, knobText, mkKnobName)
+import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobValue (..), knobDouble, knobInt, mkKnobName, renderKnobName)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..))
 import Kenshou.Suite.Keiro.Command.Correctness (recordCells)
 import Kenshou.Suite.Keiro.Fixture.Runtime (FixtureEnv (..), KeiroRunner (..), withFixtureEnv)
 import Kenshou.Suite.Keiro.Outbox.Broker qualified as Broker
+import Kenshou.Suite.Keiro.Outbox.Knobs qualified as OutboxKnobs
 import Kenshou.Suite.Keiro.Outbox.Oracle qualified as Oracle
 import Kenshou.Suite.Keiro.Outbox.Workload (enqueueInline, sourceName)
 import Kiroku.Store (defaultConnectionSettings)
@@ -114,27 +115,41 @@ perKeyOrderSerialized =
   terminalStateMatrix
     { id = either (error . show) id (parseScenarioId "keiro/outbox/correctness/per-key-order-serialized"),
       summary = "Checks serialized inline enqueues publish in key order despite transient failures.",
-      knobs =
-        [ KnobSpec (knobName "outbox.ordering-policy") "Ordered claim policy" KnobText (VText "per-key-head-of-line") (OneOf (VText "per-key-head-of-line" :| [VText "per-source-stream", VText "stop-the-line"])) [VText "per-source-stream", VText "stop-the-line"],
-          KnobSpec (knobName "outbox.rows") "Number of integration events" KnobInt (VInt 5000) (IntRange 1 20000) []
-        ],
+      knobs = map serializedKnob OutboxKnobs.outboxKnobs,
       run = runPerKeyOrderSerialized
     }
+
+serializedKnob :: KnobSpec -> KnobSpec
+serializedKnob spec = case renderKnobName spec.name of
+  "outbox.ordering-policy" -> KnobSpec spec.name spec.summary spec.knobType spec.def (OneOf (VText "per-key-head-of-line" :| [VText "per-source-stream", VText "stop-the-line"])) [VText "per-source-stream", VText "stop-the-line"]
+  "outbox.rows" -> withDefaultAndAllowed (VInt 5000) (IntRange 1 20000)
+  "outbox.key-cardinality" -> withDefaultAndAllowed (VInt 20) (IntRange 1 200)
+  "outbox.max-attempts" -> withDefault (VInt 4)
+  "outbox.backoff-seconds" -> withDefault (VDouble 0.01)
+  "outbox.backoff-max-seconds" -> withDefault (VDouble 0.08)
+  "outbox.enqueue-path" -> withDefaultAndAllowed (VText "inline") (OneOf (VText "inline" :| []))
+  "broker.fail-ratio" -> withDefault (VDouble 0.05)
+  "broker.reject-ratio" -> withDefaultAndAllowed (VDouble 0) (DoubleRange 0 0)
+  "broker.poison-ratio" -> withDefaultAndAllowed (VDouble 0) (DoubleRange 0 0)
+  "broker.throw-ratio" -> withDefaultAndAllowed (VDouble 0) (DoubleRange 0 0)
+  "broker.drop-outcome-ratio" -> withDefaultAndAllowed (VDouble 0) (DoubleRange 0 0)
+  _ -> spec
+  where
+    withDefault value = KnobSpec spec.name spec.summary spec.knobType value spec.allowed spec.variants
+    withDefaultAndAllowed value allowed = KnobSpec spec.name spec.summary spec.knobType value allowed spec.variants
 
 runPerKeyOrderSerialized :: RunContext -> IO ScenarioReport
 runPerKeyOrderSerialized context =
   withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture -> do
+    options <- either (fail . show) pure (OutboxKnobs.decodePublishOptions context.knobs Nothing)
     let KeiroRunner runFixture = fixture.runner
         source = sourceName context "serialized"
         rowCount = fromIntegral (knobInt context.knobs (knobName "outbox.rows"))
-        entries = [(Text.pack (show i), Just ("key-" <> Text.pack (show (i `mod` (20 :: Int)))), i) | i <- [1 .. rowCount]]
-        policy = case knobText context.knobs (knobName "outbox.ordering-policy") of
-          "per-source-stream" -> PerSourceStream
-          "stop-the-line" -> StopTheLine
-          _ -> PerKeyHeadOfLine
-        options = defaultPublishOptions {batchSize = 32, maxAttempts = 4, backoff = ConstantBackoff 0.01, orderingPolicy = policy}
-        plan = Broker.FaultPlan (unSeed context.seed) 0.05 0 0 0 0
-        model = Broker.BrokerModel 1000 10 4
+        keyCount = fromIntegral (knobInt context.knobs (knobName "outbox.key-cardinality"))
+        entries = [(Text.pack (show i), Just ("key-" <> Text.pack (show (i `mod` keyCount))), i) | i <- [1 .. rowCount]]
+        policy = options.orderingPolicy
+        plan = Broker.FaultPlan (unSeed context.seed) (knobDouble context.knobs (knobName "broker.fail-ratio")) 0 0 0 0
+        model = Broker.BrokerModel (fromIntegral (knobInt context.knobs (knobName "broker.invocation-micros"))) (fromIntegral (knobInt context.knobs (knobName "broker.per-record-micros"))) (fromIntegral (knobInt context.knobs (knobName "broker.partitions")))
         hooks = Broker.PublishHook (const (pure ())) (const (pure ()))
         expected = Map.fromList [(TextEncoding.encodeUtf8 messageId, (key, sequenceNo)) | (messageId, Just key, sequenceNo) <- entries]
     enqueueInline fixture source entries
@@ -176,32 +191,39 @@ terminalStateMatrix =
     { id = either (error . show) id (parseScenarioId "keiro/outbox/correctness/terminal-state-matrix"),
       summary = "Drains failed, rejected and poison integration events to their terminal states.",
       tier = TierStandard,
-      knobs =
-        [ KnobSpec (knobName "outbox.ordering-policy") "Claim ordering policy" KnobText (VText "per-key-head-of-line") (OneOf (VText "per-key-head-of-line" :| [VText "per-source-stream", VText "stop-the-line", VText "best-effort"])) [VText "per-source-stream", VText "stop-the-line", VText "best-effort"],
-          KnobSpec (knobName "outbox.backoff") "Retry schedule" KnobText (VText "constant") (OneOf (VText "constant" :| [VText "exponential"])) [VText "exponential"],
-          KnobSpec (knobName "outbox.rows") "Number of integration events" KnobInt (VInt 2000) (IntRange 1 20000) []
-        ],
+      knobs = map terminalKnob OutboxKnobs.outboxKnobs,
       run = runTerminalStateMatrix
     }
+
+terminalKnob :: KnobSpec -> KnobSpec
+terminalKnob spec = case renderKnobName spec.name of
+  "outbox.max-attempts" -> withDefault (VInt 4)
+  "outbox.backoff-seconds" -> withDefault (VDouble 0.01)
+  "outbox.backoff-max-seconds" -> withDefault (VDouble 0.08)
+  "outbox.publishing-timeout-seconds" -> withDefault (VDouble 2)
+  "outbox.enqueue-path" -> withDefault (VText "inline")
+  "outbox.rows" -> withAllowed (IntRange 1 20000)
+  "broker.fail-ratio" -> withDefault (VDouble 0.1)
+  "broker.reject-ratio" -> withDefault (VDouble 0.02)
+  "broker.poison-ratio" -> withDefault (VDouble 0.01)
+  "broker.throw-ratio" -> withAllowed (DoubleRange 0 0)
+  "broker.drop-outcome-ratio" -> withAllowed (DoubleRange 0 0)
+  _ -> spec
+  where
+    withDefault value = KnobSpec spec.name spec.summary spec.knobType value spec.allowed spec.variants
+    withAllowed allowed = KnobSpec spec.name spec.summary spec.knobType spec.def allowed spec.variants
 
 runTerminalStateMatrix :: RunContext -> IO ScenarioReport
 runTerminalStateMatrix context =
   withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture -> do
+    options <- either (fail . show) pure (OutboxKnobs.decodePublishOptions context.knobs Nothing)
     let KeiroRunner runFixture = fixture.runner
         source = sourceName context "terminal"
         rowCount = fromIntegral (knobInt context.knobs (knobName "outbox.rows"))
-        entries = [(Text.pack (show i), Just ("key-" <> Text.pack (show (i `mod` (50 :: Int)))), i `div` 50) | i <- [1 .. rowCount]]
-        policy = case knobText context.knobs (knobName "outbox.ordering-policy") of
-          "per-source-stream" -> PerSourceStream
-          "stop-the-line" -> StopTheLine
-          "best-effort" -> BestEffort
-          _ -> PerKeyHeadOfLine
-        schedule = case knobText context.knobs (knobName "outbox.backoff") of
-          "exponential" -> ExponentialBackoff (ExponentialBackoffOptions 0.01 0.08 2)
-          _ -> ConstantBackoff 0.01
-        options = defaultPublishOptions {batchSize = 32, maxAttempts = 4, backoff = schedule, orderingPolicy = policy}
-        plan = Broker.FaultPlan (unSeed context.seed) 0.1 0.02 0.01 0 0
-        model = Broker.BrokerModel 1000 10 4
+        keyCount = fromIntegral (knobInt context.knobs (knobName "outbox.key-cardinality"))
+        entries = [(Text.pack (show i), if keyCount == 0 then Nothing else Just ("key-" <> Text.pack (show (i `mod` keyCount))), i `div` max 1 keyCount) | i <- [1 .. rowCount]]
+        plan = Broker.FaultPlan (unSeed context.seed) (knobDouble context.knobs (knobName "broker.fail-ratio")) (knobDouble context.knobs (knobName "broker.reject-ratio")) (knobDouble context.knobs (knobName "broker.poison-ratio")) (knobDouble context.knobs (knobName "broker.throw-ratio")) (knobDouble context.knobs (knobName "broker.drop-outcome-ratio"))
+        model = Broker.BrokerModel (fromIntegral (knobInt context.knobs (knobName "broker.invocation-micros"))) (fromIntegral (knobInt context.knobs (knobName "broker.per-record-micros"))) (fromIntegral (knobInt context.knobs (knobName "broker.partitions")))
         hooks = Broker.PublishHook (const (pure ())) (const (pure ()))
     enqueueInline fixture source entries
     broker <- Broker.newBroker
@@ -220,7 +242,7 @@ runTerminalStateMatrix context =
     let brokerIds = Set.fromList [value | record <- records, (name, value) <- record.headers, name == TextEncoding.encodeUtf8 headerMessageId]
         statusMatches row =
           case Broker.decide plan (row {attemptCount = 1}) of
-            Broker.AlwaysFail -> row.status == OutboxDead && row.attemptCount == 4
+            Broker.AlwaysFail -> row.status == OutboxDead && row.attemptCount == options.maxAttempts
             Broker.RejectWith _ -> row.status == OutboxRejected
             _ -> row.status == OutboxSent
         wireMatches row =
