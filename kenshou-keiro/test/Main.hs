@@ -22,6 +22,7 @@ import Keiro.Integration.Event (IntegrationContentType (..), IntegrationEvent (.
 import Keiro.Outbox (OutboxId (..), OutboxRow (..), OutboxStatus (..))
 import Keiro.ProcessManager (ProcessManager (..), deterministicCommandId)
 import Keiro.Router (deterministicRouterCommandId)
+import Keiro.Timer (TimerWorkerOptions (..))
 import Keiro.Workflow (WorkflowId (..), WorkflowRunOptions (..), deterministicJournalId)
 import Keiro.Workflow.Resume (WorkflowResumeOptions (..))
 import Kenshou.Core.Knob (RawKnob (..), resolveKnobs)
@@ -36,6 +37,7 @@ import Kenshou.Suite.Keiro.Fixture.Workload qualified as Workload
 import Kenshou.Suite.Keiro.Outbox.Broker qualified as Broker
 import Kenshou.Suite.Keiro.Outbox.Oracle qualified as OutboxOracle
 import Kenshou.Suite.Keiro.Shard.Oracle qualified as ShardOracle
+import Kenshou.Suite.Keiro.Timer.Knobs qualified as TimerKnobs
 import Kenshou.Suite.Keiro.Workflow.Definitions qualified as WorkflowDefinitions
 import Kenshou.Suite.Keiro.Workflow.Effects qualified as WorkflowEffects
 import Kenshou.Suite.Keiro.Workflow.Knobs qualified as WorkflowKnobs
@@ -110,6 +112,23 @@ main = hspec do
         Right knobs -> case WorkflowKnobs.runOptionsFrom knobs of
           Left _ -> pure ()
           Right _ -> expectationFailure "every-0 snapshot policy was accepted"
+  describe "timer knobs" do
+    it "maps defaults and the disabled recovery arm" do
+      case resolveKnobs TimerKnobs.timerKnobs [] of
+        Left errors -> expectationFailure (show errors)
+        Right knobs -> TimerKnobs.timerOptionsFrom knobs `shouldBe` Right (TimerWorkerOptions Nothing (Just 2))
+      let overrides = [(TimerKnobs.timerKnobName "timer.max-attempts", RawText "3"), (TimerKnobs.timerKnobName "timer.requeue-stuck-after-seconds", RawText "none")]
+      case resolveKnobs TimerKnobs.timerKnobs overrides of
+        Left errors -> expectationFailure (show errors)
+        Right knobs -> TimerKnobs.timerOptionsFrom knobs `shouldBe` Right (TimerWorkerOptions (Just 3) Nothing)
+    it "rejects nonpositive recovery and negative attempt ceilings" do
+      let parse knob value = resolveKnobs TimerKnobs.timerKnobs [(TimerKnobs.timerKnobName knob, RawText value)]
+      case parse "timer.max-attempts" "-1" of
+        Left errors -> expectationFailure (show errors)
+        Right knobs -> TimerKnobs.timerOptionsFrom knobs `shouldSatisfy` either (const True) (const False)
+      case parse "timer.requeue-stuck-after-seconds" "0" of
+        Left errors -> expectationFailure (show errors)
+        Right knobs -> TimerKnobs.timerOptionsFrom knobs `shouldSatisfy` either (const True) (const False)
   describe "shard oracles" do
     it "includes one reconciliation pass per lost bucket per survivor" do
       ShardOracle.failoverDeadline (ShardOracle.ShardTiming 3 0.5) 5 2 `shouldBe` 5.5

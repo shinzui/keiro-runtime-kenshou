@@ -86,8 +86,11 @@ library
     Kenshou.Suite.Keiro.Shard.Roles
     Kenshou.Suite.Keiro.Telemetry
     Kenshou.Suite.Keiro.Timer
+    Kenshou.Suite.Keiro.Timer.Concurrency
     Kenshou.Suite.Keiro.Timer.Correctness
+    Kenshou.Suite.Keiro.Timer.Knobs
     Kenshou.Suite.Keiro.Timer.Oracle
+    Kenshou.Suite.Keiro.Timer.Roles
     Kenshou.Suite.Keiro.Workflow
     Kenshou.Suite.Keiro.Workflow.AwakeableSmoke
     Kenshou.Suite.Keiro.Workflow.ChildSmoke

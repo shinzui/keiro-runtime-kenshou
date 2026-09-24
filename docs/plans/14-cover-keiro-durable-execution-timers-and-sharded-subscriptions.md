@@ -72,9 +72,10 @@ Milestone 1 — Durable workflow scenarios
 
 Milestone 2 — Timer scenarios
 
-- [ ] Add `Kenshou.Suite.Keiro.Timer.Knobs`, `.Roles` (`keiro/timer-worker`) and `.Oracle` with unit tests.
+- [x] (2026-09-24) Added `Timer.Knobs` with nullable attempt and stuck-requeue settings, `keiro/timer-worker` with a journal-safe deterministic business event and flushed effect fact, and the initial `.Oracle`; 27 Keiro unit examples pass.
 - [x] (2026-09-24 05:35Z) Added both timer correctness scenarios; each passed under both `fsync-off` and `durable`. The attempt-ceiling probe checks two callback executions, post-claim dead-lettering on attempt three, zero-ceiling refusal, persisted reason and invalid options.
-- [ ] Add the timer concurrency and crash scenarios (four).
+- [x] (2026-09-24) Added `keiro/timer/concurrency/skip-locked-claims-across-processes`. Four real timer-worker processes passed at 100 timers in both PostgreSQL modes and at the default 5,000 timers on durable PostgreSQL, with one claim, effect and event per timer.
+- [ ] Add the other three timer concurrency and crash scenarios.
 - [ ] Extend the bundle; confirm `kenshou list`.
 
 Milestone 3 — Sharded subscription scenarios
@@ -582,3 +583,12 @@ reason and delivers a failure envelope; the parent's await throws the recorded
 error. A parent rotated after spawning the child receives its result in the
 new generation and attaches to the completed child. Both durability modes
 passed. Multiple-child fan-out remains open.
+
+## Revision Note — 2026-09-24 (timer workers)
+
+The timer worker now uses Keiro's claim and fire path, routes workflow sleeps,
+and writes a deterministic business event and flushed effect fact for ordinary
+timers. Nullable timer settings are validated at startup. Four worker
+processes drained 5,000 timers in the durable PostgreSQL mode with exactly one
+claim and one event per timer; 100-timer runs passed in both modes. The crash,
+slow-fire and foreground-resume scenarios remain open.

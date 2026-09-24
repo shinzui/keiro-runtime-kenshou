@@ -76,6 +76,11 @@ The two timer correctness scenarios,
 `keiro/timer/correctness/max-attempts-dead-letters-post-claim`, cover first
 arm, rearm, ordered claims, stuck recovery, repeated callback execution, and
 the post-claim dead-letter ceiling. The
+`keiro/timer/concurrency/skip-locked-claims-across-processes` scenario starts
+four timer-worker processes against due timers and checks that each timer has
+one claim, one flushed effect, and one deterministic business event. Its
+`timer.count` knob defaults to 5,000; the default durable run passed.
+The
 `keiro/shard/correctness/lease-coverage-smoke` scenario claims four buckets
 one per pass, relinquishes them, and checks that another owner can claim them
 without overlap. `keiro/shard/correctness/shard-count-mismatch` starts
