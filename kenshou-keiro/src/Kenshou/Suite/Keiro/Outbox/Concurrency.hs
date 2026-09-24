@@ -2,6 +2,7 @@ module Kenshou.Suite.Keiro.Outbox.Concurrency (scenarios) where
 
 import Control.Concurrent (threadDelay)
 import Data.Aeson (object, (.=))
+import Data.List (sort)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
@@ -54,7 +55,7 @@ runMultiProcessPublishers context =
             keyCardinality = fromIntegral (knobInt context.knobs (knobName "outbox.key-cardinality"))
             entries = [(Text.pack (show index), Just ("key-" <> Text.pack (show (index `mod` keyCardinality))), index) | index <- [1 .. rowCount :: Int]]
         enqueueInline fixture source entries
-        children <- traverse (\index -> roleProcess check "keiro/outbox-publisher" index (object ["loop" .= True]) >>= spawn supervisor) [0 .. 3 :: Int]
+        children <- traverse (\index -> roleProcess check "keiro/outbox-publisher" index (object ["loop" .= True, "pauseMicros" .= (1000 :: Int)]) >>= spawn supervisor) [0 .. 3 :: Int]
         mapM_ (\child -> awaitReady child 10000) children
         mapM_ (\child -> sendCommand child CtlStart) children
         mapM_ (\child -> awaitMark child "finished" 300000) children
@@ -66,10 +67,14 @@ runMultiProcessPublishers context =
             expectedOrder = Map.fromList [(TextEncoding.encodeUtf8 messageId, (key, index)) | (messageId, Just key, index) <- entries]
             observedOrder = [pair | messageId <- messageIds, Just pair <- [Map.lookup messageId expectedOrder]]
             publisherCounts = Map.fromListWith (+) [(record.publisher, 1 :: Int) | record <- records]
+            partitionOffsets = Map.fromListWith (<>) [((record.topic, record.partition), [record.offset]) | record <- records]
+            contiguousOffsets = all (\offsets -> sort offsets == [0 .. fromIntegral (length offsets - 1)]) (Map.elems partitionOffsets)
             cells =
               [ ("no-loss", length rows == rowCount && all ((== OutboxSent) . (.status)) rows && all (`Map.member` counts) expectedIds),
                 ("disjoint-ownership", length records == rowCount && all (== 1) (Map.elems counts) && all ((== 1) . (.attemptCount)) rows),
-                ("per-key-order", length observedOrder == rowCount && Oracle.perKeyOrder observedOrder)
+                ("publisher-participation", Map.size publisherCounts >= 2),
+                ("per-key-order", length observedOrder == rowCount && Oracle.perKeyOrder observedOrder),
+                ("broker-partition-offsets", length records == rowCount && contiguousOffsets)
               ]
             evidence = Map.fromList [("enqueued", fromIntegral rowCount), ("brokerRecords", fromIntegral (length records)), ("publishers", 4)]
         recordMessagingCells context evidence (object ["publisherCounts" .= publisherCounts]) cells

@@ -17,6 +17,11 @@ provenance:
       at: 2026-09-24T02:59:06Z
       mode: "implement"
       note: "Started outbox broker and first durable scenario"
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-24T16:38:24Z
+      mode: "implement"
+      note: "Corrected synthetic broker partition offsets and added durable concurrency oracle"
 ---
 
 # Cover the keiro outbox, inbox and job queue
@@ -42,9 +47,10 @@ Milestone 1 — Outbox scenarios (includes the shared messaging support used by 
 - [x] (2026-09-24 03:01 UTC) Verify the hard dependencies: the Nix-shell build, Keiro listing, PostgreSQL round trip, backend kill and proxy partition selftests passed. Read the prerequisite plans' interface sections and the fixture milestone; the fixture module names match the completed work.
 - [x] (2026-09-24 02:59 UTC) Add the initial outbox modules and their build dependencies to `kenshou-keiro/kenshou-keiro.cabal`.
 - [ ] Complete `Kenshou.Suite.Keiro.Outbox.Broker`: the in-process broker, model, deterministic fault decisions, callback hooks and PostgreSQL table backend are implemented; stronger determinism and ordering tests remain.
+- [x] (2026-09-24 16:39 UTC) Make the PostgreSQL synthetic broker allocate contiguous offsets per topic and partition with a transactional counter; add a durable four-publisher oracle for the offsets. The 31 `kenshou-keiro-test` examples pass, and the 32-row and 2,000-row durable offset verdicts held.
 - [ ] Implement `Kenshou.Suite.Keiro.Outbox.Knobs`, `.Workload`, `.Roles`, `.Oracle`: `.Workload` now enqueues run-namespaced inline events, `.Oracle` has per-key-order and duplicate-budget checks with doctored unit inputs, and a one-pass publisher role supports a crash window; knobs, the remaining roles, and SQL oracles remain.
 - [ ] Finish the five outbox correctness scenarios: all five are registered and have passed durable PostgreSQL runs; `terminal-state-matrix` passed at its 2,000-row default and all eight ordering/backoff combinations at 200 rows. `per-key-order-serialized` passed all three policies at its 5,000-row default. `failure-skips-successors` passes per-key, per-source, and stop-the-line arms. `publisher-misbehaviour` checks terminal rejection under those three policies. `producer-identity` asserts the literal ADR-42 frozen vector. Deeper attempt/backoff and producer-path oracles remain.
-- [ ] Implement the six outbox concurrency and crash scenarios: the `after-broker-append` arm of `crash-between-publish-and-mark` passes with the planned 2,000-row backlog, 20 keys, and three real `SIGKILL` events. `multi-process-publishers` passes with four processes and the planned 20,000-row backlog. Other crash points, attempt exhaustion, and the other four scenarios remain.
+- [ ] Implement the six outbox concurrency and crash scenarios: the `after-broker-append` arm of `crash-between-publish-and-mark` passes with the planned 2,000-row backlog, 20 keys, and three real `SIGKILL` events. `multi-process-publishers` passes with four processes and the planned 20,000-row backlog; its strengthened 2,000-row rerun now requires and observes two publishers contributing records, and checks per-partition offsets. Other crash points, attempt exhaustion, callback-interval ownership facts, and the other four scenarios remain.
 - [x] (2026-09-24 03:35 UTC) Export `Kenshou.Suite.Keiro.Outbox.scenarios` and `.roles` and splice them into the bundle module created by `docs/plans/12-…`.
 - [ ] Run every outbox scenario locally with `pg.durability=durable`; record outcomes and any upstream finding; file upstream reports for unexpected failures and attach `KnownDefect` references.
 
@@ -75,6 +81,8 @@ Milestone 4 — Messaging benchmarks, soak and telemetry arms.
 
 ## Surprises & Discoveries
 
+- The table broker previously returned its global `record_offset` as the Kafka partition offset, unlike the in-process broker's per-partition offset. A transactional `(topic, partition)` counter now assigns stable offsets on append, and `multi-process-publishers` checks that every partition has `0..n-1` even with four competing processes.
+- The initial 32-row and 2,000-row multi-process reruns passed, but one publisher did all the work in each run. Passing four worker PIDs alone did not exercise concurrent claiming. A later 2,000-row rerun deliberately failed `publisher-participation`: three workers saw no claimable head while the fourth owned all twenty keys, then exited. The worker now retries idle passes for one second, with a brief pause between productive batches. The strengthened durable rerun passed in `01a0d44b-c4d9-705d-b4b7-0f2d5600f632`; two publishers appended 1,939 and 61 records, and all contract verdicts held.
 - The project shell does not expose `ghc` directly to a plain `cabal` invocation. `nix develop -c cabal build kenshou-keiro kenshou-check kenshou-measure kenshou-diagnose kenshou-telemetry` passed; use `nix develop -c` for the subsequent commands. The completed write-side fixture exports the modules named in Interfaces and Dependencies.
 - The first outbox scenario passed with durable PostgreSQL: `keiro/outbox/correctness/failure-skips-successors` wrote its verdicts under `runs/01a0d15a-0b81-771e-9bea-a08921d97bf2` and the CLI reported `passed`. This establishes the scenario registration and fixture integration, not the other ten outbox scenarios.
 - The implemented `kenshou list` accepts positional scenario selectors and has no `--component` option. The old plan command exited 2 with `Invalid option '--component'`; the plan now uses selectors such as `list 'keiro/outbox/**'`.
@@ -151,6 +159,10 @@ Milestone 4 — Messaging benchmarks, soak and telemetry arms.
 
 - Decision: The publisher-misbehaviour scenario gives each row a distinct key when checking callback-wide errors, and uses one shared key only for the rejection subcase.
   Rationale: Ordered publisher policies skip later same-key rows after a failure, so sharing a key would conflate callback normalization with the intentional skip rule and make the attempt-count assertion wrong.
+  Date: 2026-09-24
+
+- Decision: The multi-process publisher role waits through a one-second idle window and yields briefly after productive batches, and its scenario requires at least two publishers to append records.
+  Rationale: With twenty keys, one publisher can temporarily own every claimable head. Other workers previously exited on their first empty claim, so four live PIDs did not create a competition test. The idle window lets them claim newly released heads, while the participation verdict prevents a vacuous pass.
   Date: 2026-09-24
 
 
@@ -463,3 +475,8 @@ This plan uses them in three places: the producer path of the outbox (account ev
 At the end of Milestone 1 these exist: `Kenshou.Suite.Keiro.Outbox` exporting `scenarios :: [Scenario]` and `roles :: [WorkerRole]`; `Kenshou.Suite.Keiro.Outbox.Broker` as shown in Plan of Work; `Kenshou.Suite.Keiro.Outbox.Knobs` with `outboxKnobs :: [KnobSpec]` and `decodePublishOptions :: ResolvedKnobs -> Maybe Tracer -> Either OutboxPublishConfigError OutboxPublishOptions`; `.Workload`, `.Roles`, `.Oracle`; one module per scenario under `.Correctness` and `.Concurrency`. At the end of Milestone 2: `Kenshou.Suite.Keiro.Inbox` with the same two exports, `.Effects` (`ensureEffectSchema :: Pool -> IO ()`, `effectHandler :: Text -> HandlerMode -> IntegrationEvent -> Tx.Transaction ()`, `effectCounts :: Pool -> IO (Map (Text, Text) Int)`), `.Delivery`, `.Knobs`, `.Roles`, `.Oracle` and the scenario modules. At the end of Milestone 3: `Kenshou.Suite.Keiro.Queue` with the two exports, `.Jobs` as shown, `.Knobs` (`decodeTuning :: ResolvedKnobs -> JobTuning`, deliberately unvalidated so rejection scenarios can build invalid tunings, and `decodePolicy :: ResolvedKnobs -> RetryPolicy`), `.Roles`, `.Oracle` (`queueRows`, `archiveRows`, `dlqRows :: Pool -> QueueRef -> IO [QueueRowView]`) and the scenario modules. At the end of Milestone 4: the three `.Telemetry` modules, `.Bench.*` and `.Soak.*` modules per component, and the three sections of `docs/layers/keiro.md`.
 
 Consumers of this plan: `docs/plans/15-verify-the-assembled-runtime-end-to-end-and-under-soak.md` may depend on `kenshou-keiro` and can reuse the fault plan, the inbox effect table and the scripted job for its own roles, and uses this plan's scenarios to localise an end-to-end failure to the outbox, the inbox or the queue; `docs/plans/3-plan-and-select-runs-from-what-changed.md` selects `keiro/outbox/**` and `keiro/inbox/**` when keiro's outbox or inbox modules change and `keiro/queue/**` when `keiro-pgmq`, `shibuya-pgmq-adapter`, `shibuya-core` or the pgmq packages change; `docs/plans/18-…` records the resulting runs.
+
+
+## Revision note — 2026-09-24
+
+The synthetic PostgreSQL broker now assigns Kafka-style offsets per topic and partition. The multi-process publisher scenario checks those offsets and requires actual participation from at least two workers. This exposed an idle-worker early exit in the scenario fixture; a bounded idle polling window resolved it. The remaining Milestone 1 scenario and oracle work is still tracked above.

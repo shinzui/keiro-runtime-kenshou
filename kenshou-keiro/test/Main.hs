@@ -4,10 +4,11 @@ import Data.Aeson (object)
 import Data.Aeson qualified as Aeson
 import Data.ByteString qualified as ByteString
 import Data.IORef (newIORef, readIORef)
-import Data.List (intersect)
+import Data.List (intersect, sort)
 import Data.Map.Strict qualified as Map
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
+import Data.Text qualified as Text
 import Data.Time (NominalDiffTime, addUTCTime, getCurrentTime)
 import Data.Time.Clock (UTCTime)
 import Data.UUID qualified as UUID
@@ -190,6 +191,17 @@ main = hspec do
       length outcomes `shouldBe` 2
       records <- Broker.readBroker broker
       records `shouldBe` []
+    it "assigns offsets independently within every topic partition" do
+      now <- getCurrentTime
+      broker <- Broker.newBroker
+      let model = Broker.BrokerModel 0 0 4
+          hooks = Broker.PublishHook (const (pure ())) (const (pure ()))
+          rows = [brokerRow now ("message-" <> Text.pack (show index)) (Just key) | (index, key) <- zip [1 :: Int ..] ["a", "b", "b", "a"]]
+      _ <- runEff (Broker.publishScripted broker model (const Broker.Succeed) hooks "test" rows)
+      records <- Broker.readBroker broker
+      length records `shouldBe` 4
+      let partitions = Map.fromListWith (<>) [((record.topic, record.partition), [record.offset]) | record <- records]
+      mapM_ (\offsets -> sort offsets `shouldBe` [0 .. fromIntegral (length offsets - 1)]) (Map.elems partitions)
   describe "Outbox oracles" do
     it "rejects a later broker offset carrying an earlier sequence of the same key" do
       OutboxOracle.perKeyOrder [("a" :: Text, 1), ("b", 9), ("a", 3), ("a", 2)] `shouldBe` False

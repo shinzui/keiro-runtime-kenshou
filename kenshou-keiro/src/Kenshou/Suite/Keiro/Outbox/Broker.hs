@@ -98,10 +98,14 @@ newTableBroker pool = do
         "CREATE SCHEMA IF NOT EXISTS kenshou_fx; "
           <> "CREATE TABLE IF NOT EXISTS kenshou_fx.broker_log ("
           <> "record_offset bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, "
-          <> "topic text NOT NULL, partition bigint NOT NULL, record_key bytea, "
+          <> "topic text NOT NULL, partition bigint NOT NULL, partition_offset bigint NOT NULL, record_key bytea, "
           <> "payload bytea NOT NULL, headers jsonb NOT NULL, "
           <> "appended_at timestamptz NOT NULL DEFAULT clock_timestamp(), "
-          <> "publisher text NOT NULL, attempt integer NOT NULL)"
+          <> "publisher text NOT NULL, attempt integer NOT NULL, "
+          <> "UNIQUE (topic, partition, partition_offset)); "
+          <> "CREATE TABLE IF NOT EXISTS kenshou_fx.broker_partition_offsets ("
+          <> "topic text NOT NULL, partition bigint NOT NULL, next_offset bigint NOT NULL, "
+          <> "PRIMARY KEY (topic, partition))"
   Pool.use pool (Session.script schema) >>= either (fail . show) pure
   pure (TableBroker pool)
 
@@ -211,7 +215,7 @@ append broker model publisherName row = do
 appendStatement :: Statement.Statement BrokerRecord ()
 appendStatement =
   Statement.preparable
-    "INSERT INTO kenshou_fx.broker_log (topic, partition, record_key, payload, headers, publisher, attempt) VALUES ($1, $2, $3, $4, $5, $6, $7)"
+    "WITH next AS (INSERT INTO kenshou_fx.broker_partition_offsets (topic, partition, next_offset) VALUES ($1, $2, 1) ON CONFLICT (topic, partition) DO UPDATE SET next_offset = kenshou_fx.broker_partition_offsets.next_offset + 1 RETURNING next_offset - 1 AS partition_offset) INSERT INTO kenshou_fx.broker_log (topic, partition, partition_offset, record_key, payload, headers, publisher, attempt) SELECT $1, $2, next.partition_offset, $3, $4, $5, $6, $7 FROM next"
     ( contramap (.topic) (Encoders.param (Encoders.nonNullable Encoders.text))
         <> contramap (.partition) (Encoders.param (Encoders.nonNullable Encoders.int8))
         <> contramap (.key) (Encoders.param (Encoders.nullable Encoders.bytea))
@@ -225,7 +229,7 @@ appendStatement =
 readBrokerStatement :: Statement.Statement () [(Text, Int64, Int64, Maybe ByteString, ByteString, Value, UTCTime, Text, Int32)]
 readBrokerStatement =
   Statement.preparable
-    "SELECT topic, partition, record_offset, record_key, payload, headers, appended_at, publisher, attempt FROM kenshou_fx.broker_log ORDER BY record_offset"
+    "SELECT topic, partition, partition_offset, record_key, payload, headers, appended_at, publisher, attempt FROM kenshou_fx.broker_log ORDER BY record_offset"
     Encoders.noParams
     (Decoders.rowList ((,,,,,,,,) <$> text <*> int8 <*> int8 <*> key <*> bytes <*> jsonb <*> timestamp <*> text <*> int4))
   where
