@@ -423,6 +423,9 @@ default passed with three kills on durable PostgreSQL. The run writes
 `outbox.crash-point=after-claim` arm parks before any broker append; its
 32-row durable run left no broker duplicates and recovered all rows through
 maintenance. The default after-append arm passed again after this role change.
+With `outbox.exhaust-attempts=true`, two after-claim kills consumed the attempt
+ceiling: maintenance left 32 dead rows, and 32 later rows of the same key
+reached the broker. The dead rows remain visible for operator action.
 The four-process publisher scenario passed with 20,000 rows and 200 keys: each
 outbox row had one broker record and one consumed attempt, and first-record
 order held within each key. A strengthened 2,000-row run observed records from
