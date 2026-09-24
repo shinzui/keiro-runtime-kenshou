@@ -7,6 +7,7 @@ import Control.Monad (forM_, void, when)
 import Data.Aeson (Value, object, withObject, (.:), (.:?), (.=))
 import Data.Aeson.Types (parseMaybe)
 import Data.ByteString qualified as ByteString
+import Data.IORef (atomicModifyIORef', newIORef)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -19,13 +20,14 @@ import Hasql.Encoders qualified as Encoders
 import Hasql.Statement qualified as Statement
 import Hasql.Transaction qualified as Tx
 import Keiro.Subscription.Shard (ShardCountMismatch, ShardLease (..), WorkerId (..), ensureShards)
-import Keiro.Subscription.Shard.Worker (ShardAck (..), ShardDelivery (..), ShardedWorkerOptions (..), defaultShardedWorkerOptions, mkShardedWorkerOptions, runShardedSubscriptionGroupAck)
+import Keiro.Subscription.Shard.Worker (RetryDelay (..), ShardAck (..), ShardDelivery (..), ShardedWorkerOptions (..), defaultShardedWorkerOptions, mkShardedWorkerOptions, runShardedSubscriptionGroup, runShardedSubscriptionGroupAck)
 import Kenshou.Core.Knob (resolvedKnobsMap)
 import Kenshou.Core.Role (ControlMessage (..), PostgresConnInfo (..), RoleContext (..), WorkerInit (..), WorkerMessage (..), WorkerRole (..), mkRoleName)
 import Kenshou.Suite.Keiro.Shard.Knobs (shardKnobName, shardOptionsFrom)
 import Kenshou.Suite.Keiro.Workflow.Effects (EffectFact (..), EffectSink (..), withEffectSink)
 import Kenshou.Suite.Keiro.Workflow.Fixture (DurableStore, durableKirokuStore, ensureDurableTables, fixtureCategory, runDurable, withDurableStore)
 import Kiroku.Store (appendToStream, defaultConnectionSettings, runStoreIO, runTransaction)
+import Kiroku.Store.Subscription.Fsm (DeadLetterReason (..))
 import Kiroku.Store.Subscription.Types (SubscriptionName (..), SubscriptionTarget (..))
 import Kiroku.Store.Types (CategoryName (..), EventData (..), EventId (..), EventType (..), ExpectedVersion (..), GlobalPosition (..), RecordedEvent (..), StreamId (..), StreamName (..))
 
@@ -65,9 +67,9 @@ shardAppender context = case context.init.postgres of
 shardWorker :: RoleContext -> IO ()
 shardWorker context = case context.init.postgres of
   Nothing -> context.send (WrkError "shard worker requires PostgreSQL")
-  Just postgres -> case parseMaybe (withObject "shard worker args" (\value -> (,,,) <$> value .: "subscription" <*> value .: "shardCount" <*> value .:? "delivery" <*> value .:? "handlerDelayMicros")) context.init.args of
+  Just postgres -> case parseMaybe (withObject "shard worker args" (\value -> (,,,,) <$> value .: "subscription" <*> value .: "shardCount" <*> value .:? "delivery" <*> value .:? "handlerDelayMicros" <*> value .:? "handlerMode")) context.init.args of
     Nothing -> context.send (WrkError "invalid shard worker arguments")
-    Just (subscription, count, delivery, handlerDelayMicros) -> case optionsResult count of
+    Just (subscription, count, delivery, handlerDelayMicros, handlerMode) -> case optionsResult count of
       Left err -> context.send (WrkError (Text.pack (show err)))
       Right options -> do
         context.send WrkReady
@@ -76,8 +78,22 @@ shardWorker context = case context.init.postgres of
             if delivery == Just True
               then do
                 ensureDurableTables fixture
-                withEffectSink context [] \sink ->
-                  withAsync (runShardedSubscriptionGroupAck (durableKirokuStore fixture) (SubscriptionName subscription) options (recordDelivery fixture sink context.init.instanceName context.send handlerDelayMicros)) \worker -> do
+                withEffectSink context [] \sink -> do
+                  plainAttempts <- newIORef Map.empty
+                  let plainHandler event = do
+                        let EventId identifier = event.eventId
+                            key = UUID.toText identifier
+                        number <- atomicModifyIORef' plainAttempts \previous ->
+                          let next = Map.findWithDefault (0 :: Int) key previous + 1
+                           in (Map.insert key next previous, next)
+                        if event.eventType == EventType "kenshou.shard.throw" && number == 1
+                          then sink.recordEffect (EffectFact "shard-plain-throw" key context.init.instanceName (object ["attempt" .= (0 :: Int)])) >> fail "intentional plain handler failure"
+                          else void (recordDelivery fixture sink context.init.instanceName context.send handlerDelayMicros (ShardDelivery event (fromIntegral (number - 1)) 0))
+                      runGroup =
+                        if handlerMode == Just ("plain" :: Text)
+                          then runShardedSubscriptionGroup (durableKirokuStore fixture) (SubscriptionName subscription) options plainHandler
+                          else runShardedSubscriptionGroupAck (durableKirokuStore fixture) (SubscriptionName subscription) options (recordDelivery fixture sink context.init.instanceName context.send handlerDelayMicros)
+                  withAsync runGroup \worker -> do
                     outcome <- race context.receive (wait worker)
                     case outcome of
                       Left (Just (CtlStop _)) -> context.send (WrkDone Nothing)
@@ -109,8 +125,14 @@ recordDelivery fixture sink workerName send delay delivery = do
   sink.recordEffect (EffectFact "shard-delivery" key workerName (object ["bucket" .= delivery.bucket, "attempt" .= delivery.attempt]))
   send (WrkCustom ("delivery-start-" <> Text.pack (show delivery.bucket)) (object ["eventId" .= key]))
   maybe (pure ()) threadDelay delay
-  result <- runDurable fixture (runTransaction (Tx.statement payload insertSinkStatement))
-  either (fail . show) (const (pure ShardAckOk)) result
+  let EventType kind = event.eventType
+  case kind of
+    "kenshou.shard.retry" | delivery.attempt < 2 -> pure (ShardAckRetry (RetryDelay 0.01))
+    "kenshou.shard.dead" -> pure (ShardAckDeadLetter (DeadLetterPoison "intentional shard probe"))
+    "kenshou.shard.exhaust" -> pure (ShardAckRetry (RetryDelay 0.01))
+    _ -> do
+      result <- runDurable fixture (runTransaction (Tx.statement payload insertSinkStatement))
+      either (fail . show) (const (pure ShardAckOk)) result
 
 insertSinkStatement :: Statement.Statement Value ()
 insertSinkStatement =

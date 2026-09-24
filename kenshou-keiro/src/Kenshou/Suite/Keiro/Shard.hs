@@ -7,9 +7,10 @@ import Kenshou.Suite.Keiro.Shard.Correctness qualified as Correctness
 import Kenshou.Suite.Keiro.Shard.LeaseSmoke qualified as LeaseSmoke
 import Kenshou.Suite.Keiro.Shard.Mismatch qualified as Mismatch
 import Kenshou.Suite.Keiro.Shard.Roles qualified as Roles
+import Kenshou.Suite.Keiro.Shard.Variants qualified as Variants
 
 scenarios :: [Scenario]
-scenarios = LeaseSmoke.scenarios <> Mismatch.scenarios <> Correctness.scenarios <> Concurrency.scenarios
+scenarios = LeaseSmoke.scenarios <> Mismatch.scenarios <> Correctness.scenarios <> Concurrency.scenarios <> Variants.scenarios
 
 roles :: [WorkerRole]
 roles = Roles.roles

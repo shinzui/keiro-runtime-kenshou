@@ -88,7 +88,8 @@ Milestone 3 — Sharded subscription scenarios
 - [x] (2026-09-24 05:33Z) Registered an incremental `keiro/shard/correctness/lease-coverage-smoke` scenario. Runs under both PostgreSQL durability modes passed five verdicts for one-bucket-per-pass ownership, complete coverage, relinquish and immediate transfer.
 - [x] (2026-09-24 13:43Z) Added `keiro/shard/correctness/shard-count-mismatch`, exercising the same `ensureShards` startup path as a worker. Both PostgreSQL durability modes reproduced two contract failures: extra rows remained after a larger misconfigured caller, and a fresh correct caller failed. The scenario exits zero as a reported known defect with `mori://shinzui/keiro/okf/improvement-requests/concepts/IR-49`.
 - [x] (2026-09-24 13:48Z) Changed the shard-count mismatch probe to start count-two, count-six and fresh count-four worker processes. Both PostgreSQL durability modes reproduced the same two contract failures and no other failures.
-- [ ] Add delivery assertions for the shard-count mismatch scenario and the acknowledgement-coupled handler variants scenario.
+- [ ] Add delivery assertions for the shard-count mismatch scenario and the metrics-collection assertion for acknowledgement-coupled handler variants.
+- [x] (2026-09-24) Added `keiro/shard/correctness/ack-coupled-handler-variants`. Both PostgreSQL modes passed checks for zero-based retry attempts 0, 1, 2, explicit dead-lettering, exhaustion at the configured retry ceiling, a throwing plain handler retried once, and later events delivered after both dead letters. The metrics-collection assertion remains.
 - [x] (2026-09-24) Added `keiro/shard/correctness/single-worker-drains-all-buckets`. A real worker claimed four buckets, delivered twenty account-category events exactly once to the sink and effect ledger, then relinquished every bucket on graceful stop. Both durability modes passed; a 100-event, eight-bucket durable run also passed. The sink now records first-delivery sequence and verifies strict per-stream order. A 100-event, five-stream run passed in both modes, and the default 20,000-event, 500-stream, eight-bucket durable run passed.
 - [ ] Add the shard concurrency and crash scenarios (six).
 - [x] (2026-09-24) Added `keiro/shard/concurrency/late-joiner-gets-no-buckets` with three real delivery workers. Four- and eight-bucket durable runs and a four-bucket fsync-off run reproduced exactly the declared `shard-late-workers-share` known defect; the first owner covered all buckets and coverage persisted after the two joiners started.
@@ -724,3 +725,14 @@ move, a second effect for its in-flight event, a balanced ownership snapshot,
 and complete sink delivery. The first worker then stops so its deliberately
 slow handlers do not extend the drain. Both durability modes passed at
 shakedown size, and the default 20,000-event durable run passed.
+
+## Revision Note — 2026-09-24 (shard handler variants)
+
+The sharded worker now handles explicit retries and dead-letter decisions in
+its acknowledgement-aware callback, and can run the plain-handler wrapper
+for a thrown callback. The variants scenario seeds ordered events, observes
+zero-based retry attempts in flushed effect facts, checks one dead-letter row
+for explicit rejection and one for retry exhaustion, and verifies later
+events still enter the sink. A separate plain subscription throws once and
+then delivers its event and successor. Both PostgreSQL modes passed. The
+dead-letter metric comparison remains for the telemetry arm.

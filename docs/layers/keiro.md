@@ -128,6 +128,9 @@ and reports measured recovery gaps. The default durable run delivered all
 `keiro/shard/concurrency/fair-share-shedding` joins a second worker before
 full coverage, forces the first to shed an in-flight bucket, and checks
 balanced ownership, redelivery of that event, and complete sink delivery.
+`keiro/shard/correctness/ack-coupled-handler-variants` checks explicit
+retries, retry exhaustion, explicit dead letters, a plain handler that throws
+once, and delivery of events that follow each failure.
 These correctness probes support both PostgreSQL durability modes. The remaining workflow kinds, process concurrency cases,
 subscription delivery checks, benchmarks and soaks remain in the plan's
 Progress section.
