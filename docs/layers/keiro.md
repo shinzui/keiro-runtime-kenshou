@@ -27,6 +27,35 @@ projection, snapshot, benchmark, soak, and telemetry scenarios share this
 fixture. Their implementation record is the repository-local
 `docs/plans/12-cover-the-keiro-command-processor-process-managers-and-routers.md` plan.
 
+## Durable execution probes
+
+The durable-execution work tracked by
+`docs/plans/14-cover-keiro-durable-execution-timers-and-sharded-subscriptions.md`
+has three runnable slices. `keiro/workflow/correctness/linear-replay-smoke`
+checks that replay returns the recorded result without repeating a step effect,
+and that journal event IDs match the step index. The
+`keiro/workflow/concurrency/linear-self-sigkill-smoke` run starts a resume
+worker as a separate process, kills it immediately after an `s2` effect, then
+checks that its replacement completes with one `s2` journal entry and the
+expected duplicate effect. Run the crash probe with durable PostgreSQL:
+
+```bash
+cabal run kenshou -- run keiro/workflow/concurrency/linear-self-sigkill-smoke \
+  --dim pg.durability=durable --out runs
+```
+
+The two timer correctness scenarios,
+`keiro/timer/correctness/lifecycle-and-at-least-once` and
+`keiro/timer/correctness/max-attempts-dead-letters-post-claim`, cover first
+arm, rearm, ordered claims, stuck recovery, repeated callback execution, and
+the post-claim dead-letter ceiling. The
+`keiro/shard/correctness/lease-coverage-smoke` scenario claims four buckets
+one per pass, relinquishes them, and checks that another owner can claim them
+without overlap. All three correctness probes support both PostgreSQL
+durability modes. The remaining workflow kinds, process concurrency cases,
+subscription delivery checks, benchmarks and soaks remain in the plan's
+Progress section.
+
 A Keiro-only smoke plan selected sixteen scenarios and completed locally in
 about half a minute. Fifteen passed; the `NoAdvance` receipt scenario reproduced
 its declared nonblocking known defect. The plan executor exited zero.

@@ -55,7 +55,7 @@ Milestone 1 — Durable workflow scenarios
 
 Milestone 2 — Timer scenarios
 
-- [ ] Add `Kenshou.Suite.Keiro.Timer.Knobs`, `.Roles` (`keiro.timer.worker`) and `.Oracle` with unit tests.
+- [ ] Add `Kenshou.Suite.Keiro.Timer.Knobs`, `.Roles` (`keiro/timer-worker`) and `.Oracle` with unit tests.
 - [x] (2026-09-24 05:35Z) Added both timer correctness scenarios; each passed under both `fsync-off` and `durable`. The attempt-ceiling probe checks two callback executions, post-claim dead-lettering on attempt three, zero-ceiling refusal, persisted reason and invalid options.
 - [ ] Add the timer concurrency and crash scenarios (four).
 - [ ] Extend the bundle; confirm `kenshou list`.
@@ -73,7 +73,7 @@ Milestone 4 — Durable-execution benchmarks, soak and telemetry arms
 - [ ] Add the six benchmarks and run each once locally at shakedown size with `pg.durability=durable`.
 - [ ] Add the two soaks (each as a `soak`-tier id and an `extended`-tier `-reduced` id) and pass the short forms locally with a leak verdict per worker process.
 - [ ] Wire `telemetry.tracing` and `telemetry.metrics` through the roles and add `keiro/workflow/benchmark/telemetry-overhead`.
-- [ ] Add the durable-execution section to `docs/layers/keiro.md`.
+- [ ] Add the durable-execution section to `docs/layers/keiro.md`. An initial section documents the runnable workflow, timer and shard probes; extend it with the remaining scenario identifiers and knobs as they land.
 - [ ] Write the ADRs named in Context and Orientation and validate the ADR bundle.
 - [ ] Record outcomes, distill to ADRs, and update the MasterPlan's Progress entries for EP-14.
 
@@ -81,7 +81,7 @@ Milestone 4 — Durable-execution benchmarks, soak and telemetry arms
 ## Surprises & Discoveries
 
 - The plan's example list filter assumes a top-level JSON array. The delivered CLI emits `kenshou.scenario-list/v1` with scenarios under `.scenarios[]`; `jq -r '.scenarios[].id'` found all required dependency identifiers on 2026-09-24.
-- The delivered worker role parser accepts `keiro/<name>` rather than `keiro.workflow.<name>`; `mkRoleName` in `kenshou-core/src/Kenshou/Core/Role.hs` enforces exactly two slash-delimited segments. The role names in this plan must be adapted before registration.
+- The delivered worker role parser accepts `keiro/<name>` rather than `keiro.workflow.<name>`; `mkRoleName` in `kenshou-core/src/Kenshou/Core/Role.hs` enforces exactly two slash-delimited segments. Planned role names were adapted to that format.
 - `Keiro.Workflow.Journal` is a hidden package module in the released cohort; the public `Keiro.Workflow` module re-exports `deterministicJournalId` and `loadStepIndex`. A direct hidden-module import failed compilation and was replaced by the public import.
 - Reading the correctness toolkit's ledger directory while `withCheck` still held the harness ledger open failed on macOS with `withBinaryFile: resource busy (file is locked)`. The crash probe seals the harness ledger before polling worker ledgers; its rerun passed with the `crash-armed` fact and both `s2` effect facts present.
 - The CLI cohort document identifies components by `.id`, not `.name` as the plan's illustrative filter says. `jq '.components[] | select(.id=="keiro")'` confirmed the executed cohort still pins `keiro`, `keiro-core`, `keiro-pgmq`, migrations and test support to 0.17.0.0.
@@ -140,7 +140,13 @@ Milestone 4 — Durable-execution benchmarks, soak and telemetry arms
 
 ## Outcomes & Retrospective
 
-(To be filled during and after implementation.)
+Implementation is in progress. The first durable workflow crash probe passed
+against the pinned keiro 0.17.0.0 cohort and observed a single duplicated `s2`
+effect with one journal entry after a self-`SIGKILL`. Both timer correctness
+scenarios passed under `fsync-off` and `durable`. A shard lease probe passed
+coverage and clean transfer in both modes. These results establish the fixture,
+ledger, process, timer and lease integration paths; the full scenario matrix,
+benchmarks, soaks and ADR distillation remain open.
 
 
 ## Context and Orientation
@@ -254,7 +260,7 @@ expectedResult :: WorkflowKind -> DefinitionParams -> WorkflowId -> Value
 
 Create `Workflow/Knobs.hs`. The knobs shared by workflow scenarios, each defaulting to a scenario-friendly value with keiro's default in parentheses, are: `workflow.lease-ttl-seconds` (decimal, 3; keiro 60), `workflow.max-attempts` (int, 5), `workflow.max-concurrent-advances` (int, 1; allowed 1–64), `workflow.poll-interval-ms` (int, 100; keiro 1000), `workflow.snapshot-policy` (`never` | `every-<n>` | `on-terminal`, `never`), `workflow.page-size` (int, 100), `workflow.wake-mode` (`poll` | `push` | `push-never-wake` | `push-lossy`, `poll`), `workflow.loop` (`keiro` for the shipped loop drivers, `harness` for a loop over `resumeWorkflowsOnce` that records every `ResumeSummary`; default `harness` in correctness scenarios and `keiro` elsewhere), `workflow.start-mode` (`inline` for a direct `runWorkflowWith`, `deferred` for `upsertInstanceTx … WfRunning`; default `deferred`), `workflow.resume-processes` (int, 2), `workflow.pool-size` (int, 10, kiroku's `poolSize`), `workflow.steps` (int, 8), `workflow.instances` (int, 100), `workflow.children` (int, 3) and `workflow.rotations` (int, 4). `push-never-wake` and `push-lossy` run `runPollLoopWith` with `neverWake` or the correctness toolkit's lossy signal and a pass identical to the shipped one.
 
-Create `Workflow/Roles.hs` with three roles. `keiro.workflow.resume-worker` builds the registry and runs the loop selected by `workflow.loop` and `workflow.wake-mode`. `keiro.workflow.driver` starts instances, signals and cancels awakeables read from `awakeable_publications`, cancels workflows, and runs children directly when a scenario needs a boundary hook. `keiro.workflow.gc-worker` runs `runWorkflowGcWorkerWith`. Create `Workflow/Oracle.hs`:
+Create `Workflow/Roles.hs` with three roles. `keiro/workflow-resume-worker` builds the registry and runs the loop selected by `workflow.loop` and `workflow.wake-mode`. `keiro/workflow-driver` starts instances, signals and cancels awakeables read from `awakeable_publications`, cancels workflows, and runs children directly when a scenario needs a boundary hook. `keiro/workflow-gc-worker` runs `runWorkflowGcWorkerWith`. Create `Workflow/Oracle.hs`:
 
 ```haskell
 -- contract: per generation, each expected step has exactly one StepRecorded event in the generation
@@ -319,7 +325,7 @@ The concurrency and crash scenarios, all tier `standard`, `pg.durability=durable
 
 Scope: component `timer`. At the end six `keiro/timer/*` correctness and concurrency scenarios are listed and `kenshou run keiro/timer/concurrency/sigkill-between-fire-and-mark --dim pg.durability=durable --out runs/` ends `passed`.
 
-Create `Timer/Knobs.hs`, `Timer/Roles.hs` and `Timer/Oracle.hs`. Knobs: `timer.max-attempts` (`none` | int, `none`), `timer.requeue-stuck-after-seconds` (`none` | decimal, 2; keiro 300), `timer.drain-limit` (int, 1; 1 selects `runTimerWorkerWith`, more selects `drainDueTimersWith`), `timer.tick-interval-ms` (int, 50; the application-owned loop), `timer.worker-processes` (int, 4), `timer.count` (int, 5000), `timer.clock` (`wall` | `virtual`, `wall`). The role `keiro.timer.worker` validates options with `mkTimerWorkerOptions`, ticks, and fires through `\row -> workflowSleepFireAction row >>= maybe (businessFire row) (pure . Just)`; `businessFire` records a `timer-fire` effect and appends one event to the stream `kenshouTimer-<timerId>` with an event identifier derived from the timer identifier, returning it (a duplicate append returns the same identifier).
+Create `Timer/Knobs.hs`, `Timer/Roles.hs` and `Timer/Oracle.hs`. Knobs: `timer.max-attempts` (`none` | int, `none`), `timer.requeue-stuck-after-seconds` (`none` | decimal, 2; keiro 300), `timer.drain-limit` (int, 1; 1 selects `runTimerWorkerWith`, more selects `drainDueTimersWith`), `timer.tick-interval-ms` (int, 50; the application-owned loop), `timer.worker-processes` (int, 4), `timer.count` (int, 5000), `timer.clock` (`wall` | `virtual`, `wall`). The role `keiro/timer-worker` validates options with `mkTimerWorkerOptions`, ticks, and fires through `\row -> workflowSleepFireAction row >>= maybe (businessFire row) (pure . Just)`; `businessFire` records a `timer-fire` effect and appends one event to the stream `kenshouTimer-<timerId>` with an event identifier derived from the timer identifier, returning it (a duplicate append returns the same identifier).
 
 `keiro/timer/correctness/lifecycle-and-at-least-once` (tier `smoke`, virtual `now`) verifies upsert re-arming only while `scheduled`, first-arm-wins for `scheduleTimerOnceTx`, claim order by `(fire_at, timer_id)`, `fired_event_id` on success, a `fire` returning `Nothing` leaving the row `firing`, `cancelTimer` and `deadLetterTimer` refusing terminal rows, and immediate requeue when the virtual `now` exceeds the claim time by `requeueStuckAfter`.
 
@@ -337,7 +343,7 @@ Create `Timer/Knobs.hs`, `Timer/Roles.hs` and `Timer/Oracle.hs`. Knobs: `timer.m
 
 Scope: component `shard`. At the end nine `keiro/shard/*` correctness and concurrency scenarios are listed and `kenshou run keiro/shard/concurrency/sigkill-failover-vs-graceful-relinquish --dim pg.durability=durable --out runs/` ends `passed`.
 
-Create `Shard/Knobs.hs`, `Shard/Roles.hs` and `Shard/Oracle.hs`. Knobs: `shard.shard-count` (int, 8), `shard.lease-ttl-seconds` (decimal, 3; keiro 30), `shard.renew-interval-seconds` (decimal, 0.5; keiro 10), `shard.batch-size` (int, 100), `shard.buffer-size` (int, 256), `shard.handler-retry-delay-ms` (int, 100; keiro 1000), `shard.retry-max-attempts` (int, 5), `shard.worker-processes` (int, 3), `shard.handler` (`plain` | `ack`, `ack`), `shard.events` (int, 20000), `shard.streams` (int, 500). The role `keiro.shard.worker` validates with `mkShardedWorkerOptions` and runs `runShardedSubscriptionGroupAck` inside an async that the control channel's stop message cancels (a bare `SIGTERM` runs no Haskell cleanup, so "graceful" means the cancel path that reaches keiro's `finally`). Its handler records a `shard-delivery` effect with event identifier, bucket, attempt and worker, then writes `shard_sink`. The role `keiro.shard.appender` appends fixture account events from the seeded workload. The oracle module provides:
+Create `Shard/Knobs.hs`, `Shard/Roles.hs` and `Shard/Oracle.hs`. Knobs: `shard.shard-count` (int, 8), `shard.lease-ttl-seconds` (decimal, 3; keiro 30), `shard.renew-interval-seconds` (decimal, 0.5; keiro 10), `shard.batch-size` (int, 100), `shard.buffer-size` (int, 256), `shard.handler-retry-delay-ms` (int, 100; keiro 1000), `shard.retry-max-attempts` (int, 5), `shard.worker-processes` (int, 3), `shard.handler` (`plain` | `ack`, `ack`), `shard.events` (int, 20000), `shard.streams` (int, 500). The role `keiro/shard-worker` validates with `mkShardedWorkerOptions` and runs `runShardedSubscriptionGroupAck` inside an async that the control channel's stop message cancels (a bare `SIGTERM` runs no Haskell cleanup, so "graceful" means the cancel path that reaches keiro's `finally`). Its handler records a `shard-delivery` effect with event identifier, bucket, attempt and worker, then writes `shard_sink`. The role `keiro/shard-appender` appends fixture account events from the seeded workload. The oracle module provides:
 
 ```haskell
 failoverDeadline :: ShardTiming -> Int -> Int -> NominalDiffTime
@@ -482,6 +488,15 @@ If a module fails to compile after the fixture domain changed, fix only `Kenshou
 
 Libraries come from the pinned cohort of `docs/plans/1-…`: `keiro` and `keiro-core` 0.17.0.0 (`Keiro.Workflow`, `.Workflow.Resume`, `.Workflow.Sleep`, `.Workflow.Awakeable`, `.Workflow.Child`, `.Workflow.Gc`, `.Workflow.Instance`, `.Timer`, `.Subscription.Shard`, `.Subscription.Shard.Worker`, `.Wake`, `.Telemetry`, `Keiro.EventStream` for `SnapshotPolicy`), `kiroku-store` 0.8.0.1 (`Kiroku.Store.Connection`, `.Effect`, `.Read`, `.Transaction`, `.Subscription.Types`), `effectful` 2.6, `hasql` 1.10 with `hasql-transaction`, `hs-opentelemetry-api` 1.0, `unix` for `raiseSignal`, and the five `kenshou-*` foundation packages. No other layer package is imported.
 
-At the end of Milestone 1 these modules exist under `kenshou-keiro/src/Kenshou/Suite/Keiro/`: `Workflow.hs` (`scenarios :: [Scenario]`, `roles :: [WorkerRole]`), `Workflow/Fixture.hs` (`DurableStore`, `withDurableStore`, the account command helpers, `fixtureCategory`, `conservationOracle`), `Workflow/Effects.hs`, `Workflow/Definitions.hs`, `Workflow/Knobs.hs` (`workflowKnobs :: [KnobSpec]`, `resumeOptionsFrom`, `runOptionsFrom`), `Workflow/Roles.hs`, `Workflow/Oracle.hs`, `Workflow/Correctness.hs`, `Workflow/Concurrency.hs` and `Workflow/Wake.hs`. At the end of Milestone 2: `Timer.hs`, `Timer/Knobs.hs` (`timerOptionsFrom :: … -> Either TimerWorkerConfigError TimerWorkerOptions`), `Timer/Roles.hs`, `Timer/Oracle.hs`, `Timer/Correctness.hs`, `Timer/Concurrency.hs`. At the end of Milestone 3: `Shard.hs`, `Shard/Knobs.hs` (`shardOptionsFrom :: … -> Either ShardedWorkerConfigError ShardedWorkerOptions`), `Shard/Roles.hs`, `Shard/Oracle.hs` (`failoverDeadline`, `coverageAndDisjointness`, `checkpointsMonotonic`), `Shard/Correctness.hs`, `Shard/Concurrency.hs`. At the end of Milestone 4: `Workflow/Bench.hs`, `Workflow/Soak.hs`, `Timer/Bench.hs`, `Timer/Soak.hs`, `Shard/Bench.hs`, and the section in `docs/layers/keiro.md`. Worker role names are `keiro.workflow.resume-worker`, `keiro.workflow.driver`, `keiro.workflow.gc-worker`, `keiro.timer.worker`, `keiro.shard.worker` and `keiro.shard.appender`.
+At the end of Milestone 1 these modules exist under `kenshou-keiro/src/Kenshou/Suite/Keiro/`: `Workflow.hs` (`scenarios :: [Scenario]`, `roles :: [WorkerRole]`), `Workflow/Fixture.hs` (`DurableStore`, `withDurableStore`, the account command helpers, `fixtureCategory`, `conservationOracle`), `Workflow/Effects.hs`, `Workflow/Definitions.hs`, `Workflow/Knobs.hs` (`workflowKnobs :: [KnobSpec]`, `resumeOptionsFrom`, `runOptionsFrom`), `Workflow/Roles.hs`, `Workflow/Oracle.hs`, `Workflow/Correctness.hs`, `Workflow/Concurrency.hs` and `Workflow/Wake.hs`. At the end of Milestone 2: `Timer.hs`, `Timer/Knobs.hs` (`timerOptionsFrom :: … -> Either TimerWorkerConfigError TimerWorkerOptions`), `Timer/Roles.hs`, `Timer/Oracle.hs`, `Timer/Correctness.hs`, `Timer/Concurrency.hs`. At the end of Milestone 3: `Shard.hs`, `Shard/Knobs.hs` (`shardOptionsFrom :: … -> Either ShardedWorkerConfigError ShardedWorkerOptions`), `Shard/Roles.hs`, `Shard/Oracle.hs` (`failoverDeadline`, `coverageAndDisjointness`, `checkpointsMonotonic`), `Shard/Correctness.hs`, `Shard/Concurrency.hs`. At the end of Milestone 4: `Workflow/Bench.hs`, `Workflow/Soak.hs`, `Timer/Bench.hs`, `Timer/Soak.hs`, `Shard/Bench.hs`, and the section in `docs/layers/keiro.md`. Worker role names are `keiro/workflow-resume-worker`, `keiro/workflow-driver`, `keiro/workflow-gc-worker`, `keiro/timer-worker`, `keiro/shard-worker` and `keiro/shard-appender`.
 
 `docs/plans/15-…` (the assembled runtime) may reuse `Workflow/Definitions.hs`, `Workflow/Effects.hs` and the three oracle modules, because `kenshou-runtime` is allowed to depend on `kenshou-keiro`; keep their exports free of scenario-specific state. `docs/plans/3-…` selects these scenarios through the components `workflow`, `timer`, `shard` and `wake`. `docs/plans/13-…` is independent of this plan; the two only share EP-12's bundle module, where each appends its own lists.
+
+
+## Revision Note — 2026-09-24
+
+Implementation began against the delivered EP-12 fixture and kernel APIs. The
+plan records their actual CLI JSON and worker-role naming contracts and the
+passing incremental workflow, timer and shard probes. Remaining acceptance
+criteria and unfinished work stay in Progress so implementation can resume
+without mistaking a green slice for the completed initiative.
