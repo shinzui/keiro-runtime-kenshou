@@ -1,39 +1,177 @@
 module Kenshou.Suite.Keiro.ProcessManager.Concurrency (scenarios) where
 
 import Control.Concurrent (threadDelay)
+import Control.Concurrent.Async (withAsync)
+import Control.Concurrent.MVar (modifyMVar_, newMVar, readMVar)
 import Control.Concurrent.STM (atomically)
-import Data.Aeson (object, (.=))
+import Control.Exception (mask_)
+import Control.Monad (forM, when)
+import Data.Aeson (object, withObject, (.:), (.=))
+import Data.Aeson.Types (parseMaybe)
 import Data.Foldable (traverse_)
+import Data.IORef (modifyIORef', newIORef, readIORef)
+import Data.Int (Int32)
 import Data.List (nub, sort)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
+import GHC.Clock (getMonotonicTimeNSec)
 import Hasql.Connection qualified as Connection
 import Hasql.Connection.Settings qualified as Settings
+import Hasql.Decoders qualified as Decoders
+import Hasql.Encoders qualified as Encoders
+import Hasql.Session qualified as Session
+import Hasql.Statement qualified as Statement
 import Keiro.Command (CommandResult (..), defaultRunCommandOptions, runCommand)
+import Kenshou.Check.Fault (Fault (..), FaultHandle (..))
+import Kenshou.Check.Fault.Postgres (BackendSelector (..), terminateOneBackend)
 import Kenshou.Check.Process (ProgressSnapshot (..), awaitMark, awaitReady, childPid, killChild, progress, roleProcess, sendCommand, spawn, withSupervisor)
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary, requirePostgres)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
-import Kenshou.Core.Id (parseScenarioId)
-import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), knobInt, knobText, mkKnobName)
+import Kenshou.Core.Id (parseScenarioId, renderRunId, unSeed)
+import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobBool, knobInt, knobText, mkKnobName)
+import Kenshou.Core.Outcome (Outcome (..), worstOutcome)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Role (ControlMessage (..))
-import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..))
+import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport (..), Tier (..))
 import Kenshou.Suite.Keiro.Command.Correctness (recordCells)
 import Kenshou.Suite.Keiro.Fixture.Account
 import Kenshou.Suite.Keiro.Fixture.Domain
 import Kenshou.Suite.Keiro.Fixture.Oracle qualified as Oracle
 import Kenshou.Suite.Keiro.Fixture.Runtime
+import Kenshou.Suite.Keiro.Fixture.Workload qualified as Workload
 import Kiroku.Store (defaultConnectionSettings)
 import Kiroku.Store.Types (EventType (..))
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [sigkillCrashWindows, topologies]
+scenarios = [sigkillCrashWindows, randomKillExactlyOnce, topologies]
+
+randomKillExactlyOnce :: Scenario
+randomKillExactlyOnce =
+  sigkillCrashWindows
+    { id = either (error . show) id (parseScenarioId "keiro/process-manager/concurrency/random-kill-exactly-once"),
+      summary = "Restarts a durable saga worker repeatedly while paced transfer commands continue.",
+      knobs =
+        [ KnobSpec (knobName "command.rate-per-second") "Transfer submission rate" KnobInt (VInt 50) (IntRange 1 500) [],
+          KnobSpec (knobName "fault.kill-interval-seconds") "Seconds between worker restarts" KnobInt (VInt 4) (IntRange 1 120) [],
+          KnobSpec (knobName "command.duration-seconds") "Transfer submission duration" KnobInt (VInt 120) (IntRange 1 3600) [],
+          KnobSpec (knobName "command.accounts") "Independent source and destination account pairs" KnobInt (VInt 100) (IntRange 1 1000) [],
+          KnobSpec (knobName "fault.backend-terminate") "Terminate one worker backend on alternate restarts" KnobBool (VBool True) AnyValue []
+        ],
+      run = runRandomKill
+    }
+
+runRandomKill :: RunContext -> IO ScenarioReport
+runRandomKill context =
+  withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture ->
+    withCheck context \check -> withSupervisor check \supervisor -> do
+      let KeiroRunner runFixture = fixture.runner
+          accountEvents = accountEventStream SnapNever
+          subscription = "kenshou-keiro-random-kill" :: Text
+          rate = fromIntegral (knobInt context.knobs (knobName "command.rate-per-second")) :: Int
+          duration = fromIntegral (knobInt context.knobs (knobName "command.duration-seconds")) :: Int
+          accounts = fromIntegral (knobInt context.knobs (knobName "command.accounts")) :: Int
+          interval = fromIntegral (knobInt context.knobs (knobName "fault.kill-interval-seconds")) :: Int
+          terminateBackend = knobBool context.knobs (knobName "fault.backend-terminate")
+          total = rate * duration
+          source index = AccountId ("kill-source-" <> Text.pack (show (index `mod` accounts)))
+          destination index = AccountId ("kill-destination-" <> Text.pack (show (index `mod` accounts)))
+          submit account command = runFixture (runCommand defaultRunCommandOptions accountEvents (accountStream account) command)
+          accepted = \case Right (Right result) -> result.eventsAppended == 1; _ -> False
+          spawnManager index = do
+            spec <- roleProcess check "keiro/pm-worker" index (object ["subscription" .= subscription])
+            child <- spawn supervisor spec
+            awaitReady child 10000
+            sendCommand child CtlStart
+            pure child
+          transferId index = TransferId ("kill-transfer-" <> Text.pack (show index))
+          submitTransfer index = do
+            let transfer = transferId index
+                currentSource = source index
+                currentDestination = destination index
+                operation = Workload.Op 0 (fromIntegral index) (Workload.ActTransfer transfer currentSource currentDestination 1)
+                debit = DebitTransfer (DebitTransferData currentSource transfer currentDestination 1 4102444800)
+                announce = AnnounceTransfer (AnnounceTransferData currentSource transfer)
+            first <- submitAccountCommand fixture accountEvents RunnerPlain defaultRunCommandOptions 3 (Workload.opEventId (unSeed context.seed) operation 0) debit
+            second <- submitAccountCommand fixture accountEvents RunnerPlain defaultRunCommandOptions 3 (Workload.opEventId (unSeed context.seed) operation 1) announce
+            pure [first, second]
+          successful = \case SubmitAppended {} -> True; SubmitDuplicate -> True; _ -> False
+      setup <- forM [0 .. accounts - 1] \index -> do
+        let currentSource = source index
+            currentDestination = destination index
+        openedSource <- submit currentSource (OpenAccount (OpenAccountData currentSource (total + 10)))
+        openedDestination <- submit currentDestination (OpenAccount (OpenAccountData currentDestination 0))
+        pure [openedSource, openedDestination]
+      initial <- spawnManager 0
+      current <- newMVar initial
+      restarts <- newIORef (0 :: Int)
+      backendFaults <- newIORef (0 :: Int)
+      let cycleWorker index = do
+            threadDelay (interval * 1000000)
+            mask_ $ modifyMVar_ current \old -> do
+              when (terminateBackend && even index) do
+                let appName = "kenshou-" <> Text.take 8 (renderRunId context.runId) <> "-keiro/pm-worker-" <> Text.pack (show (index - 1))
+                handle <- (terminateOneBackend (requirePostgres context) (ByApplicationName appName)).inject
+                let victims = parseMaybe (withObject "backend termination" (.: "victims")) handle.details :: Maybe [Int32]
+                modifyIORef' backendFaults (+ maybe 0 length victims)
+              killChild supervisor old
+              replacement <- spawnManager index
+              modifyIORef' restarts (+ 1)
+              pure replacement
+            cycleWorker (index + 1)
+      (outcomes, submissionSeconds) <- withAsync (cycleWorker 1) \_ -> do
+        started <- getMonotonicTimeNSec
+        results <- forM [0 .. total - 1] \index -> do
+          now <- getMonotonicTimeNSec
+          let target = started + fromIntegral index * 1000000000 `div` fromIntegral rate
+          when (target > now) (threadDelay (fromIntegral ((target - now) `div` 1000)))
+          submitTransfer index
+        ended <- getMonotonicTimeNSec
+        pure (results, fromIntegral (ended - started) / 1000000000 :: Double)
+      acquired <- Connection.acquire (Settings.connectionString (requirePostgres context).connectionString <> Settings.applicationName "kenshou-keiro-random-kill-oracle")
+      connection <- either (fail . show) pure acquired
+      quiescent <- timeout 60000000 (awaitQuiescence connection total)
+      accountRows <- Oracle.readCategoryLog connection "account"
+      sagaRows <- Oracle.readCategoryLog connection "pm:transferSaga"
+      deadLetters <- Oracle.readDispatchDeadLetters connection
+      subscriptionDeadLetters <- Connection.use connection (Session.statement () subscriptionLetterCount) >>= either (fail . show) pure
+      Connection.release connection
+      readMVar current >>= killChild supervisor
+      restartCount <- readIORef restarts
+      backendCount <- readIORef backendFaults
+      let count kind = length [() | row <- accountRows, row.eventType == EventType kind]
+          cells =
+            [ ("source-setup", all accepted (concat setup)),
+              ("commands-submitted", length outcomes == total && all successful (concat outcomes) && count "TransferDebited" == total),
+              ("worker-restarted", restartCount >= 1 && (not terminateBackend || backendCount >= 1)),
+              ("exactly-once-target-effects", quiescent == Just True && count "TransferAnnounced" == total && count "TransferCredited" == total && count "TransferConfirmed" == total && length sagaRows == 2 * total),
+              ("no-dead-letters", null deadLetters && subscriptionDeadLetters == 0),
+              ("logs-well-formed", Oracle.logWellFormed accountRows && Oracle.logWellFormed sagaRows)
+            ]
+      let pacingHealthy = submissionSeconds <= fromIntegral duration * 1.1
+      putSummary context Measurements "random-kill" (object ["accounts" .= accounts, "transfers" .= total, "submissionSeconds" .= submissionSeconds, "effectiveTransfersPerSecond" .= (fromIntegral total / submissionSeconds :: Double), "pacingHealthy" .= pacingHealthy, "restarts" .= restartCount, "backendTerminations" .= backendCount])
+      base <- recordCells context cells
+      pure (base {outcome = worstOutcome (base.outcome :| [if pacingHealthy then Passed else Inconclusive])})
+  where
+    awaitQuiescence connection expected = do
+      rows <- Oracle.readCategoryLog connection "account"
+      let count kind = length [() | row <- rows, row.eventType == EventType kind]
+      if count "TransferCredited" == expected && count "TransferConfirmed" == expected
+        then pure True
+        else threadDelay 200000 >> awaitQuiescence connection expected
+    subscriptionLetterCount =
+      Statement.preparable
+        "SELECT count(*) FROM kiroku.dead_letters WHERE subscription_name = 'kenshou-keiro-random-kill'"
+        Encoders.noParams
+        (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
+
+knobName :: Text -> KnobName
+knobName = either (error . show) id . mkKnobName
 
 topologies :: Scenario
 topologies =

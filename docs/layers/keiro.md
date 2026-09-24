@@ -67,6 +67,15 @@ parks it at one of four append or acknowledgement boundaries, kills it, and
 checks the durable saga and target effects for that transfer and its neighbour
 after a fresh worker resumes the same subscription. Select a boundary with
 `--set pm.kill-window=between-targets`.
+`random-kill-exactly-once` paces debit and announcement commands while
+restarting the real saga worker at a configured interval. An optional arm
+terminates one of its PostgreSQL backends before alternating restarts. A
+30-second local run submitted 300 transfers, restarted the worker nine times,
+terminated four backends, and passed its durable effect and dead-letter checks.
+A default run completed 6,000 transfers with 60 restarts and 30 confirmed
+backend terminations, passing all six durable checks. It took about 249 seconds
+on this host, so the scenario now reports effective rate and marks runs that
+miss their paced schedule as inconclusive for rate validation.
 `retry-budget-dead-letter` keeps one credit in conflict while a healthy transfer
 follows it. The production adapter dead-letters after five deliveries;
 `--set pm.source=ack-stream --set kiroku.retry-max-attempts=3` tests a
@@ -102,11 +111,14 @@ account log and balance table together.
 The command `throughput-latency` benchmark uses the measurement toolkit's
 warm-up, steady, and drain phases and verifies the durable ledger after the
 drain. It writes raw samples and time series. `command.writers` selects the
-number of account streams, and `command.duration-seconds` sets the steady
-window. The measurement health gates can mark a local run inconclusive or an
-infrastructure failure when the load driver is saturated. A 15-second local
-run with two writers and `load.think-time-us=10000` passed its three ledger
-checks; paired trials on the target cell are still required for comparisons.
+load workers, `command.accounts` selects the account streams, and
+`command.duration-seconds` sets the steady window. Pool size, snapshot policy,
+memo length, replay verification, and the plain, SQL callback, and inline
+projection command paths are selectable. The inline path checks its balance
+table against the log. Paced 15-second local runs passed all three command
+paths with two writers and sixteen accounts. An unpaced run completed 10,811
+commands with all durable checks passing but hit the local driver CPU gate;
+paired trials on the target cell are still required for comparisons.
 `hydration-cost` prepares a selected stream length with `snapshot.policy=never`
 or `every-100` and a selected `command.page-size`. Its timed close command
 is rejected after hydration, keeping the stream length fixed across samples.

@@ -2,18 +2,20 @@ module Kenshou.Suite.Keiro.Command.Bench (scenarios) where
 
 import Data.Aeson (object, (.=))
 import Data.List.NonEmpty (NonEmpty (..))
+import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Hasql.Connection qualified as Connection
 import Hasql.Connection.Settings qualified as Settings
-import Keiro.Command (CommandError (..), CommandResult (..), RunCommandOptions (..), defaultRunCommandOptions, runCommand)
+import Keiro.Command (CommandError (..), CommandResult (..), RunCommandOptions (..), defaultRunCommandOptions, runCommand, runCommandWithSql)
+import Keiro.Projection (runCommandWithProjections)
 import Keiro.Telemetry (newKeiroMetrics)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary, requirePostgres)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (Kind (..), parseScenarioId)
-import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobInt, knobText, mkKnobName)
+import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobBool, knobInt, knobText, mkKnobName)
 import Kenshou.Core.Phase (PhasePlan (..))
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport (..), Tier (..), failedWith)
 import Kenshou.Measure.Knobs (LoadDefaults (..), defaultLoadDefaults, loadKnobs, loadModelFromKnobs, measureKnobs)
@@ -25,6 +27,7 @@ import Kenshou.Suite.Keiro.Fixture.Account
 import Kenshou.Suite.Keiro.Fixture.Domain
 import Kenshou.Suite.Keiro.Fixture.Model qualified as Model
 import Kenshou.Suite.Keiro.Fixture.Oracle qualified as Oracle
+import Kenshou.Suite.Keiro.Fixture.Projection (accountBalanceProjection, ensureFixtureReadModels)
 import Kenshou.Suite.Keiro.Fixture.Runtime
 import Kenshou.Telemetry (TelemetryHandles (..), telemetryKnobs, telemetrySpecFromContext, withTelemetry)
 import Kiroku.Store (defaultConnectionSettings)
@@ -118,7 +121,15 @@ throughputLatency =
         telemetryKnobs
           <> loadKnobs (defaultLoadDefaults {workers = 8})
           <> measureKnobs Benchmark
-          <> [intKnob "command.writers" 8 1 128, intKnob "command.duration-seconds" 120 1 3600],
+          <> [ intKnob "command.writers" 8 1 128,
+               intKnob "command.accounts" 1000 1 10000,
+               intKnob "kiroku.pool-size" 10 1 128,
+               KnobSpec (knobName "command.runner") "Command execution path" KnobText (VText "plain") (OneOf (VText "plain" :| [VText "with-sql", VText "with-inline-projection"])) [],
+               KnobSpec (knobName "snapshot.policy") "Snapshot policy" KnobText (VText "every-100") (OneOf (VText "never" :| [VText "every-100"])) [],
+               intKnob "command.memo-bytes" 64 0 65536,
+               KnobSpec (knobName "command.verify-replay-on-append") "Verify replay on append" KnobBool (VBool True) AnyValue [],
+               intKnob "command.duration-seconds" 120 1 3600
+             ],
       dimensions =
         DimensionSupport
           { tracing = Supported (Support (TracingOff :| [TracingNoop, TracingSdkInMemory, TracingSdkOtlp]) TracingOff),
@@ -140,20 +151,29 @@ runCommandBenchmark isCeiling context =
     (Right configuredLoad, Right config) -> case telemetrySpecFromContext context of
       Left reason -> pure (failedWith ["invalid-telemetry-config"] reason)
       Right telemetrySpec -> withTelemetry telemetrySpec \telemetry ->
-        withFixtureEnv ((defaultConnectionSettings (requirePostgres context).connectionString) {poolSize = if isCeiling then fromIntegral (knobInt context.knobs (knobName "kiroku.pool-size")) else 10}) \fixture -> do
+        withFixtureEnv ((defaultConnectionSettings (requirePostgres context).connectionString) {poolSize = fromIntegral (knobInt context.knobs (knobName "kiroku.pool-size"))}) \fixture -> do
           let KeiroRunner runFixture = fixture.runner
               writers = fromIntegral (knobInt context.knobs (knobName "command.writers")) :: Int
-              account worker = AccountId ("bench-" <> Text.pack (show worker))
-              eventStream = accountEventStream (SnapEvery 100)
+              accounts = if isCeiling then writers else fromIntegral (knobInt context.knobs (knobName "command.accounts")) :: Int
+              account index = AccountId ("bench-" <> Text.pack (show index))
+              policyName = if isCeiling then "every-100" else knobText context.knobs (knobName "snapshot.policy")
+              runnerName = if isCeiling then "plain" else knobText context.knobs (knobName "command.runner")
+              memoBytes = if isCeiling then 5 else fromIntegral (knobInt context.knobs (knobName "command.memo-bytes")) :: Int
+              eventStream = accountEventStream (if policyName == "never" then SnapNever else SnapEvery 100)
               load = case configuredLoad of
                 ClosedLoop closed -> ClosedLoop (closed {workers = writers})
                 other -> other
           keiroMetrics <- traverse newKeiroMetrics telemetry.meter
-          let options = defaultRunCommandOptions {tracer = telemetry.tracer, metrics = keiroMetrics}
-          seeded <- traverse (\worker -> runFixture (runCommand options eventStream (accountStream (account worker)) (OpenAccount (OpenAccountData (account worker) 0)))) [0 .. writers - 1]
-          let operation worker _ = do
-                let target = account (worker `mod` writers)
-                result <- runFixture (runCommand options eventStream (accountStream target) (Deposit (DepositData target 1 "bench")))
+          let options = defaultRunCommandOptions {tracer = telemetry.tracer, metrics = keiroMetrics, verifyReplayOnAppend = isCeiling || knobBool context.knobs (knobName "command.verify-replay-on-append")}
+              submit target command = case runnerName of
+                "with-sql" -> runFixture (fmap (fmap fst) (runCommandWithSql options eventStream (accountStream target) command (\_ -> pure ())))
+                "with-inline-projection" -> runFixture (runCommandWithProjections options eventStream (accountStream target) command [accountBalanceProjection])
+                _ -> runFixture (runCommand options eventStream (accountStream target) command)
+          if runnerName == "with-inline-projection" then runFixture ensureFixtureReadModels >>= either (fail . show) pure else pure ()
+          seeded <- traverse (\index -> submit (account index) (OpenAccount (OpenAccountData (account index) 0))) [0 .. accounts - 1]
+          let operation worker index = do
+                let target = account ((worker + fromIntegral index * writers) `mod` accounts)
+                result <- submit target (Deposit (DepositData target 1 (Text.replicate memoBytes "x")))
                 pure case result of
                   Right (Right response) | response.eventsAppended == 1 -> OpOk 1
                   other -> OpFailed (ErrorCause (Text.pack (show other)))
@@ -161,15 +181,20 @@ runCommandBenchmark isCeiling context =
           acquired <- Connection.acquire (Settings.connectionString (requirePostgres context).connectionString <> Settings.applicationName "kenshou-keiro-command-bench-oracle")
           connection <- either (fail . show) pure acquired
           rows <- Oracle.readCategoryLog connection "account"
+          balances <- if runnerName == "with-inline-projection" then Oracle.readBalanceTable connection else pure mempty
           Connection.release connection
           let completions = sum [batch.completed | batch <- report.loads]
               failures = sum [batch.failed | batch <- report.loads]
               seedOk = all (\case Right (Right response) -> response.eventsAppended == 1; _ -> False) seeded
               ledgerOk = case Oracle.modelFromLog rows of
-                Right model -> Model.totalMoney model == length rows - writers
+                Right model -> Model.totalMoney model == length rows - accounts
                 Left _ -> False
-              checks = [("seeded-writers", seedOk), ("commands-completed", failures == 0 && completions > 0), ("durable-ledger", Oracle.logWellFormed rows && ledgerOk)]
-          putSummary context Measurements "command-throughput" (object ["writers" .= writers, "poolSize" .= (if isCeiling then fromIntegral (knobInt context.knobs (knobName "kiroku.pool-size")) :: Int else 10), "completed" .= completions, "failed" .= failures, "durableEvents" .= length rows])
+              inlineOk =
+                runnerName /= "with-inline-projection" || case Oracle.modelFromLog rows of
+                  Left _ -> False
+                  Right model -> all (\index -> let current = account index; expected = Model.lookupAccount current model in case Map.lookup current balances of Just (balance, entries, _) -> fromIntegral expected.balance == balance && fromIntegral expected.entries == entries; Nothing -> False) [0 .. accounts - 1]
+              checks = [("seeded-writers", seedOk), ("commands-completed", failures == 0 && completions > 0), ("durable-ledger", Oracle.logWellFormed rows && ledgerOk), ("inline-balances", inlineOk)]
+          putSummary context Measurements "command-throughput" (object ["writers" .= writers, "accounts" .= accounts, "runner" .= runnerName, "snapshotPolicy" .= policyName, "memoBytes" .= memoBytes, "poolSize" .= (fromIntegral (knobInt context.knobs (knobName "kiroku.pool-size")) :: Int), "completed" .= completions, "failed" .= failures, "durableEvents" .= length rows])
           base <- recordCells context checks
           pure (base {outcome = measuredOutcome report base.outcome})
 
