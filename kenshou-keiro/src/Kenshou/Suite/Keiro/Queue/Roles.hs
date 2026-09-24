@@ -2,7 +2,7 @@ module Kenshou.Suite.Keiro.Queue.Roles (roles) where
 
 import Control.Concurrent (threadDelay)
 import Control.Monad (when)
-import Data.Aeson (object, withObject, (.:), (.:?), (.=))
+import Data.Aeson (object, withObject, (.!=), (.:), (.:?), (.=))
 import Data.Aeson.Types (parseMaybe)
 import Data.IORef (atomicModifyIORef', newIORef)
 import Data.Int (Int64)
@@ -39,9 +39,9 @@ fifoFinishStatement = Statement.preparable "UPDATE kenshou_fx.queue_fifo_spans S
 worker :: RoleContext -> IO ()
 worker context = case context.init.postgres of
   Nothing -> context.send (WrkError "queue worker requires PostgreSQL")
-  Just postgres -> case parseMaybe (withObject "queue worker args" (\o -> (,,,) <$> o .: "queue" <*> o .:? "mode" <*> o .:? "polling" <*> o .:? "extend")) context.init.args of
+  Just postgres -> case parseMaybe (withObject "queue worker args" (\o -> (,,,,) <$> o .: "queue" <*> o .:? "mode" <*> o .:? "polling" <*> o .:? "extend" <*> (o .:? "processors" .!= (1 :: Int)))) context.init.args of
     Nothing -> context.send (WrkError "invalid queue worker arguments")
-    Just (queue, mode, pollingMode, extend) -> do
+    Just (queue, mode, pollingMode, extend, processors) -> do
       context.send WrkReady
       context.receive >>= \case
         Just CtlStart -> withJobRuntime postgres.connectionString Nothing \runtime -> do
@@ -58,6 +58,7 @@ worker context = case context.init.postgres of
                 | mode == Just "throw-once" = defaultJobTuning {visibilityTimeout = 1, polling = PollEvery 0.2}
                 | fifo = defaultJobTuning {visibilityTimeout = 10, batchSize = 8, polling = PollEvery 0.1, ordering = FifoHeads}
                 | deadWorker = defaultJobTuning {visibilityTimeout = 3, polling = PollEvery 0.1}
+                | mode == Just "pool-long-poll" = defaultJobTuning {polling = LongPoll 5 100}
                 | otherwise = defaultJobTuning
               job = Job "queue-poll-probe" (queueRef queue) (aesonJobCodec @Text) (if fifo then FifoHeads else Unordered) policy
               handler jobContext payload = do
@@ -123,7 +124,8 @@ worker context = case context.init.postgres of
                 context.send (WrkCustom "running" (object []))
                 runJobEff runtime (runJobOnceWithContext tuning 1 job handler >> pure ())
               else runJobEff runtime do
-                started <- runJobWorkers StopAllOnFailure 16 [jobProcessorWithContext tuning job handler]
+                let processorJob index = if mode == Just "pool-long-poll" then job {jobName = "queue-poll-probe-" <> Text.pack (show index)} else job
+                started <- runJobWorkers StopAllOnFailure 16 [jobProcessorWithContext tuning (processorJob index) handler | index <- [0 .. max 1 processors - 1]]
                 case started of
                   Left err -> liftIO (context.send (WrkError (Text.pack (show err))))
                   Right app -> do

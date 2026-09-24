@@ -628,10 +628,14 @@ after backend termination the message is only in the main queue. A replacement
 worker moves it to one DLQ row, so `exactly-one-place` holds throughout the
 observed interruption and recovery.
 
-`runtime-pool-isolation` currently covers independent pool progress: ten live
-kiroku store transactions occupy its pool while a queue worker completes a
-job through the separate PGMQ runtime pool. The long-poll processor-count
-arm remains open.
+`runtime-pool-isolation` holds ten live kiroku store transactions while a queue
+worker completes a job through the separate PGMQ runtime pool. Long-poll arms
+with one and three processors also complete; a six-processor worker reaches
+the runtime's three-connection cap and leaves its job queued without a handler
+effect for thirty seconds. The scenario records a `pool-starvation` diagnosis,
+then a one-processor replacement drains the job. The observation is filed at
+`mori://shinzui/keiro/okf/bug-reports/concepts/BUG-6`; the exact acquisition
+failure remains under investigation.
 
 `write-side-steady-state` starts two command-writer processes and durable
 process-manager, router, and activity-projection workers. It stops writers at

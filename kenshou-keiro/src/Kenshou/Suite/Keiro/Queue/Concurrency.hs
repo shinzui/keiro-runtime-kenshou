@@ -4,6 +4,7 @@ import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (mapConcurrently, withAsync)
 import Control.Concurrent.STM (atomically)
 import Control.Exception (bracket)
+import Control.Monad (replicateM)
 import Data.Aeson (object, withObject, (.:), (.=))
 import Data.Aeson.Types (parseMaybe)
 import Data.Int (Int64)
@@ -27,7 +28,7 @@ import Kenshou.Check.Fault.Postgres (Backend (..), BackendSelector (..), LockTar
 import Kenshou.Check.Process (ProgressSnapshot (..), awaitMark, awaitReady, childPid, killChild, progress, roleProcess, sendCommand, spawn, withSupervisor)
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Check.Verdict (InvariantClass (..))
-import Kenshou.Core.Context (RunContext (..), requirePostgres)
+import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary, requirePostgres)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
@@ -83,7 +84,7 @@ runRuntimePoolIsolation context =
         Pool.use runtime.runtimePool (Session.script "CREATE SCHEMA IF NOT EXISTS kenshou_fx; CREATE TABLE IF NOT EXISTS kenshou_fx.queue_effects (payload text NOT NULL)") >>= either (fail . show) pure
         setup <- runJobEff runtime (ensureJobQueue job)
         _ <- either (fail . show) pure setup
-        withAsync (mapConcurrently (const hog) [1 .. 10 :: Int]) \_ -> do
+        (observedHogs, delivered, hogsAfter, remaining) <- withAsync (mapConcurrently (const hog) [1 .. 10 :: Int]) \_ -> do
           observedHogs <- maybe 0 id <$> timeout 10000000 waitHogs
           spec <- roleProcess check "keiro/queue-worker" 0 (object ["queue" .= queue])
           child <- spawn supervisor spec
@@ -96,7 +97,67 @@ runRuntimePoolIsolation context =
           hogsAfter <- activeHogs
           remaining <- depth
           killChild supervisor child
-          recordMessagingCells context (Map.fromList [("storeConnections", fromIntegral observedHogs), ("storeConnectionsAfterDelivery", fromIntegral hogsAfter), ("effects", delivered), ("queueDepth", remaining)]) (object []) [("store-pool-saturated", observedHogs == 10), ("job-pool-progress", delivered == 1 && hogsAfter == 10), ("queue-empty", remaining == 0)]
+          pure (observedHogs, delivered, hogsAfter, remaining)
+        let longPollArm processors = do
+              let armQueue = sourceName context ("long-poll-" <> Text.pack (show processors))
+                  armPayload = "long-poll-" <> Text.pack (show processors)
+                  armJob = Job "queue-poll-probe" (queueRef armQueue) (aesonJobCodec @Text) Unordered defaultRetryPolicy
+                  armDepthStatement = Statement.preparable ("SELECT count(*) FROM pgmq.q_" <> queueNameToText armJob.jobQueue.physicalName) Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
+                  armDepth = Pool.use runtime.runtimePool (Session.statement () armDepthStatement) >>= either (fail . show) pure
+                  armEffect = Pool.use runtime.runtimePool (Session.statement armPayload effectStatement) >>= either (fail . show) pure
+                  waitArm = do
+                    count <- armEffect
+                    queued <- armDepth
+                    if count == 1 && queued == 0 then pure True else threadDelay 100000 >> waitArm
+                  countConnections = do
+                    backends <- listBackends postgres
+                    pure (length [backend | backend <- backends, ("queue-worker-" <> Text.pack (show processors)) `Text.isInfixOf` backend.applicationName])
+              prepared <- runJobEff runtime (ensureJobQueue armJob)
+              _ <- either (fail . show) pure prepared
+              spec <- roleProcess check "keiro/queue-worker" processors (object ["queue" .= armQueue, "mode" .= ("pool-long-poll" :: Text), "processors" .= processors])
+              child <- spawn supervisor spec
+              awaitReady child 10000
+              sendCommand child CtlStart
+              awaitMark child "running" 30000
+              samples <- replicateM 20 (threadDelay 100000 >> countConnections)
+              sent <- runJobEff runtime (enqueue armJob armPayload)
+              _ <- either (fail . show) pure sent
+              completed <- maybe False id <$> timeout 30000000 waitArm
+              maxConnections <- pure (maximum (0 : samples))
+              finalEffect <- armEffect
+              finalDepth <- armDepth
+              snapshot <- atomically (progress child)
+              killChild supervisor child
+              recovered <-
+                if completed
+                  then pure True
+                  else do
+                    recoverySpec <- roleProcess check "keiro/queue-worker" (processors + 10) (object ["queue" .= armQueue, "mode" .= ("pool-long-poll" :: Text), "processors" .= (1 :: Int)])
+                    recovery <- spawn supervisor recoverySpec
+                    awaitReady recovery 10000
+                    sendCommand recovery CtlStart
+                    awaitMark recovery "running" 30000
+                    settled <- maybe False id <$> timeout 45000000 waitArm
+                    killChild supervisor recovery
+                    pure settled
+              pure (processors, maxConnections, completed, recovered, finalEffect, finalDepth, Map.member "stopped" snapshot.marks)
+        longPoll <- traverse longPollArm [1, 3, 6]
+        let maxConnections = maximum [connections | (_, connections, _, _, _, _, _) <- longPoll]
+            completedArms = length [() | (_, _, True, _, _, _, _) <- longPoll]
+            recoveredArms = length [() | (_, _, _, True, _, _, _) <- longPoll]
+            starved = [processors | (processors, _, False, _, _, _, _) <- longPoll]
+        if null starved
+          then pure ()
+          else putSummary context Diagnosis "pool-starvation" (object ["processors" .= starved, "connectionLimit" .= (3 :: Int), "arms" .= longPoll])
+        recordMessagingCells
+          context
+          (Map.fromList [("storeConnections", fromIntegral observedHogs), ("storeConnectionsAfterDelivery", fromIntegral hogsAfter), ("effects", delivered), ("queueDepth", remaining), ("maxJobPoolConnections", fromIntegral maxConnections), ("longPollArmsCompleted", fromIntegral completedArms), ("longPollArmsRecovered", fromIntegral recoveredArms)])
+          (object ["longPoll" .= longPoll, "starvedProcessors" .= starved])
+          [ ("store-pool-saturated", observedHogs == 10),
+            ("job-pool-progress", delivered == 1 && hogsAfter == 10 && remaining == 0),
+            ("job-pool-size", all (\(_, connections, _, _, _, _, _) -> connections > 0 && connections <= 3) longPoll),
+            ("long-poll-no-loss", recoveredArms == 3)
+          ]
   where
     postgres = requirePostgres context
 
