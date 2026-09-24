@@ -4,6 +4,7 @@ module Kenshou.Telemetry.Metrics
     startMetrics,
     flushMetrics,
     readMetricSums,
+    readMetricGauges,
     stopMetrics,
   )
 where
@@ -18,7 +19,7 @@ import Kenshou.Telemetry.Spec
 import Kenshou.Telemetry.Tracing (otlpExporterConfig)
 import Network.Socket (Socket, close)
 import Network.Wai.Handler.Warp (defaultSettings, openFreePort, runSettingsSocket)
-import OpenTelemetry.Exporter.Metric (MetricExport (..), NumberValue (..), ResourceMetricsExport (..), ScopeMetricsExport (..), SumDataPoint (..))
+import OpenTelemetry.Exporter.Metric (GaugeDataPoint (..), MetricExport (..), NumberValue (..), ResourceMetricsExport (..), ScopeMetricsExport (..), SumDataPoint (..))
 import OpenTelemetry.Exporter.OTLP.Metric qualified as OtlpMetric
 import OpenTelemetry.Exporter.Prometheus.WAI (prometheusApplication)
 import OpenTelemetry.MeterProvider (SdkMeterEnv, collectResourceMetrics, createMeterProvider, defaultSdkMeterProviderOptions)
@@ -79,6 +80,21 @@ readMetricSums runtime = do
     ]
   where
     pointValue point = case point.sumDataPointValue of
+      IntNumber value -> fromIntegral value
+      DoubleNumber value -> value
+
+readMetricGauges :: MetricsRuntime -> IO [(Text.Text, Double)]
+readMetricGauges runtime = do
+  batches <- maybe (pure []) collectResourceMetrics runtime.env
+  pure
+    [ (metric.megName, pointValue point.gaugeDataPointValue)
+    | resource <- batches,
+      scope <- Vector.toList resource.resourceMetricsScopes,
+      metric@MetricExportGauge {} <- Vector.toList scope.scopeMetricsExports,
+      point <- Vector.toList metric.megGaugePoints
+    ]
+  where
+    pointValue = \case
       IntNumber value -> fromIntegral value
       DoubleNumber value -> value
 

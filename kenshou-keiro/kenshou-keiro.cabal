@@ -71,6 +71,7 @@ library
     Kenshou.Suite.Keiro.Outbox.ProducerIdentity
     Kenshou.Suite.Keiro.Outbox.ProducerReplay
     Kenshou.Suite.Keiro.Outbox.Roles
+    Kenshou.Suite.Keiro.Outbox.Telemetry
     Kenshou.Suite.Keiro.Outbox.Workload
     Kenshou.Suite.Keiro.ProcessManager.Bench
     Kenshou.Suite.Keiro.ProcessManager.Concurrency
