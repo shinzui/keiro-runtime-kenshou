@@ -139,7 +139,13 @@ runPerKeyOrderSerialized context =
         expected = Map.fromList [(TextEncoding.encodeUtf8 messageId, (key, sequenceNo)) | (messageId, Just key, sequenceNo) <- entries]
     enqueueInline fixture source entries
     broker <- Broker.newBroker
-    let callback = Broker.publishCallback broker model plan hooks "publisher"
+    let publishSource [] = pure []
+        publishSource (row : rest) = do
+          outcomes <- Broker.publishScripted broker model (Broker.decide plan) hooks "publisher" [row]
+          case outcomes of
+            [(_, PublishFailed _)] -> pure outcomes
+            _ -> (outcomes <>) <$> publishSource rest
+        callback = if policy == PerSourceStream then publishSource else Broker.publishCallback broker model plan hooks "publisher"
         drain = do
           backlog <- runFixture countOutboxBacklog >>= either (fail . show) pure
           if backlog == 0
