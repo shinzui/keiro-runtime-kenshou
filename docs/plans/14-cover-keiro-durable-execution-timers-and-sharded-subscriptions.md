@@ -71,7 +71,8 @@ Milestone 3 — Sharded subscription scenarios
 
 - [ ] Add `Kenshou.Suite.Keiro.Shard.Knobs`, `.Roles` and complete `.Oracle`. Pure coverage/disjointness, deadline arithmetic and checkpoint monotonicity checkers are implemented with doctored-input tests; process roles and knobs remain. Use the delivered kernel's slash-form role names.
 - [x] (2026-09-24 05:33Z) Registered an incremental `keiro/shard/correctness/lease-coverage-smoke` scenario. Runs under both PostgreSQL durability modes passed five verdicts for one-bucket-per-pass ownership, complete coverage, relinquish and immediate transfer.
-- [ ] Add the shard correctness scenarios (three).
+- [x] (2026-09-24 13:43Z) Added `keiro/shard/correctness/shard-count-mismatch`, exercising the same `ensureShards` startup path as a worker. Both PostgreSQL durability modes reproduced two contract failures: extra rows remained after a larger misconfigured caller, and a fresh correct caller failed. The scenario exits zero as a reported known defect with `mori://shinzui/keiro/okf/improvement-requests/concepts/IR-49`.
+- [ ] Finish process-role startup and delivery assertions for the shard-count mismatch scenario; add the other two shard correctness scenarios.
 - [ ] Add the shard concurrency and crash scenarios (six).
 - [ ] Extend the bundle; confirm `kenshou list`.
 
@@ -93,6 +94,7 @@ Milestone 4 — Durable-execution benchmarks, soak and telemetry arms
 - Reading the correctness toolkit's ledger directory while `withCheck` still held the harness ledger open failed on macOS with `withBinaryFile: resource busy (file is locked)`. The crash probe seals the harness ledger before polling worker ledgers; its rerun passed with the `crash-armed` fact and both `s2` effect facts present.
 - The CLI cohort document identifies components by `.id`, not `.name` as the plan's illustrative filter says. `jq '.components[] | select(.id=="keiro")'` confirmed the executed cohort still pins `keiro`, `keiro-core`, `keiro-pgmq`, migrations and test support to 0.17.0.0.
 - A real self-`SIGKILL` produced a ledger file ending inside a JSON line. `foldFacts` raised `Data.ByteString.hGetLine: end of file` before it could apply its existing torn-final-line rule, so the scenario exited 4 without verdicts. The ledger reader now treats that EOF as the torn final fact; the rerun passed all seven verdicts.
+- Keiro 0.17.0.0's `ensureShards` commits bucket insertion before throwing `ShardCountMismatch`. A four-bucket subscription remained at four rows after a count-two caller, but grew to six after a count-six caller; a subsequent count-four caller also threw. The external probe reported only `shard-larger-worker-left-four` and `shard-correct-worker-recovers` as failures in both durability modes. The upstream request is `mori://shinzui/keiro/okf/improvement-requests/concepts/IR-49`; the local Mori registry had not indexed it immediately after creation.
 
 
 ## Decision Log
@@ -516,3 +518,10 @@ the test suite rejects doctored evidence. The retry spacing check follows
 keiro's persisted 2, 4, 8, …, 64 second gate. A process kill exposed a torn
 ledger-line reader error; the reader now discards that incomplete final fact.
 Database-backed workflow oracles and the remaining scenarios remain open.
+
+## Revision Note — 2026-09-24 (shard mismatch)
+
+The shard count mismatch probe now documents and reproduces a released Keiro
+defect, with an upstream improvement request. Its first version invokes the
+worker's public startup path directly. A later revision must add the planned
+process-role and delivery evidence before Milestone 3 is complete.

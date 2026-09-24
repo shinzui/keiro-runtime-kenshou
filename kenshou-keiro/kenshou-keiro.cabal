@@ -81,6 +81,7 @@ library
     Kenshou.Suite.Keiro.Router.Correctness
     Kenshou.Suite.Keiro.Shard
     Kenshou.Suite.Keiro.Shard.LeaseSmoke
+    Kenshou.Suite.Keiro.Shard.Mismatch
     Kenshou.Suite.Keiro.Shard.Oracle
     Kenshou.Suite.Keiro.Telemetry
     Kenshou.Suite.Keiro.Timer

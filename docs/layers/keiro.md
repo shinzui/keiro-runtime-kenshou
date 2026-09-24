@@ -31,7 +31,7 @@ fixture. Their implementation record is the repository-local
 
 The durable-execution work tracked by
 `docs/plans/14-cover-keiro-durable-execution-timers-and-sharded-subscriptions.md`
-has three runnable slices. `keiro/workflow/correctness/linear-replay-smoke`
+has incremental runnable probes. `keiro/workflow/correctness/linear-replay-smoke`
 checks that replay returns the recorded result without repeating a step effect,
 and that journal event IDs match the step index. The
 `keiro/workflow/concurrency/linear-self-sigkill-smoke` run starts a resume
@@ -57,8 +57,12 @@ arm, rearm, ordered claims, stuck recovery, repeated callback execution, and
 the post-claim dead-letter ceiling. The
 `keiro/shard/correctness/lease-coverage-smoke` scenario claims four buckets
 one per pass, relinquishes them, and checks that another owner can claim them
-without overlap. These correctness probes support both PostgreSQL
-durability modes. The remaining workflow kinds, process concurrency cases,
+without overlap. `keiro/shard/correctness/shard-count-mismatch` attempts
+smaller and larger shard counts against a four-bucket subscription, then tries
+another correctly configured startup. Keiro 0.17.0.0 rejects the larger caller
+after inserting two extra rows, so the scenario reports a reproduced known
+defect at `mori://shinzui/keiro/okf/improvement-requests/concepts/IR-49`.
+These correctness probes support both PostgreSQL durability modes. The remaining workflow kinds, process concurrency cases,
 subscription delivery checks, benchmarks and soaks remain in the plan's
 Progress section.
 
