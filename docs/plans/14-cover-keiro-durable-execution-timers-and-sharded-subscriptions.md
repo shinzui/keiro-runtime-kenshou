@@ -52,6 +52,7 @@ Milestone 1 — Durable workflow scenarios
 - [x] (2026-09-24 05:31Z) Added a `keiro/workflow-resume-worker` role and incremental `keiro/workflow/concurrency/linear-self-sigkill-smoke` scenario. A durable PostgreSQL run passed seven verdicts, including one bounded duplicate after a real process self-`SIGKILL` and no consumed attempt.
 - [x] (2026-09-24) Added named, ordinal and rotated sleeper definitions and `keiro/workflow/correctness/sleep-via-timers`. The final form passed both PostgreSQL durability modes with nine verdicts for deterministic timer rows and payloads, stable first-arm deadline and wake hint, due discovery without firing, batched wake, terminal-owner cancellation, generation pinning, completion journals, and single execution of surrounding step effects.
 - [x] (2026-09-24) Added the approval workflow definition and `keiro/workflow/correctness/awakeable-signal-semantics`. Seven verdicts passed in both PostgreSQL durability modes for journaled publication, idempotent signal payload, unknown-ID refusal, terminal-owner settlement without a wake journal, cancellation without a result journal, a cancelled await throwing, and a signal before the await.
+- [x] (2026-09-24) Added `keiro/workflow/correctness/continue-as-new-abandons-awakeable-ids` and a rotating approval definition. Seven implementation verdicts passed in both durability modes: bounded generation journals, fresh IDs, old-row settlement without waking or writing an old-ID result in the new generation, and completion from the new ID.
 - [ ] Extend awakeable cancellation coverage through the resume worker's attempt ceiling and terminal `WorkflowFailed` state; add compensation-on-cancel coverage.
 - [ ] Add `Kenshou.Suite.Keiro.Workflow.Knobs` and complete `.Roles`. A basic `keiro/workflow-resume-worker` is registered and exercised; knob plumbing, push mode, the driver, and GC worker remain. The delivered kernel requires slash-form role names.
 - [x] (2026-09-24 13:25Z) Added the first shared `Kenshou.Suite.Keiro.Workflow.Oracle` checks for journal step identity, effect coverage bounded by crash windows, and the retry backoff ladder. Doctored duplicate, missing, wrong-ID, and mistimed inputs fail their unit tests; the linear replay and real `SIGKILL` probes use the shared checks and pass.
@@ -538,3 +539,10 @@ awakeable publication, signal and cancellation paths. Signal-before-await
 coverage revealed a legitimate repeated publication action; the verdict
 checks idempotence across that repeat. Worker-driven cancellation exhaustion
 and compensation remain open.
+
+## Revision Note — 2026-09-24 (rotating approval)
+
+The documented awakeable limitation now has an executable scenario. It records
+the two published IDs and generation step indexes, then verifies that the old
+ID can settle without advancing the rotated workflow. Both durability modes
+passed; no upstream defect was observed.

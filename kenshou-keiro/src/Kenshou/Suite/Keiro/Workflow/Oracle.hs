@@ -3,6 +3,7 @@ module Kenshou.Suite.Keiro.Workflow.Oracle
     effectCoverage,
     backoffLadder,
     recordWorkflowCells,
+    recordWorkflowCellsAs,
   )
 where
 
@@ -60,13 +61,16 @@ backoffLadder initialDelay slack observations
             else Left ("backoff interval " <> Text.pack (show attempt) <> " was " <> Text.pack (show actual) <> "; expected " <> Text.pack (show expected) <> " +/- " <> Text.pack (show slack))
 
 recordWorkflowCells :: CheckEnv -> [(Text, Bool)] -> IO ScenarioReport
-recordWorkflowCells check cells = do
+recordWorkflowCells = recordWorkflowCellsAs Contract
+
+recordWorkflowCellsAs :: InvariantClass -> CheckEnv -> [(Text, Bool)] -> IO ScenarioReport
+recordWorkflowCellsAs invariantClass check cells = do
   now <- getCurrentTime
   let verdict (name, held) =
         Verdict
           { checker = "workflow-" <> name,
             invariant = name,
-            cls = Contract,
+            cls = invariantClass,
             status = if held then Held else Violated,
             reason = Nothing,
             summary = if held then "Workflow invariant held" else "Workflow invariant failed",

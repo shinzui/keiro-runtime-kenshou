@@ -15,6 +15,8 @@ module Kenshou.Suite.Keiro.Workflow.Definitions
     approvalName,
     approvalWorkflow,
     approvalRegistry,
+    rotatingApprovalName,
+    rotatingApprovalWorkflow,
   )
 where
 
@@ -122,3 +124,19 @@ approvalWorkflow sink wid = do
 
 approvalRegistry :: EffectSink -> WorkflowRegistry '[Store, Error StoreError, IOE]
 approvalRegistry sink = Map.singleton approvalName (WorkflowDef (approvalWorkflow sink))
+
+rotatingApprovalName :: WorkflowName
+rotatingApprovalName = either (error . show) id (mkWorkflowName "kenshouRotatingApproval")
+
+-- | Generation zero publishes an id and rotates without awaiting it. The
+-- next generation must allocate a different id under the same label.
+rotatingApprovalWorkflow :: (IOE :> es, Store :> es) => EffectSink -> WorkflowId -> Eff (Workflow : es) Text
+rotatingApprovalWorkflow sink wid = do
+  generation <- restoreSeed (0 :: Int)
+  (aid, await) <- awakeableNamed (StepName "approval")
+  _ <- step (StepName "publish") do
+    liftIO $ sink.recordEffect (EffectFact "arm" (unWorkflowId wid <> "/" <> Text.pack (show generation) <> "/approval") "workflow" (object ["awakeableId" .= aid, "generation" .= generation]))
+    pure ()
+  if generation == 0
+    then continueAsNew (1 :: Int)
+    else await

@@ -53,6 +53,9 @@ cancellation and the timer generation after workflow rotation.
 approval id, first-signal payload preservation, repeated and unknown signal
 refusals, terminal-owner settlement, cancellation, and a signal that arrives
 before the workflow awaits it.
+`keiro/workflow/correctness/continue-as-new-abandons-awakeable-ids` records
+that rotation publishes a new approval id; an old signal settles its original
+row without waking the new generation, and the new id completes it.
 
 The two timer correctness scenarios,
 `keiro/timer/correctness/lifecycle-and-at-least-once` and
