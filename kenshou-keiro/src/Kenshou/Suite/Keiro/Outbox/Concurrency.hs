@@ -1,17 +1,28 @@
 module Kenshou.Suite.Keiro.Outbox.Concurrency (scenarios) where
 
 import Control.Concurrent (threadDelay)
+import Control.Concurrent.Async (wait, withAsync)
+import Control.Exception (bracket)
 import Data.Aeson (object, (.=))
+import Data.Int (Int32)
 import Data.List (sort)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
+import Data.Time (getCurrentTime)
+import Hasql.Decoders qualified as Decoders
+import Hasql.Encoders qualified as Encoders
+import Hasql.Statement qualified as Statement
+import Hasql.Transaction qualified as Tx
 import Keiro.Integration.Event (IntegrationEvent (..), headerMessageId)
-import Keiro.Outbox (BackoffSchedule (..), OutboxMaintenanceOptions (..), OutboxMaintenanceSummary (..), OutboxPublishOptions (..), OutboxPublishSummary (..), OutboxRow (..), OutboxStatus (..), countOutboxBacklog, defaultPublishOptions, listOutbox, outboxMaintenancePass, publishClaimedOutbox)
+import Keiro.Outbox (BackoffSchedule (..), OutboxMaintenanceOptions (..), OutboxMaintenanceSummary (..), OutboxPublishOptions (..), OutboxPublishSummary (..), OutboxRow (..), OutboxStatus (..), countOutboxBacklog, defaultPublishOptions, enqueueIntegrationEventTx, freshOutboxId, listOutbox, outboxMaintenancePass, publishClaimedOutbox)
+import Kenshou.Check.Fault (Fault (..), FaultHandle (..))
+import Kenshou.Check.Fault.Postgres (Backend (..), LockTarget (..), holdLock, listBackends)
 import Kenshou.Check.Process (awaitMark, awaitReady, childPid, killChild, roleProcess, sendCommand, spawn, withSupervisor)
 import Kenshou.Check.Scenario (withCheck)
+import Kenshou.Check.Verdict (InvariantClass (..))
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
@@ -20,17 +31,93 @@ import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobInt, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Role (ControlMessage (..))
-import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..))
+import Kenshou.Core.Scenario (CohortScope (..), KnownDefect (..), Placement (..), Scenario (..), ScenarioReport, Tier (..), inconclusiveBecause)
 import Kenshou.Suite.Keiro.Fixture.Runtime (FixtureEnv (..), KeiroRunner (..), withFixtureEnv)
-import Kenshou.Suite.Keiro.Messaging.Verdict (recordMessagingCells)
+import Kenshou.Suite.Keiro.Messaging.Verdict (recordMessagingCells, recordMessagingCellsClassified)
 import Kenshou.Suite.Keiro.Outbox.Broker qualified as Broker
 import Kenshou.Suite.Keiro.Outbox.Oracle qualified as Oracle
-import Kenshou.Suite.Keiro.Outbox.Workload (enqueueInline, sourceName)
-import Kiroku.Store (defaultConnectionSettings)
+import Kenshou.Suite.Keiro.Outbox.Workload (enqueueInline, inlineEvent, sourceName)
+import Kiroku.Store (defaultConnectionSettings, runTransaction)
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [crashBetweenPublishAndMark, multiProcessPublishers]
+scenarios = [crashBetweenPublishAndMark, multiProcessPublishers, concurrentInlineEnqueueOrder]
+
+concurrentInlineEnqueueOrder :: Scenario
+concurrentInlineEnqueueOrder =
+  crashBetweenPublishAndMark
+    { id = either (error . show) id (parseScenarioId "keiro/outbox/concurrency/concurrent-inline-enqueue-order"),
+      summary = "Stages opposite transaction-start and commit order for two inline events of one key.",
+      tier = TierSmoke,
+      knobs = [],
+      knownDefect = Just (KnownDefect "mori://shinzui/keiro/okf/user-documentation/concepts/DOC-16" "Concurrent inline enqueues can publish one key out of producer order" ["per-key-order"] AllCohorts),
+      run = runConcurrentInlineEnqueueOrder
+    }
+
+runConcurrentInlineEnqueueOrder :: RunContext -> IO ScenarioReport
+runConcurrentInlineEnqueueOrder context =
+  withFixtureEnv (defaultConnectionSettings (requirePostgres context).connectionString) \fixture ->
+    Broker.withTableBroker (requirePostgres context).connectionString \broker -> do
+      let KeiroRunner runFixture = fixture.runner
+          source = sourceName context "inline-order"
+          postgres = requirePostgres context
+          model = Broker.BrokerModel 0 0 4
+          hooks = Broker.PublishHook (const (pure ())) (const (pure ()))
+          callback = Broker.publishScripted broker model (const Broker.Succeed) hooks "inline-order-publisher"
+          lockKey = 735715
+      firstId <- runFixture freshOutboxId >>= either (fail . show) pure
+      secondId <- runFixture freshOutboxId >>= either (fail . show) pure
+      firstTime <- getCurrentTime
+      bracket (holdLock postgres (AdvisoryLock lockKey)).inject (.heal) \handle ->
+        withAsync
+          ( runFixture
+              ( runTransaction do
+                  enqueueIntegrationEventTx firstId (inlineEvent source "first" (Just "shared") 1 firstTime)
+                  Tx.statement () advisoryLockStatement
+              )
+          )
+          \firstWriter -> do
+            let waitBlocked = do
+                  backends <- listBackends postgres
+                  if any (\backend -> backend.waitEventType == Just "Lock" && "pg_advisory_xact_lock" `Text.isInfixOf` backend.query) backends
+                    then pure True
+                    else threadDelay 10000 >> waitBlocked
+            blocked <- timeout 10000000 waitBlocked
+            case blocked of
+              Nothing -> fail "first inline enqueue never blocked on the advisory lock"
+              Just True -> pure ()
+              Just False -> fail "first inline enqueue did not reach the advisory lock"
+            secondTime <- getCurrentTime
+            runFixture (runTransaction (enqueueIntegrationEventTx secondId (inlineEvent source "second" (Just "shared") 2 secondTime))) >>= either (fail . show) pure
+            _ <- runFixture (publishClaimedOutbox callback defaultPublishOptions Nothing) >>= either (fail . show) pure
+            beforeRelease <- Broker.readBroker broker
+            handle.heal
+            _ <- wait firstWriter >>= either (fail . show) pure
+            _ <- runFixture (publishClaimedOutbox callback defaultPublishOptions Nothing) >>= either (fail . show) pure
+            rows <- runFixture (listOutbox source) >>= either (fail . show) pure
+            records <- Broker.readBroker broker
+            let ids = [TextEncoding.decodeUtf8 value | record <- records, (name, value) <- record.headers, name == TextEncoding.encodeUtf8 headerMessageId]
+                beforeIds = [TextEncoding.decodeUtf8 value | record <- beforeRelease, (name, value) <- record.headers, name == TextEncoding.encodeUtf8 headerMessageId]
+                firstCreated = [row.createdAt | row <- rows, row.event.messageId == "first"]
+                secondCreated = [row.createdAt | row <- rows, row.event.messageId == "second"]
+                schedule =
+                  beforeIds == ["second"] && ids == ["second", "first"] && case (firstCreated, secondCreated) of
+                    ([a], [b]) -> a < b
+                    _ -> False
+                cells =
+                  [ ("schedule-realised", Contract, schedule),
+                    ("no-loss", Contract, length rows == 2 && all ((== OutboxSent) . (.status)) rows && sort ids == ["first", "second"]),
+                    ("per-key-order", Implementation, ids == ["first", "second"])
+                  ]
+            report <- recordMessagingCellsClassified context (Map.fromList [("enqueued", 2), ("brokerRecords", fromIntegral (length records))]) (object ["brokerMessageIds" .= ids, "firstCreatedAt" .= firstCreated, "secondCreatedAt" .= secondCreated]) cells
+            pure (if schedule then report else inconclusiveBecause "the inline enqueue inversion was not observed")
+
+advisoryLockStatement :: Statement.Statement () Int32
+advisoryLockStatement =
+  Statement.preparable
+    "SELECT 1 FROM pg_advisory_xact_lock(735715)"
+    Encoders.noParams
+    (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int4)))
 
 multiProcessPublishers :: Scenario
 multiProcessPublishers =

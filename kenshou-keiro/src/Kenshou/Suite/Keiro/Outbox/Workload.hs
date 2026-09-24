@@ -1,5 +1,6 @@
 module Kenshou.Suite.Keiro.Outbox.Workload
   ( sourceName,
+    inlineEvent,
     enqueueInline,
   )
 where
@@ -10,7 +11,7 @@ import Data.Aeson (object, (.=))
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
-import Data.Time (getCurrentTime)
+import Data.Time (UTCTime, getCurrentTime)
 import Keiro.Integration.Event (IntegrationContentType (..), IntegrationEvent (..))
 import Keiro.Outbox (enqueueIntegrationEventTx, freshOutboxId)
 import Kenshou.Core.Context (RunContext (..))
@@ -28,24 +29,26 @@ enqueueInline fixture source entries = forM_ entries \(messageId, key, sequenceN
   now <- getCurrentTime
   let KeiroRunner runFixture = fixture.runner
   outboxId <- runFixture freshOutboxId >>= either (fail . show) pure
-  let event =
-        IntegrationEvent
-          { messageId,
-            source,
-            destination = "kenshou.outbox.v1",
-            key,
-            eventType = "OutboxProbe",
-            schemaVersion = 1,
-            contentType = ApplicationJson,
-            schemaReference = Nothing,
-            sourceEventId = Nothing,
-            sourceGlobalPosition = Nothing,
-            payloadBytes = TextEncoding.encodeUtf8 messageId,
-            occurredAt = now,
-            causationId = Nothing,
-            correlationId = Nothing,
-            traceContext = Nothing,
-            attributes = Just (object ["sequence" .= sequenceNo])
-          }
-  runFixture (runTransaction (enqueueIntegrationEventTx outboxId event)) >>= either (fail . show) pure
+  runFixture (runTransaction (enqueueIntegrationEventTx outboxId (inlineEvent source messageId key sequenceNo now))) >>= either (fail . show) pure
   threadDelay 1000
+
+inlineEvent :: Text -> Text -> Maybe Text -> Int -> UTCTime -> IntegrationEvent
+inlineEvent source messageId key sequenceNo now =
+  IntegrationEvent
+    { messageId,
+      source,
+      destination = "kenshou.outbox.v1",
+      key,
+      eventType = "OutboxProbe",
+      schemaVersion = 1,
+      contentType = ApplicationJson,
+      schemaReference = Nothing,
+      sourceEventId = Nothing,
+      sourceGlobalPosition = Nothing,
+      payloadBytes = TextEncoding.encodeUtf8 messageId,
+      occurredAt = now,
+      causationId = Nothing,
+      correlationId = Nothing,
+      traceContext = Nothing,
+      attributes = Just (object ["sequence" .= sequenceNo])
+    }

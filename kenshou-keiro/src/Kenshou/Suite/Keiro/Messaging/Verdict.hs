@@ -1,4 +1,4 @@
-module Kenshou.Suite.Keiro.Messaging.Verdict (recordMessagingCells) where
+module Kenshou.Suite.Keiro.Messaging.Verdict (recordMessagingCells, recordMessagingCellsClassified) where
 
 import Data.Aeson (Value, object, (.=))
 import Data.Int (Int64)
@@ -12,14 +12,18 @@ import Kenshou.Core.Scenario (ScenarioReport, failedWith, passed)
 import System.FilePath ((</>))
 
 recordMessagingCells :: RunContext -> Map Text Int64 -> Value -> [(Text, Bool)] -> IO ScenarioReport
-recordMessagingCells context counts parameters cells = do
+recordMessagingCells context counts parameters cells =
+  recordMessagingCellsClassified context counts parameters [(label, Contract, held) | (label, held) <- cells]
+
+recordMessagingCellsClassified :: RunContext -> Map Text Int64 -> Value -> [(Text, InvariantClass, Bool)] -> IO ScenarioReport
+recordMessagingCellsClassified context counts parameters cells = do
   checkedAt <- getCurrentTime
   mapM_ (writeCell checkedAt) cells
-  let failed = [label | (label, False) <- cells]
+  let failed = [label | (label, _, False) <- cells]
   putSummary context Verdicts (renderScenarioId context.scenario) (object ["checks" .= length cells, "failures" .= failed])
   pure $ if null failed then passed else failedWith failed "messaging scenario checks failed"
   where
-    writeCell checkedAt (label, held) = do
+    writeCell checkedAt (label, classification, held) = do
       _ <-
         writeVerdict
           (context.outDir </> "verdicts")
@@ -27,7 +31,7 @@ recordMessagingCells context counts parameters cells = do
           Verdict
             { checker = label,
               invariant = label,
-              cls = Contract,
+              cls = classification,
               status = if held then Held else Violated,
               reason = Nothing,
               summary = if held then "Expected result observed" else "Expected result did not match",
