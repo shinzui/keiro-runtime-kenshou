@@ -474,6 +474,13 @@ under source-event and custom identity. A missing field required by each
 policy fails without a receipt. Dedupe-only rows have empty payloads and no
 attributes; full-envelope rows retain both. The effect table has no uniqueness
 constraint, so the inbox receipt enforces the one-effect result.
+With `inbox.idempotence=delegated`, the same four policies use deterministic
+event IDs on account streams as receipts. Each of 16 accounts receives one
+deposit on first delivery, no deposit on redelivery, and a second deposit on
+republish only for message-ID and Kafka-delivery identity. The inbox table
+stays empty. A zero-event command and a rejected command return their typed
+delegated errors without changing the target stream. All four delegated arms
+passed on durable PostgreSQL.
 `poison-accounting` verifies the default exception path's three-attempt
 ceiling and retention of failed rows. With `inbox.failure-mode=condemn`, two
 deliveries each report processed but roll back; a nontransactional sequence
