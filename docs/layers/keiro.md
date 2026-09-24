@@ -496,6 +496,11 @@ duplicating other effects. With `inbox.failure-mode=condemn`, the batch rolls
 back, the poison handler runs again in the fallback, its reported processed
 receipt leaves no row, and the other deliveries commit one effect each. Both
 arms passed with durable PostgreSQL.
+With `inbox.idempotence=delegated`, the batch runner returns results in
+delivery order, suppresses a repeated successful key within the call, and
+retries a key whose first handler invocation threw. A second batch invokes
+the handler again for the same key, showing that batch memory is call local.
+The delegated arm leaves the inbox table empty.
 The `race-one-key` no-kill arm starts four real consumer processes against a
 slow transactional handler. Its durable run observed one processed delivery,
 three duplicates, one completed inbox row, and one protected effect.
