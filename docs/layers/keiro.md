@@ -417,10 +417,14 @@ exponential backoff at 200 rows. The serialized-order probe passed all three
 ordered policies at 5,000 rows; its per-source broker callback stops dispatch
 after a source failure so later rows are never appended and then marked skipped.
 The `telemetry-contract` scenario publishes one successful, one rejected, and
-one retryable row in a single batch. It matches the producer span's messaging
-and batch attributes, the published/rejected/retried counters, and the backlog
-gauge to the three durable outbox states. Both in-memory tracing with collected
-metrics and the fully disabled arm passed on durable PostgreSQL.
+one retryable row in a single batch, then delivers the successful broker record
+twice to the inbox. It matches the producer span's messaging and batch
+attributes, the published/rejected/retried counters, and the backlog gauge to
+the three durable outbox states. It also checks one inbox handler effect, a
+duplicate receipt, processed and duplicate counters, the inbox backlog gauge,
+and consumer spans continuing the context saved in the outbox row. Both
+in-memory tracing with collected metrics and the fully disabled arm passed on
+durable PostgreSQL.
 
 The crash scenario
 parks a publisher after the broker append, kills its process with `SIGKILL`,

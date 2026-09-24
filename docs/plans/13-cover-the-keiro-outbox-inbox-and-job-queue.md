@@ -102,6 +102,7 @@ Milestone 3 — Job queue scenarios.
 Milestone 4 — Messaging benchmarks, soak and telemetry arms.
 
 - [x] (2026-09-24 21:15 UTC) Register `keiro/outbox/correctness/telemetry-contract`. Durable run `runs/01a0d543-d9d2-732d-8bb7-381e017462c5` matched one producer span, three outcome counters, and the backlog gauge to three durable row states; `runs/01a0d544-150b-7521-9210-054ba2ff378f` passed with tracing and metrics off. The telemetry toolkit now exposes gauge points as well as sums to contract scenarios.
+- [x] (2026-09-24 21:25 UTC) Extend the outbox contract through an inbox delivery and duplicate. Durable run `runs/01a0d54b-f61f-716a-985f-065e75e70554` matched the inbox counters and gauge to one receipt and one handler effect, and checked both Consumer spans continued the `traceparent` persisted from the source span through the outbox row and broker record. The disabled arm `runs/01a0d54c-1365-77d4-a5bd-403f9d38243c` also passed. `InboxInProgress` and server endpoint arms remain to be covered.
 - [ ] Implement the telemetry adaptation for the three components and the two telemetry-contract scenarios.
 - [ ] Implement the seven benchmarks; run each once locally at smoke scale to prove the measurement files are produced; run one paired comparison with `kenshou compare`.
 - [ ] Implement the three soaks (each registered as a full and a `-reduced` scenario); run the short forms locally and confirm leak verdicts and growth verdicts are emitted.
