@@ -65,9 +65,9 @@ shardAppender context = case context.init.postgres of
 shardWorker :: RoleContext -> IO ()
 shardWorker context = case context.init.postgres of
   Nothing -> context.send (WrkError "shard worker requires PostgreSQL")
-  Just postgres -> case parseMaybe (withObject "shard worker args" (\value -> (,,) <$> value .: "subscription" <*> value .: "shardCount" <*> value .:? "delivery")) context.init.args of
+  Just postgres -> case parseMaybe (withObject "shard worker args" (\value -> (,,,) <$> value .: "subscription" <*> value .: "shardCount" <*> value .:? "delivery" <*> value .:? "handlerDelayMicros")) context.init.args of
     Nothing -> context.send (WrkError "invalid shard worker arguments")
-    Just (subscription, count, delivery) -> case optionsResult count of
+    Just (subscription, count, delivery, handlerDelayMicros) -> case optionsResult count of
       Left err -> context.send (WrkError (Text.pack (show err)))
       Right options -> do
         context.send WrkReady
@@ -77,7 +77,7 @@ shardWorker context = case context.init.postgres of
               then do
                 ensureDurableTables fixture
                 withEffectSink context [] \sink ->
-                  withAsync (runShardedSubscriptionGroupAck (durableKirokuStore fixture) (SubscriptionName subscription) options (recordDelivery fixture sink context.init.instanceName)) \worker -> do
+                  withAsync (runShardedSubscriptionGroupAck (durableKirokuStore fixture) (SubscriptionName subscription) options (recordDelivery fixture sink context.init.instanceName context.send handlerDelayMicros)) \worker -> do
                     outcome <- race context.receive (wait worker)
                     case outcome of
                       Left (Just (CtlStop _)) -> context.send (WrkDone Nothing)
@@ -98,8 +98,8 @@ shardWorker context = case context.init.postgres of
         then shardOptionsFrom target context.init.knobs
         else mkShardedWorkerOptions (defaultShardedWorkerOptions target count) {leaseTtl = 10, renewInterval = 2}
 
-recordDelivery :: DurableStore -> EffectSink -> Text -> ShardDelivery -> IO ShardAck
-recordDelivery fixture sink workerName delivery = do
+recordDelivery :: DurableStore -> EffectSink -> Text -> (WorkerMessage -> IO ()) -> Maybe Int -> ShardDelivery -> IO ShardAck
+recordDelivery fixture sink workerName send delay delivery = do
   let event = delivery.event
       EventId identifier = event.eventId
       StreamId stream = event.originalStreamId
@@ -107,6 +107,8 @@ recordDelivery fixture sink workerName delivery = do
       key = UUID.toText identifier
       payload = object ["eventId" .= key, "streamId" .= stream, "globalPosition" .= position, "bucket" .= delivery.bucket, "worker" .= workerName]
   sink.recordEffect (EffectFact "shard-delivery" key workerName (object ["bucket" .= delivery.bucket, "attempt" .= delivery.attempt]))
+  send (WrkCustom ("delivery-start-" <> Text.pack (show delivery.bucket)) (object ["eventId" .= key]))
+  maybe (pure ()) threadDelay delay
   result <- runDurable fixture (runTransaction (Tx.statement payload insertSinkStatement))
   either (fail . show) (const (pure ShardAckOk)) result
 

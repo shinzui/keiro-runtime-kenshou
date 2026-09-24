@@ -94,6 +94,7 @@ Milestone 3 — Sharded subscription scenarios
 - [x] (2026-09-24) Added `keiro/shard/concurrency/late-joiner-gets-no-buckets` with three real delivery workers. Four- and eight-bucket durable runs and a four-bucket fsync-off run reproduced exactly the declared `shard-late-workers-share` known defect; the first owner covered all buckets and coverage persisted after the two joiners started.
 - [x] (2026-09-24) Added `keiro/shard/concurrency/sigkill-failover-vs-graceful-relinquish`. It samples ownership after `SIGKILL` and halfway through the lease, requires transfer to a surviving worker within the calculated failover deadline, then checks immediate release on graceful stop and reownership within the renewal deadline. Four-bucket runs passed in both PostgreSQL modes; the default eight-bucket durable run passed.
 - [x] (2026-09-24) Added `keiro/shard/concurrency/coverage-after-membership-change`. A separate appender feeds account events while worker membership changes gracefully and by `SIGKILL`; 100 ms ownership samples preserve valid bucket rows, and verdict parameters report the measured recovery gaps. A 100-event, four-bucket run passed in both modes and the default 20,000-event, eight-bucket durable run passed with graceful and killed gaps of 3.54 s and 6.60 s. Per-event duplicate-window and checkpoint monotonicity checks remain.
+- [x] (2026-09-24) Added `keiro/shard/concurrency/fair-share-shedding`. The second worker joins after the first owns more than its fair share but before coverage is complete. A delayed handler holds an event on the bucket the first worker sheds; the worker ledger records redelivery, ownership rebalances to the fair-share cap, and the sink receives every event. A 100-event, four-bucket run passed in both modes and the default 20,000-event, eight-bucket durable run passed.
 - [x] (2026-09-24) The bundle includes shard scenarios and the shard worker role; `kenshou list --json` shows the five implemented shard scenarios.
 
 Milestone 4 — Durable-execution benchmarks, soak and telemetry arms
@@ -712,3 +713,14 @@ deadlines, and reports each measured gap in its verdict parameters. The
 default durable run delivered all 20,000 events and measured 3.54 s for
 graceful recovery and 6.60 s after `SIGKILL`. Per-event duplicate windows
 and checkpoint histories remain to be added.
+
+## Revision Note — 2026-09-24 (fair-share shedding)
+
+The fair-share scenario waits until one worker owns one bucket above the
+two-worker target while other buckets remain free. It starts a paced appender,
+waits for a delayed delivery on the highest owned bucket, and starts the
+second worker. Keiro sheds that bucket. The scenario requires the bucket to
+move, a second effect for its in-flight event, a balanced ownership snapshot,
+and complete sink delivery. The first worker then stops so its deliberately
+slow handlers do not extend the drain. Both durability modes passed at
+shakedown size, and the default 20,000-event durable run passed.

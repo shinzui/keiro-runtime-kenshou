@@ -125,6 +125,9 @@ and immediate release and faster recovery after a graceful stop.
 appender during those membership changes, samples ownership every 100 ms,
 and reports measured recovery gaps. The default durable run delivered all
 20,000 events; graceful and killed recovery took 3.54 s and 6.60 s.
+`keiro/shard/concurrency/fair-share-shedding` joins a second worker before
+full coverage, forces the first to shed an in-flight bucket, and checks
+balanced ownership, redelivery of that event, and complete sink delivery.
 These correctness probes support both PostgreSQL durability modes. The remaining workflow kinds, process concurrency cases,
 subscription delivery checks, benchmarks and soaks remain in the plan's
 Progress section.

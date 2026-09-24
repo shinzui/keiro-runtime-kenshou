@@ -3,19 +3,24 @@ module Kenshou.Suite.Keiro.Shard.Concurrency (scenarios) where
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM (atomically, retry)
 import Control.Monad (forM, forM_)
-import Data.Aeson (object, (.=))
+import Data.Aeson (Value (..), object, (.=))
+import Data.Aeson.KeyMap qualified as KeyMap
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
 import Data.Text (Text)
+import Data.Text qualified as Text
 import Data.Time (diffUTCTime, getCurrentTime)
 import Hasql.Decoders qualified as Decoders
 import Hasql.Encoders qualified as Encoders
 import Hasql.Statement qualified as Statement
 import Hasql.Transaction qualified as Tx
 import Keiro.Subscription.Shard (ownershipSnapshotFor)
-import Kenshou.Check.Process (ProgressSnapshot (..), awaitReady, killChild, progress, roleProcess, sendCommand, spawn, stopGracefully, withSupervisor)
-import Kenshou.Check.Scenario (withCheck)
+import Kenshou.Check.Fact (Fact (..), FactKind (..))
+import Kenshou.Check.Ledger (sealLedger)
+import Kenshou.Check.Ledger.Read (discoverLedgers, foldFacts)
+import Kenshou.Check.Process (ProgressSnapshot (..), awaitMark, awaitReady, killChild, progress, roleProcess, sendCommand, spawn, stopGracefully, withSupervisor)
+import Kenshou.Check.Scenario (CheckEnv (..), withCheck)
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
@@ -33,7 +38,92 @@ import Kiroku.Store.Subscription.Types (SubscriptionName (..))
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [lateJoinerGetsNoBuckets, sigkillFailoverVsGracefulRelinquish, coverageAfterMembershipChange]
+scenarios = [lateJoinerGetsNoBuckets, sigkillFailoverVsGracefulRelinquish, coverageAfterMembershipChange, fairShareShedding]
+
+fairShareShedding :: Scenario
+fairShareShedding =
+  lateJoinerGetsNoBuckets
+    { id = either (error . show) id (parseScenarioId "keiro/shard/concurrency/fair-share-shedding"),
+      summary = "Starts a second worker while buckets remain unowned and checks balanced coverage and complete delivery.",
+      knownDefect = Nothing,
+      run = runFairShare
+    }
+
+runFairShare :: RunContext -> IO ScenarioReport
+runFairShare context = withCheck context \check ->
+  withDurableStore (defaultConnectionSettings (requirePostgres context).connectionString) \fixture -> do
+    ensureDurableTables fixture
+    let store = durableKirokuStore fixture
+        name = SubscriptionName "kenshouShardFairShare"
+        bucketCount = fromIntegral (knobInt context.knobs (shardKnobName "shard.shard-count")) :: Int
+        eventCount = fromIntegral (knobInt context.knobs (shardKnobName "shard.events")) :: Int
+        streamCount = fromIntegral (knobInt context.knobs (shardKnobName "shard.streams")) :: Int
+        ownership = runStoreIO store (ownershipSnapshotFor name)
+        sinkCount = runDurable fixture (runTransaction (Tx.statement () sinkCountStatement))
+        partlyOwned = \case
+          Right rows -> length rows == bucketCount && let occupied = length [() | (_, Just _, _) <- rows] in occupied == (bucketCount + 1) `div` 2 + 1 && occupied < bucketCount
+          Left _ -> False
+        covered = \case
+          Right rows -> length rows == bucketCount && all (\(_, owner, _) -> owner /= Nothing) rows
+          Left _ -> False
+    (joinedBeforeCoverage, shedBucketMoved, inFlightEvent, allCovered, fair, appenderDone, drained) <- withSupervisor check \supervisor -> do
+      let start index = do
+            spec <- roleProcess check "keiro/shard-worker" index (object ["subscription" .= ("kenshouShardFairShare" :: Text), "shardCount" .= bucketCount, "delivery" .= True, "handlerDelayMicros" .= if index == (0 :: Int) then Just (3000000 :: Int) else Nothing])
+            worker <- spawn supervisor spec
+            awaitReady worker 10000
+            sendCommand worker CtlStart
+            pure worker
+      first <- start 0
+      joinedBeforeCoverage <- waitUntil (partlyOwned <$> ownership) 40
+      beforeJoin <- ownership
+      let shedBucket = case beforeJoin of
+            Right rows -> maximum (0 : [bucket | (bucket, Just _, _) <- rows])
+            Left _ -> 0
+      appenderSpec <- roleProcess check "keiro/shard-appender" 0 (object ["eventCount" .= eventCount, "streamCount" .= streamCount, "idPrefix" .= ("kenshou:shard:fair:" :: Text), "streamPrefix" .= ("account-fair-" :: Text), "pauseMicros" .= (1000 :: Int)])
+      appender <- spawn supervisor appenderSpec
+      awaitReady appender 10000
+      sendCommand appender CtlStart
+      let mark = "delivery-start-" <> Text.pack (show shedBucket)
+      awaitMark first mark 20000
+      firstState <- atomically (progress first)
+      let inFlightEvent = case Map.lookup mark firstState.marks of
+            Just (Object fields) -> case KeyMap.lookup "eventId" fields of Just (String value) -> Just value; _ -> Nothing
+            _ -> Nothing
+      second <- start 1
+      allCovered <- waitUntil (covered <$> ownership) 120
+      snapshot <- ownership
+      let distribution = case snapshot of
+            Right rows -> Map.fromListWith (+) [(owner, 1 :: Int) | (_, Just owner, _) <- rows]
+            Left _ -> Map.empty
+          fair = (bucketCount == 1 || Map.size distribution >= 2) && all (<= (bucketCount + 1) `div` 2) (Map.elems distribution)
+          shedBucketMoved = case (beforeJoin, snapshot) of
+            (Right beforeRows, Right afterRows) ->
+              let beforeOwner = [owner | (bucket, Just owner, _) <- beforeRows, bucket == shedBucket]
+                  afterOwner = [owner | (bucket, Just owner, _) <- afterRows, bucket == shedBucket]
+               in length beforeOwner == 1 && length afterOwner == 1 && beforeOwner /= afterOwner
+            _ -> False
+      _ <- stopGracefully supervisor first 5000
+      appenderDone <- timeout 180000000 $ atomically do
+        state <- progress appender
+        case state.lastMessage of
+          Just (WrkDone Nothing) -> pure True
+          Just (WrkError _) -> pure False
+          _ -> retry
+      drained <- waitUntil ((== Right eventCount) <$> sinkCount) (max 160 (eventCount `div` 25))
+      _ <- stopGracefully supervisor second 5000
+      pure (joinedBeforeCoverage, shedBucketMoved, inFlightEvent, allCovered, fair, appenderDone == Just True, drained)
+    sealLedger check.ledger
+    ledgers <- discoverLedgers check.ledgerDirectory
+    effects <- foldFacts ledgers Map.empty \counts fact ->
+      pure if fact.kind == Effect then Map.insertWith (+) fact.key (1 :: Int) counts else counts
+    recordShardCells
+      check
+      [ ("second-joined-before-complete-coverage", joinedBeforeCoverage),
+        ("full-bucket-coverage", allCovered),
+        ("fair-share-cap", fair),
+        ("no-event-loss", appenderDone && drained),
+        ("shed-in-flight-event-redelivered", shedBucketMoved && maybe False (\key -> Map.findWithDefault 0 key effects >= 2) inFlightEvent)
+      ]
 
 coverageAfterMembershipChange :: Scenario
 coverageAfterMembershipChange =
