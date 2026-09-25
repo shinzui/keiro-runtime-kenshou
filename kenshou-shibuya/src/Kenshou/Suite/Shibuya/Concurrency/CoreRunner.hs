@@ -2,6 +2,7 @@ module Kenshou.Suite.Shibuya.Concurrency.CoreRunner (scenarios) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (async, cancel, mapConcurrently, waitCatch)
+import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 import Control.Concurrent.STM (TVar, atomically, check, newTVarIO, readTVar, writeTVar)
 import Control.Exception (SomeException, try)
 import Control.Exception qualified as Exception
@@ -36,7 +37,131 @@ import Streamly.Data.Stream qualified as Stream
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [haltWakesIdleIntake, leasedButUnfinalizedUpperBound, haltStrandsLeases, finalizationFailure, adapterShutdownFailure, blockingAdapterShutdown, forcedShutdownConserves]
+scenarios = [haltWakesIdleIntake, leasedButUnfinalizedUpperBound, haltStrandsLeases, finalizationFailure, stopAllOnFailure, adapterShutdownFailure, blockingAdapterShutdown, forcedShutdownConserves]
+
+stopAllOnFailure :: Scenario
+stopAllOnFailure =
+  Scenario
+    { id = either (error . Text.unpack) id (parseScenarioId "shibuya/core-runner/concurrency/stop-all-on-failure-delivers-once"),
+      revision = 1,
+      summary = "A source failure reaches the caller once and stops siblings only under StopAllOnFailure.",
+      tier = TierSmoke,
+      placement = PlaceEither,
+      knobs = [],
+      dimensions = noDimensions,
+      phases = zeroPhases,
+      requires = noEnvironment,
+      knownDefect = Nothing,
+      run = runStopAllOnFailure
+    }
+
+runStopAllOnFailure :: RunContext -> IO ScenarioReport
+runStopAllOnFailure context = do
+  (linked, noDuplicate, siblingStopped, siblingStarted) <- runStopAllSourceFault
+  ignoreFailures <- runSiblingCompletion IgnoreFailures True
+  finiteSource <- runSiblingCompletion StopAllOnFailure False
+  haltedSource <- runHaltSiblingCompletion
+  let failures =
+        ["source-failure-not-linked-once" | not linked]
+          <> ["source-failure-linked-more-than-once" | not noDuplicate]
+          <> ["failed-source-sibling-not-stopped" | not siblingStopped || not siblingStarted]
+          <> ["ignore-failures-stopped-sibling" | not ignoreFailures]
+          <> ["finite-source-stopped-sibling" | not finiteSource]
+          <> ["handler-halt-stopped-sibling" | not haltedSource]
+  putSummary context Verdicts "stop-all-on-failure" $
+    object
+      [ "linkedFailureDelivered" .= linked,
+        "noSecondLinkedFailure" .= noDuplicate,
+        "siblingStarted" .= siblingStarted,
+        "siblingStoppedBeforeExplicitStop" .= siblingStopped,
+        "ignoreFailuresSiblingCompleted" .= ignoreFailures,
+        "finiteSourceSiblingCompleted" .= finiteSource,
+        "haltedSourceSiblingCompleted" .= haltedSource
+      ]
+  pure $ if null failures then passed else failedWith failures (Text.intercalate "; " failures)
+
+runStopAllSourceFault :: IO (Bool, Bool, Bool, Bool)
+runStopAllSourceFault = do
+  failing <- newSyntheticBroker defaultSyntheticConfig {sourceFault = Just (1, "scripted source fault")}
+  sibling <- newSyntheticBroker defaultSyntheticConfig
+  _ <- publish failing Nothing "source-fault"
+  closeInput failing
+  reported <- newEmptyMVar
+  release <- newEmptyMVar
+  worker <- async $ runEff $ runTracingNoop $ do
+    let delayedAck _ = liftIO (threadDelay 100000) >> pure AckOk
+        processors =
+          [ (ProcessorId "failing-source", mkProcessor (syntheticAdapter failing) delayedAck),
+            (ProcessorId "idle-sibling", mkProcessor (syntheticAdapter sibling) (\_ -> pure AckOk))
+          ]
+    started <- runApp defaultAppConfig {strategy = StopAllOnFailure} processors
+    case started of
+      Left err -> error (show err)
+      Right handle -> withEffToIO (ConcUnlift Persistent Unlimited) $ \runInIO -> liftIO $ do
+        observed <- try @SomeException (runInIO (waitApp handle))
+        putMVar reported observed
+        takeMVar release
+        runInIO (stopApp handle)
+  observed <- timeout 3000000 (takeMVar reported)
+  before <- brokerStats sibling
+  threadDelay 100000
+  after <- brokerStats sibling
+  putMVar release ()
+  finished <- timeout 3000000 (waitCatch worker)
+  case finished of
+    Nothing -> cancel worker
+    Just _ -> pure ()
+  let linked = case observed of
+        Just (Left err) -> "ExceptionInLinkedThread" `Text.isInfixOf` Text.pack (show err)
+        _ -> False
+      noDuplicate = case finished of
+        Just (Right ()) -> True
+        _ -> False
+      started = before.idlePolls > 0
+      stopped = before.idlePolls == after.idlePolls
+  pure (linked, noDuplicate, stopped, started)
+
+runSiblingCompletion :: SupervisionStrategy -> Bool -> IO Bool
+runSiblingCompletion supervision injectFailure = do
+  sourceBroker <- newSyntheticBroker defaultSyntheticConfig {sourceFault = if injectFailure then Just (1, "ignored source fault") else Nothing}
+  sibling <- newSyntheticBroker defaultSyntheticConfig
+  _ <- publish sourceBroker Nothing "source"
+  closeInput sourceBroker
+  mapM_ (\number -> publish sibling Nothing (ByteString.pack (show number))) [1 .. 20 :: Int]
+  closeInput sibling
+  completed <- timeout 3000000 $ runEff $ runTracingNoop $ do
+    started <-
+      runApp
+        defaultAppConfig {strategy = supervision}
+        [ (ProcessorId "source", mkProcessor (syntheticAdapter sourceBroker) (\_ -> pure AckOk)),
+          (ProcessorId "sibling", mkProcessor (syntheticAdapter sibling) (\_ -> liftIO (threadDelay 1000) >> pure AckOk))
+        ]
+    case started of
+      Left err -> error (show err)
+      Right handle -> waitApp handle >> stopApp handle
+  stats <- brokerStats sibling
+  pure (completed /= Nothing && stats.finalizedOk == 20)
+
+runHaltSiblingCompletion :: IO Bool
+runHaltSiblingCompletion = do
+  sourceBroker <- newSyntheticBroker defaultSyntheticConfig
+  sibling <- newSyntheticBroker defaultSyntheticConfig
+  _ <- publish sourceBroker Nothing "halt"
+  closeInput sourceBroker
+  mapM_ (\number -> publish sibling Nothing (ByteString.pack (show number))) [1 .. 20 :: Int]
+  closeInput sibling
+  completed <- timeout 3000000 $ runEff $ runTracingNoop $ do
+    started <-
+      runApp
+        defaultAppConfig {strategy = StopAllOnFailure}
+        [ (ProcessorId "halter", mkProcessor (syntheticAdapter sourceBroker) (\_ -> pure (AckHalt (HaltFatal "normal halt")))),
+          (ProcessorId "sibling", mkProcessor (syntheticAdapter sibling) (\_ -> liftIO (threadDelay 1000) >> pure AckOk))
+        ]
+    case started of
+      Left err -> error (show err)
+      Right handle -> waitApp handle >> stopApp handle
+  stats <- brokerStats sibling
+  pure (completed /= Nothing && stats.finalizedOk == 20)
 
 finalizationFailure :: Scenario
 finalizationFailure =
