@@ -55,6 +55,9 @@ library
     streamly-core >=0.3 && <0.4,
     text >=2.1 && <2.2,
     time >=1.12 && <1.15,
+    wai,
+    wai-websockets,
+    warp,
     websockets,
 
 test-suite kenshou-shibuya-test

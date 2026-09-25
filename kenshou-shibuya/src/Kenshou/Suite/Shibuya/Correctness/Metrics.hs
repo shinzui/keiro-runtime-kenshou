@@ -2,6 +2,7 @@ module Kenshou.Suite.Shibuya.Correctness.Metrics (scenarios, readyFailures, live
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar, tryPutMVar)
+import Control.Concurrent.STM qualified as STM
 import Control.Exception (Exception, SomeException, bracket, finally, fromException, throwIO, try)
 import Control.Monad (when)
 import Data.Aeson (Value (..), decode, encode, object, (.=))
@@ -26,12 +27,16 @@ import Kenshou.Core.Scenario (CohortScope (..), KnownDefect (..), PackageConditi
 import Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter (BrokerStats (..), SyntheticBroker, SyntheticConfig (..), brokerStats, defaultSyntheticConfig, newSyntheticBroker, publish, syntheticAdapter)
 import Kenshou.Telemetry.Endpoint (reserveFreePort)
 import Network.HTTP.Client (Manager, defaultManagerSettings, httpLbs, newManager, parseRequest, responseBody, responseStatus)
-import Network.HTTP.Types.Status (statusCode)
+import Network.HTTP.Types.Status (status404, statusCode)
+import Network.Wai qualified as Wai
+import Network.Wai.Handler.Warp qualified as Warp
+import Network.Wai.Handler.WebSockets qualified as WaiWebSockets
 import Network.WebSockets qualified as WebSockets
 import Shibuya.App (Master, QueueProcessor (..), defaultAppConfig, getAppMaster, mkProcessor, runApp, stopApp, waitApp)
 import Shibuya.Core.Ack (AckDecision (..), RetryDelay (..))
 import Shibuya.Core.Metrics (AckDecisionMetric (..), ProcessorId (..), beginProcessing, finishProcessing, incrementReceived, newMetricsHandle, sampleMetrics)
 import Shibuya.Metrics.Server (MetricsServerConfig (..), defaultConfig, startMetricsServer, stopMetricsServer)
+import Shibuya.Metrics.WebSocket (WebSocketState (..), newWebSocketState, websocketApp)
 import Shibuya.Policy (Concurrency (..))
 import Shibuya.Telemetry.Effect (runTracingNoop)
 import System.Timeout (timeout)
@@ -578,7 +583,6 @@ instance Exception IntentionalPeerDrop
 
 websocketSlotFailures :: IO [Text]
 websocketSlotFailures = do
-  manager <- newManager defaultManagerSettings
   broker <- newSyntheticBroker defaultSyntheticConfig
   runEff $ runTracingNoop $ do
     result <- runApp defaultAppConfig [(ProcessorId "websocket-slots", mkProcessor (syntheticAdapter broker) (\_ -> pure AckOk))]
@@ -587,30 +591,46 @@ websocketSlotFailures = do
       Right handle -> do
         failures <- liftIO $ do
           let config = defaultConfig {wsMaxConnections = 8}
-          batches <- traverse (\mode -> withServer manager config (getAppMaster handle) (\port -> slotBatch port mode)) [CleanClose, DropAfterSnapshot, DropBeforeSnapshot]
+          batches <- traverse (\mode -> withSlotServer config (getAppMaster handle) (\port state -> slotBatch port state mode)) [CleanClose, DropAfterSnapshot, DropBeforeSnapshot]
           pure $ nub $ concat batches
         stopApp handle
         pure failures
 
-slotBatch :: Int -> SlotClose -> IO [Text]
-slotBatch port mode = do
+withSlotServer :: MetricsServerConfig -> Master -> (Int -> WebSocketState -> IO [Text]) -> IO [Text]
+withSlotServer config master action = do
+  state <- newWebSocketState config.wsMaxConnections
+  let quietSettings = Warp.setOnException (\_ _ -> pure ()) Warp.defaultSettings
+      app =
+        WaiWebSockets.websocketsOr
+          WebSockets.defaultConnectionOptions
+          (websocketApp config master state)
+          (\_ respond -> respond $ Wai.responseLBS status404 [] "not found")
+  Warp.withApplicationSettings quietSettings (pure app) (\port -> action port state)
+
+slotBatch :: Int -> WebSocketState -> SlotClose -> IO [Text]
+slotBatch port state mode = do
   control <- snapshotAccepted port
   if not control
     then pure ["websocket-slot-initial-control-" <> Text.pack (show mode)]
     else do
       churned <- churn (24 :: Int)
-      if not churned
-        then pure ["REV-9-F1"]
-        else do
-          threadDelay 50000
-          final <- snapshotAccepted port
-          pure $ check "REV-9-F1" final
+      released <- awaitSlotRelease state
+      final <- snapshotAccepted port
+      finalReleased <- awaitSlotRelease state
+      pure $ check "REV-9-F1" (churned && released && final && finalReleased)
   where
     churn 0 = pure True
     churn remaining = do
       closed <- closeOne port mode
       threadDelay 10000
       if closed then churn (remaining - 1) else pure False
+
+awaitSlotRelease :: WebSocketState -> IO Bool
+awaitSlotRelease state = do
+  released <- timeout 1000000 $ STM.atomically $ do
+    count <- STM.readTVar state.connectionCount
+    STM.check (count == 0)
+  pure $ released == Just ()
 
 snapshotAccepted :: Int -> IO Bool
 snapshotAccepted port = do
