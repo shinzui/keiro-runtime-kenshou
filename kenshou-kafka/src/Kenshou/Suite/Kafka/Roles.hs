@@ -21,7 +21,7 @@ import Kenshou.Core.Role (ControlMessage (..), RoleContext (..), RoleName, Worke
 import Shibuya.Adapter (Adapter (..))
 import Shibuya.Adapter.Kafka (defaultConfig, kafkaAdapter, kafkaAdapterWith, kafkaRebalanceHandler, newKafkaAdapterState)
 import Shibuya.App (ProcessorId (..), defaultAppConfig, mkProcessor, runApp, stopApp, waitApp)
-import Shibuya.Core.Ack (AckDecision (..), DeadLetterReason (..), HaltReason (..))
+import Shibuya.Core.Ack (AckDecision (..), DeadLetterReason (..), HaltReason (..), RetryDelay (..))
 import Shibuya.Core.Ingested (Message (..))
 import Shibuya.Core.Types (Cursor (..), Envelope (..))
 import Shibuya.Telemetry.Effect (runTracingNoop)
@@ -125,7 +125,9 @@ data CrashConsumerArgs = CrashConsumerArgs
     maxPollMillis :: Maybe Int,
     sessionMillis :: Maybe Int,
     serviceMillis :: Int,
-    installRebalanceHandler :: Bool
+    installRebalanceHandler :: Bool,
+    retryOffset :: Maybe Int,
+    retryDelayMillis :: Int
   }
 
 instance FromJSON CrashConsumerArgs where
@@ -145,6 +147,8 @@ instance FromJSON CrashConsumerArgs where
       <*> value .:? "sessionMillis"
       <*> (fromMaybe 0 <$> value .:? "serviceMillis")
       <*> (fromMaybe True <$> value .:? "installRebalanceHandler")
+      <*> value .:? "retryOffset"
+      <*> (fromMaybe 0 <$> value .:? "retryDelayMillis")
 
 runCrashConsumer :: RoleContext -> IO ()
 runCrashConsumer context = do
@@ -196,23 +200,30 @@ consumeCrash context args = do
       let handler Message {envelope = Envelope {payload, partition, cursor}} = do
             case (payload >>= readInt, partition >>= readTextInt, cursor) of
               (Just value, Just partitionNumber, Just (CursorInt offset)) -> do
-                if Just offset == args.haltOffset
+                if Just offset == args.retryOffset
                   then do
-                    liftIO $ context.send (WrkCustom "halted" (object ["value" .= value, "partition" .= partitionNumber, "offset" .= offset]))
-                    pure (AckHalt (HaltFatal "kenshou assignment hold"))
-                  else do
                     liftIO $ do
-                      if args.serviceMillis > 0 then threadDelay (args.serviceMillis * 1000) else pure ()
-                      if Just offset == args.blockOffset
-                        then do
-                          context.send (WrkCustom "entered-block" (object ["offset" .= offset]))
-                          threadDelay (args.blockMillis * 1000)
-                        else pure ()
                       at <- getCurrentTime
-                      context.send (WrkCustom "ok" (object ["value" .= value, "partition" .= partitionNumber, "offset" .= offset, "at" .= at]))
-                      handled <- atomicModifyIORef' count (\old -> let next = old + 1 in (next, next))
-                      if handled `mod` 10 == 0 then getCurrentTime >>= context.send . WrkProgress (fromIntegral handled) else pure ()
-                    pure AckOk
+                      context.send (WrkCustom "retry" (object ["value" .= value, "partition" .= partitionNumber, "offset" .= offset, "at" .= at]))
+                    pure (AckRetry (RetryDelay (fromIntegral args.retryDelayMillis / 1000)))
+                  else
+                    if Just offset == args.haltOffset
+                      then do
+                        liftIO $ context.send (WrkCustom "halted" (object ["value" .= value, "partition" .= partitionNumber, "offset" .= offset]))
+                        pure (AckHalt (HaltFatal "kenshou assignment hold"))
+                      else do
+                        liftIO $ do
+                          if args.serviceMillis > 0 then threadDelay (args.serviceMillis * 1000) else pure ()
+                          if Just offset == args.blockOffset
+                            then do
+                              context.send (WrkCustom "entered-block" (object ["offset" .= offset]))
+                              threadDelay (args.blockMillis * 1000)
+                            else pure ()
+                          at <- getCurrentTime
+                          context.send (WrkCustom "ok" (object ["value" .= value, "partition" .= partitionNumber, "offset" .= offset, "at" .= at]))
+                          handled <- atomicModifyIORef' count (\old -> let next = old + 1 in (next, next))
+                          if handled `mod` 10 == 0 then getCurrentTime >>= context.send . WrkProgress (fromIntegral handled) else pure ()
+                        pure AckOk
               _ -> pure (AckHalt (HaltFatal "invalid crash-consumer coordinate"))
       appResult <- runApp defaultAppConfig [(ProcessorId "crash-consumer", mkProcessor adapter handler)]
       case appResult of

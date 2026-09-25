@@ -52,6 +52,7 @@ library
     Kenshou.Suite.Kafka.Concurrency.HaltAssignment
     Kenshou.Suite.Kafka.Concurrency.NonSerial
     Kenshou.Suite.Kafka.Concurrency.Sigkill
+    Kenshou.Suite.Kafka.Concurrency.StaleBarrier
     Kenshou.Suite.Kafka.Concurrency.StaticMembership
     Kenshou.Suite.Kafka.Correctness.Ack
     Kenshou.Suite.Kafka.Correctness.Buffered

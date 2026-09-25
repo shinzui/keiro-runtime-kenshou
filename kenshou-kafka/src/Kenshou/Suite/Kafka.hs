@@ -9,6 +9,7 @@ import Kenshou.Suite.Kafka.Concurrency.GroupRebalance qualified as GroupRebalanc
 import Kenshou.Suite.Kafka.Concurrency.HaltAssignment qualified as HaltAssignment
 import Kenshou.Suite.Kafka.Concurrency.NonSerial qualified as NonSerial
 import Kenshou.Suite.Kafka.Concurrency.Sigkill qualified as Sigkill
+import Kenshou.Suite.Kafka.Concurrency.StaleBarrier qualified as StaleBarrier
 import Kenshou.Suite.Kafka.Concurrency.StaticMembership qualified as StaticMembership
 import Kenshou.Suite.Kafka.Correctness.Ack qualified as Ack
 import Kenshou.Suite.Kafka.Correctness.Buffered qualified as Buffered
@@ -24,4 +25,4 @@ import Kenshou.Suite.Kafka.Producer.Transactions qualified as Transactions
 import Kenshou.Suite.Kafka.Roles qualified as Roles
 
 bundle :: LayerBundle
-bundle = LayerBundle Kafka (Fixture.scenarios <> Ack.scenarios <> Buffered.scenarios <> DeadLetter.scenarios <> Halt.scenarios <> MultiTopic.scenarios <> Records.scenarios <> Retry.scenarios <> NonSerial.scenarios <> Sigkill.scenarios <> AutoOffsetStore.scenarios <> StaticMembership.scenarios <> Fencing.scenarios <> HaltAssignment.scenarios <> BrokerOutage.scenarios <> GroupRebalance.scenarios <> Producer.scenarios <> BatchFailure.scenarios <> Transactions.scenarios) Roles.roles
+bundle = LayerBundle Kafka (Fixture.scenarios <> Ack.scenarios <> Buffered.scenarios <> DeadLetter.scenarios <> Halt.scenarios <> MultiTopic.scenarios <> Records.scenarios <> Retry.scenarios <> NonSerial.scenarios <> Sigkill.scenarios <> AutoOffsetStore.scenarios <> StaticMembership.scenarios <> Fencing.scenarios <> HaltAssignment.scenarios <> BrokerOutage.scenarios <> GroupRebalance.scenarios <> StaleBarrier.scenarios <> Producer.scenarios <> BatchFailure.scenarios <> Transactions.scenarios) Roles.roles

@@ -180,6 +180,14 @@ surviving workers ending normally before stop. That scoped exit is tracked at
 Offset-order reversals in both runs and duplicates beyond the declared
 windows in one remain blocking, separately labeled results.
 
+`kafka/adapter/concurrency/stale-barrier-after-partition-roundtrip` keeps
+offset 50 pending on both partitions, moves one partition to a second member,
+then returns it and produces 100 new records there. With the adapter's
+rebalance callback installed, A handled all 100 new records at offsets
+300–399. With `kafka.rebalance-handler=absent`, the same live check failed
+only `roundtrip-new-records`: the stale barrier discarded the new records.
+This demonstrates why callers must install the callback.
+
 `kafka/keiro-records/correctness/roundtrip-through-broker` publishes 200
 Keiro integration events through the neutral record conversion and checks
 their decoded events, Kafka delivery references, all six required wire
