@@ -48,7 +48,7 @@ cabal run kenshou -- run kafka/adapter/concurrency/sigkill-redelivery-window --o
 ## Progress
 
 - [x] Milestone 1: private Redpanda fixture, two live fixture scenarios, CLI registration, layer guide, and ADR validated on Apple Container and Docker.
-- [ ] Milestone 2: the live AckOk, AckHalt, dead-letter, producer modes, and Keiro record-conversion checks pass; the two-topic partition-key and buffered-retry scenarios reproduce scoped, nonblocking counterexamples. The retry scenario's batch-size-one and early-exit controls pass. Rebalance and the remaining producer cases remain.
+- [ ] Milestone 2: the live AckOk, AckHalt, dead-letter, producer modes, and Keiro record-conversion checks pass; the two-topic partition-key and buffered-retry scenarios reproduce scoped, nonblocking counterexamples. The retry scenario's batch-size-one and early-exit controls pass. Rebalance and the remaining producer cases remain. Milestone 3's buffered-successor ordering check reproduces its scoped counterexample.
 - [ ] Deliver the disposable broker, Kafka adapter correctness and rebalance coverage, real crash/outage/model scenarios, benchmarks, soaks, and telemetry arms; verify the acceptance commands in Validation and Acceptance.
 
 ## Surprises & Discoveries
@@ -61,6 +61,7 @@ cabal run kenshou -- run kafka/adapter/concurrency/sigkill-redelivery-window --o
 - A new `produceMessageSync` call against the killed broker did not return promptly, even with `message.timeout.ms=1000`, because the pinned hw-kafka-client flush path waits for its outbound queue to drain. The restart fixture uses a five-second bounded `rpk topic produce` outage probe; all acknowledged data before and after the outage still goes through `produceMessageSync`.
 - Apple Container's bind-mount syntax rejected a single-file mount for a Redpanda server override. Mounting the generated configuration directory at `/etc/redpanda` passed a live run with `auto_create_topics_enabled=false`.
 - The released `shibuya-kafka-adapter` 0.9.0.1 returned `AckOk` for every one of 50 records after retrying offset 20, yet a live group remained at committed 21 against log end 50. Batch size 1 reached zero lag. The failure is tracked as `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-1` with a local finding in `docs/findings/`.
+- A second live run isolated the KFK-2 handler-order effect: offset 3 retried, offsets 4–9 returned `AckOk`, then offset 3 redelivered. The released adapter's serial runner therefore executed successors before the failed record completed. The owner report is `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-2`.
 
 
 ## Decision Log

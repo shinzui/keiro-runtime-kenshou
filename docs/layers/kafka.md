@@ -102,6 +102,12 @@ default return `AckDeadLetter`; the scenario checks every other ID, one
 warning per drop, zero lag, no redelivery, and no prefixed DLQ topic. The
 verdict summary records the actual drop count as `documentedLoss`.
 
+`kafka/adapter/concurrency/buffered-successors-run-before-retry` retries
+offset 3 of a single partition. On the released adapter, handlers for offsets
+4–9 succeed before offset 3 is redelivered. The scoped nonblocking finding is
+`mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-2`.
+The `kafka.batch-size=1` control passes.
+
 `kafka/keiro-records/correctness/roundtrip-through-broker` publishes 200
 Keiro integration events through the neutral record conversion and checks
 their decoded events, Kafka delivery references, all six required wire

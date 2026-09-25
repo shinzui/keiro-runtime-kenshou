@@ -57,7 +57,7 @@ scenarios =
               { reference = "mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-1",
                 summary = "A buffered retry can leave successful successors uncommitted until restart.",
                 expectedFailures = ["retry-final-offset-at-log-end"],
-                appliesTo = OnlyWhen (ResolvedFromHackage "shibuya-kafka-adapter" :| [])
+                appliesTo = OnlyWhen (ResolvedFromHackage "shibuya-kafka-adapter" :| [VersionBelow "shibuya-kafka-adapter" "0.9.0.2"])
               },
         run = runRetry
       }
