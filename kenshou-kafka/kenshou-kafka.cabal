@@ -45,6 +45,7 @@ library
     Kenshou.Env.Kafka.Spec
     Kenshou.Env.Kafka.Types
     Kenshou.Suite.Kafka
+    Kenshou.Suite.Kafka.Benchmark.ProducerModes
     Kenshou.Suite.Kafka.Concurrency.AutoOffsetStore
     Kenshou.Suite.Kafka.Concurrency.BarrierOverwrite
     Kenshou.Suite.Kafka.Concurrency.BrokerOutage
@@ -87,6 +88,7 @@ library
     keiro-core,
     kenshou-check,
     kenshou-core,
+    kenshou-measure,
     kiroku-store,
     network,
     process,

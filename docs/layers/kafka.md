@@ -146,6 +146,22 @@ redelivers 4–9 and the group commits 10 without any successful decision for
 offset 3. The known, released-cohort failure is
 `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-5`.
 
+`kafka/producer/benchmark/produce-modes` measures four modes against a private
+broker with `kafka.produce-mode`, `kafka.messages`, `kafka.payload-bytes`,
+`kafka.prop.acks`, `kafka.prop.linger.ms`, and
+`kafka.prop.enable.idempotence`. It checks the entire produced ID set through
+an independent consumer. Sync and callback histograms measure broker
+acknowledgements; asynchronous and batch-loop histograms measure enqueue and
+flush, because those APIs do not provide per-record delivery facts. A local
+100-record exploratory run gave 479 records/s and 0.57 ms p50, 6.48 ms p99
+acknowledgement latency for sync. Async-flush gave 726 records/s, batch-loop
+564 records/s, and callback 687 records/s; the callback acknowledgement p50
+was 10.18 ms and p99 10.48 ms. These four single runs are exploratory, not
+cell throughput claims. Their IDs are `01a0d663-575e-769b-91ec-44cdc38e08dc`,
+`01a0d663-97f1-7506-87f3-c58c0b605ba8`,
+`01a0d663-c641-746a-b976-992fe7baf749`, and
+`01a0d663-f453-73ca-b38b-f0690d7b6724` respectively.
+
 `kafka/adapter/concurrency/sigkill-redelivery-window` runs the adapter in a
 worker process, kills it three times by default, records the consumer group's
 committed offsets before each restart, and compares handler facts across
