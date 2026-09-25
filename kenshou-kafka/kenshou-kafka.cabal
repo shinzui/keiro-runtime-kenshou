@@ -47,6 +47,7 @@ library
     Kenshou.Suite.Kafka
     Kenshou.Suite.Kafka.Concurrency.AutoOffsetStore
     Kenshou.Suite.Kafka.Concurrency.Fencing
+    Kenshou.Suite.Kafka.Concurrency.HaltAssignment
     Kenshou.Suite.Kafka.Concurrency.NonSerial
     Kenshou.Suite.Kafka.Concurrency.Sigkill
     Kenshou.Suite.Kafka.Concurrency.StaticMembership

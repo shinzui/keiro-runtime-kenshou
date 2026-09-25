@@ -153,6 +153,14 @@ without a fatal error on Hackage `hw-kafka-client` 5.3.0. That scoped,
 nonblocking result tracks
 `mori://shinzui/keiro/masterplans/23-make-the-kafka-consumer-streaming-stack-surface-fatal-errors-and-close-deterministically`.
 
+`kafka/adapter/concurrency/halt-holds-assignment-past-max-poll-interval`
+keeps a consumer open after `AckHalt` at offset 10 and adds a second member.
+The first member retained the partition for 26 seconds, beyond the configured
+poll and session timeout window, with 90 records of lag. Its group commit
+remained at 10; after the first member was killed, the second handled offset
+10 and drained the partition. The assignment claim is the nonblocking CAP-2
+limitation at `mori://shinzui/shibuya-kafka-adapter/okf/capabilities/concepts/CAP-2`.
+
 `kafka/keiro-records/correctness/roundtrip-through-broker` publishes 200
 Keiro integration events through the neutral record conversion and checks
 their decoded events, Kafka delivery references, all six required wire

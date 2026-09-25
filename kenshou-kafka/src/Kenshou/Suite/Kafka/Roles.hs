@@ -119,7 +119,11 @@ data CrashConsumerArgs = CrashConsumerArgs
     autoOffsetStore :: Bool,
     blockOffset :: Maybe Int,
     blockMillis :: Int,
-    instanceId :: Maybe Text
+    instanceId :: Maybe Text,
+    haltOffset :: Maybe Int,
+    holdAfterHalt :: Bool,
+    maxPollMillis :: Maybe Int,
+    sessionMillis :: Maybe Int
   }
 
 instance FromJSON CrashConsumerArgs where
@@ -133,6 +137,10 @@ instance FromJSON CrashConsumerArgs where
       <*> value .:? "blockOffset"
       <*> (fromMaybe 0 <$> value .:? "blockMillis")
       <*> value .:? "instanceId"
+      <*> value .:? "haltOffset"
+      <*> (fromMaybe False <$> value .:? "holdAfterHalt")
+      <*> value .:? "maxPollMillis"
+      <*> value .:? "sessionMillis"
 
 runCrashConsumer :: RoleContext -> IO ()
 runCrashConsumer context = do
@@ -161,9 +169,10 @@ consumeCrash context args = do
           <> C.groupId (ConsumerGroupId args.group)
           <> (if args.autoOffsetStore then mempty else C.noAutoOffsetStore)
           <> C.extraProp "auto.commit.interval.ms" (Text.pack (show args.autoCommitMillis))
-          <> C.extraProp "session.timeout.ms" "6000"
+          <> C.extraProp "session.timeout.ms" (Text.pack (show (fromMaybe 6000 args.sessionMillis)))
           <> C.extraProp "heartbeat.interval.ms" "2000"
           <> maybe mempty (C.extraProp "group.instance.id") args.instanceId
+          <> maybe mempty (C.extraProp "max.poll.interval.ms" . Text.pack . show) args.maxPollMillis
       subscription = C.topics [topic] <> C.offsetReset C.Earliest
   outcome <- runEff . runError @KafkaError . runTracingNoop $
     C.runKafkaConsumer props subscription $ do
@@ -171,22 +180,30 @@ consumeCrash context args = do
       let handler Message {envelope = Envelope {payload, partition, cursor}} = do
             case (payload >>= readInt, partition >>= readTextInt, cursor) of
               (Just value, Just partitionNumber, Just (CursorInt offset)) -> do
-                liftIO $ do
-                  if Just offset == args.blockOffset
-                    then do
-                      context.send (WrkCustom "entered-block" (object ["offset" .= offset]))
-                      threadDelay (args.blockMillis * 1000)
-                    else pure ()
-                  at <- getCurrentTime
-                  context.send (WrkCustom "ok" (object ["value" .= value, "partition" .= partitionNumber, "offset" .= offset, "at" .= at]))
-                  handled <- atomicModifyIORef' count (\old -> let next = old + 1 in (next, next))
-                  if handled `mod` 10 == 0 then getCurrentTime >>= context.send . WrkProgress (fromIntegral handled) else pure ()
-                pure AckOk
+                if Just offset == args.haltOffset
+                  then do
+                    liftIO $ context.send (WrkCustom "halted" (object ["value" .= value, "partition" .= partitionNumber, "offset" .= offset]))
+                    pure (AckHalt (HaltFatal "kenshou assignment hold"))
+                  else do
+                    liftIO $ do
+                      if Just offset == args.blockOffset
+                        then do
+                          context.send (WrkCustom "entered-block" (object ["offset" .= offset]))
+                          threadDelay (args.blockMillis * 1000)
+                        else pure ()
+                      at <- getCurrentTime
+                      context.send (WrkCustom "ok" (object ["value" .= value, "partition" .= partitionNumber, "offset" .= offset, "at" .= at]))
+                      handled <- atomicModifyIORef' count (\old -> let next = old + 1 in (next, next))
+                      if handled `mod` 10 == 0 then getCurrentTime >>= context.send . WrkProgress (fromIntegral handled) else pure ()
+                    pure AckOk
               _ -> pure (AckHalt (HaltFatal "invalid crash-consumer coordinate"))
       appResult <- runApp defaultAppConfig [(ProcessorId "crash-consumer", mkProcessor adapter handler)]
       case appResult of
         Left problem -> liftIO $ ioError (userError (show problem))
-        Right handle -> waitApp handle >> stopApp handle
+        Right handle -> do
+          waitApp handle
+          if args.holdAfterHalt then liftIO (threadDelay 120000000) else pure ()
+          stopApp handle
   case outcome of
     Left problem -> context.send (WrkError (Text.pack (show problem)))
     Right () -> pure ()
