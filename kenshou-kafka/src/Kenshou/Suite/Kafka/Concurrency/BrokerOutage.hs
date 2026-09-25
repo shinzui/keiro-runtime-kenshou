@@ -18,8 +18,9 @@ import Data.Time (UTCTime, addUTCTime, getCurrentTime)
 import Effectful (liftIO, runEff)
 import Effectful.Error.Static (runError)
 import Kafka.Consumer.Types (ConsumerGroupId (..))
+import Kafka.Effectful.Consumer qualified as C
 import Kafka.Effectful.Producer qualified as P
-import Kafka.Types (BrokerAddress (..), KafkaError, TopicName (..))
+import Kafka.Types (BrokerAddress (..), KafkaError, Timeout (..), TopicName (..))
 import Kenshou.Check.Fault.Network (ProxyMode (..), resetConnections, setProxyMode)
 import Kenshou.Check.Process (Child, Supervisor, awaitReady, readChildMessages, roleProcess, sendCommand, spawn, stopGracefully, withSupervisor)
 import Kenshou.Check.Scenario (withCheck)
@@ -79,7 +80,7 @@ runBrokerOutage context = do
         outageMode = knobText context.knobs (key "kafka.outage-mode")
         group = groupName env "broker-outage"
     [topic] <- createTopics env [TopicSpec "broker-outage" 4 mempty]
-    (acked, deliveryFailures, facts, recoveryFacts, workerErrors, outageStart, outageEnd, reachedEnd, recoveredAfterRestart) <- withCheck context \check -> withSupervisor check \supervisor -> do
+    (acked, deliveryFailures, facts, recoveryFacts, brokerValues, workerErrors, outageStart, outageEnd, reachedEnd, recoveredAfterRestart) <- withCheck context \check -> withSupervisor check \supervisor -> do
       let args = object ["brokers" .= fmap unBrokerAddress (firstBrokers env), "topic" .= unTopicName topic, "group" .= unConsumerGroupId group, "autoCommitMillis" .= (1000 :: Int), "serviceMillis" .= (1 :: Int)]
       firstSpec <- roleProcess check "kafka/crash-consumer" 0 args
       secondSpec <- roleProcess check "kafka/crash-consumer" 1 args
@@ -114,6 +115,7 @@ runBrokerOutage context = do
       stopIfAlive supervisor second
       firstMessages <- readChildMessages first
       secondMessages <- readChildMessages second
+      brokerValues <- readBackBroker env topic messages
       let handled = okFacts (firstMessages <> secondMessages)
           errors = [message | WrkError message <- firstMessages <> secondMessages]
           reached = either (const False) (const True) groupResult
@@ -135,7 +137,7 @@ runBrokerOutage context = do
             firstControl <- readChildMessages recoveryFirst
             secondControl <- readChildMessages recoverySecond
             pure (okFacts (firstControl <> secondControl), either (const False) (const True) controlResult)
-      pure (acknowledged, failedReports, handled, controlFacts, errors, outageStart, outageEnd, reached, recovered)
+      pure (acknowledged, failedReports, handled, controlFacts, brokerValues, errors, outageStart, outageEnd, reached, recovered)
     _ <- deleteRunGroups env
     _ <- deleteRunTopics env
     let acknowledged = Set.fromList acked
@@ -143,6 +145,7 @@ runBrokerOutage context = do
         missing = Set.toAscList (Set.difference acknowledged handled)
         handledAfterRestart = Set.union handled (Set.fromList (fmap (.value) recoveryFacts))
         missingAfterRestart = Set.toAscList (Set.difference acknowledged handledAfterRestart)
+        missingOnBroker = Set.toAscList (Set.difference acknowledged brokerValues)
         byId = Map.fromListWith (<>) [(fact.value, [fact]) | fact <- facts]
         afterWindow = addUTCTime 1 outageEnd
         lateDuplicates =
@@ -154,12 +157,14 @@ runBrokerOutage context = do
           ]
         failures =
           ["outage-acknowledged-traffic" | length acked < 1000]
+            <> ["outage-callback-duplicate" | Set.size acknowledged /= length acked]
             <> ["outage-acked-no-loss" | not (null missing)]
+            <> ["outage-broker-ack-loss" | not (null missingOnBroker)]
             <> ["outage-consumers-resumed" | not reachedEnd]
             <> ["outage-duplicate-window" | not (null lateDuplicates)]
             <> ["outage-adapter-exit" | not (null workerErrors)]
-            <> ["outage-restart-control-no-loss" | not (null recoveryFacts) && (not recoveredAfterRestart || not (null missingAfterRestart))]
-    putSummary context Verdicts "brokerOutage" (object ["mode" .= outageMode, "acknowledged" .= length acked, "deliveryFailures" .= deliveryFailures, "handled" .= length facts, "missing" .= take 20 missing, "recoveryControlHandled" .= length recoveryFacts, "missingAfterRestart" .= take 20 missingAfterRestart, "recoveredAfterRestart" .= recoveredAfterRestart, "lateDuplicates" .= take 20 lateDuplicates, "consumerErrors" .= workerErrors, "zeroLag" .= reachedEnd])
+            <> ["outage-restart-control-no-loss" | not (null recoveryFacts) && (not recoveredAfterRestart || not (null (filter (`Set.member` brokerValues) missingAfterRestart)))]
+    putSummary context Verdicts "brokerOutage" (object ["mode" .= outageMode, "acknowledged" .= length acked, "uniqueAcknowledged" .= Set.size acknowledged, "deliveryFailures" .= deliveryFailures, "handled" .= length facts, "missing" .= take 20 missing, "brokerAvailable" .= Set.size brokerValues, "missingOnBroker" .= take 20 missingOnBroker, "recoveryControlHandled" .= length recoveryFacts, "missingAfterRestart" .= take 20 missingAfterRestart, "recoveredAfterRestart" .= recoveredAfterRestart, "lateDuplicates" .= take 20 lateDuplicates, "consumerErrors" .= workerErrors, "zeroLag" .= reachedEnd])
     pure $
       if null failures
         then passed
@@ -175,6 +180,20 @@ produceOpenLoop env topic count reports = do
         _ <- P.produceMessage' record (\report -> atomicModifyIORef' reports (\old -> (report : old, ())))
         liftIO $ threadDelay 2000
       P.flushProducer
+  either (ioError . userError . show) pure result
+
+readBackBroker :: KafkaEnv -> TopicName -> Int -> IO (Set.Set Int)
+readBackBroker env topic expected = do
+  let props = C.brokersList (firstBrokers env) <> C.groupId (groupName env "outage-audit") <> C.noAutoOffsetStore
+      subscription = C.topics [topic] <> C.offsetReset C.Earliest
+      loop idle values
+        | Set.size values >= expected || idle >= 10 = pure values
+        | otherwise = do
+            candidate <- C.pollMessage (Timeout 500)
+            case candidate >>= (\row -> C.crValue row >>= readInt) of
+              Nothing -> loop (idle + 1) values
+              Just value -> loop 0 (Set.insert value values)
+  result <- runEff . runError @KafkaError $ C.runKafkaConsumer props subscription (loop (0 :: Int) Set.empty)
   either (ioError . userError . show) pure result
 
 injectOutage :: KafkaEnv -> Text -> IO ()

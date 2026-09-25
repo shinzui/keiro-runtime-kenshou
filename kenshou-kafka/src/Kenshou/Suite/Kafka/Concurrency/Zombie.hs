@@ -134,7 +134,10 @@ runZombie context = do
         regressions = [partition | (partition, values) <- Map.toList committedSeries, not (nondecreasing values)]
         beforeCommit = Map.fromList [(partition, committed) | item <- committedAtBlackhole.offsets, let PartitionId partition = item.partition, Just committed <- [item.committed]]
         uncommittedA = length [() | fact <- aFacts, fact.at <= blackholedAt, fromIntegral fact.offset >= Map.findWithDefault 0 fact.partition beforeCommit]
-        duplicated = sum [count - 1 | count <- Map.elems (Map.fromListWith (+) [((fact.partition, fact.offset), 1 :: Int) | fact <- allFacts]), count > 1]
+        byOffset = Map.fromListWith (<>) [((fact.partition, fact.offset), [member]) | (member, facts) <- [(0 :: Int, aFacts), (1, bFacts)], fact <- facts]
+        proxyDuplicates = sum [a - if b == 0 then 1 else 0 | members <- Map.elems byOffset, let a = length (filter (== 0) members), let b = length (filter (== 1) members), a > 0]
+        survivorReplays = sum [max 0 (length (filter (== 1) members) - 1) | members <- Map.elems byOffset]
+        duplicated = proxyDuplicates + survivorReplays
         duplicateBound = uncommittedA + 100 * length initialA
         errors = [problem | WrkError problem <- aRows <> bRows]
         (zeroLag, lastSnapshot) = case reachedEnd of Left item -> (False, item); Right item -> (True, item)
@@ -143,11 +146,11 @@ runZombie context = do
             <> ["zombie-no-loss" | not (null missing)]
             <> ["zombie-takeover" | not takenOver]
             <> ["zombie-commits-monotone" | not (null regressions)]
-            <> ["zombie-duplicate-proxy-bound" | duplicated > duplicateBound]
+            <> ["zombie-duplicate-proxy-bound" | proxyDuplicates > duplicateBound]
             <> ["zombie-zero-lag" | not zeroLag]
             <> ["zombie-consumer-exit" | not (null errors)]
-    putSummary context Verdicts "zombie" (object ["acknowledged" .= Set.size ackedIds, "handled" .= length allFacts, "missing" .= take 20 missing, "initialAPartitions" .= initialA, "bTookOver" .= takenOver, "commitRegressions" .= regressions, "duplicateCount" .= duplicated, "duplicateBoundEstimate" .= duplicateBound, "duplicateBoundBasis" .= ("A handler facts above the sampled commit boundary plus 100 polled records per initial A partition; exact adapter buffer occupancy is not exposed" :: Text), "consumerErrors" .= errors, "blackholedAt" .= blackholedAt, "healedAt" .= healedAt, "zeroLag" .= zeroLag])
-    pure $ if null failures then passed else failedWith failures ("missing=" <> Text.pack (show (take 20 missing)) <> " takeover=" <> Text.pack (show takenOver) <> " regressions=" <> Text.pack (show regressions) <> " duplicate=" <> Text.pack (show duplicated) <> "/" <> Text.pack (show duplicateBound) <> " group=" <> Text.pack (show lastSnapshot))
+    putSummary context Verdicts "zombie" (object ["acknowledged" .= Set.size ackedIds, "handled" .= length allFacts, "missing" .= take 20 missing, "initialAPartitions" .= initialA, "bTookOver" .= takenOver, "commitRegressions" .= regressions, "duplicateCount" .= duplicated, "proxyDuplicateCount" .= proxyDuplicates, "survivorReplayCount" .= survivorReplays, "duplicateBoundEstimate" .= duplicateBound, "duplicateBoundBasis" .= ("A handler facts above the sampled commit boundary plus 100 polled records per initial A partition; exact adapter buffer occupancy is not exposed. The bound applies to repeats involving A; B-only replays after reassignment are reported separately." :: Text), "consumerErrors" .= errors, "blackholedAt" .= blackholedAt, "healedAt" .= healedAt, "zeroLag" .= zeroLag])
+    pure $ if null failures then passed else failedWith failures ("missing=" <> Text.pack (show (take 20 missing)) <> " takeover=" <> Text.pack (show takenOver) <> " regressions=" <> Text.pack (show regressions) <> " proxyDuplicates=" <> Text.pack (show proxyDuplicates) <> "/" <> Text.pack (show duplicateBound) <> " survivorReplays=" <> Text.pack (show survivorReplays) <> " group=" <> Text.pack (show lastSnapshot))
 
 produceOpenLoop :: KafkaEnv -> TopicName -> Int -> IORef [P.DeliveryReport] -> IO ()
 produceOpenLoop env topic count reports = do

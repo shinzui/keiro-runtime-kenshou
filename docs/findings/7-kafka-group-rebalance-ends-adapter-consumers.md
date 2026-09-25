@@ -23,7 +23,11 @@ the schedule.
 
 The scenario also recorded within-assignment offset reversals in both runs,
 and duplicate delivery beyond the declared membership windows in the second.
-Those separate checks remain blocking until isolated. The BUG-4 known-defect
+Later runs with committed-offset boundary sampling and corrected window
+classification cleared the duplicate label while still reproducing the
+ordering failure. The ordering issue is now filed separately as
+`mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-6`.
+The BUG-4 known-defect
 scope covers only the unexpected worker exit and its immediate no-loss and
 lag consequences on Hackage adapter 0.9.0.1. Versions above 0.9.0.1 are not
 verified here.

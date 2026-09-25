@@ -1,0 +1,16 @@
+{
+  "schema": "kenshou.comparison-policy/v1",
+  "name": "kafka-local-exploratory",
+  "minimumPairs": 3,
+  "confidenceLevel": 0.95,
+  "bootstrapIterations": 10000,
+  "resamplingSeed": 20260925,
+  "requireInterleaving": false,
+  "requireGrade": "exploratory",
+  "maxCiRelativeWidth": 10,
+  "maxCheckpointAsymmetry": 1,
+  "metrics": [
+    {"match": "op.intended-to-poll.latency.p50", "direction": "lower-is-better", "relativeLimit": 0.2, "absoluteFloor": 1000000},
+    {"match": "op.intended-to-poll.latency.p99", "direction": "lower-is-better", "relativeLimit": 0.2, "absoluteFloor": 1000000}
+  ]
+}

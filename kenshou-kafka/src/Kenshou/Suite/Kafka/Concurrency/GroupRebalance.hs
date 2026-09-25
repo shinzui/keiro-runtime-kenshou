@@ -2,6 +2,7 @@ module Kenshou.Suite.Kafka.Concurrency.GroupRebalance (scenarios) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (async, wait)
+import Control.Exception (IOException, throwIO, try)
 import Control.Monad (forM, forM_)
 import Data.Aeson (FromJSON (..), object, withObject, (.:), (.=))
 import Data.Aeson qualified as Aeson
@@ -20,7 +21,7 @@ import Effectful (liftIO, runEff)
 import Effectful.Error.Static (runError)
 import Kafka.Consumer.Types (ConsumerGroupId (..))
 import Kafka.Effectful.Producer qualified as P
-import Kafka.Types (BrokerAddress (..), KafkaError, TopicName (..))
+import Kafka.Types (BrokerAddress (..), KafkaError, PartitionId (..), TopicName (..))
 import Kenshou.Check.Process (Child, Supervisor, awaitReady, killChild, readChildMessages, restartChild, roleProcess, sendCommand, spawn, stopGracefully, withSupervisor)
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
@@ -86,7 +87,7 @@ runGroupRebalance context = do
         drainSeconds = max 90 (2 * messages * serviceMillis `div` (max 1 consumers * 1000))
         group = groupName env "group-rebalance"
     [topic] <- createTopics env [TopicSpec "group-rebalance" partitions mempty]
-    (acked, reports, timeline, snapshots) <- withCheck context \check -> withSupervisor check \supervisor -> do
+    (acked, reports, timeline, boundaries, targetExitBeforeKill, snapshots) <- withCheck context \check -> withSupervisor check \supervisor -> do
       let args = object ["brokers" .= fmap unBrokerAddress (firstBrokers env), "topic" .= unTopicName topic, "group" .= unConsumerGroupId group, "autoCommitMillis" .= (1000 :: Int), "serviceMillis" .= serviceMillis]
           startMember index = do
             memberSpec <- roleProcess check "kafka/crash-consumer" index args
@@ -98,16 +99,31 @@ runGroupRebalance context = do
       deliveryReports <- newIORef []
       producer <- async (produceOpenLoop env topic messages deliveryReports)
       threadDelay (interval * 1000000)
+      joinedBoundary <- describeGroup env group
       joinedAt <- getCurrentTime
       fourth <- startMember consumers
       threadDelay (interval * 1000000)
+      leftBoundary <- describeGroup env group
       leftAt <- getCurrentTime
       first <- case initial of member : _ -> pure member; [] -> ioError (userError "rebalance requires initial members")
-      _ <- stopGracefully supervisor first 10000
+      stopIfAlive supervisor first
       threadDelay (interval * 1000000)
+      killedBoundary <- describeGroup env group
       killedAt <- getCurrentTime
-      killChild supervisor (initial !! 1)
+      let target = initial !! 1
+      targetRows <- readChildMessages target
+      targetExitBeforeKill <-
+        if any ended targetRows
+          then pure True
+          else do
+            attempted <- try @IOException (killChild supervisor target)
+            case attempted of
+              Right () -> pure False
+              Left problem -> do
+                latest <- readChildMessages target
+                if any ended latest then pure True else throwIO problem
       threadDelay (interval * 1000000)
+      restartedBoundary <- describeGroup env group
       restartedAt <- getCurrentTime
       replacement <- restartChild supervisor (initial !! 1)
       sendCommand replacement CtlStart
@@ -118,7 +134,7 @@ runGroupRebalance context = do
         rows <- readChildMessages member
         pure (index, rows)
       delivered <- reverse <$> readIORef deliveryReports
-      pure (delivered, workerMessages, [joinedAt, leftAt, killedAt, restartedAt], result)
+      pure (delivered, workerMessages, [joinedAt, leftAt, killedAt, restartedAt], zip [joinedAt, leftAt, killedAt, restartedAt] [joinedBoundary, leftBoundary, killedBoundary, restartedBoundary], targetExitBeforeKill, result)
     _ <- deleteRunGroups env
     _ <- deleteRunTopics env
     let ackedIds = Set.fromList [value | P.DeliverySuccess sent _ <- acked, Just value <- [P.prValue sent >>= readInt]]
@@ -129,7 +145,7 @@ runGroupRebalance context = do
         windows = [(addUTCTime (-16) instant, addUTCTime 16 instant) | instant <- timeline]
         withinWindow instant = any (\(start, end) -> instant >= start && instant <= end) windows
         byId = Map.fromListWith (<>) [(fact.value, [fact]) | (_, fact) <- facts]
-        duplicatesOutside = [value | (value, occurrences) <- Map.toList byId, length occurrences > 1, fact <- drop 1 (sortOn (.at) occurrences), not (withinWindow fact.at)]
+        duplicatesBeyondCommit = [value | (value, occurrences) <- Map.toList byId, (previous, duplicate) <- consecutive (sortOn (.at) occurrences), not (withinWindow duplicate.at || replayAllowed boundaries previous duplicate)]
         assignments = Map.fromList [(member, rebalanceFacts rows) | (member, rows) <- reports]
         orderedViolations =
           [ (member, partition, period)
@@ -139,8 +155,8 @@ runGroupRebalance context = do
             let assignmentTimes = [event.at | event <- Map.findWithDefault [] member assignments, event.kind == "assign", partition `elem` event.partitions],
             (period, start) <- zip [0 :: Int ..] assignmentTimes,
             let end = case drop (period + 1) assignmentTimes of next : _ -> Just next; _ -> Nothing,
-            let offsets = [fact.offset | fact <- sortOn (.at) memberFacts, fact.partition == partition, fact.at >= start, maybe True (fact.at <) end],
-            not (strictlyIncreasing offsets)
+            let periodFacts = [fact | fact <- sortOn (.at) memberFacts, fact.partition == partition, fact.at >= start, maybe True (fact.at <) end],
+            any (\(previous, current) -> current.offset <= previous.offset && not (replayAllowed boundaries previous current)) (consecutive periodFacts)
           ]
         ownership = Map.fromListWith Set.union [((fact.partition, floor (utcTimeToPOSIXSeconds fact.at) :: Integer), Set.singleton member) | (member, fact) <- facts, not (withinWindow fact.at)]
         overlappingOwners = [(partition, second, Set.toAscList owners) | ((partition, second), owners) <- Map.toList ownership, Set.size owners > 1]
@@ -150,11 +166,11 @@ runGroupRebalance context = do
           ["rebalance-ack-count" | Set.size ackedIds /= messages || deliveryFailures > 0]
             <> ["rebalance-no-loss" | not (null missing)]
             <> ["rebalance-zero-lag" | not zeroLag]
-            <> ["rebalance-duplicate-window" | not (null duplicatesOutside)]
+            <> ["rebalance-duplicate-beyond-commit" | not (null duplicatesBeyondCommit)]
             <> ["rebalance-assignment-order" | not (null orderedViolations)]
             <> ["rebalance-exclusive-owner" | not (null overlappingOwners)]
-            <> ["rebalance-survivor-exit" | not (null survivorErrors)]
-    putSummary context Verdicts "groupRebalance" (object ["acknowledged" .= Set.size ackedIds, "deliveryFailures" .= deliveryFailures, "handled" .= length facts, "missing" .= take 20 missing, "duplicateOutsideWindows" .= take 20 duplicatesOutside, "assignmentOrderViolations" .= take 20 orderedViolations, "overlappingOwners" .= take 20 overlappingOwners, "survivorErrors" .= survivorErrors, "membershipEvents" .= timeline, "zeroLag" .= zeroLag])
+            <> ["rebalance-survivor-exit" | targetExitBeforeKill || not (null survivorErrors)]
+    putSummary context Verdicts "groupRebalance" (object ["acknowledged" .= Set.size ackedIds, "deliveryFailures" .= deliveryFailures, "handled" .= length facts, "missing" .= take 20 missing, "duplicateBeyondCommitBoundary" .= take 20 duplicatesBeyondCommit, "assignmentOrderViolations" .= take 20 orderedViolations, "overlappingOwners" .= take 20 overlappingOwners, "survivorErrors" .= survivorErrors, "targetExitBeforeKill" .= targetExitBeforeKill, "membershipEvents" .= timeline, "commitBoundaries" .= [object ["at" .= at, "offsets" .= [object ["partition" .= offset.partition.unPartitionId, "committed" .= offset.committed] | offset <- boundarySnapshot.offsets]] | (at, boundarySnapshot) <- boundaries], "zeroLag" .= zeroLag])
     pure $ if null failures then passed else failedWith failures ("missing=" <> Text.pack (show (take 20 missing)) <> " order=" <> Text.pack (show (take 20 orderedViolations)) <> " overlap=" <> Text.pack (show (take 20 overlappingOwners)) <> " group=" <> Text.pack (show snapshot))
 
 produceOpenLoop :: KafkaEnv -> TopicName -> Int -> IORef [P.DeliveryReport] -> IO ()
@@ -179,8 +195,15 @@ rebalanceFacts = mapMaybe \case
   WrkCustom "rebalance" value -> case Aeson.fromJSON value of Aeson.Success fact -> Just fact; _ -> Nothing
   _ -> Nothing
 
-strictlyIncreasing :: [Int] -> Bool
-strictlyIncreasing values = and (zipWith (<) values (drop 1 values))
+consecutive :: [a] -> [(a, a)]
+consecutive values = zip values (drop 1 values)
+
+replayAllowed :: [(UTCTime, GroupSnapshot)] -> OkFact -> OkFact -> Bool
+replayAllowed boundaries previous current = case reverse [(at, snapshot) | (at, snapshot) <- boundaries, at > previous.at, at <= current.at] of
+  (_, snapshot) : _ -> case [offset | offset <- snapshot.offsets, offset.partition.unPartitionId == current.partition] of
+    offset : _ -> maybe True (fromIntegral current.offset >=) offset.committed
+    [] -> False
+  [] -> False
 
 readInt :: ByteString.ByteString -> Maybe Int
 readInt bytes = case reads (ByteString.unpack bytes) of [(value, "")] -> Just value; _ -> Nothing

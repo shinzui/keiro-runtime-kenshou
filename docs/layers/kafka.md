@@ -19,6 +19,12 @@ the run's topics and groups. The restart case acknowledges 500 records, kills
 the container, attempts a bounded write during the outage, restarts the same
 container and data, then checks that 1,000 acknowledged records remain. Broker
 logs are saved as `logs/kafka-broker.log` in the run directory.
+The private fixture creates topics with `write.caching=false` unless a
+scenario explicitly overrides that setting. Its disposable Redpanda instance
+reported `write_caching_default:true`, which can acknowledge before disk
+write. [Redpanda's topic-property reference](https://docs.redpanda.com/streaming/current/reference/properties/topic-properties/)
+documents the override. This makes broker-kill checks of acknowledged
+records meaningful; the external backend retains the cell broker's settings.
 
 ## Broker configuration
 
@@ -156,8 +162,9 @@ flush, because those APIs do not provide per-record delivery facts. A local
 100-record exploratory run gave 479 records/s and 0.57 ms p50, 6.48 ms p99
 acknowledgement latency for sync. Async-flush gave 726 records/s, batch-loop
 564 records/s, and callback 687 records/s; the callback acknowledgement p50
-was 10.18 ms and p99 10.48 ms. These four single runs are exploratory, not
-cell throughput claims. Their IDs are `01a0d663-575e-769b-91ec-44cdc38e08dc`,
+was 10.18 ms and p99 10.48 ms. These four single runs are exploratory. The
+workstation was busy during measurement, so they are not capacity estimates.
+Their IDs are `01a0d663-575e-769b-91ec-44cdc38e08dc`,
 `01a0d663-97f1-7506-87f3-c58c0b605ba8`,
 `01a0d663-c641-746a-b976-992fe7baf749`, and
 `01a0d663-f453-73ca-b38b-f0690d7b6724` respectively.
@@ -172,7 +179,7 @@ batch 100 and requested timeout 1000 ms yielded p50 242 ms, p99 496 ms;
 batch 100 and timeout 50 ms yielded p50 207 ms, p99 536 ms; batch 1 and
 timeout 1000 ms yielded p50 9.93 s and p99 19.38 s, at only 4.84 records/s.
 The last result is much slower than the drafted batch-size-one expectation;
-the short runs include assignment and catch-up effects, so they do not
+the short runs include assignment and catch-up effects on a busy workstation, so they do not
 establish a steady-state latency curve. The run IDs are
 `01a0d667-fbf6-732d-b479-4ef6adb3279d`,
 `01a0d668-b342-71f2-92f7-4369d9da9ba7`, and
@@ -189,13 +196,17 @@ ID set and zero lag. In three local 100-record exploratory runs with four
 partitions and two consumers, raw poll handled about 525 records/s (p50
 5.9 ms, p99 11.1 ms), adapter stream 375 records/s (p50 203 ms, p99 258 ms),
 and the Shibuya runner 10.9 records/s (p50 3.55 s, p99 9.08 s). These
-single short runs include consumer assignment and do not establish sustained
+single short runs include consumer assignment on a busy workstation and do not establish sustained
 capacity. Their IDs are `01a0d66d-ecb0-7525-9eae-e42def1afb15`,
 `01a0d66e-39a3-75d4-b47b-85ecd21ff80b`, and
 `01a0d671-03cb-7047-b6c3-1efe2bf257c9`. The runner path initially
 crashed when the harness canceled its thread; a graceful adapter shutdown
 removed the crash in one and two consumer controls. The leaked private
 containers from those two unsealed crash probes were stopped and deleted.
+These three benchmark sets predate the private topic's `write.caching=false`
+default. Keep their run IDs as historical smoke evidence; collect fresh
+measurements under the revised fixture before comparing any performance
+figure with later runs.
 
 `kafka/telemetry/correctness/context-leak-regression` uses the in-memory SDK
 arm and one traced Kafka batch containing a record with `traceparent`, a
@@ -256,16 +267,28 @@ released 0.9.0.1 result is tracked as
 `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-3`.
 Replacement workers are run as a control after this failure. One control
 recovered every ID; another reached zero lag with nine IDs lacking handler
-facts, which remains a blocking, separately labeled result.
+facts. An independent raw readback in a later kill run found only 983 of
+1,000 acknowledged IDs on the restarted topic while Redpanda write caching
+was enabled. With caching disabled, run
+`01a0d6ac-6636-716c-bd02-de4af109776f` found all 1,000 IDs on the
+broker and in the combined original and replacement handler facts. Only
+the scoped early-exit labels remain.
 
 `kafka/adapter/concurrency/group-rebalance-with-inflight` changes membership
 four times while an open-loop producer sends acknowledged records. It checks
-no loss, assignment-period offset order, duplicate windows, disjoint
+no loss, assignment-period offset order, committed replay boundaries, disjoint
 ownership, and group lag. Two reduced runs on the released adapter recorded
 surviving workers ending normally before stop. That scoped exit is tracked at
 `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-4`.
-Offset-order reversals in both runs and duplicates beyond the declared
-windows in one remain blocking, separately labeled results.
+The revised oracle samples committed offsets before each membership change
+and permits replay inside declared windows or from a sampled uncommitted
+position. Run `01a0d6b3-b843-7149-a2b2-981e6a1734ef` handled all 4,000
+acknowledged IDs, reached zero lag, and cleared the duplicate label. It
+still handled partition 4 offset 200 followed by 165 in one serial member's
+assignment after the group had committed 173. The independent order finding
+is filed as `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-6`;
+its failure remains blocking because the scenario's single known-defect
+reference covers BUG-4's early exit.
 
 `kafka/adapter/concurrency/stale-barrier-after-partition-roundtrip` keeps
 offset 50 pending on both partitions, moves one partition to a second member,
@@ -282,13 +305,94 @@ acknowledged ID had a handler fact, and sampled committed offsets did not
 decrease. Both workers nevertheless ended normally before stop, leaving
 lag 388 on each of A's former partitions. This matches the scoped
 rebalance-exit report `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-4`.
-There were 312 duplicate facts against a proxy bound of 241 computed from
-A's uncommitted handler facts and two 100-record poll batches. The worker
-does not expose exact buffer occupancy, so that bound remains a blocking
-estimate rather than a confirmed adapter contract violation.
+The 312 repeated facts comprise 213 repeats involving A and 99 replays by
+B alone, as shown by the saved worker ledgers. The proxy bound of 241 is
+derived from A's uncommitted handler facts and two 100-record poll batches,
+so the revised oracle applies it to the 213 A-involved repeats and reports
+B's replays separately. In the live rerun
+`01a0d6af-c6f6-722f-a62e-909a76e1f2a6`, 214 A-involved repeats stayed
+below the 243 estimate and 60 B-only replays were reported separately.
+All 2,000 acknowledged IDs had handler facts, commits did not regress, and
+only the scoped early-exit label remained. Exact adapter buffer occupancy
+is not exposed.
 
 `kafka/keiro-records/correctness/roundtrip-through-broker` publishes 200
 Keiro integration events through the neutral record conversion and checks
 their decoded events, Kafka delivery references, all six required wire
 headers, and each `MissingHeader` error. Inputs include optional fields,
 non-ASCII text, and payloads up to 64 KiB.
+
+## Soak and telemetry measurements
+
+`kafka/pipeline/soak/consumer-memory-and-fd-stability` and its `-reduced`
+variant run two adapter-stream consumer processes under open-loop producer
+traffic. `soak.duration-minutes` defaults to 240 and 20 respectively;
+`kafka.rate-per-second` defaults to 500, `soak.restart-every-minutes` to 5,
+and `soak.sample-seconds` to 10. One member restarts on schedule while the
+other remains alive for the leak window. The scenario requires every broker
+acknowledgement to appear in a compact on-disk ID ledger, zero lag at the
+end, bounded sampled lag outside restart windows, and no unexpected worker
+exit. The diagnostics toolkit judges the long-lived member's post-GC heap,
+native memory (`RSS − GHC memory in use`), Haskell threads, OS threads, and
+file descriptors. Every process receives a diagnosis file; short-lived
+restart processes can legitimately report `InsufficientData`.
+
+`kafka/consumer/soak/rebalance-churn-native-memory` and its `-reduced`
+variant keep one adapter-stream consumer alive while a second joins and
+leaves at `soak.churn-seconds` (default 10). They use the same acknowledged
+ID ledger and zero-lag checks. The long-lived member's native-memory series
+is judged by the diagnostics toolkit. The released `hw-kafka-client` leak
+under assignment races is tracked at
+`mori://shinzui/hw-kafka-client/commits/6caed636898a78e9f6e5a9c93eeb5562cbb2580a`;
+the known-defect scope applies only when that package resolves from Hackage.
+If the slope cannot be judged, the result is inconclusive.
+
+One-minute broker-backed smoke runs covered both reduced variants with
+`kafka.rate-per-second=20` and `soak.sample-seconds=2`. Stability run
+`01a0d687-ec96-71a6-84a8-b9a252af47f2` and churn run
+`01a0d68a-f295-7426-ae48-e2859d0b0ee4` each acknowledged 1,200 IDs,
+found none missing, and finished at zero lag with clean worker exits.
+Their leak verdicts were `InsufficientData`, as intended for a one-minute
+window. These runs verify the mechanism; they do not satisfy the 20-minute
+reduced soak acceptance criterion.
+
+The pipeline benchmark now installs the selected telemetry runtime. Tracing
+arms use the traced Kafka producer and Shibuya processing spans; metrics
+arms record produced and handled counters through the selected meter. A
+30-record `noop` tracing plus `collect` metrics run
+`01a0d68d-af9b-75e8-a1a6-b6a79c421b5f` passed the ID and lag oracles and
+reported two metric instruments. Any local overhead delta should be treated
+as exploratory while the workstation is busy.
+
+An interleaved three-block local overhead run used 20 records per arm and a
+one-second scrape interval. Every child run passed, the OTLP arm exported
+all 40 spans per run without drops, and the scraped arm recorded seven
+successful scrapes per run. The report at
+`runs/overhead-01a0d690-b258-71cf-b22a-487954267828/overhead-report.json`
+contains all four comparisons:
+
+| Arm versus off | Throughput delta | p99 latency delta | Verdict |
+| --- | ---: | ---: | --- |
+| Metrics collect | −14.6% | −29.3% | Inconclusive |
+| Metrics serve-scraped | +0.2% | +0.6% | Inconclusive |
+| Tracing noop | −1.7% | −4.4% | Inconclusive |
+| Tracing sdk-otlp | +0.5% | +0.2% | Inconclusive |
+
+Each comparison is inconclusive because the 20-record runs had exploratory
+measurement grade and a soft health observation. The busy workstation and
+short trial length make these deltas unsuitable as overhead claims.
+
+## Change-planner component map
+
+| Selector | Runtime code exercised |
+| --- | --- |
+| `kafka/adapter/**` | `mori://shinzui/shibuya-kafka-adapter`, `mori://shinzui/shibuya` |
+| `kafka/consumer/**`, `kafka/producer/**`, `kafka/telemetry/**` | `mori://shinzui/kafka-effectful`, `mori://shinzui/hw-kafka-streamly`, `mori://haskell-works/hw-kafka-client` or `mori://shinzui/hw-kafka-client`, and librdkafka |
+| `kafka/keiro-records/**` | `mori://shinzui/keiro` record conversion and `mori://shinzui/keiro/packages/keiro-core` integration events |
+| `kafka/pipeline/**`, `kafka/broker/**` | The assembled Kafka edge and disposable Redpanda broker |
+
+The plan's unresolved blocking findings remain in
+[the ExecPlan](../plans/11-cover-the-kafka-transport-edge-with-a-disposable-broker.md):
+the outage replacement control, rebalance offset order and duplicate window,
+and the zombie duplicate bound. The upstream rebalance worker-exit defect is
+`mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-4`.

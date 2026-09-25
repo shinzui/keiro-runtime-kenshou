@@ -127,13 +127,13 @@ runSoak mode profile context = do
             snapshot <- describeGroup env group
             let lag = sum [maybe 0 fromIntegral offset.lag | offset <- snapshot.offsets]
                 lags' = (tick * sampleSeconds, lag) : lags
-            if mode == Stability && tick * sampleSeconds < minutes * 60 && tick * sampleSeconds `mod` (restartMinutes * 60) == 0
+            if mode == Stability && tick * sampleSeconds < minutes * 60 && crossedBoundary sampleSeconds tick (restartMinutes * 60)
               then do
                 exit <- stopGracefully supervisor activeFirst.child 20000
                 replacement <- startWorker
                 pure (replacement, activeSecond, history <> [replacement], exit : exits, lags')
               else
-                if mode == Churn && tick * sampleSeconds < minutes * 60 && tick * sampleSeconds `mod` churnSeconds == 0
+                if mode == Churn && tick * sampleSeconds < minutes * 60 && crossedBoundary sampleSeconds tick churnSeconds
                   then case activeSecond of
                     Nothing -> do
                       joined <- startWorker
@@ -162,7 +162,7 @@ runSoak mode profile context = do
         (acked, deliveryFailures) = acknowledgements
         zeroLag = case drained of Right _ -> True; Left _ -> False
         lagLimit = rate * 10
-        lagOver = [(second, lag) | (second, lag) <- lagSamples, lag > lagLimit, mode == Stability, second `mod` (restartMinutes * 60) > 20]
+        lagOver = [(second, lag) | (second, lag) <- lagSamples, lag > lagLimit, mode == Stability, second < restartMinutes * 60 || second `mod` (restartMinutes * 60) > 20]
         leakFailures = [if mode == Churn then "native-memory-leak" else "resource-leak" | (_, LeakSuspected) <- leakVerdicts]
         failures =
           ["soak-acknowledgements" | acked /= target || deliveryFailures /= 0]
@@ -182,6 +182,7 @@ runSoak mode profile context = do
             else passed
   where
     knob name = fromIntegral (knobInt context.knobs (either (error . Text.unpack) id (mkKnobName name)))
+    crossedBoundary sampleSeconds tick period = tick * sampleSeconds `div` period > (tick - 1) * sampleSeconds `div` period
 
 startMember :: RunContext -> CheckEnv -> Supervisor -> KafkaEnv -> TopicName -> ConsumerGroupId -> Int -> Int -> Int -> IO Worker
 startMember context check supervisor env (TopicName topic) (ConsumerGroupId group) target sampleSeconds index = do
@@ -221,6 +222,12 @@ producePaced env topic target rate counter = do
       pure ()
     P.flushProducer
   either (ioError . userError . show) pure result
+  let awaitCallbacks remaining = do
+        (ok, bad) <- readIORef counter
+        when (ok + bad < target && remaining > (0 :: Int)) $ do
+          threadDelay 100000
+          awaitCallbacks (remaining - 1)
+  awaitCallbacks 300
 
 inspectWorker :: RunContext -> Profile -> Mode -> Int -> Worker -> IO (Worker, LeakReport, [Text])
 inspectWorker context profile mode target worker = do
@@ -252,7 +259,8 @@ inspectWorker context profile mode target worker = do
         defaultLeakSpec
           { probes = filter (\probe -> probe.name `elem` selected) defaultLeakSpec.probes,
             warmupCutSeconds = if profile == Full then 300 else 60,
-            minDurationSeconds = if profile == Full then 1200 else 900
+            minDurationSeconds = if profile == Full then 1200 else 900,
+            envelopeWindowSeconds = if profile == Full then 60 else 30
           }
   createDirectoryIfMissing True series
   TextIO.writeFile (series </> "proc.csv") proc

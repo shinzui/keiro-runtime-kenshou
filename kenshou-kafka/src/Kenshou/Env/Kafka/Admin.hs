@@ -31,6 +31,7 @@ import Data.Vector qualified as Vector
 import Kafka.Consumer (ConsumerGroupId (..), PartitionId (..))
 import Kafka.Types (BrokerAddress (..), TopicName (..))
 import Kenshou.Env.Kafka.Naming (topicName)
+import Kenshou.Env.Kafka.Spec (BrokerBackend (..))
 import Kenshou.Env.Kafka.Types (BrokerLane (..), KafkaEnv (..))
 import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
@@ -74,7 +75,8 @@ runRpk env args = do
 createTopics :: KafkaEnv -> [TopicSpec] -> IO [TopicName]
 createTopics env specs = forM specs \spec -> do
   let topic@(TopicName fullName) = topicName env spec.name
-      configArgs = concat [["-c", Text.unpack key <> "=" <> Text.unpack value] | (key, value) <- Map.toAscList spec.config]
+      topicConfig = if env.backend == RedpandaContainer then Map.insertWith (\_ configured -> configured) "write.caching" "false" spec.config else spec.config
+      configArgs = concat [["-c", Text.unpack key <> "=" <> Text.unpack value] | (key, value) <- Map.toAscList topicConfig]
   if spec.partitions < 1 || spec.partitions > 64
     then ioError (userError "Kafka topic partitions must be between 1 and 64")
     else runRpk env (["topic", "create", Text.unpack fullName, "-p", show spec.partitions, "-r", "1"] <> configArgs) >> pure topic
