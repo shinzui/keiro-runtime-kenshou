@@ -47,11 +47,13 @@ library
     Kenshou.Suite.Kafka
     Kenshou.Suite.Kafka.Correctness.Ack
     Kenshou.Suite.Kafka.Correctness.MultiTopic
+    Kenshou.Suite.Kafka.Correctness.Retry
     Kenshou.Suite.Kafka.Fixture
     Kenshou.Suite.Kafka.Producer
 
   build-depends:
     aeson,
+    async,
     base,
     bytestring,
     containers,

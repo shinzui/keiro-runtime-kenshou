@@ -291,6 +291,7 @@ Drafting the child plans against real source corrected the research in ways that
 
 ### Upstream issue register
 
+- EP-11 Kafka buffered-retry finding: [local finding](../findings/4-kafka-buffered-retry-leaves-successors-uncommitted.md); upstream `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-1`. The released adapter can leave successful buffered successors uncommitted after a retry; a batch-size-one control passes.
 - EP-12 write-side worker heap-growth finding: [local finding](../findings/1-keiro-write-side-worker-heap-growth.md); upstream `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-1` (filed by the concurrent session; check final validation and ownership evidence).
 - EP-12 seed-backlog heap-growth finding: [local finding](../findings/2-keiro-seed-backlog-heap-growth.md); upstream `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-2` (filed by the concurrent session; check final validation and ownership evidence).
 - EP-12 steady-restart harness thread-growth finding: [local finding](../findings/3-keiro-steady-restart-harness-threads.md); owner remains this repository pending a focused harness investigation. No upstream runtime bug concept should be inferred from the current evidence.

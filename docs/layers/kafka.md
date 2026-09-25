@@ -81,3 +81,12 @@ single-partition topics through one adapter. Message IDs are distinct, but
 the envelope partition key is `"0"` for both. The scenario records the
 collision as the documented, nonblocking defect at
 `mori://shinzui/shibuya-kafka-adapter/okf/capabilities/concepts/CAP-3`.
+
+`kafka/adapter/correctness/retry-redelivers-and-never-commits-past` retries
+offset 20 of a 50-record partition and samples the group commit boundary.
+It supports `retry` and `throw` failure modes, a retry delay, an early-exit
+resume arm, and poll batch sizes 1, 10, 100, or 1,000. With the released
+adapter and default batch size, all handlers succeed but the group remains
+behind the log end. This is the scoped known defect
+`mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-1`;
+other retry failures still block the run.

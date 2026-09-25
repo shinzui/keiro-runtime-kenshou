@@ -4,8 +4,9 @@ import Kenshou.Core.Bundle (LayerBundle (..))
 import Kenshou.Core.Id (Layer (Kafka))
 import Kenshou.Suite.Kafka.Correctness.Ack qualified as Ack
 import Kenshou.Suite.Kafka.Correctness.MultiTopic qualified as MultiTopic
+import Kenshou.Suite.Kafka.Correctness.Retry qualified as Retry
 import Kenshou.Suite.Kafka.Fixture qualified as Fixture
 import Kenshou.Suite.Kafka.Producer qualified as Producer
 
 bundle :: LayerBundle
-bundle = LayerBundle Kafka (Fixture.scenarios <> Ack.scenarios <> MultiTopic.scenarios <> Producer.scenarios) []
+bundle = LayerBundle Kafka (Fixture.scenarios <> Ack.scenarios <> MultiTopic.scenarios <> Retry.scenarios <> Producer.scenarios) []
