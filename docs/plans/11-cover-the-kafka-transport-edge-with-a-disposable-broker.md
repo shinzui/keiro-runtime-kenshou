@@ -48,7 +48,7 @@ cabal run kenshou -- run kafka/adapter/concurrency/sigkill-redelivery-window --o
 ## Progress
 
 - [x] Milestone 1: private Redpanda fixture, two live fixture scenarios, CLI registration, layer guide, and ADR validated on Apple Container and Docker.
-- [ ] Milestone 2: the live AckOk, AckHalt, producer modes, and Keiro record-conversion checks pass; the two-topic partition-key and buffered-retry scenarios reproduce scoped, nonblocking counterexamples. The retry scenario's batch-size-one and early-exit controls pass. Dead-letter, rebalance, and the remaining producer cases remain.
+- [ ] Milestone 2: the live AckOk, AckHalt, dead-letter, producer modes, and Keiro record-conversion checks pass; the two-topic partition-key and buffered-retry scenarios reproduce scoped, nonblocking counterexamples. The retry scenario's batch-size-one and early-exit controls pass. Rebalance and the remaining producer cases remain.
 - [ ] Deliver the disposable broker, Kafka adapter correctness and rebalance coverage, real crash/outage/model scenarios, benchmarks, soaks, and telemetry arms; verify the acceptance commands in Validation and Acceptance.
 
 ## Surprises & Discoveries

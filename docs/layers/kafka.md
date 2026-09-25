@@ -96,6 +96,12 @@ partitions, halts on partition zero offset 30, and checks that no later
 handler runs, the group's committed offset remains 30, and a second session
 receives offset 30 first on that partition.
 
+`kafka/adapter/correctness/dead-letter-drops-record` runs the adapter in a
+child worker so its standard error is captured. Five poison records by
+default return `AckDeadLetter`; the scenario checks every other ID, one
+warning per drop, zero lag, no redelivery, and no prefixed DLQ topic. The
+verdict summary records the actual drop count as `documentedLoss`.
+
 `kafka/keiro-records/correctness/roundtrip-through-broker` publishes 200
 Keiro integration events through the neutral record conversion and checks
 their decoded events, Kafka delivery references, all six required wire
