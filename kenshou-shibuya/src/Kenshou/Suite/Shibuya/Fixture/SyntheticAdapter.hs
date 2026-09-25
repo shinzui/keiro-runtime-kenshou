@@ -59,6 +59,7 @@ data BrokerStats = BrokerStats
   { published :: !Int,
     yielded :: !Int,
     sourcePulls :: !Int,
+    idlePolls :: !Int,
     finalizedOk :: !Int,
     retried :: !Int,
     deadLettered :: !Int,
@@ -73,7 +74,7 @@ data BrokerStats = BrokerStats
 data BrokerEvent
   = Published !MessageId
   | Yielded !MessageId !Int
-  | FinalizeAttempt !MessageId !Int !AckDecision
+  | FinalizeAttempt !MessageId !Int !AckDecision !UTCTime
   | Finalized !MessageId !Int !AckDecision
   | DuplicateFinalize !MessageId !Int
   | LeaseExpired !MessageId !Int
@@ -107,7 +108,7 @@ data SyntheticBroker = SyntheticBroker
   }
 
 emptyStats :: BrokerStats
-emptyStats = BrokerStats 0 0 0 0 0 0 0 0 0 0 0
+emptyStats = BrokerStats 0 0 0 0 0 0 0 0 0 0 0 0
 
 newSyntheticBroker :: SyntheticConfig -> IO SyntheticBroker
 newSyntheticBroker config =
@@ -193,7 +194,10 @@ nextDelivery broker = do
       case result of
         Left reason -> ioError (userError (Text.unpack reason))
         Right PollClosed -> pure Nothing
-        Right PollWait -> threadDelay 5000 >> loop
+        Right PollWait -> do
+          atomically $ modifyTVar' broker.state $ \current -> current {stats = current.stats {idlePolls = current.stats.idlePolls + 1}}
+          threadDelay 5000
+          loop
         Right (PollDelivery delivery) -> pure (Just delivery)
 
 firstReady :: UTCTime -> IntMap BrokerMessage -> Maybe (Int, BrokerMessage, Bool)
@@ -220,7 +224,8 @@ finalizeDelivery :: SyntheticBroker -> MessageId -> Int -> IORef Int -> AckDecis
 finalizeDelivery broker identifier token callCount decision = do
   let finalizeOne = do
         attemptNumber <- atomicModifyIORef' callCount (\value -> let next = value + 1 in (next, next))
-        atomically $ modifyTVar' broker.state $ \current -> current {events = FinalizeAttempt identifier attemptNumber decision : current.events}
+        attemptedAt <- getCurrentTime
+        atomically $ modifyTVar' broker.state $ \current -> current {events = FinalizeAttempt identifier attemptNumber decision attemptedAt : current.events}
         case broker.config.finalizerScript identifier attemptNumber of
           FinalizeThrows reason -> ioError (userError (Text.unpack reason))
           FinalizeSucceeds -> do

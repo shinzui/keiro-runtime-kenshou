@@ -1,9 +1,10 @@
 module Kenshou.Suite.Shibuya.Concurrency.CoreRunner (scenarios) where
 
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async (mapConcurrently)
+import Control.Concurrent.Async (async, cancel, mapConcurrently, waitCatch)
 import Control.Concurrent.STM (TVar, atomically, check, newTVarIO, readTVar, writeTVar)
 import Control.Exception (SomeException, try)
+import Control.Exception qualified as Exception
 import Data.Aeson (object, (.=))
 import Data.ByteString.Char8 qualified as ByteString
 import Data.IORef (IORef, atomicModifyIORef', modifyIORef', newIORef, readIORef)
@@ -20,10 +21,10 @@ import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
 import Kenshou.Suite.Shibuya.Cohort (knownOnReleasedCore, rev)
 import Kenshou.Suite.Shibuya.Fixture.Handlers (HandlerScript (..), HandlerStats (..), defaultHandlerScript, handlerStats, newHandlerProbe, scriptedHandler)
-import Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter (BrokerStats (..), ShutdownBehaviour (..), SyntheticConfig (..), brokerStats, closeInput, defaultSyntheticConfig, newSyntheticBroker, publish, reopenSource, syntheticAdapter)
+import Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter (BrokerEvent (..), BrokerStats (..), FinalizerOutcome (..), ShutdownBehaviour (..), SyntheticConfig (..), brokerEvents, brokerStats, closeInput, defaultSyntheticConfig, newSyntheticBroker, publish, reopenSource, syntheticAdapter)
 import Kenshou.Suite.Shibuya.Knobs (coreKnobs, parseConcurrency, parseOrdering)
 import Shibuya.Adapter (Adapter (..))
-import Shibuya.App (AppConfig (..), QueueProcessor (..), ShutdownConfig (..), defaultAppConfig, defaultShutdownConfig, mkProcessor, runApp, stopApp, stopAppGracefully, waitApp)
+import Shibuya.App (AppConfig (..), QueueProcessor (..), ShutdownConfig (..), SupervisionStrategy (..), defaultAppConfig, defaultShutdownConfig, mkProcessor, runApp, stopApp, stopAppGracefully, waitApp)
 import Shibuya.Core.Ack (AckDecision (..), HaltReason (..))
 import Shibuya.Core.AckHandle (AckHandle (..))
 import Shibuya.Core.Ingested (mkIngested)
@@ -35,7 +36,110 @@ import Streamly.Data.Stream qualified as Stream
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [haltWakesIdleIntake, leasedButUnfinalizedUpperBound, haltStrandsLeases, adapterShutdownFailure, blockingAdapterShutdown, forcedShutdownConserves]
+scenarios = [haltWakesIdleIntake, leasedButUnfinalizedUpperBound, haltStrandsLeases, finalizationFailure, adapterShutdownFailure, blockingAdapterShutdown, forcedShutdownConserves]
+
+finalizationFailure :: Scenario
+finalizationFailure =
+  Scenario
+    { id = either (error . Text.unpack) id (parseScenarioId "shibuya/core-runner/concurrency/finalization-failure-is-a-failure-not-a-halt"),
+      revision = 1,
+      summary = "Transient finalizer faults preserve the decision, and an exhausted retry budget triggers supervision.",
+      tier = TierSmoke,
+      placement = PlaceEither,
+      knobs = [],
+      dimensions = noDimensions,
+      phases = zeroPhases,
+      requires = noEnvironment,
+      knownDefect = knownOnReleasedCore (rev 4 "REV-4-F2"),
+      run = runFinalizationFailure
+    }
+
+runFinalizationFailure :: RunContext -> IO ScenarioReport
+runFinalizationFailure context = do
+  transientArms <- mapM runTransientFinalizer [1 .. 3]
+  (linkedFailure, siblingStopped, permanentAttempts, permanentFinalized) <- runPermanentFinalizer
+  let transient = concatMap fst transientArms
+      supervisionFailed = not linkedFailure || not siblingStopped
+      failures =
+        transient
+          <> ["permanent-finalizer-attempts" | permanentAttempts /= 4]
+          <> ["permanent-finalizer-was-effective" | permanentFinalized]
+          <> ["REV-4-F2" | supervisionFailed]
+  putSummary context Verdicts "finalization-failure" $
+    object
+      [ "transientFailures" .= transient,
+        "transientRetryGapsSeconds" .= map snd transientArms,
+        "permanentAttempts" .= permanentAttempts,
+        "permanentFinalized" .= permanentFinalized,
+        "linkedFailureDelivered" .= linkedFailure,
+        "siblingStopped" .= siblingStopped
+      ]
+  pure $ if null failures then passed else failedWith failures (Text.intercalate "; " failures)
+
+runTransientFinalizer :: Int -> IO ([Text], [Double])
+runTransientFinalizer faultCount = do
+  broker <- newSyntheticBroker defaultSyntheticConfig {finalizerScript = \_ attempt -> if attempt <= faultCount then FinalizeThrows "transient finalizer fault" else FinalizeSucceeds}
+  _ <- publish broker Nothing "transient"
+  closeInput broker
+  completed <- timeout 3000000 $ runEff $ runTracingNoop $ do
+    started <- runApp defaultAppConfig [(ProcessorId "transient-finalizer", mkProcessor (syntheticAdapter broker) (\_ -> pure AckOk))]
+    case started of
+      Left err -> error (show err)
+      Right handle -> waitApp handle >> stopApp handle
+  stats <- brokerStats broker
+  events <- brokerEvents broker
+  let attempts = [(number, decision, at) | FinalizeAttempt _ number decision at <- events]
+      gaps = zipWith (\(_, _, earlier) (_, _, later) -> realToFrac (diffUTCTime later earlier) :: Double) attempts (drop 1 attempts)
+      expectedGaps = take faultCount [0.01, 0.05, 0.25 :: Double]
+      label = "transient-" <> Text.pack (show faultCount)
+  pure
+    ( [label <> "-timeout" | completed == Nothing]
+        <> [label <> "-retry-count" | length attempts /= faultCount + 1]
+        <> [label <> "-decision-changed" | any (\(_, decision, _) -> decision /= AckOk) attempts]
+        <> [label <> "-retry-too-fast" | or (zipWith (\actual expected -> actual < expected - 0.001) gaps expectedGaps)]
+        <> [label <> "-finalization-not-effective-once" | stats.finalizedOk /= 1 || stats.leasedUnfinalized /= 0 || length [() | Finalized _ _ AckOk <- events] /= 1],
+      gaps
+    )
+
+runPermanentFinalizer :: IO (Bool, Bool, Int, Bool)
+runPermanentFinalizer = do
+  failing <- newSyntheticBroker defaultSyntheticConfig {finalizerScript = \_ _ -> FinalizeThrows "permanent finalizer fault"}
+  sibling <- newSyntheticBroker defaultSyntheticConfig
+  _ <- publish failing Nothing "permanent"
+  closeInput failing
+  worker <- async $ runEff $ runTracingNoop $ do
+    let processors =
+          [ (ProcessorId "permanent-finalizer", mkProcessor (syntheticAdapter failing) (\_ -> pure AckOk)),
+            (ProcessorId "idle-sibling", mkProcessor (syntheticAdapter sibling) (\_ -> pure AckOk))
+          ]
+    started <- runApp defaultAppConfig {strategy = StopAllOnFailure} processors
+    case started of
+      Left err -> error (show err)
+      Right handle -> withEffToIO (ConcUnlift Persistent Unlimited) $ \runInIO ->
+        liftIO $ Exception.finally (runInIO (waitApp handle)) (runInIO (stopApp handle))
+  let awaitFourth = do
+        events <- brokerEvents failing
+        if length [() | FinalizeAttempt _ _ _ _ <- events] >= 4
+          then pure ()
+          else threadDelay 1000 >> awaitFourth
+  _ <- timeout 2000000 awaitFourth
+  result <- timeout 2000000 (waitCatch worker)
+  before <- brokerStats sibling
+  threadDelay 100000
+  after <- brokerStats sibling
+  case result of
+    Nothing -> do
+      _ <- timeout 3000000 (cancel worker)
+      pure ()
+    Just _ -> pure ()
+  events <- brokerEvents failing
+  let attempts = length [() | FinalizeAttempt _ _ _ _ <- events]
+      effective = any (\case Finalized _ _ _ -> True; _ -> False) events
+      linked = case result of
+        Just (Left err) -> "ExceptionInLinkedThread" `Text.isInfixOf` Text.pack (show err)
+        _ -> False
+      stopped = before.idlePolls > 0 && before.idlePolls == after.idlePolls
+  pure (linked, stopped, attempts, effective)
 
 haltStrandsLeases :: Scenario
 haltStrandsLeases =

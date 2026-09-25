@@ -82,7 +82,7 @@ spec = describe "synthetic broker" $ do
         Right app -> waitApp app >> stopApp app
     completed `shouldBe` Just ()
     events <- brokerEvents broker
-    length [() | FinalizeAttempt _ _ _ <- events] `shouldBe` 2
+    length [() | FinalizeAttempt _ _ _ _ <- events] `shouldBe` 2
     stats <- brokerStats broker
     stats.finalizedOk `shouldBe` 1
 
