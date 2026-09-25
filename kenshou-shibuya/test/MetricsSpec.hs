@@ -1,7 +1,7 @@
 module MetricsSpec (spec) where
 
 import Kenshou.Suite.Shibuya.Cohort (CoreLine (..), coreLine)
-import Kenshou.Suite.Shibuya.Correctness.Metrics (counterFailures, liveFailures, readyFailures, websocketFlagFailures, websocketSlotFailures, websocketUnsubscribeFailures)
+import Kenshou.Suite.Shibuya.Correctness.Metrics (counterFailures, liveFailures, readyFailures, sustainedLoadFailures, websocketFlagFailures, websocketSlotFailures, websocketUnsubscribeFailures)
 import Test.Hspec (Spec, describe, it, shouldBe)
 
 spec :: Spec
@@ -15,6 +15,9 @@ spec = describe "metrics health lifecycle" $ do
   it "exposes identical counters for one retry and one success" $ do
     failures <- counterFailures
     failures `shouldBe` ["REV-7-A2"]
+  it "distinguishes steady progress from a genuinely stuck processor" $ do
+    failures <- sustainedLoadFailures
+    failures `shouldBe` expected "REV-7-F1"
   it "rejects WebSocket upgrades when the endpoint is disabled on remediated metrics" $ do
     failures <- websocketFlagFailures
     failures `shouldBe` expected "REV-9-F2"

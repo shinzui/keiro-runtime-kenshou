@@ -1,8 +1,8 @@
-module Kenshou.Suite.Shibuya.Correctness.Metrics (scenarios, readyFailures, liveFailures, counterFailures, websocketFlagFailures, websocketUnsubscribeFailures, websocketSlotFailures) where
+module Kenshou.Suite.Shibuya.Correctness.Metrics (scenarios, readyFailures, liveFailures, counterFailures, sustainedLoadFailures, websocketFlagFailures, websocketUnsubscribeFailures, websocketSlotFailures) where
 
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
-import Control.Exception (Exception, SomeException, bracket, fromException, throwIO, try)
+import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar, tryPutMVar)
+import Control.Exception (Exception, SomeException, bracket, finally, fromException, throwIO, try)
 import Control.Monad (when)
 import Data.Aeson (Value (..), decode, encode, object, (.=))
 import Data.Aeson.KeyMap qualified as KeyMap
@@ -27,15 +27,16 @@ import Kenshou.Telemetry.Endpoint (reserveFreePort)
 import Network.HTTP.Client (Manager, defaultManagerSettings, httpLbs, newManager, parseRequest, responseBody, responseStatus)
 import Network.HTTP.Types.Status (statusCode)
 import Network.WebSockets qualified as WebSockets
-import Shibuya.App (Master, defaultAppConfig, getAppMaster, mkProcessor, runApp, stopApp, waitApp)
+import Shibuya.App (Master, QueueProcessor (..), defaultAppConfig, getAppMaster, mkProcessor, runApp, stopApp, waitApp)
 import Shibuya.Core.Ack (AckDecision (..), RetryDelay (..))
 import Shibuya.Core.Metrics (ProcessorId (..))
 import Shibuya.Metrics.Server (MetricsServerConfig (..), defaultConfig, startMetricsServer, stopMetricsServer)
+import Shibuya.Policy (Concurrency (..))
 import Shibuya.Telemetry.Effect (runTracingNoop)
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [endpointContract, readyReflectsFailedProcessor, liveReflectsStoppedMaster, countersDistinguishRetries, websocketFlagGatesUpgrades, websocketUnsubscribeAll, websocketSlotAccounting]
+scenarios = [endpointContract, readyReflectsFailedProcessor, liveReflectsStoppedMaster, countersDistinguishRetries, readyNotStuckUnderLoad, websocketFlagGatesUpgrades, websocketUnsubscribeAll, websocketSlotAccounting]
 
 metricsDimensions :: DimensionSupport
 metricsDimensions = noDimensions {metrics = Supported (Support (MetricsServe :| [MetricsServeScraped]) MetricsServe)}
@@ -83,6 +84,29 @@ countersDistinguishRetries =
               appliesTo = AllCohorts
             },
       run = runCounters
+    }
+
+readyNotStuckUnderLoad :: Scenario
+readyNotStuckUnderLoad =
+  Scenario
+    { id = either (error . Text.unpack) id (parseScenarioId "shibuya/metrics/correctness/ready-not-stuck-under-sustained-load"),
+      revision = 1,
+      summary = "A processor making steady progress remains ready beyond the stuck threshold while a blocked control becomes unready.",
+      tier = TierSmoke,
+      placement = PlaceEither,
+      knobs = [],
+      dimensions = metricsDimensions,
+      phases = zeroPhases,
+      requires = noEnvironment,
+      knownDefect =
+        Just $
+          KnownDefect
+            { reference = "mori://shinzui/shibuya/okf/reviews/concepts/REV-7",
+              summary = "REV-7-F1",
+              expectedFailures = ["REV-7-F1"],
+              appliesTo = OnlyWhen (ResolvedFromHackage "shibuya-core" :| [VersionBelow "shibuya-core" "0.10.0.0"])
+            },
+      run = \context -> sustainedLoadFailures >>= healthReport context "sustained-load-readiness"
     }
 
 websocketFlagGatesUpgrades :: Scenario
@@ -569,3 +593,90 @@ closeOne port mode = do
       Just (Right ()) -> mode == CleanClose
       Just (Left err) -> mode /= CleanClose && fromException err == Just IntentionalPeerDrop
       Nothing -> False
+
+sustainedLoadFailures :: IO [Text]
+sustainedLoadFailures = do
+  manager <- newManager defaultManagerSettings
+  active <- sustainedProgress manager
+  blocked <- blockedControl manager
+  pure $ active <> blocked
+
+sustainedProgress :: Manager -> IO [Text]
+sustainedProgress manager = do
+  broker <- newSyntheticBroker defaultSyntheticConfig
+  runEff $ runTracingNoop $ do
+    let handler _ = liftIO (threadDelay 100000) >> pure AckOk
+        processor = (mkProcessor (syntheticAdapter broker) handler) {concurrency = Async 8}
+    result <- runApp defaultAppConfig [(ProcessorId "sustained", processor)]
+    case result of
+      Left err -> pure ["app-start: " <> Text.pack (show err)]
+      Right handle -> do
+        checks <- liftIO $ withServer manager defaultConfig {stuckThreshold = 3} (getAppMaster handle) $ \port -> do
+          mapM_ (\_ -> publish broker Nothing "work") [1 .. (1200 :: Int)]
+          begun <- timeout 3000000 (awaitInFlight manager port)
+          threadDelay 4000000
+          first <- activeSnapshot manager port
+          threadDelay 3000000
+          second <- activeSnapshot manager port
+          threadDelay 3000000
+          third <- activeSnapshot manager port
+          stats <- brokerStats broker
+          let samples = [first, second, third]
+              metricSamples = map snd samples
+              progress = map (lookupPath ["stats", "processed"] . (.body)) metricSamples
+              inFlight = map (lookupPath ["state", "inFlight"] . (.body)) metricSamples
+              readySample (ready, _) = ready.status == 200 && lookupPath ["ready"] ready.body == Just (Bool True) && lookupPath ["processors", "stuck"] ready.body == Just (Number 0)
+              progressed = case progress of
+                [Just (Number a), Just (Number b), Just (Number c)] -> a > 0 && a < b && b < c
+                _ -> False
+              activeThroughout = all (\case Just (Number n) -> n > 0; _ -> False) inFlight
+              controls =
+                check "sustained-load-not-started" (begun == Just ())
+                  <> check "sustained-load-not-progressing" (progressed && stats.finalizedOk > 0)
+                  <> check "sustained-load-not-in-flight" activeThroughout
+          pure $ controls <> if null controls then check "REV-7-F1" (all readySample samples) else []
+        stopApp handle
+        pure checks
+
+activeSnapshot :: Manager -> Int -> IO (HttpResult, HttpResult)
+activeSnapshot manager port = do
+  ready <- fetch manager port "/health/ready"
+  metrics <- fetch manager port "/metrics/sustained"
+  pure (ready, metrics)
+
+awaitInFlight :: Manager -> Int -> IO ()
+awaitInFlight manager port = do
+  metrics <- fetch manager port "/metrics/sustained"
+  case lookupPath ["state", "inFlight"] metrics.body of
+    Just (Number count) | count > 0 -> pure ()
+    _ -> threadDelay 10000 >> awaitInFlight manager port
+
+blockedControl :: Manager -> IO [Text]
+blockedControl manager = do
+  broker <- newSyntheticBroker defaultSyntheticConfig
+  started <- newEmptyMVar
+  release <- newEmptyMVar
+  runEff $ runTracingNoop $ do
+    let handler _ = do
+          liftIO $ putMVar started ()
+          liftIO $ takeMVar release
+          pure AckOk
+    result <- runApp defaultAppConfig [(ProcessorId "blocked-control", mkProcessor (syntheticAdapter broker) handler)]
+    case result of
+      Left err -> pure ["blocked-app-start: " <> Text.pack (show err)]
+      Right handle -> do
+        checks <- liftIO $ withServer manager defaultConfig {stuckThreshold = 3} (getAppMaster handle) $ \port ->
+          ( do
+              _ <- publish broker Nothing "blocked"
+              began <- timeout 2000000 (takeMVar started)
+              primed <- fetch manager port "/metrics/blocked-control"
+              threadDelay 4000000
+              ready <- fetch manager port "/health/ready"
+              pure $
+                check "blocked-handler-not-started" (began == Just ())
+                  <> check "blocked-metrics-not-primed" (primed.status == 200 && lookupPath ["state", "inFlight"] primed.body == Just (Number 1))
+                  <> check "blocked-control-not-stuck" (ready.status == 503 && lookupPath ["ready"] ready.body == Just (Bool False) && lookupPath ["processors", "stuck"] ready.body == Just (Number 1))
+          )
+            `finally` (tryPutMVar release () >> pure ())
+        stopApp handle
+        pure checks
