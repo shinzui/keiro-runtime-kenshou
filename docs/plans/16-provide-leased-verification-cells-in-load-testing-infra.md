@@ -46,11 +46,13 @@ You can see it working with the fixture payloads this plan ships: two terminals 
 
 - [x] (2026-09-24) Started Milestone 1 in `mori://shinzui/load-testing-infra` at commit `588da3e`: the committed-project allowlist and shared preflight are wired into the disposable-lane scripts. Bash syntax and allowed, wrong-active-project, and disallowed-project probes passed without contacting GCP.
 - [x] (2026-09-24) Extracted the existing image build, hash, tarball lookup, upload, and registration functions into a sourceable library at commit `d8e0bf4`. Bash syntax and staged-diff checks passed; an image build awaits the cell image outputs.
+- [x] (2026-09-24) Committed the shared and per-cell Pulumi stacks, four NixOS image outputs, cell lifecycle scripts, descriptor and policy schemas, and idle-stop simulation in `mori://shinzui/load-testing-infra` at `f264dce`. The cell Pulumi program compiles after an audited lockfile refresh, Nix evaluates all four image outputs, and both schemas validate. Live GCP acceptance is still pending.
 - [ ] Deliver leased, resettable multi-instance verification cells with the generic agent, payload delivery, health gates, immutable result publication, broker, and collector roles; verify the cell protocol in Validation and Acceptance.
 
 ## Surprises & Discoveries
 
-(None yet.)
+- Observation: the copied Pulumi lockfile initially held `@pulumi/pulumi` 3.239.0 and `@pulumi/gcp` 8.41.1 and reported 27 transitive advisories. Refreshing the new cell program's lockfile within its existing direct version bounds resolved all reported advisories; the disposable program retains its own lockfile. The Nixpkgs revision names the standalone `rpk` package `redpanda-client`, and its Business Source License requires a package-specific Nix allowance.
+  Evidence: the npm registry and upstream tags identified Pulumi SDK 3.264.0 as current; the GCP provider's latest 8.x release remains 8.41.1. The refreshed `infra/cells/package-lock.json` resolves SDK 3.264.0, provider 8.41.1, and `tar` 7.5.22; `npm ci`, `npm run build`, and `npm audit` report zero vulnerabilities. `nix eval --raw .#packages.x86_64-linux.cell-image-driver.drvPath` passed after a `redpanda-rpk`-specific `allowUnfreePredicate` was added.
 
 
 ## Decision Log
@@ -126,6 +128,10 @@ You can see it working with the fixture payloads this plan ships: two terminals 
 - Decision: The run role may create databases, a generic fault hook and a clock-offset bound are part of the environment file, and the fingerprint lists PostgreSQL extensions.
   Rationale: Requested by the first consumer's draft (`docs/plans/17-run-kenshou-on-leased-cells-with-payloads-submission-and-retrieval.md`) and by the toolkits behind it; each is generic, optional for a payload that does not need it, and cleared or re-measured by the reset, so the cell stays project-agnostic.
   Date: 2026-09-20
+
+- Decision: Ship `pg_partman` in both PostgreSQL 17 and 18 cell images through the same `withPackages` composition already used by the local verification fixture.
+  Rationale: PGMQ's partitioned queues need the extension available at server startup. The cell's later reset agent will decide which databases install it, and the fingerprint will list that installed state.
+  Date: 2026-09-24
 
 
 ## Outcomes & Retrospective
