@@ -13,10 +13,10 @@ import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
 import Effectful (Eff, liftIO, runEff, (:>))
 import Effectful.Error.Static (runError)
-import Kafka.Consumer.Types (ConsumerGroupId (..))
+import Kafka.Consumer.Types (ConsumerGroupId (..), Offset (..), RebalanceEvent (..))
 import Kafka.Effectful.Consumer qualified as C
 import Kafka.Effectful.Producer qualified as P
-import Kafka.Types (BrokerAddress (..), KafkaError, Timeout (..), TopicName (..))
+import Kafka.Types (BrokerAddress (..), KafkaError, PartitionId (..), Timeout (..), TopicName (..))
 import Kenshou.Core.Role (ControlMessage (..), RoleContext (..), RoleName, WorkerInit (..), WorkerMessage (..), WorkerRole (..), mkRoleName)
 import Shibuya.Adapter (Adapter (..))
 import Shibuya.Adapter.Kafka (defaultConfig, kafkaAdapter)
@@ -31,6 +31,7 @@ roles :: [WorkerRole]
 roles =
   [ WorkerRole adapterConsumerRole "Consumes Kafka records through the adapter under a declared handler policy." runAdapterConsumer,
     WorkerRole crashConsumerRole "Records adapter handler decisions across controlled SIGKILL cycles." runCrashConsumer,
+    WorkerRole rawConsumerRole "Reports raw Kafka assignment callbacks and consumed records." runRawConsumer,
     WorkerRole batchProducerRole "Enqueues a batch and attempts a bounded flush during a broker outage." runBatchProducer,
     WorkerRole transactionWorkerRole "Stages a consume-transform-produce transaction until told to commit." runTransactionWorker
   ]
@@ -40,6 +41,9 @@ adapterConsumerRole = either (error . Text.unpack) id (mkRoleName "kafka/adapter
 
 crashConsumerRole :: RoleName
 crashConsumerRole = either (error . Text.unpack) id (mkRoleName "kafka/crash-consumer")
+
+rawConsumerRole :: RoleName
+rawConsumerRole = either (error . Text.unpack) id (mkRoleName "kafka/raw-consumer")
 
 batchProducerRole :: RoleName
 batchProducerRole = either (error . Text.unpack) id (mkRoleName "kafka/batch-producer")
@@ -114,7 +118,8 @@ data CrashConsumerArgs = CrashConsumerArgs
     autoCommitMillis :: Int,
     autoOffsetStore :: Bool,
     blockOffset :: Maybe Int,
-    blockMillis :: Int
+    blockMillis :: Int,
+    instanceId :: Maybe Text
   }
 
 instance FromJSON CrashConsumerArgs where
@@ -127,6 +132,7 @@ instance FromJSON CrashConsumerArgs where
       <*> (fromMaybe False <$> value .:? "autoOffsetStore")
       <*> value .:? "blockOffset"
       <*> (fromMaybe 0 <$> value .:? "blockMillis")
+      <*> value .:? "instanceId"
 
 runCrashConsumer :: RoleContext -> IO ()
 runCrashConsumer context = do
@@ -157,6 +163,7 @@ consumeCrash context args = do
           <> C.extraProp "auto.commit.interval.ms" (Text.pack (show args.autoCommitMillis))
           <> C.extraProp "session.timeout.ms" "6000"
           <> C.extraProp "heartbeat.interval.ms" "2000"
+          <> maybe mempty (C.extraProp "group.instance.id") args.instanceId
       subscription = C.topics [topic] <> C.offsetReset C.Earliest
   outcome <- runEff . runError @KafkaError . runTracingNoop $
     C.runKafkaConsumer props subscription $ do
@@ -186,6 +193,74 @@ consumeCrash context args = do
 
 readTextInt :: Text -> Maybe Int
 readTextInt = readInt . ByteString.pack . Text.unpack
+
+data RawConsumerArgs = RawConsumerArgs
+  { brokers :: [Text],
+    topic :: Text,
+    group :: Text,
+    instanceId :: Text,
+    sessionMillis :: Int
+  }
+
+instance FromJSON RawConsumerArgs where
+  parseJSON = withObject "Kafka raw consumer args" \value ->
+    RawConsumerArgs <$> value .: "brokers" <*> value .: "topic" <*> value .: "group" <*> value .: "instanceId" <*> value .: "sessionMillis"
+
+runRawConsumer :: RoleContext -> IO ()
+runRawConsumer context = do
+  args <- either (ioError . userError) pure (fromJson context.init.args :: Either String RawConsumerArgs)
+  context.send WrkReady
+  command <- context.receive
+  case command of
+    Just CtlStart -> do
+      consumer <- async (consumeRaw context args)
+      next <- race (waitCatch consumer) context.receive
+      case next of
+        Right (Just (CtlStop _)) -> cancel consumer
+        Right _ -> cancel consumer
+        Left result -> context.send (WrkError ("raw-consumer exited before stop: " <> Text.pack (show result)))
+    _ -> ioError (userError "raw-consumer expected start")
+
+consumeRaw :: RoleContext -> RawConsumerArgs -> IO ()
+consumeRaw context args = do
+  let topic = TopicName args.topic
+      rebalance _ event = do
+        at <- getCurrentTime
+        let (kind, partitions) = case event of
+              RebalanceBeforeAssign values -> ("before-assign" :: Text, values)
+              RebalanceAssign values -> ("assign", values)
+              RebalanceBeforeRevoke values -> ("before-revoke", values)
+              RebalanceRevoke values -> ("revoke", values)
+            coordinates = [number | (_, PartitionId number) <- partitions]
+        context.send (WrkCustom (if kind == "assign" then "assigned" else "rebalance") (object ["kind" .= kind, "partitions" .= coordinates, "at" .= at]))
+      props =
+        C.brokersList (fmap BrokerAddress args.brokers)
+          <> C.groupId (ConsumerGroupId args.group)
+          <> C.noAutoCommit
+          <> C.noAutoOffsetStore
+          <> C.extraProp "group.instance.id" args.instanceId
+          <> C.extraProp "session.timeout.ms" (Text.pack (show args.sessionMillis))
+          <> C.extraProp "heartbeat.interval.ms" (Text.pack (show (args.sessionMillis `div` 3)))
+          <> C.setCallback (C.rebalanceCallback rebalance)
+      subscription = C.topics [topic] <> C.offsetReset C.Earliest
+  outcome <-
+    runEff . runError @KafkaError $
+      C.runKafkaConsumer props subscription (pollForever (0 :: Int))
+  case outcome of
+    Left problem -> context.send (WrkError (Text.pack (show problem)))
+    Right () -> pure ()
+  where
+    pollForever count = do
+      candidate <- C.pollMessage (Timeout 500)
+      case candidate of
+        Nothing -> pollForever count
+        Just record -> do
+          liftIO $ do
+            at <- getCurrentTime
+            context.send (WrkCustom "record" (object ["partition" .= unPartitionId (C.crPartition record), "offset" .= unOffset (C.crOffset record), "at" .= at]))
+            if count `mod` 10 == 0 then context.send (WrkProgress (fromIntegral count) at) else pure ()
+          C.commitOffsetMessage C.OffsetCommit record
+          pollForever (count + 1)
 
 data ProducerArgs = ProducerArgs {brokers :: [Text], topic :: Text, messages :: Int, messageTimeoutMillis :: Int}
 

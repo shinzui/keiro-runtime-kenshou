@@ -143,6 +143,16 @@ replacement saw no record. The paired manual-store control committed 10 and
 resumed at 10. The automatic-store loss is the nonblocking KFK-5 limitation at
 `mori://shinzui/keiro/plans/121-enforce-consumer-offset-store-configuration-and-correct-the-kafka-transport-docs`.
 
+`kafka/consumer/concurrency/static-membership-restart-without-revoke` starts
+two raw consumers with prefixed static member IDs, kills A, then restarts it
+after three seconds. In the local released-cohort run A regained its original
+partitions, B logged no revoke during the window, and the group reached zero
+lag. `kafka/consumer/concurrency/static-membership-fencing-is-observable`
+starts A′ with A's member ID. A′ handled records, while A remained alive
+without a fatal error on Hackage `hw-kafka-client` 5.3.0. That scoped,
+nonblocking result tracks
+`mori://shinzui/keiro/masterplans/23-make-the-kafka-consumer-streaming-stack-surface-fatal-errors-and-close-deterministically`.
+
 `kafka/keiro-records/correctness/roundtrip-through-broker` publishes 200
 Keiro integration events through the neutral record conversion and checks
 their decoded events, Kafka delivery references, all six required wire
