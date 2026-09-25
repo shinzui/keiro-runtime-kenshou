@@ -37,6 +37,11 @@ provenance:
       at: 2026-09-24T22:53:07Z
       mode: "update"
       note: "Consolidated Progress into delivered outcomes and remaining acceptance"
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-25T04:37:39Z
+      mode: "implement"
+      note: "Reran PostgreSQL 17 and 18 PGMQ fault scenarios and filed three verified owner bug reports."
 ---
 
 # Cover pgmq-hs in isolation
@@ -58,10 +63,14 @@ After this plan, a maintainer can run `kenshou list --layer pgmq` and see about 
 - [x] (2026-09-22) Correctness baseline: the PGMQ bundle and roles are registered; all eighteen correctness scenarios ran on PostgreSQL 17 and 18 with persisted verdicts and scoped known-defect outcomes.
 - [x] (2026-09-22) Concurrency and crash baseline: all twenty identifiers ran on both PostgreSQL versions. The full random-kill acceptance handled 300,000 sends and 120 kills per version without loss; fault probes isolate known classifier and reconciliation defects.
 - [x] (2026-09-22) Measurement baseline: nine benchmarks, comparison policy, telemetry arms, and reduced/full soak constructors produce artifacts. Two A/A controls passed; seven local A/A results were inconclusive under the checked-in tail policy.
-- [ ] Complete wider outage and blackhole semantics, rerun the seven noisy A/A controls on a quiet cell, and audit reproduced upstream findings against published contracts.
+- [x] (2026-09-24) Reproduced disconnect classification, false concurrent-reconcile creator reports, and partitioned notification storms on PostgreSQL 17 and 18; filed validated owner bug reports BUG-1–3 and linked them from the exact scenarios.
+- [ ] Complete wider outage and blackhole semantics, rerun the seven noisy A/A controls on a quiet cell, and finish the remaining published-contract audit (blackhole, mixed-case alias, partition retention).
 - [ ] Obtain stable reduced-soak leak verdicts with tracing off and OTLP. Existing twenty-minute runs kept non-heap probes stable but measured post-GC heap growth; see Outcomes & Retrospective.
 
 ## Surprises & Discoveries
+
+- Observation: fresh PostgreSQL 17 and 18 reproductions confirmed three distinct shipped-contract failures before owner reports were finalized. Immediate restart preserved 200 confirmed keys and recovered the same pool in 361 ms, but `isTransient` marked the outage error permanent. Eight concurrent reconcilers reported as many as eighty creators for ten queues despite catalog convergence. Partitioned queues emitted one thousand notifications on leaf channels over five seconds against a 250 ms throttle allowance of twenty-one.
+  Evidence: restart runs `01a0d6d6-cb25-7609-b1d1-0eeebbba50ec` and `01a0d6d7-cae8-72ed-ba4a-17a8cc224e53`; reconciliation runs `01a0d6d6-85fe-7214-b7f3-cea91e397461` and `01a0d6d7-9fe9-7653-bad0-83c881850ae8`; notification runs `01a0d6d6-268b-73bc-b9fe-40b6045586bd` and `01a0d6d7-5dab-76ea-8315-00fcc28919d3`. Owner reports are `mori://shinzui/pgmq-hs/okf/bug-reports/concepts/BUG-1`, `mori://shinzui/pgmq-hs/okf/bug-reports/concepts/BUG-2`, and `mori://shinzui/pgmq-hs/okf/bug-reports/concepts/BUG-3`.
 
 - Observation: Hackage's preferred-version endpoint and the upstream Git tags both identify `0.6.1.0` as the current pgmq-hs release, while the local Mori corpus exposes the matching release source and documentation.
   Evidence: `https://hackage.haskell.org/package/pgmq-core/preferred.json`, upstream tag `v0.6.1.0`, and `mori registry show shinzui/pgmq-hs --full` all agree on the selected cohort.
@@ -252,7 +261,9 @@ After this plan, a maintainer can run `kenshou list --layer pgmq` and see about 
 
 EP-8 now contributes a registry-valid 50-scenario PGMQ layer, three worker roles, PostgreSQL 17/18 fixtures with pg_partman, contract verdict artifacts, paired benchmark policy, overhead reports, and reduced/full soak constructors. The layer has already localized two released partition defects, two transient-error classifier gaps, a response-blackhole timeout gap, listener-loss semantics, and a deliberately injected handler regression without making declared known defects blocking.
 
-The layer is not yet complete. Seven of nine A/A controls need the quieter execution environment owned by EP-17, the backend-termination and TCP-reset contracts expose error shapes that pgmq-hs 0.6.1.0 classifies as permanent, and the corrected reduced-soak controls expose a remaining common-path live-heap slope despite stable workload, queue, OS-resource, and telemetry probes. Until those acceptance items are resolved, this plan and its MasterPlan registry row remain `In Progress`.
+Three published-contract failures now have fresh reproductions, local findings, and validated owner bug reports. The classifier, concurrent-reconciliation report, and partitioned-notification scenarios cite those reports while their existing remediation requests and plans remain linked in the reports.
+
+The layer is not yet complete. Seven of nine A/A controls need the quieter execution environment owned by EP-17, the remaining published-contract findings need disposition, and the corrected reduced-soak controls expose a common-path live-heap slope despite stable workload, queue, OS-resource, and telemetry probes. Until those acceptance items are resolved, this plan and its MasterPlan registry row remain `In Progress`.
 
 
 ## Context and Orientation
