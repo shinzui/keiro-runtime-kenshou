@@ -1,17 +1,18 @@
-module Kenshou.Suite.Kafka.Roles (roles, adapterConsumerRole, batchProducerRole) where
+module Kenshou.Suite.Kafka.Roles (roles, adapterConsumerRole, batchProducerRole, transactionWorkerRole) where
 
+import Control.Monad (forM_)
 import Data.Aeson (FromJSON (..), Value, object, withObject, (.:), (.=))
 import Data.Aeson qualified as Aeson
 import Data.ByteString.Char8 qualified as ByteString
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Effectful (liftIO, runEff)
+import Effectful (Eff, liftIO, runEff, (:>))
 import Effectful.Error.Static (runError)
 import Kafka.Consumer.Types (ConsumerGroupId (..))
 import Kafka.Effectful.Consumer qualified as C
 import Kafka.Effectful.Producer qualified as P
-import Kafka.Types (BrokerAddress (..), KafkaError, TopicName (..))
+import Kafka.Types (BrokerAddress (..), KafkaError, Timeout (..), TopicName (..))
 import Kenshou.Core.Role (ControlMessage (..), RoleContext (..), RoleName, WorkerInit (..), WorkerMessage (..), WorkerRole (..), mkRoleName)
 import Shibuya.Adapter (Adapter (..))
 import Shibuya.Adapter.Kafka (defaultConfig, kafkaAdapter)
@@ -25,7 +26,8 @@ import Streamly.Data.Stream qualified as Stream
 roles :: [WorkerRole]
 roles =
   [ WorkerRole adapterConsumerRole "Consumes Kafka records through the adapter under a declared handler policy." runAdapterConsumer,
-    WorkerRole batchProducerRole "Enqueues a batch and attempts a bounded flush during a broker outage." runBatchProducer
+    WorkerRole batchProducerRole "Enqueues a batch and attempts a bounded flush during a broker outage." runBatchProducer,
+    WorkerRole transactionWorkerRole "Stages a consume-transform-produce transaction until told to commit." runTransactionWorker
   ]
 
 adapterConsumerRole :: RoleName
@@ -33,6 +35,9 @@ adapterConsumerRole = either (error . Text.unpack) id (mkRoleName "kafka/adapter
 
 batchProducerRole :: RoleName
 batchProducerRole = either (error . Text.unpack) id (mkRoleName "kafka/batch-producer")
+
+transactionWorkerRole :: RoleName
+transactionWorkerRole = either (error . Text.unpack) id (mkRoleName "kafka/transaction-worker")
 
 data ConsumerArgs = ConsumerArgs
   { brokers :: [Text],
@@ -131,3 +136,88 @@ runBatchProducer context = do
       _ <- context.receive
       pure ()
     _ -> ioError (userError "batch-producer expected start")
+
+data TransactionArgs = TransactionArgs
+  { brokers :: [Text],
+    inputTopic :: Text,
+    outputTopic :: Text,
+    group :: Text,
+    transactionId :: Text,
+    messages :: Int
+  }
+
+instance FromJSON TransactionArgs where
+  parseJSON = withObject "Kafka transaction args" \value ->
+    TransactionArgs <$> value .: "brokers" <*> value .: "inputTopic" <*> value .: "outputTopic" <*> value .: "group" <*> value .: "transactionId" <*> value .: "messages"
+
+runTransactionWorker :: RoleContext -> IO ()
+runTransactionWorker context = do
+  args <- either (ioError . userError) pure (fromJson context.init.args :: Either String TransactionArgs)
+  context.send WrkReady
+  command <- context.receive
+  case command of
+    Just CtlStart -> do
+      let producerProps =
+            P.brokersList (fmap BrokerAddress args.brokers)
+              <> P.extraProp "transactional.id" args.transactionId
+              <> P.extraProp "enable.idempotence" "true"
+              <> P.extraProp "acks" "all"
+          consumerProps =
+            C.brokersList (fmap BrokerAddress args.brokers)
+              <> C.groupId (ConsumerGroupId args.group)
+              <> C.noAutoCommit
+              <> C.noAutoOffsetStore
+              <> C.extraProp "session.timeout.ms" "6000"
+              <> C.extraProp "heartbeat.interval.ms" "2000"
+              <> C.extraProp "isolation.level" "read_committed"
+          subscription = C.topics [TopicName args.inputTopic] <> C.offsetReset C.Earliest
+      outcome <- runEff . runError @KafkaError $
+        P.runKafkaProducer producerProps $
+          C.runKafkaConsumer consumerProps subscription $ do
+            P.initTransactions (Timeout 10000)
+            records <- collectRecords args.messages 0 []
+            if length records /= args.messages
+              then liftIO $ ioError (userError ("transaction worker read " <> show (length records) <> " records"))
+              else pure ()
+            P.beginTransaction
+            forM_ records \record ->
+              P.produceMessage
+                P.ProducerRecord
+                  { P.prTopic = TopicName args.outputTopic,
+                    P.prPartition = P.UnassignedPartition,
+                    P.prKey = C.crKey record,
+                    P.prValue = C.crValue record,
+                    P.prHeaders = mempty
+                  }
+            case reverse records of
+              lastRecord : _ -> do
+                offsetResult <- P.commitOffsetMessageTransaction lastRecord (Timeout 10000)
+                case offsetResult of
+                  Nothing -> pure ()
+                  Just problem -> liftIO $ ioError (userError ("send offsets to transaction: " <> show (P.getKafkaError problem)))
+              [] -> pure ()
+            liftIO $ context.send (WrkCustom "prepared" (object ["records" .= length records]))
+            release <- liftIO context.receive
+            case release of
+              Just (CtlCustom "commit" _) -> do
+                result <- P.commitTransaction (Timeout 10000)
+                case result of
+                  Nothing -> liftIO $ context.send (WrkCustom "committed" (object ["records" .= length records]))
+                  Just problem -> liftIO $ ioError (userError ("commit transaction: " <> show (P.getKafkaError problem)))
+              _ -> liftIO $ ioError (userError "transaction worker expected commit")
+      case outcome of
+        Left problem -> context.send (WrkError (Text.pack (show problem)))
+        Right () -> pure ()
+      _ <- context.receive
+      pure ()
+    _ -> ioError (userError "transaction worker expected start")
+
+collectRecords :: (C.KafkaConsumer :> es) => Int -> Int -> [C.ConsumerRecord (Maybe ByteString.ByteString) (Maybe ByteString.ByteString)] -> Eff es [C.ConsumerRecord (Maybe ByteString.ByteString) (Maybe ByteString.ByteString)]
+collectRecords count emptyPolls collected
+  | length collected >= count = pure (reverse collected)
+  | emptyPolls >= 8 = pure (reverse collected)
+  | otherwise = do
+      candidate <- C.pollMessage (Timeout 2500)
+      case candidate of
+        Nothing -> collectRecords count (emptyPolls + 1) collected
+        Just record -> collectRecords count 0 (record : collected)

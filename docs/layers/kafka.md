@@ -83,6 +83,14 @@ enqueue failures although none of the 100 records was delivered. This is
 the documented nonblocking limitation tracked by
 `mori://shinzui/keiro/plans/120-add-an-acked-batch-publish-api-to-kafka-effectful-and-a-reference-outbox-bridge`.
 
+`kafka/producer/correctness/transactions-commit-and-abort` checks that a
+read-committed consumer sees ten committed records and none from an aborted
+transaction. It then kills a consume-transform-produce worker after output
+and input offsets are staged but before commit. A replacement with the same
+transactional ID commits the replay; the output contains exactly one record
+per input and the input group reaches zero lag. Both worker process IDs and
+the visible counts are recorded in the verdict summary.
+
 `kafka/adapter/correctness/multi-topic-partition-key` consumes two
 single-partition topics through one adapter. Message IDs are distinct, but
 the envelope partition key is `"0"` for both. The scenario records the

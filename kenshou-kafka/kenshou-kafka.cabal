@@ -55,6 +55,7 @@ library
     Kenshou.Suite.Kafka.Fixture
     Kenshou.Suite.Kafka.Producer
     Kenshou.Suite.Kafka.Producer.BatchFailure
+    Kenshou.Suite.Kafka.Producer.Transactions
     Kenshou.Suite.Kafka.Roles
 
   build-depends:
