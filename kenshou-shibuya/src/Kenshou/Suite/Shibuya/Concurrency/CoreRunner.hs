@@ -1,4 +1,4 @@
-module Kenshou.Suite.Shibuya.Concurrency.CoreRunner (scenarios) where
+module Kenshou.Suite.Shibuya.Concurrency.CoreRunner (scenarios, startupCancellationFailures) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (async, cancel, mapConcurrently, waitCatch)
@@ -9,17 +9,19 @@ import Control.Exception qualified as Exception
 import Data.Aeson (object, (.=))
 import Data.ByteString.Char8 qualified as ByteString
 import Data.IORef (IORef, atomicModifyIORef', modifyIORef', newIORef, readIORef)
+import Data.Maybe (isNothing)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time.Clock (diffUTCTime, getCurrentTime)
 import Effectful (IOE, Limit (..), Persistence (..), UnliftStrategy (..), liftIO, runEff, withEffToIO, (:>))
+import GHC.Conc (listThreads)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension (noDimensions)
 import Kenshou.Core.Env (noEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobInt, knobText, mkKnobName, renderKnobName)
 import Kenshou.Core.Phase (zeroPhases)
-import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
+import Kenshou.Core.Scenario (KnownDefect (..), Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
 import Kenshou.Suite.Shibuya.Cohort (knownOnReleasedCore, rev)
 import Kenshou.Suite.Shibuya.Fixture.Handlers (HandlerScript (..), HandlerStats (..), defaultHandlerScript, handlerStats, newHandlerProbe, scriptedHandler)
 import Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter (BrokerEvent (..), BrokerStats (..), FinalizerOutcome (..), ShutdownBehaviour (..), SyntheticConfig (..), brokerEvents, brokerStats, closeInput, defaultSyntheticConfig, newSyntheticBroker, publish, reopenSource, syntheticAdapter)
@@ -34,10 +36,98 @@ import Shibuya.Core.Types (MessageId (..), mkEnvelope)
 import Shibuya.Policy (Concurrency (..), OrderingPolicy)
 import Shibuya.Telemetry.Effect (runTracingNoop)
 import Streamly.Data.Stream qualified as Stream
+import System.Mem (performMajorGC)
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [haltWakesIdleIntake, leasedButUnfinalizedUpperBound, haltStrandsLeases, finalizationFailure, stopAllOnFailure, adapterShutdownFailure, blockingAdapterShutdown, forcedShutdownConserves]
+scenarios = [haltWakesIdleIntake, leasedButUnfinalizedUpperBound, haltStrandsLeases, finalizationFailure, stopAllOnFailure, adapterShutdownFailure, blockingAdapterShutdown, forcedShutdownConserves, startupCancellation]
+
+startupCancellation :: Scenario
+startupCancellation =
+  Scenario
+    { id = either (error . Text.unpack) id (parseScenarioId "shibuya/core-runner/concurrency/startup-cancellation-leaks-nothing"),
+      revision = 2,
+      summary = "Cancellation during startup and rapid start-stop cycles leave no active source or thread growth.",
+      tier = TierStandard,
+      placement = PlaceEither,
+      knobs = [],
+      dimensions = noDimensions,
+      phases = zeroPhases,
+      requires = noEnvironment,
+      knownDefect =
+        knownOnReleasedCore
+          ( (rev 3 "REV-3-F3")
+              { expectedFailures =
+                  [ "startup-cancel-timeout",
+                    "startup-worker-not-terminated",
+                    "startup-source-still-active",
+                    "startup-thread-count-growth"
+                  ]
+              }
+          ),
+      run = \context -> do
+        (failures, attempted, observedStarts, baseline, finalThreads) <- startupCancellationFailures 500 200
+        putSummary context Verdicts "startup-cancellation" $
+          object
+            [ "targetCancelIterations" .= (500 :: Int),
+              "attemptedCancelIterations" .= attempted,
+              "observedSourceStarts" .= observedStarts,
+              "rapidStartStopCycles" .= (200 :: Int),
+              "baselineThreads" .= baseline,
+              "finalThreads" .= finalThreads,
+              "failures" .= failures
+            ]
+        pure $ if null failures then passed else failedWith failures (Text.intercalate "; " failures)
+    }
+
+startupCancellationFailures :: Int -> Int -> IO ([Text], Int, Int, Int, Int)
+startupCancellationFailures cancelIterations rapidCycles = do
+  performMajorGC
+  baseline <- length <$> listThreads
+  (cancellationFailures, attempted, observedStarts) <- cancellationLoop 0 0
+  cycleFailures <- concat <$> mapM rapidCycle [1 .. rapidCycles]
+  threadDelay 1000000
+  performMajorGC
+  finalThreads <- length <$> listThreads
+  let threadFailure = ["startup-thread-count-growth" | finalThreads > baseline + 8]
+      controlFailure = ["startup-cancellation-not-exercised" | cancelIterations >= 20 && observedStarts == 0]
+  pure (cancellationFailures <> cycleFailures <> threadFailure <> controlFailure, attempted, observedStarts, baseline, finalThreads)
+  where
+    cancellationLoop iteration observedStarts
+      | iteration >= cancelIterations = pure ([], iteration, observedStarts)
+      | otherwise = do
+          (failures, started) <- cancelledStart iteration
+          if null failures then cancellationLoop (iteration + 1) (observedStarts + fromEnum started) else pure (failures, iteration + 1, observedStarts + fromEnum started)
+
+    cancelledStart iteration = do
+      broker <- newSyntheticBroker defaultSyntheticConfig
+      worker <- async $ runEff $ runTracingNoop $ do
+        result <- runApp defaultAppConfig [(ProcessorId "startup-cancel", mkProcessor (syntheticAdapter broker) (\_ -> pure AckOk))]
+        case result of
+          Left err -> pure $ Just (Text.pack (show err))
+          Right handle -> stopApp handle >> pure Nothing
+      threadDelay ((iteration * 7919) `mod` 5000)
+      cancelled <- timeout 2000000 (cancel worker)
+      finished <- timeout 2000000 (waitCatch worker)
+      before <- brokerStats broker
+      threadDelay 1000000
+      after <- brokerStats broker
+      pure
+        ( ["startup-cancel-timeout" | isNothing cancelled]
+            <> ["startup-worker-not-terminated" | isNothing finished]
+            <> ["startup-source-still-active" | before.sourcePulls /= after.sourcePulls || before.idlePolls /= after.idlePolls]
+            <> ["startup-runApp-error" | Just (Right (Just _)) <- [finished]],
+          before.sourcePulls > 0
+        )
+
+    rapidCycle _ = do
+      broker <- newSyntheticBroker defaultSyntheticConfig
+      result <- timeout 2000000 $ runEff $ runTracingNoop $ do
+        started <- runApp defaultAppConfig [(ProcessorId "rapid-start-stop", mkProcessor (syntheticAdapter broker) (\_ -> pure AckOk))]
+        case started of
+          Left err -> pure $ Just (Text.pack (show err))
+          Right handle -> stopApp handle >> stopApp handle >> pure Nothing
+      pure $ ["rapid-start-stop-timeout" | result == Nothing] <> ["rapid-start-stop-error" | Just (Just _) <- [result]]
 
 stopAllOnFailure :: Scenario
 stopAllOnFailure =

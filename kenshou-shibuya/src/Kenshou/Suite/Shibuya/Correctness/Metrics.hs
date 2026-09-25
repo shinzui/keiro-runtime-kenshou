@@ -13,19 +13,22 @@ import Data.Either (isLeft, isRight)
 import Data.IORef (atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (nub, sort)
 import Data.List.NonEmpty (NonEmpty (..))
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes, isJust)
 import Data.String (fromString)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
 import Data.Time.Clock (getCurrentTime)
+import Data.Word (Word64)
 import Effectful (Limit (..), Persistence (..), UnliftStrategy (..), liftIO, runEff, withEffToIO)
+import GHC.Conc (listThreads)
 import Kenshou.Core.Context (RunContext, SummarySection (..), putSummary)
 import Kenshou.Core.Dimension (DimensionSupport (..), MetricsArm (..), Support (..), Supported (..), noDimensions)
 import Kenshou.Core.Env (noEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (CohortScope (..), KnownDefect (..), PackageCondition (..), Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
+import Kenshou.Measure.Sampler.Process (ProcessSample (..), readProcessSample)
 import Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter (BrokerStats (..), SyntheticBroker, SyntheticConfig (..), brokerStats, defaultSyntheticConfig, newSyntheticBroker, publish, syntheticAdapter)
 import Kenshou.Telemetry.Endpoint (reserveFreePort)
 import Network.HTTP.Client (Manager, defaultManagerSettings, httpLbs, newManager, parseRequest, responseBody, responseStatus)
@@ -41,6 +44,7 @@ import Shibuya.Metrics.Server (MetricsServerConfig (..), defaultConfig, startMet
 import Shibuya.Metrics.WebSocket (WebSocketState (..), newWebSocketState, websocketApp)
 import Shibuya.Policy (Concurrency (..))
 import Shibuya.Telemetry.Effect (runTracingNoop)
+import System.Mem (performMajorGC)
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
@@ -183,8 +187,8 @@ websocketSlotAccounting :: Scenario
 websocketSlotAccounting =
   Scenario
     { id = either (error . Text.unpack) id (parseScenarioId "shibuya/metrics/concurrency/websocket-slot-accounting"),
-      revision = 2,
-      summary = "Clean closes, peer drops and cancelled clients release WebSocket slots; stopping the server twice remains safe.",
+      revision = 3,
+      summary = "WebSocket churn releases slots, threads and descriptors; stopping the server twice remains safe.",
       tier = TierSmoke,
       placement = PlaceEither,
       knobs = [],
@@ -196,10 +200,10 @@ websocketSlotAccounting =
           KnownDefect
             { reference = "mori://shinzui/shibuya/okf/reviews/concepts/REV-9",
               summary = "REV-9-F1",
-              expectedFailures = ["REV-9-F1"],
+              expectedFailures = ["REV-9-F1", "websocket-thread-baseline", "websocket-os-thread-baseline", "websocket-fd-baseline"],
               appliesTo = OnlyWhen (ResolvedFromHackage "shibuya-metrics" :| [VersionBelow "shibuya-metrics" "0.10.0.0"])
             },
-      run = \context -> websocketSlotFailures >>= healthReport context "websocket-slot-accounting"
+      run = runWebsocketSlots
     }
 
 healthScenario :: Text -> Text -> Text -> (RunContext -> IO ScenarioReport) -> Scenario
@@ -587,21 +591,83 @@ data IntentionalPeerDrop = IntentionalPeerDrop deriving (Eq, Show)
 instance Exception IntentionalPeerDrop
 
 websocketSlotFailures :: IO [Text]
-websocketSlotFailures = do
+websocketSlotFailures = fst <$> websocketSlotProbe
+
+data SlotResources = SlotResources
+  { baselineHaskellThreads :: !Int,
+    finalHaskellThreads :: !Int,
+    baselineOsThreads :: !(Maybe Word64),
+    finalOsThreads :: !(Maybe Word64),
+    baselineFds :: !(Maybe Word64),
+    finalFds :: !(Maybe Word64)
+  }
+  deriving stock (Show)
+
+runWebsocketSlots :: RunContext -> IO ScenarioReport
+runWebsocketSlots context = do
+  (failures, resources) <- websocketSlotProbe
+  putSummary context Verdicts "websocket-slot-accounting" $
+    object
+      [ "failures" .= failures,
+        "resources" .= maybe Null resourceSummary resources
+      ]
+  pure $ if null failures then passed else failedWith failures (Text.intercalate "; " failures)
+  where
+    resourceSummary sample =
+      object
+        [ "baselineHaskellThreads" .= sample.baselineHaskellThreads,
+          "finalHaskellThreads" .= sample.finalHaskellThreads,
+          "baselineOsThreads" .= sample.baselineOsThreads,
+          "finalOsThreads" .= sample.finalOsThreads,
+          "baselineFds" .= sample.baselineFds,
+          "finalFds" .= sample.finalFds
+        ]
+
+websocketSlotProbe :: IO ([Text], Maybe SlotResources)
+websocketSlotProbe = do
   broker <- newSyntheticBroker defaultSyntheticConfig
   runEff $ runTracingNoop $ do
     result <- runApp defaultAppConfig [(ProcessorId "websocket-slots", mkProcessor (syntheticAdapter broker) (\_ -> pure AckOk))]
     case result of
-      Left err -> pure ["app-start: " <> Text.pack (show err)]
+      Left err -> pure (["app-start: " <> Text.pack (show err)], Nothing)
       Right handle -> do
-        failures <- liftIO $ do
+        (failures, resources) <- liftIO $ do
           let config = defaultConfig {wsMaxConnections = 8}
+          stopped <- repeatedServerStop (getAppMaster handle)
+          warmup <- withSlotServer config (getAppMaster handle) $ \port _ -> do
+            accepted <- snapshotAccepted port
+            pure $ check "websocket-resource-warmup" accepted
+          threadDelay 500000
+          performMajorGC
+          baselineHaskellThreads <- length <$> listThreads
+          baseline <- readProcessSample
           batches <- traverse (\mode -> withSlotServer config (getAppMaster handle) (\port state -> slotBatch port state mode)) [CleanClose, DropAfterSnapshot, DropBeforeSnapshot]
           cancelled <- withSlotServer config (getAppMaster handle) cancellationBatch
-          stopped <- repeatedServerStop (getAppMaster handle)
-          pure $ nub $ concat batches <> cancelled <> stopped
+          threadDelay 1000000
+          performMajorGC
+          finalHaskellThreads <- length <$> listThreads
+          final <- readProcessSample
+          let resources =
+                SlotResources
+                  { baselineHaskellThreads,
+                    finalHaskellThreads,
+                    baselineOsThreads = baseline.osThreads,
+                    finalOsThreads = final.osThreads,
+                    baselineFds = baseline.openFds,
+                    finalFds = final.openFds
+                  }
+              resourceFailures =
+                check "websocket-resource-sample-unavailable" (all isJust [baseline.osThreads, final.osThreads, baseline.openFds, final.openFds])
+                  <> check "websocket-thread-baseline" (finalHaskellThreads <= baselineHaskellThreads + 2)
+                  <> check "websocket-os-thread-baseline" (withinBaseline baseline.osThreads final.osThreads)
+                  <> check "websocket-fd-baseline" (withinBaseline baseline.openFds final.openFds)
+          pure (nub $ stopped <> warmup <> concat batches <> cancelled <> resourceFailures, resources)
         stopApp handle
-        pure failures
+        pure (failures, Just resources)
+
+withinBaseline :: Maybe Word64 -> Maybe Word64 -> Bool
+withinBaseline (Just baseline) (Just final) = final <= baseline + 2
+withinBaseline _ _ = True
 
 withSlotServer :: MetricsServerConfig -> Master -> (Int -> WebSocketState -> IO [Text]) -> IO [Text]
 withSlotServer config master action = do

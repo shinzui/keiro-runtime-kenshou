@@ -48,6 +48,7 @@ library
     http-client,
     http-types,
     kenshou-core,
+    kenshou-measure,
     kenshou-telemetry,
     shibuya-core,
     shibuya-metrics,

@@ -70,6 +70,7 @@ cellsOf scenario = case renderScenarioId scenario of
   "shibuya/core-runner/concurrency/halt-wakes-idle-intake" -> [(Dispatch, Timeout)]
   "shibuya/core-runner/concurrency/finalization-failure-is-a-failure-not-a-halt" -> [(Finalization, SynchronousException), (Finalization, Timeout), (Supervision, SynchronousException)]
   "shibuya/core-runner/concurrency/stop-all-on-failure-delivers-once" -> [(Supervision, SynchronousException), (Supervision, Normal)]
+  "shibuya/core-runner/concurrency/startup-cancellation-leaks-nothing" -> [(StartupRegistration, Cancellation), (StartupRegistration, RepeatedStop)]
   "shibuya/core-runner/concurrency/adapter-shutdown-failure-does-not-skip-siblings" -> [(DrainCancel, SynchronousException), (DrainCancel, RepeatedStop), (Supervision, RepeatedStop)]
   "shibuya/core-runner/concurrency/blocking-adapter-shutdown-is-bounded" -> [(DrainCancel, Timeout)]
   "shibuya/core-runner/concurrency/forced-shutdown-abandons-but-never-loses" -> [(Dispatch, Cancellation), (Finalization, Cancellation), (DrainCancel, Normal), (DrainCancel, Cancellation), (IngestionBackpressure, Timeout), (RetryLease, Timeout)]

@@ -6,6 +6,8 @@ import Control.Exception (SomeException, try)
 import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.Text (Text)
 import Effectful (liftIO, runEff)
+import Kenshou.Suite.Shibuya.Cohort (CoreLine (..), coreLine)
+import Kenshou.Suite.Shibuya.Concurrency.CoreRunner (startupCancellationFailures)
 import Kenshou.Suite.Shibuya.Fixture.Handlers
 import Kenshou.Suite.Shibuya.Fixture.RestartLoop (RestartPolicy (..), runWithRestartLoop)
 import Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter
@@ -22,6 +24,15 @@ import Test.Hspec
 
 spec :: Spec
 spec = describe "synthetic broker" $ do
+  it "stops source polling after startup cancellation and rapid stop cycles" $ do
+    (failures, attempted, _, baseline, finalThreads) <- startupCancellationFailures 4 8
+    attempted `shouldSatisfy` (> 0)
+    case coreLine of
+      CoreReleased0903 -> failures `shouldSatisfy` all (`elem` ["startup-cancel-timeout", "startup-worker-not-terminated", "startup-source-still-active", "startup-thread-count-growth"])
+      CoreLifecycleRemediated -> do
+        failures `shouldBe` []
+        finalThreads `shouldSatisfy` (<= baseline + 8)
+
   it "redelivers a retry with an incremented attempt and conserves the message" $ do
     broker <- newSyntheticBroker defaultSyntheticConfig
     _ <- publish broker Nothing "payload"
