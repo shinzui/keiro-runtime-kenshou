@@ -81,6 +81,8 @@ cellsOf scenario = case renderScenarioId scenario of
   "shibuya/core-batch/concurrency/shutdown-with-partial-batches" -> [(Batching, Cancellation), (Batching, RepeatedStop), (RetryLease, Cancellation)]
   "shibuya/core-batch/correctness/conservation-triggers-and-decisions" -> [(Batching, Normal), (Batching, SynchronousException)]
   "shibuya/metrics/correctness/endpoint-contract" -> [(MetricsHealth, Normal)]
+  "shibuya/metrics/correctness/ready-reflects-a-failed-processor" -> [(MetricsHealth, SynchronousException)]
+  "shibuya/metrics/correctness/live-reflects-a-stopped-master" -> [(MetricsHealth, Cancellation), (MetricsHealth, RepeatedStop)]
   _ -> []
 
 -- Add reasons only for cells which cannot be exercised through public APIs.

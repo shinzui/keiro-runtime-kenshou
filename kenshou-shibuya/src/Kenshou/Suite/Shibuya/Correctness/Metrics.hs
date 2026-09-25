@@ -1,4 +1,4 @@
-module Kenshou.Suite.Shibuya.Correctness.Metrics (scenarios) where
+module Kenshou.Suite.Shibuya.Correctness.Metrics (scenarios, readyFailures, liveFailures) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
@@ -11,18 +11,18 @@ import Data.String (fromString)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
-import Effectful (liftIO, runEff)
+import Effectful (Limit (..), Persistence (..), UnliftStrategy (..), liftIO, runEff, withEffToIO)
 import Kenshou.Core.Context (RunContext, SummarySection (..), putSummary)
 import Kenshou.Core.Dimension (DimensionSupport (..), MetricsArm (..), Support (..), Supported (..), noDimensions)
 import Kenshou.Core.Env (noEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Phase (zeroPhases)
-import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
-import Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter (defaultSyntheticConfig, newSyntheticBroker, publish, syntheticAdapter)
+import Kenshou.Core.Scenario (CohortScope (..), KnownDefect (..), PackageCondition (..), Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
+import Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter (SyntheticConfig (..), defaultSyntheticConfig, newSyntheticBroker, publish, syntheticAdapter)
 import Kenshou.Telemetry.Endpoint (reserveFreePort)
 import Network.HTTP.Client (Manager, defaultManagerSettings, httpLbs, newManager, parseRequest, responseBody, responseStatus)
 import Network.HTTP.Types.Status (statusCode)
-import Shibuya.App (Master, defaultAppConfig, getAppMaster, mkProcessor, runApp, stopApp)
+import Shibuya.App (Master, defaultAppConfig, getAppMaster, mkProcessor, runApp, stopApp, waitApp)
 import Shibuya.Core.Ack (AckDecision (..))
 import Shibuya.Core.Metrics (ProcessorId (..))
 import Shibuya.Metrics.Server (MetricsServerConfig (..), defaultConfig, startMetricsServer, stopMetricsServer)
@@ -30,7 +30,10 @@ import Shibuya.Telemetry.Effect (runTracingNoop)
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [endpointContract]
+scenarios = [endpointContract, readyReflectsFailedProcessor, liveReflectsStoppedMaster]
+
+metricsDimensions :: DimensionSupport
+metricsDimensions = noDimensions {metrics = Supported (Support (MetricsServe :| [MetricsServeScraped]) MetricsServe)}
 
 endpointContract :: Scenario
 endpointContract =
@@ -41,11 +44,40 @@ endpointContract =
       tier = TierSmoke,
       placement = PlaceEither,
       knobs = [],
-      dimensions = noDimensions {metrics = Supported (Support (MetricsServe :| [MetricsServeScraped]) MetricsServe)},
+      dimensions = metricsDimensions,
       phases = zeroPhases,
       requires = noEnvironment,
       knownDefect = Nothing,
       run = runEndpointContract
+    }
+
+readyReflectsFailedProcessor :: Scenario
+readyReflectsFailedProcessor = healthScenario "shibuya/metrics/correctness/ready-reflects-a-failed-processor" "Readiness retains a failed configured processor after its source exits." "REV-8-F1" runReadyFailed
+
+liveReflectsStoppedMaster :: Scenario
+liveReflectsStoppedMaster = healthScenario "shibuya/metrics/correctness/live-reflects-a-stopped-master" "Liveness reports a stopped master as unavailable." "REV-8-F2" runLiveStopped
+
+healthScenario :: Text -> Text -> Text -> (RunContext -> IO ScenarioReport) -> Scenario
+healthScenario identifier description finding action =
+  Scenario
+    { id = either (error . Text.unpack) id (parseScenarioId identifier),
+      revision = 1,
+      summary = description,
+      tier = TierSmoke,
+      placement = PlaceEither,
+      knobs = [],
+      dimensions = metricsDimensions,
+      phases = zeroPhases,
+      requires = noEnvironment,
+      knownDefect =
+        Just $
+          KnownDefect
+            { reference = "mori://shinzui/shibuya/okf/reviews/concepts/REV-8",
+              summary = finding,
+              expectedFailures = [finding],
+              appliesTo = OnlyWhen (ResolvedFromHackage "shibuya-metrics" :| [VersionBelow "shibuya-metrics" "0.10.0.0"])
+            },
+      run = action
     }
 
 data HttpResult = HttpResult {status :: !Int, body :: !LazyByteString.ByteString}
@@ -159,3 +191,55 @@ hasPath keys body = maybe False (go keys) (decode body)
 
 check :: Text -> Bool -> [Text]
 check label success = [label | not success]
+
+runReadyFailed :: RunContext -> IO ScenarioReport
+runReadyFailed context = readyFailures >>= healthReport context "ready-failed-processor"
+
+readyFailures :: IO [Text]
+readyFailures = do
+  manager <- newManager defaultManagerSettings
+  broker <- newSyntheticBroker defaultSyntheticConfig {sourceFault = Just (1, "scripted source failure")}
+  failures <- runEff $ runTracingNoop $ do
+    result <- runApp defaultAppConfig [(ProcessorId "readiness-failure", mkProcessor (syntheticAdapter broker) (\_ -> pure AckOk))]
+    case result of
+      Left err -> pure ["app-start: " <> Text.pack (show err)]
+      Right handle -> withEffToIO (ConcUnlift Persistent Unlimited) $ \runInIO -> liftIO $
+        withServer manager defaultConfig (getAppMaster handle) $ \port -> do
+          before <- fetch manager port "/health/ready"
+          _ <- publish broker Nothing "probe"
+          ended <- timeout 5000000 (runInIO $ waitApp handle)
+          after <- fetch manager port "/health/ready"
+          runInIO $ stopApp handle
+          pure $
+            check "ready-before-failure" (before.status == 200 && hasPath ["ready"] before.body)
+              <> check "source-did-not-fail" (ended /= Nothing)
+              <> check "REV-8-F1" (after.status == 503 && hasPath ["ready"] after.body)
+  pure failures
+
+runLiveStopped :: RunContext -> IO ScenarioReport
+runLiveStopped context = liveFailures >>= healthReport context "live-stopped-master"
+
+liveFailures :: IO [Text]
+liveFailures = do
+  manager <- newManager defaultManagerSettings
+  broker <- newSyntheticBroker defaultSyntheticConfig
+  failures <- runEff $ runTracingNoop $ do
+    result <- runApp defaultAppConfig [(ProcessorId "liveness-stopped", mkProcessor (syntheticAdapter broker) (\_ -> pure AckOk))]
+    case result of
+      Left err -> pure ["app-start: " <> Text.pack (show err)]
+      Right handle -> withEffToIO (ConcUnlift Persistent Unlimited) $ \runInIO -> liftIO $
+        withServer manager defaultConfig (getAppMaster handle) $ \port -> do
+          before <- fetch manager port "/health/live"
+          runInIO $ stopApp handle
+          after <- fetch manager port "/health/live"
+          runInIO $ stopApp handle
+          afterAgain <- fetch manager port "/health/live"
+          pure $
+            check "live-before-stop" (before.status == 200 && hasPath ["alive"] before.body)
+              <> check "REV-8-F2" (after.status == 503 && afterAgain.status == 503 && hasPath ["alive"] after.body && hasPath ["alive"] afterAgain.body)
+  pure failures
+
+healthReport :: RunContext -> Text -> [Text] -> IO ScenarioReport
+healthReport context name failures = do
+  putSummary context Verdicts name $ object ["failures" .= failures]
+  pure $ if null failures then passed else failedWith failures (Text.intercalate "; " failures)

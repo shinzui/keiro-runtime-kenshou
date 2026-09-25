@@ -61,7 +61,10 @@ test-suite kenshou-shibuya-test
   type: exitcode-stdio-1.0
   hs-source-dirs: test
   main-is: Main.hs
-  other-modules: SyntheticSpec
+  other-modules:
+    MetricsSpec
+    SyntheticSpec
+
   ghc-options: -threaded
   build-depends:
     base >=4.21 && <4.22,
