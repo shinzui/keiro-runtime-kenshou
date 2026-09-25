@@ -32,6 +32,11 @@ provenance:
       at: 2026-09-24T22:53:08Z
       mode: "update"
       note: "Consolidated Progress into delivered outcomes and remaining acceptance"
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-25T19:14:42Z
+      mode: "implement"
+      note: "Continued Shibuya core lifecycle coverage with bounded shutdown scenario"
 ---
 
 # Cover shibuya core and its PGMQ and kiroku adapters
@@ -68,6 +73,8 @@ After this plan a maintainer can, from this repository, run `kenshou list --laye
 - With 1,000 published messages, inbox size 100 and `async:4` handlers blocked on a gate, the broker measured 105 leased but unfinalized messages against the implementation bound of 114; after opening the gate all 1,000 were finalized. Released-cohort evidence: `runs/01a0cf05-0613-7078-a258-3169943ec976/run-result.json`.
 - The ordering policy matrix passed all seven valid policy pairs on released and pinned head in `runs/01a0cf08-d088-7295-a9f2-a63cefd1bb67/run-result.json` and `runs/01a0cf09-726b-713d-b861-a0b91b22ff6e/run-result.json`. The unfinalized-lease bound also passed on head in `runs/01a0cf09-a436-738b-8897-e48842e8c035/run-result.json`.
 - The concurrent shutdown failure run `runs/01a0cf42-ee54-7550-8915-1d58145162eb/run-result.json` observed the released core deliver the scripted exception to all eight stop callers but call `shutdown` eight times on the throwing adapter and zero times on either sibling. It is `knownDefect.status=reproduced`, `blocking=false`. The pinned head run `runs/01a0cf43-8916-75c6-ad09-d1286f4704ff/run-result.json` passed. An initial run had `different-failure` because its expected-failure token named the review rather than the scenario's failure key; this was corrected before the cited runs.
+- The blocking-adapter shutdown scenario now exercises the default total deadline through the API common to both historical and remediated cores. Historical 0.9.0.3 run `runs/01a0d9ff-1445-72af-9fe1-70ee45d0c1c0/run-result.json` entered shutdown once and hit the 70-second watchdog, reproducing REV-2-A1 as a nonblocking known defect. Pinned remediation run `runs/01a0da02-c455-77b3-91fe-ba9b771b7268/run-result.json` returned `False` after 60.0 seconds, inside the 65-second acceptance bound, with no known-defect annotation. The package's 20 tests pass on historical, pinned remediation and isolated current-release 0.10.0.0 builds. A direct 0.10.0.0 scenario run remains to be exercised.
+- The halt lease conservation scenario passed on historical 0.9.0.3 in `runs/01a0da07-e228-732a-b4bd-ec79fc10ec82/run-result.json`: halting on the tenth delivery stranded 101 leases against the single-worker bound of 105; a replacement observed 101 redeliveries and finalized all 1,000 published messages after lease expiry. The stranded deliveries wait for their five-second lease before redelivery. Remediated-cohort repetitions remain acceptance work.
 - Hackage now lists `shibuya-core` and `shibuya-metrics` 0.10.0.0, `shibuya-pgmq-adapter` 0.16.1.0 and `shibuya-kiroku-adapter` 0.5.1.3. The upstream `v0.10.0.0` tag resolves to commit `694daf72f32db673bd6ae0d00867ce9ca565a3c7`. The original `released` cohort remains a 0.9.0.3 historical baseline. Its `keiro-pgmq` 0.17.0.0 dependency requires `shibuya-core ^>=0.9.0.0`, so simply changing that cohort's Shibuya constraint to 0.10.0.0 would make it unsolvable. The separate `cohort/shibuya-current.project` selects only `kenshou-core` and `kenshou-shibuya`, and builds against the four current Shibuya packages. `nix develop -c cabal --project-file=cohort/shibuya-current.project test kenshou-shibuya-test` passed 20 examples; the same project file built all three adapter/metrics packages.
 
 

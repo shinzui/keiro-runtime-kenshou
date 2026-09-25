@@ -6,9 +6,10 @@ import Control.Concurrent.STM (TVar, atomically, check, newTVarIO, readTVar, wri
 import Control.Exception (SomeException, try)
 import Data.Aeson (object, (.=))
 import Data.ByteString.Char8 qualified as ByteString
-import Data.IORef (IORef, modifyIORef', newIORef, readIORef)
+import Data.IORef (IORef, atomicModifyIORef', modifyIORef', newIORef, readIORef)
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Data.Time.Clock (diffUTCTime, getCurrentTime)
 import Effectful (IOE, Limit (..), Persistence (..), UnliftStrategy (..), liftIO, runEff, withEffToIO, (:>))
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension (noDimensions)
@@ -34,7 +35,116 @@ import Streamly.Data.Stream qualified as Stream
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [haltWakesIdleIntake, leasedButUnfinalizedUpperBound, adapterShutdownFailure, forcedShutdownConserves]
+scenarios = [haltWakesIdleIntake, leasedButUnfinalizedUpperBound, haltStrandsLeases, adapterShutdownFailure, blockingAdapterShutdown, forcedShutdownConserves]
+
+haltStrandsLeases :: Scenario
+haltStrandsLeases =
+  Scenario
+    { id = either (error . Text.unpack) id (parseScenarioId "shibuya/core-runner/concurrency/halt-strands-leased-messages"),
+      revision = 1,
+      summary = "A processor halt may strand bounded leases until expiry, but a replacement consumes the whole queue.",
+      tier = TierSmoke,
+      placement = PlaceEither,
+      knobs = [],
+      dimensions = noDimensions,
+      phases = zeroPhases,
+      requires = noEnvironment,
+      knownDefect = Nothing,
+      run = runHaltStrandsLeases
+    }
+
+runHaltStrandsLeases :: RunContext -> IO ScenarioReport
+runHaltStrandsLeases context = do
+  broker <- newSyntheticBroker defaultSyntheticConfig {leaseSeconds = Just 5}
+  mapM_ (\number -> publish broker Nothing (ByteString.pack ("message-" <> show number))) [1 .. 1000 :: Int]
+  closeInput broker
+  handled <- newIORef (0 :: Int)
+  observed <- timeout 20000000 $ runEff $ runTracingNoop $ do
+    let haltOnTenth _ = do
+          number <- liftIO $ atomicModifyIORef' handled (\old -> let new = old + 1 in (new, new))
+          pure $ if number == 10 then AckHalt (HaltFatal "tenth delivery") else AckOk
+    first <- runApp defaultAppConfig {inboxSize = 100} [(ProcessorId "halt-first", mkProcessor (syntheticAdapter broker) haltOnTenth)]
+    case first of
+      Left err -> error (show err)
+      Right firstHandle -> do
+        waitApp firstHandle
+        atHalt <- liftIO $ brokerStats broker
+        stopApp firstHandle
+        liftIO $ reopenSource broker
+        replacement <- runApp defaultAppConfig [(ProcessorId "halt-replacement", mkProcessor (syntheticAdapter broker) (\_ -> pure AckOk))]
+        case replacement of
+          Left err -> error (show err)
+          Right replacementHandle -> do
+            waitApp replacementHandle
+            stopApp replacementHandle
+            afterRestart <- liftIO $ brokerStats broker
+            pure (atHalt, afterRestart)
+  case observed of
+    Nothing -> pure $ failedWith ["halt-restart-timeout"] "halt or replacement did not finish within twenty seconds"
+    Just (atHalt, afterRestart) -> do
+      let bound = 100 + 3 * 1 + 2
+          stranded = atHalt.leasedUnfinalized
+          finalized = afterRestart.finalizedOk + afterRestart.halted
+          failures =
+            ["halt-not-on-tenth" | atHalt.finalizedOk /= 9 || atHalt.halted /= 1]
+              <> ["stranded-bound-exceeded" | stranded > bound]
+              <> ["halt-did-not-strand-leases" | stranded == 0]
+              <> ["messages-lost-after-halt" | finalized /= 1000]
+              <> ["leases-remain-after-halt-restart" | afterRestart.leasedUnfinalized /= 0]
+      putSummary context Verdicts "halt-stranded-leases" $
+        object
+          [ "strandedAtHalt" .= stranded,
+            "strandedBound" .= bound,
+            "finalizedAfterRestart" .= finalized,
+            "redeliveries" .= afterRestart.redeliveries
+          ]
+      pure $ if null failures then passed else failedWith failures (Text.intercalate "; " failures)
+
+blockingAdapterShutdown :: Scenario
+blockingAdapterShutdown =
+  Scenario
+    { id = either (error . Text.unpack) id (parseScenarioId "shibuya/core-runner/concurrency/blocking-adapter-shutdown-is-bounded"),
+      revision = 1,
+      summary = "A permanently blocked adapter shutdown respects the application's total shutdown deadline.",
+      tier = TierStandard,
+      placement = PlaceEither,
+      knobs = [],
+      dimensions = noDimensions,
+      phases = zeroPhases,
+      requires = noEnvironment,
+      knownDefect = knownOnReleasedCore (rev 2 "REV-2-A1"),
+      run = runBlockingAdapterShutdown
+    }
+
+runBlockingAdapterShutdown :: RunContext -> IO ScenarioReport
+runBlockingAdapterShutdown context = do
+  broker <- newSyntheticBroker defaultSyntheticConfig {shutdownBehaviour = ShutdownBlocksForever}
+  startedAt <- getCurrentTime
+  -- The common API has no total-deadline field on the historical release.
+  -- Its default is 60 seconds on remediated cores, so allow five seconds of
+  -- scheduling slack and keep a separate 70-second watchdog for the old core.
+  observed <- timeout 70000000 $ runEff $ runTracingNoop $ do
+    started <- runApp defaultAppConfig [(ProcessorId "blocking-shutdown", mkProcessor (syntheticAdapter broker) (\_ -> pure AckOk))]
+    case started of
+      Left err -> error (show err)
+      Right handle -> stopAppGracefully defaultShutdownConfig handle
+  endedAt <- getCurrentTime
+  let elapsed = realToFrac (diffUTCTime endedAt startedAt) :: Double
+  stats <- brokerStats broker
+  let bounded = maybe False (const (elapsed <= (65 :: Double))) observed
+      failures =
+        ["REV-2-A1" | not bounded]
+          <> ["blocked-shutdown-reported-clean-drain" | observed == Just True]
+          <> ["shutdown-not-entered-once" | stats.shutdownCalls /= 1]
+  putSummary context Verdicts "blocking-adapter-shutdown" $
+    object
+      [ "stopReturned" .= maybe False (const True) observed,
+        "cleanDrain" .= observed,
+        "elapsedSeconds" .= (elapsed :: Double),
+        "shutdownCalls" .= stats.shutdownCalls,
+        "deadlineSeconds" .= (65 :: Int)
+      ]
+  pure $ if null failures then passed else failedWith failures (Text.intercalate "; " failures)
 
 forcedShutdownConserves :: Scenario
 forcedShutdownConserves =
