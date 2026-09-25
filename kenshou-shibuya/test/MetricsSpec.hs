@@ -1,7 +1,7 @@
 module MetricsSpec (spec) where
 
 import Kenshou.Suite.Shibuya.Cohort (CoreLine (..), coreLine)
-import Kenshou.Suite.Shibuya.Correctness.Metrics (counterFailures, liveFailures, readyFailures, websocketFlagFailures)
+import Kenshou.Suite.Shibuya.Correctness.Metrics (counterFailures, liveFailures, readyFailures, websocketFlagFailures, websocketUnsubscribeFailures)
 import Test.Hspec (Spec, describe, it, shouldBe)
 
 spec :: Spec
@@ -18,6 +18,9 @@ spec = describe "metrics health lifecycle" $ do
   it "rejects WebSocket upgrades when the endpoint is disabled on remediated metrics" $ do
     failures <- websocketFlagFailures
     failures `shouldBe` expected "REV-9-F2"
+  it "suppresses updates after subscribe-all exclusions on remediated metrics" $ do
+    failures <- websocketUnsubscribeFailures
+    failures `shouldBe` expected "REV-9-F3"
   where
     expected finding = case coreLine of
       CoreReleased0903 -> [finding]

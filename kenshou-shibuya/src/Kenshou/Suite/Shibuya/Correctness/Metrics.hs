@@ -1,13 +1,14 @@
-module Kenshou.Suite.Shibuya.Correctness.Metrics (scenarios, readyFailures, liveFailures, counterFailures, websocketFlagFailures) where
+module Kenshou.Suite.Shibuya.Correctness.Metrics (scenarios, readyFailures, liveFailures, counterFailures, websocketFlagFailures, websocketUnsubscribeFailures) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 import Control.Exception (SomeException, bracket, try)
-import Data.Aeson (Value (..), decode, object, (.=))
+import Data.Aeson (Value (..), decode, encode, object, (.=))
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.List (sort)
 import Data.List.NonEmpty (NonEmpty (..))
+import Data.Maybe (catMaybes)
 import Data.String (fromString)
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -32,7 +33,7 @@ import Shibuya.Telemetry.Effect (runTracingNoop)
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [endpointContract, readyReflectsFailedProcessor, liveReflectsStoppedMaster, countersDistinguishRetries, websocketFlagGatesUpgrades]
+scenarios = [endpointContract, readyReflectsFailedProcessor, liveReflectsStoppedMaster, countersDistinguishRetries, websocketFlagGatesUpgrades, websocketUnsubscribeAll]
 
 metricsDimensions :: DimensionSupport
 metricsDimensions = noDimensions {metrics = Supported (Support (MetricsServe :| [MetricsServeScraped]) MetricsServe)}
@@ -103,6 +104,29 @@ websocketFlagGatesUpgrades =
               appliesTo = OnlyWhen (ResolvedFromHackage "shibuya-metrics" :| [VersionBelow "shibuya-metrics" "0.10.0.0"])
             },
       run = \context -> websocketFlagFailures >>= healthReport context "websocket-flag"
+    }
+
+websocketUnsubscribeAll :: Scenario
+websocketUnsubscribeAll =
+  Scenario
+    { id = either (error . Text.unpack) id (parseScenarioId "shibuya/metrics/correctness/websocket-unsubscribe-all-suppresses-updates"),
+      revision = 1,
+      summary = "Unsubscribing from a processor after subscribe-all suppresses its updates while other subscriptions remain live.",
+      tier = TierSmoke,
+      placement = PlaceEither,
+      knobs = [],
+      dimensions = metricsDimensions,
+      phases = zeroPhases,
+      requires = noEnvironment,
+      knownDefect =
+        Just $
+          KnownDefect
+            { reference = "mori://shinzui/shibuya/okf/reviews/concepts/REV-9",
+              summary = "REV-9-F3",
+              expectedFailures = ["REV-9-F3"],
+              appliesTo = OnlyWhen (ResolvedFromHackage "shibuya-metrics" :| [VersionBelow "shibuya-metrics" "0.10.0.0"])
+            },
+      run = \context -> websocketUnsubscribeFailures >>= healthReport context "websocket-unsubscribe-all"
     }
 
 healthScenario :: Text -> Text -> Text -> (RunContext -> IO ScenarioReport) -> Scenario
@@ -385,3 +409,60 @@ websocketProbe :: Int -> IO (Maybe (Either SomeException LazyByteString.ByteStri
 websocketProbe port =
   timeout 2000000 $
     (try (WebSockets.runClient "127.0.0.1" port "/ws" WebSockets.receiveData) :: IO (Either SomeException LazyByteString.ByteString))
+
+websocketUnsubscribeFailures :: IO [Text]
+websocketUnsubscribeFailures = do
+  manager <- newManager defaultManagerSettings
+  alphaBroker <- newSyntheticBroker defaultSyntheticConfig
+  betaBroker <- newSyntheticBroker defaultSyntheticConfig
+  runEff $ runTracingNoop $ do
+    let processors =
+          [ (ProcessorId "alpha", mkProcessor (syntheticAdapter alphaBroker) (\_ -> pure AckOk)),
+            (ProcessorId "beta", mkProcessor (syntheticAdapter betaBroker) (\_ -> pure AckOk))
+          ]
+    result <- runApp defaultAppConfig processors
+    case result of
+      Left err -> pure ["app-start: " <> Text.pack (show err)]
+      Right handle -> do
+        failures <- liftIO $ withServer manager defaultConfig (getAppMaster handle) $ \port -> do
+          session <-
+            timeout 7000000 $
+              ( try
+                  ( WebSockets.runClient "127.0.0.1" port "/ws" $ \connection -> do
+                      initial <- receiveFrame connection
+                      WebSockets.sendTextData connection $ encode $ object ["type" .= ("unsubscribe" :: Text), "processors" .= (["alpha"] :: [Text])]
+                      WebSockets.sendTextData connection $ encode $ object ["type" .= ("ping" :: Text)]
+                      pong <- receiveFrame connection
+                      _ <- publish alphaBroker Nothing "first"
+                      _ <- publish betaBroker Nothing "first"
+                      finalized <- timeout 2000000 $ awaitFinalizedPair alphaBroker betaBroker
+                      first <- receiveFrame connection
+                      second <- receiveFrame connection
+                      let frames = catMaybes [first, second]
+                          updates processor = any (\frame -> lookupPath ["type"] frame == Just (String "update") && lookupPath ["processor"] frame == Just (String processor)) frames
+                      pure $
+                        check "websocket-initial-snapshot" (maybe False (\frame -> lookupPath ["type"] frame == Just (String "snapshot")) initial)
+                          <> check "websocket-ping-control" (maybe False (\frame -> lookupPath ["type"] frame == Just (String "pong")) pong)
+                          <> check "broker-updates-not-finalized" (finalized == Just ())
+                          <> check "retained-subscription-control" (updates "beta")
+                          <> check "REV-9-F3" (not $ updates "alpha")
+                  )
+              ) ::
+              IO (Maybe (Either SomeException [Text]))
+          pure $ case session of
+            Nothing -> ["websocket-session-timeout"]
+            Just (Left err) -> ["websocket-session: " <> Text.pack (show err)]
+            Just (Right checks) -> checks
+        stopApp handle
+        pure failures
+
+receiveFrame :: WebSockets.Connection -> IO (Maybe LazyByteString.ByteString)
+receiveFrame connection = timeout 2000000 (WebSockets.receiveData connection)
+
+awaitFinalizedPair :: SyntheticBroker -> SyntheticBroker -> IO ()
+awaitFinalizedPair alphaBroker betaBroker = do
+  alpha <- brokerStats alphaBroker
+  beta <- brokerStats betaBroker
+  if alpha.finalizedOk >= 1 && beta.finalizedOk >= 1
+    then pure ()
+    else threadDelay 10000 >> awaitFinalizedPair alphaBroker betaBroker
