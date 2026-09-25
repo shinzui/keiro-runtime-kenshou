@@ -179,6 +179,24 @@ establish a steady-state latency curve. The run IDs are
 `01a0d668-4921-754d-8dc4-6db197914ac7` respectively. Idle consumer CPU
 still needs a process-isolated measurement.
 
+`kafka/pipeline/benchmark/produce-consume-throughput` exercises three paths
+with `kafka.consume-path`: the Shibuya runner (`adapter-runapp`), the adapter
+stream (`adapter-stream`), and a raw consumer poll (`raw-poll`). Knobs cover
+partitions, consumers, batch and inbox sizes, payload size, record count,
+acknowledgement policy, linger, compression, and fetch queue settings. It
+timestamps each acknowledged send and handler entry, then requires the full
+ID set and zero lag. In three local 100-record exploratory runs with four
+partitions and two consumers, raw poll handled about 525 records/s (p50
+5.9 ms, p99 11.1 ms), adapter stream 375 records/s (p50 203 ms, p99 258 ms),
+and the Shibuya runner 10.9 records/s (p50 3.55 s, p99 9.08 s). These
+single short runs include consumer assignment and do not establish sustained
+capacity. Their IDs are `01a0d66d-ecb0-7525-9eae-e42def1afb15`,
+`01a0d66e-39a3-75d4-b47b-85ecd21ff80b`, and
+`01a0d671-03cb-7047-b6c3-1efe2bf257c9`. The runner path initially
+crashed when the harness canceled its thread; a graceful adapter shutdown
+removed the crash in one and two consumer controls. The leaked private
+containers from those two unsealed crash probes were stopped and deleted.
+
 `kafka/adapter/concurrency/sigkill-redelivery-window` runs the adapter in a
 worker process, kills it three times by default, records the consumer group's
 committed offsets before each restart, and compares handler facts across
