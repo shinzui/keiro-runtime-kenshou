@@ -1,11 +1,13 @@
 module Kenshou.Suite.Kafka.Roles (roles, adapterConsumerRole, batchProducerRole, transactionWorkerRole) where
 
+import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (async, cancel, race, waitCatch)
 import Control.Monad (forM_)
-import Data.Aeson (FromJSON (..), Value, object, withObject, (.:), (.=))
+import Data.Aeson (FromJSON (..), Value, object, withObject, (.:), (.:?), (.=))
 import Data.Aeson qualified as Aeson
 import Data.ByteString.Char8 qualified as ByteString
 import Data.IORef (atomicModifyIORef', modifyIORef', newIORef, readIORef)
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
@@ -109,12 +111,22 @@ data CrashConsumerArgs = CrashConsumerArgs
   { brokers :: [Text],
     topic :: Text,
     group :: Text,
-    autoCommitMillis :: Int
+    autoCommitMillis :: Int,
+    autoOffsetStore :: Bool,
+    blockOffset :: Maybe Int,
+    blockMillis :: Int
   }
 
 instance FromJSON CrashConsumerArgs where
   parseJSON = withObject "Kafka crash consumer args" \value ->
-    CrashConsumerArgs <$> value .: "brokers" <*> value .: "topic" <*> value .: "group" <*> value .: "autoCommitMillis"
+    CrashConsumerArgs
+      <$> value .: "brokers"
+      <*> value .: "topic"
+      <*> value .: "group"
+      <*> value .: "autoCommitMillis"
+      <*> (fromMaybe False <$> value .:? "autoOffsetStore")
+      <*> value .:? "blockOffset"
+      <*> (fromMaybe 0 <$> value .:? "blockMillis")
 
 runCrashConsumer :: RoleContext -> IO ()
 runCrashConsumer context = do
@@ -141,7 +153,7 @@ consumeCrash context args = do
       props =
         C.brokersList (fmap BrokerAddress args.brokers)
           <> C.groupId (ConsumerGroupId args.group)
-          <> C.noAutoOffsetStore
+          <> (if args.autoOffsetStore then mempty else C.noAutoOffsetStore)
           <> C.extraProp "auto.commit.interval.ms" (Text.pack (show args.autoCommitMillis))
           <> C.extraProp "session.timeout.ms" "6000"
           <> C.extraProp "heartbeat.interval.ms" "2000"
@@ -153,6 +165,11 @@ consumeCrash context args = do
             case (payload >>= readInt, partition >>= readTextInt, cursor) of
               (Just value, Just partitionNumber, Just (CursorInt offset)) -> do
                 liftIO $ do
+                  if Just offset == args.blockOffset
+                    then do
+                      context.send (WrkCustom "entered-block" (object ["offset" .= offset]))
+                      threadDelay (args.blockMillis * 1000)
+                    else pure ()
                   at <- getCurrentTime
                   context.send (WrkCustom "ok" (object ["value" .= value, "partition" .= partitionNumber, "offset" .= offset, "at" .= at]))
                   handled <- atomicModifyIORef' count (\old -> let next = old + 1 in (next, next))

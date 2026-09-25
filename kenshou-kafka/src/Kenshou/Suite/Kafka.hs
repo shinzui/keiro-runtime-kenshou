@@ -2,6 +2,7 @@ module Kenshou.Suite.Kafka (bundle) where
 
 import Kenshou.Core.Bundle (LayerBundle (..))
 import Kenshou.Core.Id (Layer (Kafka))
+import Kenshou.Suite.Kafka.Concurrency.AutoOffsetStore qualified as AutoOffsetStore
 import Kenshou.Suite.Kafka.Concurrency.NonSerial qualified as NonSerial
 import Kenshou.Suite.Kafka.Concurrency.Sigkill qualified as Sigkill
 import Kenshou.Suite.Kafka.Correctness.Ack qualified as Ack
@@ -18,4 +19,4 @@ import Kenshou.Suite.Kafka.Producer.Transactions qualified as Transactions
 import Kenshou.Suite.Kafka.Roles qualified as Roles
 
 bundle :: LayerBundle
-bundle = LayerBundle Kafka (Fixture.scenarios <> Ack.scenarios <> Buffered.scenarios <> DeadLetter.scenarios <> Halt.scenarios <> MultiTopic.scenarios <> Records.scenarios <> Retry.scenarios <> NonSerial.scenarios <> Sigkill.scenarios <> Producer.scenarios <> BatchFailure.scenarios <> Transactions.scenarios) Roles.roles
+bundle = LayerBundle Kafka (Fixture.scenarios <> Ack.scenarios <> Buffered.scenarios <> DeadLetter.scenarios <> Halt.scenarios <> MultiTopic.scenarios <> Records.scenarios <> Retry.scenarios <> NonSerial.scenarios <> Sigkill.scenarios <> AutoOffsetStore.scenarios <> Producer.scenarios <> BatchFailure.scenarios <> Transactions.scenarios) Roles.roles

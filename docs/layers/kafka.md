@@ -136,6 +136,13 @@ process incarnations. The default local run acknowledged 20,000 records,
 recorded 20,233 handler facts, lost no IDs, replayed no offset below a sampled
 commit boundary, and stayed inside the declared duplicate bounds.
 
+`kafka/adapter/concurrency/auto-offset-store-loses-on-crash` blocks the handler
+at offset 10 for three commit intervals before killing it. With automatic
+offset storage enabled, the group committed the log end at 100 and a
+replacement saw no record. The paired manual-store control committed 10 and
+resumed at 10. The automatic-store loss is the nonblocking KFK-5 limitation at
+`mori://shinzui/keiro/plans/121-enforce-consumer-offset-store-configuration-and-correct-the-kafka-transport-docs`.
+
 `kafka/keiro-records/correctness/roundtrip-through-broker` publishes 200
 Keiro integration events through the neutral record conversion and checks
 their decoded events, Kafka delivery references, all six required wire
