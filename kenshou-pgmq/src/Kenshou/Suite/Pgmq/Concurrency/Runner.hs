@@ -4,11 +4,12 @@ import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (async, cancel, mapConcurrently, wait)
 import Control.Concurrent.MVar
 import Control.Concurrent.STM (atomically)
-import Control.Exception (IOException, SomeException, finally, throwIO, try)
+import Control.Exception (IOException, SomeException, finally, onException, throwIO, try)
 import Control.Monad (forM, forM_, replicateM, void, when)
 import Data.Aeson (Value, decodeStrict', object, withObject, (.:), (.=))
 import Data.Aeson.Types (parseMaybe)
 import Data.ByteString.Char8 qualified as ByteString
+import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.Int (Int64)
 import Data.List (sort, sortOn, zip4)
 import Data.Map.Strict qualified as Map
@@ -18,6 +19,7 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (UTCTime, diffUTCTime, getCurrentTime)
 import Data.Vector qualified as Vector
+import Data.Word (Word64)
 import Database.PostgreSQL.LibPQ qualified as LibPQ
 import Effectful qualified
 import Effectful.Error.Static qualified
@@ -427,45 +429,119 @@ backendTermination :: RunContext -> IO ScenarioReport
 backendTermination context = withPgmqRun context \runtime ->
   withScenarioQueue runtime.pool context runtime.knobs "backend_termination" \queue -> do
     withScenarioQueue runtime.pool context runtime.knobs "backend_termination_data" \dataQueue -> do
-      let duration = fromIntegral (knobInt context.knobs (knobName "pgmq.backend-termination-duration-seconds")) :: Int
-          interval = fromIntegral (knobInt context.knobs (knobName "pgmq.fault.interval-seconds")) :: Int
-          rounds = max 1 ((duration + interval - 1) `div` interval)
-          fault = terminateBackends (requirePostgres context) (ByApplicationName "kenshou-pgmq-%")
-      periodStarted <- getMonotonicTimeNSec
-      observations <- forM [1 .. rounds] \roundIndex -> do
-        let firstIndex = (roundIndex - 1) * 200 + 1
-            baselineIndices = [firstIndex .. firstIndex + 99]
-            recoveredIndices = [firstIndex + 100 .. firstIndex + 199]
-            expectedKeys = Set.fromList ["message-" <> Text.pack (show index) | index <- baselineIndices <> recoveredIndices]
-        baseline <- effect runtime (Pgmq.batchSendMessage (Types.BatchSendMessage dataQueue (fmap body baselineIndices) Nothing))
-        waiting <- async (runOps runtime.tracer runtime.pool (Pgmq.readWithPoll (Types.ReadWithPollMessage queue 30 Nothing 5 100 Nothing)))
-        threadDelay 200000
-        faultStarted <- getMonotonicTimeNSec
-        handle <- fault.inject
-        interrupted <- wait waiting
-        interruptedAt <- getMonotonicTimeNSec
-        handle.heal
-        recovered <- retry 20 (runOps runtime.tracer runtime.pool (Pgmq.batchSendMessage (Types.BatchSendMessage dataQueue (fmap body recoveredIndices) Nothing)))
-        durable <- queueKeys runtime.pool dataQueue
-        readResult <- runOps runtime.tracer runtime.pool (Pgmq.readMessage (Types.ReadMessage dataQueue 30 (Just 200) Nothing))
-        let delivered = either (const []) Vector.toList readResult
-        acknowledgements <- forM delivered \message ->
-          runOps runtime.tracer runtime.pool (Pgmq.deleteMessage (Types.MessageQuery dataQueue message.messageId))
-        metrics <- effect runtime (Pgmq.queueMetrics dataQueue)
-        let confirmedIds = Set.fromList (baseline <> either (const []) id recovered)
-            deliveredIds = Set.fromList (fmap (.messageId) delivered)
-            transientError = either Pgmq.isTransient (const False) interrupted
-            recoveredCount = either (const 0) length recovered
-            deliveryComplete = either (const False) (const True) readResult && deliveredIds == confirmedIds && length delivered == 200
-            acknowledged = all (either (const False) id) acknowledgements && length acknowledgements == 200
-            roundObservation = object ["round" .= roundIndex, "interrupted" .= show interrupted, "faultWindowMillis" .= ((interruptedAt - faultStarted) `div` 1000000), "baselineCount" .= length baseline, "recoveredCount" .= recoveredCount, "durableCount" .= Set.size durable, "deliveredCount" .= length delivered, "acknowledgedCount" .= length (filter (either (const False) id) acknowledgements), "queueLength" .= metrics.queueLength]
-        roundEnded <- getMonotonicTimeNSec
-        let targetMicros = min duration (roundIndex * interval) * 1000000
-        threadDelay (max 0 (targetMicros - fromIntegral ((roundEnded - periodStarted) `div` 1000)))
-        pure (transientError, recoveredCount == 100, durable == expectedKeys, deliveryComplete, acknowledged, metrics.queueLength == 0, roundObservation)
-      let allRounds project = all project observations
-      putSummary context Verdicts "backend-termination-observations" (object ["durationSeconds" .= duration, "intervalSeconds" .= interval, "faultRounds" .= rounds, "baselineCount" .= (100 * rounds), "rounds" .= fmap (\(_, _, _, _, _, _, observation) -> observation) observations])
-      verdict context "backend-termination" [("transient-error", allRounds (\(ok, _, _, _, _, _, _) -> ok)), ("same-pool-recovers", allRounds (\(_, ok, _, _, _, _, _) -> ok)), ("confirmed-keys-durable", allRounds (\(_, _, ok, _, _, _, _) -> ok)), ("all-consumed-once", allRounds (\(_, _, _, ok, _, _, _) -> ok)), ("acknowledgements-succeed", allRounds (\(_, _, _, _, ok, _, _) -> ok)), ("queue-drains-each-round", allRounds (\(_, _, _, _, _, ok, _) -> ok))]
+      withScenarioQueue runtime.pool context runtime.knobs "backend_termination_traffic" \trafficQueue -> do
+        let duration = fromIntegral (knobInt context.knobs (knobName "pgmq.backend-termination-duration-seconds")) :: Int
+            interval = fromIntegral (knobInt context.knobs (knobName "pgmq.fault.interval-seconds")) :: Int
+            rounds = max 1 ((duration + interval - 1) `div` interval)
+            fault = terminateBackends (requirePostgres context) (ByApplicationName "kenshou-pgmq-%")
+        periodStarted <- getMonotonicTimeNSec
+        traffic <- newMVar (Set.empty, Map.empty, Set.empty, [] :: [(Word64, Text, Bool)])
+        running <- newIORef True
+        let recordError started operation err =
+              modifyMVar_ traffic \(sent, delivered, acked, errors) ->
+                pure (sent, delivered, acked, (started, operation <> ": " <> Text.pack (show err), Pgmq.isTransient err) : errors)
+            produce index = do
+              active <- readIORef running
+              when active do
+                started <- getMonotonicTimeNSec
+                result <- runOps runtime.tracer runtime.pool (Pgmq.sendMessage (Types.SendMessage trafficQueue (body (1000000 + index)) Nothing))
+                case result of
+                  Left err -> recordError started "send" err
+                  Right identifier -> modifyMVar_ traffic \(sent, delivered, acked, errors) -> pure (Set.insert identifier sent, delivered, acked, errors)
+                threadDelay 20000
+                produce (index + 1)
+            consume = do
+              active <- readIORef running
+              when active do
+                started <- getMonotonicTimeNSec
+                result <- runOps runtime.tracer runtime.pool (Pgmq.readMessage (Types.ReadMessage trafficQueue 2 (Just 10) Nothing))
+                case result of
+                  Left err -> recordError started "read" err
+                  Right messages -> forM_ (Vector.toList messages) \message -> do
+                    modifyMVar_ traffic \(sent, delivered, acked, errors) -> pure (sent, Map.insertWith (<>) message.messageId [started] delivered, acked, errors)
+                    ackStarted <- getMonotonicTimeNSec
+                    acknowledgement <- runOps runtime.tracer runtime.pool (Pgmq.deleteMessage (Types.MessageQuery trafficQueue message.messageId))
+                    case acknowledgement of
+                      Left err -> recordError ackStarted "ack" err
+                      Right True -> modifyMVar_ traffic \(sent, delivered, acked, errors) -> pure (sent, delivered, Set.insert message.messageId acked, errors)
+                      Right False -> pure ()
+                when (either (const True) Vector.null result) (threadDelay 10000)
+                consume
+        producer <- async (produce (1 :: Int))
+        consumer <- async consume
+        observations <-
+          ( forM [1 .. rounds] \roundIndex -> do
+              let firstIndex = (roundIndex - 1) * 200 + 1
+                  baselineIndices = [firstIndex .. firstIndex + 99]
+                  recoveredIndices = [firstIndex + 100 .. firstIndex + 199]
+                  expectedKeys = Set.fromList ["message-" <> Text.pack (show index) | index <- baselineIndices <> recoveredIndices]
+              baseline <- retryValue 50 (runOps runtime.tracer runtime.pool (Pgmq.batchSendMessage (Types.BatchSendMessage dataQueue (fmap body baselineIndices) Nothing)))
+              waiting <- async (runOps runtime.tracer runtime.pool (Pgmq.readWithPoll (Types.ReadWithPollMessage queue 30 Nothing 5 100 Nothing)))
+              threadDelay 200000
+              faultStarted <- getMonotonicTimeNSec
+              handle <- fault.inject
+              interrupted <- wait waiting
+              interruptedAt <- getMonotonicTimeNSec
+              handle.heal
+              recovered <- retry 20 (runOps runtime.tracer runtime.pool (Pgmq.batchSendMessage (Types.BatchSendMessage dataQueue (fmap body recoveredIndices) Nothing)))
+              recoveredAt <- getMonotonicTimeNSec
+              durable <- retryException 20 (queueKeys runtime.pool dataQueue)
+              readResult <- runOps runtime.tracer runtime.pool (Pgmq.readMessage (Types.ReadMessage dataQueue 30 (Just 200) Nothing))
+              let delivered = either (const []) Vector.toList readResult
+              acknowledgements <- forM delivered \message ->
+                runOps runtime.tracer runtime.pool (Pgmq.deleteMessage (Types.MessageQuery dataQueue message.messageId))
+              metrics <- retryValue 20 (runOps runtime.tracer runtime.pool (Pgmq.queueMetrics dataQueue))
+              let confirmedIds = Set.fromList (baseline <> either (const []) id recovered)
+                  deliveredIds = Set.fromList (fmap (.messageId) delivered)
+                  transientError = either Pgmq.isTransient (const False) interrupted
+                  recoveredCount = either (const 0) length recovered
+                  deliveryComplete = either (const False) (const True) readResult && deliveredIds == confirmedIds && length delivered == 200
+                  acknowledged = all (either (const False) id) acknowledgements && length acknowledgements == 200
+                  roundObservation = object ["round" .= roundIndex, "interrupted" .= show interrupted, "interruptionMillis" .= ((interruptedAt - faultStarted) `div` 1000000), "faultWindowMillis" .= ((recoveredAt - faultStarted) `div` 1000000), "baselineCount" .= length baseline, "recoveredCount" .= recoveredCount, "durableCount" .= Set.size durable, "deliveredCount" .= length delivered, "acknowledgedCount" .= length (filter (either (const False) id) acknowledgements), "queueLength" .= metrics.queueLength]
+              roundEnded <- getMonotonicTimeNSec
+              let targetMicros = min duration (roundIndex * interval) * 1000000
+              threadDelay (max 0 (targetMicros - fromIntegral ((roundEnded - periodStarted) `div` 1000)))
+              pure (transientError, recoveredCount == 100, durable == expectedKeys, deliveryComplete, acknowledged, metrics.queueLength == 0, faultStarted, recoveredAt, roundObservation)
+          )
+            `onException` (cancel producer >> cancel consumer)
+        writeIORef running False
+        wait producer `onException` cancel consumer
+        wait consumer
+        recovery <- effect runtime (Pgmq.sendMessage (Types.SendMessage trafficQueue (body 999999999) Nothing))
+        modifyMVar_ traffic \(sent, delivered, acked, errors) -> pure (Set.insert recovery sent, delivered, acked, errors)
+        let finishDrain remaining = when (remaining > (0 :: Int)) do
+              started <- getMonotonicTimeNSec
+              result <- runOps runtime.tracer runtime.pool (Pgmq.readMessage (Types.ReadMessage trafficQueue 2 (Just 100) Nothing))
+              case result of
+                Left err -> recordError started "drain-read" err
+                Right messages -> forM_ (Vector.toList messages) \message -> do
+                  modifyMVar_ traffic \(sent, delivered, acked, errors) -> pure (sent, Map.insertWith (<>) message.messageId [started] delivered, acked, errors)
+                  ackStarted <- getMonotonicTimeNSec
+                  acknowledgement <- runOps runtime.tracer runtime.pool (Pgmq.deleteMessage (Types.MessageQuery trafficQueue message.messageId))
+                  case acknowledgement of
+                    Left err -> recordError ackStarted "drain-ack" err
+                    Right True -> modifyMVar_ traffic \(sent, delivered, acked, errors) -> pure (sent, delivered, Set.insert message.messageId acked, errors)
+                    Right False -> pure ()
+              metrics <- retryValue 20 (runOps runtime.tracer runtime.pool (Pgmq.queueMetrics trafficQueue))
+              when (metrics.queueLength /= 0) do
+                threadDelay 100000
+                finishDrain (remaining - 1)
+        finishDrain 100
+        (sent, delivered, acked, trafficErrors) <- readMVar traffic
+        remainingKeys <- retryException 20 (queueKeys runtime.pool trafficQueue)
+        trafficMetrics <- retryValue 20 (runOps runtime.tracer runtime.pool (Pgmq.queueMetrics trafficQueue))
+        let windows = [(started, ended + 2000000000) | (_, _, _, _, _, _, started, ended, _) <- observations]
+            withinWindow at = any (\(started, ended) -> at >= started && at <= ended) windows
+            duplicateWithinFault times = length times <= 1 || any (\(started, ended) -> minimum times >= started - min started 2000000000 && minimum times <= ended && maximum times <= ended + 3000000000) windows
+            errorsOutside = [(at, label) | (at, label, _) <- trafficErrors, not (withinWindow at)]
+            permanent = [label | (_, label, transient) <- trafficErrors, not transient]
+            deliveredIds = Map.keysSet delivered
+            missing = sent `Set.difference` deliveredIds
+            duplicateIds = [identifier | (identifier, times) <- Map.toList delivered, length times > 1]
+            unrelatedDuplicates = [identifier | (identifier, times) <- Map.toList delivered, not (duplicateWithinFault times)]
+        let allRounds project = all project observations
+        putSummary context Verdicts "backend-termination-observations" (object ["durationSeconds" .= duration, "intervalSeconds" .= interval, "faultRounds" .= rounds, "baselineCount" .= (100 * rounds), "rounds" .= fmap (\(_, _, _, _, _, _, _, _, observation) -> observation) observations, "traffic" .= object ["confirmedSends" .= Set.size sent, "deliveries" .= Map.size delivered, "acknowledgements" .= Set.size acked, "errors" .= [object ["operation" .= label, "transient" .= transient] | (_, label, transient) <- trafficErrors], "errorsOutsideFaultWindow" .= length errorsOutside, "missingConfirmed" .= Set.size missing, "duplicateDeliveries" .= length duplicateIds, "unrelatedDuplicates" .= length unrelatedDuplicates, "remainingKeys" .= Set.size remainingKeys, "queueLength" .= trafficMetrics.queueLength]])
+        verdict context "backend-termination" [("transient-error", allRounds (\(ok, _, _, _, _, _, _, _, _) -> ok) && null permanent), ("same-pool-recovers", allRounds (\(_, ok, _, _, _, _, _, _, _) -> ok)), ("confirmed-keys-durable", allRounds (\(_, _, ok, _, _, _, _, _, _) -> ok) && Set.null missing), ("all-consumed-once", allRounds (\(_, _, _, ok, _, _, _, _, _) -> ok) && null unrelatedDuplicates), ("acknowledgements-succeed", allRounds (\(_, _, _, _, ok, _, _, _, _) -> ok) && sent `Set.isSubsetOf` acked), ("queue-drains-each-round", allRounds (\(_, _, _, _, _, ok, _, _, _) -> ok) && trafficMetrics.queueLength == 0 && Set.null remainingKeys), ("errors-confined-to-fault-windows", null errorsOutside), ("continuous-traffic", Set.size sent >= duration && Set.size deliveredIds >= duration)]
 
 postgresRestart :: RunContext -> IO ScenarioReport
 postgresRestart context = withPgmqRun context \runtime ->
@@ -965,6 +1041,13 @@ retry attempts action =
 
 retryValue :: (Show error) => Int -> IO (Either error value) -> IO value
 retryValue attempts action = retry attempts action >>= either (throwIO . userError . show) pure
+
+retryException :: Int -> IO value -> IO value
+retryException attempts action =
+  try @IOException action >>= \case
+    Right value -> pure value
+    Left err | attempts <= 1 -> throwIO err
+    Left _ -> threadDelay 100000 >> retryException (attempts - 1) action
 
 cleanupQueues :: PgmqRun -> [Pgmq.QueueName] -> IO ()
 cleanupQueues runtime = mapM_ (\queue -> void (runOps Nothing runtime.pool (Pgmq.dropQueue queue)))

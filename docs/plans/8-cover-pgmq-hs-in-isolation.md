@@ -42,6 +42,11 @@ provenance:
       at: 2026-09-25T04:37:39Z
       mode: "implement"
       note: "Reran PostgreSQL 17 and 18 PGMQ fault scenarios and filed three verified owner bug reports."
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-25T18:42:09Z
+      mode: "implement"
+      note: "Added continuous PGMQ producer and consumer traffic to the backend termination oracle."
 ---
 
 # Cover pgmq-hs in isolation
@@ -67,11 +72,15 @@ After this plan, a maintainer can run `kenshou list --layer pgmq` and see about 
 - [x] (2026-09-24) Finished the remaining published-contract audit: the response blackhole has no promised call deadline and stays IR-6; mixed-case names are explicitly rejected by the public client and the foreign-metadata collision stays plan 24; partition retention has no completion-aware guarantee and stays plan 21. No bug report was inferred from those observations.
 - [x] (2026-09-24) Separated the blackhole duration expectation from its contract checks. A fresh PostgreSQL 18 run passed baseline, recovery, durability, and conservation while reproducing only the five-second known bound failure.
 - [x] (2026-09-24) Extended backend termination to twelve fault rounds over two minutes on each PostgreSQL major. Every round confirmed, delivered and acknowledged 200 messages with the same pool, and only BUG-1's classifier label failed. Continuous producer and consumer traffic during each fault remains part of the wider outage work.
-- [ ] Complete wider outage semantics and rerun the seven noisy A/A controls on a quiet cell.
+- [x] (2026-09-25) Completed continuous producer and consumer traffic during twelve backend faults on PostgreSQL 17 and 18. Both two-minute runs preserved and acknowledged over 5,500 confirmed sends, confined errors and duplicate deliveries to the fault windows, drained their queues, and reproduced only BUG-1's classifier label.
+- [ ] Rerun the seven noisy A/A controls on a quiet leased cell; local p99 noise remains inconclusive under the checked-in policy.
 - [x] (2026-09-24) Obtained stable twenty-minute reduced-soak leak verdicts at 100 cycles/s with tracing off and OTLP, using post-major-collection heap samples.
 - [x] (2026-09-24) Ran both twenty-minute reduced-soak controls at the registered 500 cycles/s default rate, with tracing off and OTLP. Retained the lower-rate pair as a controlled comparison.
 
 ## Surprises & Discoveries
+
+- Observation: the earlier twelve-round probe sent and drained finite control batches around each kill. Keeping separate producer and consumer loops active for the full window exposed additional interrupted sends, reads, and acknowledgements without losing confirmed work. The pool sometimes returned a connection error at the next round boundary, so that control batch now retries recovery through the same pool rather than aborting before its oracle runs. PostgreSQL 17 and 18 both reproduced only the already scoped transient-classification defect.
+  Evidence: sealed PostgreSQL 18 run `01a0d9da-d536-7046-80d2-e0c0a8b3f054` recorded 5,569 confirmed, delivered, and acknowledged traffic IDs over twelve faults, six duplicate deliveries associated with fault windows, zero errors outside them, and an empty queue. Sealed PostgreSQL 17 run `01a0d9dd-3cf9-70ca-a813-a933fe5f01ae` recorded 5,572 of each, eight fault-associated duplicates, zero outside-window errors, and an empty queue. Both retained `blocking=false` with the sole `transient-error` failure under `mori://shinzui/pgmq-hs/okf/bug-reports/concepts/BUG-1`. `nix develop --command cabal test kenshou-pgmq-test` passed 13 examples after the change.
 
 - Observation: fresh PostgreSQL 17 and 18 reproductions confirmed three distinct shipped-contract failures before owner reports were finalized. Immediate restart preserved 200 confirmed keys and recovered the same pool in 361 ms, but `isTransient` marked the outage error permanent. Eight concurrent reconcilers reported as many as eighty creators for ten queues despite catalog convergence. Partitioned queues emitted one thousand notifications on leaf channels over five seconds against a 250 ms throttle allowance of twenty-one.
   Evidence: restart runs `01a0d6d6-cb25-7609-b1d1-0eeebbba50ec` and `01a0d6d7-cae8-72ed-ba4a-17a8cc224e53`; reconciliation runs `01a0d6d6-85fe-7214-b7f3-cea91e397461` and `01a0d6d7-9fe9-7653-bad0-83c881850ae8`; notification runs `01a0d6d6-268b-73bc-b9fe-40b6045586bd` and `01a0d6d7-5dab-76ea-8315-00fcc28919d3`. Owner reports are `mori://shinzui/pgmq-hs/okf/bug-reports/concepts/BUG-1`, `mori://shinzui/pgmq-hs/okf/bug-reports/concepts/BUG-2`, and `mori://shinzui/pgmq-hs/okf/bug-reports/concepts/BUG-3`.
