@@ -73,6 +73,7 @@ library
     Kenshou.Suite.Kafka.Producer.BatchFailure
     Kenshou.Suite.Kafka.Producer.Transactions
     Kenshou.Suite.Kafka.Roles
+    Kenshou.Suite.Kafka.Soak
     Kenshou.Suite.Kafka.Telemetry.Context
 
   build-depends:
@@ -92,6 +93,7 @@ library
     keiro-core,
     kenshou-check,
     kenshou-core,
+    kenshou-diagnose,
     kenshou-measure,
     kenshou-telemetry,
     kiroku-store,

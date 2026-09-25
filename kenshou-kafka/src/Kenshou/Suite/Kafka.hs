@@ -29,7 +29,8 @@ import Kenshou.Suite.Kafka.Producer qualified as Producer
 import Kenshou.Suite.Kafka.Producer.BatchFailure qualified as BatchFailure
 import Kenshou.Suite.Kafka.Producer.Transactions qualified as Transactions
 import Kenshou.Suite.Kafka.Roles qualified as Roles
+import Kenshou.Suite.Kafka.Soak qualified as Soak
 import Kenshou.Suite.Kafka.Telemetry.Context qualified as KafkaTelemetry
 
 bundle :: LayerBundle
-bundle = LayerBundle Kafka (Fixture.scenarios <> Ack.scenarios <> Buffered.scenarios <> DeadLetter.scenarios <> Halt.scenarios <> MultiTopic.scenarios <> Records.scenarios <> Retry.scenarios <> NonSerial.scenarios <> Sigkill.scenarios <> AutoOffsetStore.scenarios <> StaticMembership.scenarios <> Fencing.scenarios <> HaltAssignment.scenarios <> BrokerOutage.scenarios <> GroupRebalance.scenarios <> StaleBarrier.scenarios <> Zombie.scenarios <> BarrierOverwrite.scenarios <> Model.scenarios <> Producer.scenarios <> ProducerModes.scenarios <> PollCap.scenarios <> Pipeline.scenarios <> KafkaTelemetry.scenarios <> BatchFailure.scenarios <> Transactions.scenarios) Roles.roles
+bundle = LayerBundle Kafka (Fixture.scenarios <> Ack.scenarios <> Buffered.scenarios <> DeadLetter.scenarios <> Halt.scenarios <> MultiTopic.scenarios <> Records.scenarios <> Retry.scenarios <> NonSerial.scenarios <> Sigkill.scenarios <> AutoOffsetStore.scenarios <> StaticMembership.scenarios <> Fencing.scenarios <> HaltAssignment.scenarios <> BrokerOutage.scenarios <> GroupRebalance.scenarios <> StaleBarrier.scenarios <> Zombie.scenarios <> BarrierOverwrite.scenarios <> Model.scenarios <> Producer.scenarios <> ProducerModes.scenarios <> PollCap.scenarios <> Pipeline.scenarios <> KafkaTelemetry.scenarios <> Soak.scenarios <> BatchFailure.scenarios <> Transactions.scenarios) Roles.roles

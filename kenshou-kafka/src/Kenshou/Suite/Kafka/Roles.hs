@@ -2,35 +2,55 @@ module Kenshou.Suite.Kafka.Roles (roles, adapterConsumerRole, batchProducerRole,
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (async, cancel, race, waitCatch)
+import Control.Concurrent.STM (atomically, writeTVar)
 import Control.Monad (forM_)
 import Data.Aeson (FromJSON (..), Value, object, withObject, (.:), (.:?), (.=))
 import Data.Aeson qualified as Aeson
+import Data.Bits (bit, (.|.))
+import Data.ByteString qualified as RawByteString
+import Data.ByteString.Builder qualified as Builder
 import Data.ByteString.Char8 qualified as ByteString
+import Data.ByteString.Lazy qualified as LazyByteString
 import Data.IORef (atomicModifyIORef', modifyIORef', newIORef, readIORef)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
+import Data.Vector.Unboxed qualified as Vector
+import Data.Vector.Unboxed.Mutable qualified as MutableVector
+import Data.Word (Word8)
 import Effectful (Eff, liftIO, runEff, (:>))
 import Effectful.Error.Static (runError)
+import GHC.Clock (getMonotonicTimeNSec)
+import GHC.Conc (listThreads)
+import GHC.Stats (GCDetails (..), RTSStats (..), getRTSStats, getRTSStatsEnabled)
 import Kafka.Consumer.Types (ConsumerGroupId (..), Offset (..), RebalanceEvent (..))
 import Kafka.Effectful.Consumer qualified as C
 import Kafka.Effectful.Producer qualified as P
 import Kafka.Types (BrokerAddress (..), KafkaError, PartitionId (..), Timeout (..), TopicName (..))
 import Kenshou.Core.Role (ControlMessage (..), RoleContext (..), RoleName, WorkerInit (..), WorkerMessage (..), WorkerRole (..), mkRoleName)
+import Kenshou.Measure.Sampler.Process (ProcessSample (..), readProcessSample)
 import Shibuya.Adapter (Adapter (..))
 import Shibuya.Adapter.Kafka (defaultConfig, kafkaAdapter, kafkaAdapterWith, kafkaRebalanceHandler, newKafkaAdapterState)
+import Shibuya.Adapter.Kafka.Internal (KafkaAdapterState (..))
 import Shibuya.App (ProcessorId (..), defaultAppConfig, mkProcessor, runApp, stopApp, waitApp)
 import Shibuya.Core.Ack (AckDecision (..), DeadLetterReason (..), HaltReason (..), RetryDelay (..))
-import Shibuya.Core.Ingested (Message (..))
+import Shibuya.Core.AckHandle (AckHandle (..))
+import Shibuya.Core.Ingested (Ingested (..), Message (..), toMessage)
 import Shibuya.Core.Types (Cursor (..), Envelope (..))
 import Shibuya.Telemetry.Effect (runTracingNoop)
+import Streamly.Data.Fold qualified as Fold
 import Streamly.Data.Stream qualified as Stream
+import System.Directory (createDirectoryIfMissing)
+import System.FilePath (takeDirectory)
+import System.Mem (performMajorGC)
+import System.Timeout (timeout)
 
 roles :: [WorkerRole]
 roles =
   [ WorkerRole adapterConsumerRole "Consumes Kafka records through the adapter under a declared handler policy." runAdapterConsumer,
     WorkerRole crashConsumerRole "Records adapter handler decisions across controlled SIGKILL cycles." runCrashConsumer,
+    WorkerRole soakConsumerRole "Samples consumer process resources and writes a compact handled-ID ledger." runSoakConsumer,
     WorkerRole rawConsumerRole "Reports raw Kafka assignment callbacks and consumed records." runRawConsumer,
     WorkerRole batchProducerRole "Enqueues a batch and attempts a bounded flush during a broker outage." runBatchProducer,
     WorkerRole transactionWorkerRole "Stages a consume-transform-produce transaction until told to commit." runTransactionWorker
@@ -41,6 +61,9 @@ adapterConsumerRole = either (error . Text.unpack) id (mkRoleName "kafka/adapter
 
 crashConsumerRole :: RoleName
 crashConsumerRole = either (error . Text.unpack) id (mkRoleName "kafka/crash-consumer")
+
+soakConsumerRole :: RoleName
+soakConsumerRole = either (error . Text.unpack) id (mkRoleName "kafka/soak-consumer")
 
 rawConsumerRole :: RoleName
 rawConsumerRole = either (error . Text.unpack) id (mkRoleName "kafka/raw-consumer")
@@ -127,7 +150,12 @@ data CrashConsumerArgs = CrashConsumerArgs
     serviceMillis :: Int,
     installRebalanceHandler :: Bool,
     retryOffset :: Maybe Int,
-    retryDelayMillis :: Int
+    retryDelayMillis :: Int,
+    emitOkFacts :: Bool,
+    progressEvery :: Int,
+    ledgerPath :: Maybe FilePath,
+    ledgerRecords :: Maybe Int,
+    streamMode :: Bool
   }
 
 instance FromJSON CrashConsumerArgs where
@@ -149,6 +177,11 @@ instance FromJSON CrashConsumerArgs where
       <*> (fromMaybe True <$> value .:? "installRebalanceHandler")
       <*> value .:? "retryOffset"
       <*> (fromMaybe 0 <$> value .:? "retryDelayMillis")
+      <*> (fromMaybe True <$> value .:? "emitOkFacts")
+      <*> (fromMaybe 10 <$> value .:? "progressEvery")
+      <*> value .:? "ledgerPath"
+      <*> value .:? "ledgerRecords"
+      <*> (fromMaybe False <$> value .:? "streamMode")
 
 runCrashConsumer :: RoleContext -> IO ()
 runCrashConsumer context = do
@@ -168,10 +201,68 @@ runCrashConsumer context = do
         Left result -> context.send (WrkError ("crash-consumer exited before stop: " <> Text.pack (show result)))
     _ -> ioError (userError "crash-consumer expected start")
 
+data SoakConsumerArgs = SoakConsumerArgs {consumer :: CrashConsumerArgs, sampleEverySeconds :: Int}
+
+instance FromJSON SoakConsumerArgs where
+  parseJSON value = withObject "Kafka soak consumer args" (\fields -> SoakConsumerArgs <$> parseJSON value <*> (fromMaybe 10 <$> fields .:? "sampleEverySeconds")) value
+
+runSoakConsumer :: RoleContext -> IO ()
+runSoakConsumer context = do
+  args <- either (ioError . userError) pure (fromJson context.init.args :: Either String SoakConsumerArgs)
+  context.send WrkReady
+  command <- context.receive
+  case command of
+    Just CtlStart -> do
+      state <- newKafkaAdapterState
+      consumer <- async (consumeCrashWithState context args.consumer state)
+      sampler <- async (sampleSoak context (max 1 args.sampleEverySeconds))
+      next <- race (waitCatch consumer) context.receive
+      case next of
+        Right (Just (CtlStop _)) -> do
+          atomically (writeTVar state.shutdownVar True)
+          stopped <- timeout 15000000 (waitCatch consumer)
+          case stopped of
+            Just result -> context.send (WrkCustom "soak-stopped" (object ["result" .= show result]))
+            Nothing -> context.send (WrkError "soak consumer did not stop within 15 seconds") >> cancel consumer
+        Right _ -> atomically (writeTVar state.shutdownVar True) >> cancel consumer
+        Left result -> context.send (WrkError ("soak consumer exited before stop: " <> Text.pack (show result)))
+      cancel sampler
+    _ -> ioError (userError "soak-consumer expected start")
+
+sampleSoak :: RoleContext -> Int -> IO ()
+sampleSoak context seconds = do
+  performMajorGC
+  now <- getMonotonicTimeNSec
+  enabled <- getRTSStatsEnabled
+  stats <- if enabled then Just <$> getRTSStats else pure Nothing
+  process <- readProcessSample
+  threads <- length <$> listThreads
+  context.send $
+    WrkCustom "soak-sample" $
+      object
+        [ "monoNs" .= now,
+          "rssBytes" .= process.rssBytes,
+          "osThreads" .= process.osThreads,
+          "fds" .= process.openFds,
+          "majorGcs" .= fmap (.major_gcs) stats,
+          "liveBytes" .= fmap (.gcdetails_live_bytes) (fmap (.gc) stats),
+          "memInUseBytes" .= fmap (.gcdetails_mem_in_use_bytes) (fmap (.gc) stats),
+          "haskellThreads" .= threads
+        ]
+  threadDelay (seconds * 1000000)
+  sampleSoak context seconds
+
 consumeCrash :: RoleContext -> CrashConsumerArgs -> IO ()
 consumeCrash context args = do
-  count <- newIORef (0 :: Int)
   state <- newKafkaAdapterState
+  consumeCrashWithState context args state
+
+consumeCrashWithState :: RoleContext -> CrashConsumerArgs -> KafkaAdapterState -> IO ()
+consumeCrashWithState context args state = do
+  count <- newIORef (0 :: Int)
+  ledger <- case (args.ledgerPath, args.ledgerRecords) of
+    (Just path, Just records) | records > 0 -> Just . (path,) <$> MutableVector.replicate ((records + 7) `div` 8) (0 :: Word8)
+    _ -> pure Nothing
   let topic = TopicName args.topic
       rebalance consumer event = do
         kafkaRebalanceHandler state consumer event
@@ -220,21 +311,39 @@ consumeCrash context args = do
                               threadDelay (args.blockMillis * 1000)
                             else pure ()
                           at <- getCurrentTime
-                          context.send (WrkCustom "ok" (object ["value" .= value, "partition" .= partitionNumber, "offset" .= offset, "at" .= at]))
+                          if args.emitOkFacts then context.send (WrkCustom "ok" (object ["value" .= value, "partition" .= partitionNumber, "offset" .= offset, "at" .= at])) else pure ()
+                          forM_ ledger \(_, bits) ->
+                            if value >= 0 && value < MutableVector.length bits * 8
+                              then do
+                                old <- MutableVector.read bits (value `div` 8)
+                                MutableVector.write bits (value `div` 8) (old .|. bit (value `mod` 8))
+                              else context.send (WrkError ("soak ledger ID outside fixed range: " <> Text.pack (show value)))
                           handled <- atomicModifyIORef' count (\old -> let next = old + 1 in (next, next))
-                          if handled `mod` 10 == 0 then getCurrentTime >>= context.send . WrkProgress (fromIntegral handled) else pure ()
+                          if handled `mod` max 1 args.progressEvery == 0 then getCurrentTime >>= context.send . WrkProgress (fromIntegral handled) else pure ()
                         pure AckOk
               _ -> pure (AckHalt (HaltFatal "invalid crash-consumer coordinate"))
-      appResult <- runApp defaultAppConfig [(ProcessorId "crash-consumer", mkProcessor adapter handler)]
-      case appResult of
-        Left problem -> liftIO $ ioError (userError (show problem))
-        Right handle -> do
-          waitApp handle
-          if args.holdAfterHalt then liftIO (threadDelay 120000000) else pure ()
-          stopApp handle
+      if args.streamMode
+        then Stream.fold Fold.drain $ Stream.mapM (\ingested@Ingested {ack = AckHandle finalize} -> handler (toMessage ingested) >>= finalize) adapter.source
+        else do
+          appResult <- runApp defaultAppConfig [(ProcessorId "crash-consumer", mkProcessor adapter handler)]
+          case appResult of
+            Left problem -> liftIO $ ioError (userError (show problem))
+            Right handle -> do
+              waitApp handle
+              if args.holdAfterHalt then liftIO (threadDelay 120000000) else pure ()
+              stopApp handle
   case outcome of
     Left problem -> context.send (WrkError (Text.pack (show problem)))
     Right () -> pure ()
+  forM_ ledger \(path, bits) -> do
+    createDirectoryIfMissing True (takeDirectory path)
+    bytes <- Vector.freeze bits
+    let occupied = Vector.ifoldl' (\items index value -> if value == 0 then items else (index, value) : items) [] bytes
+    if 5 * length occupied < Vector.length bytes
+      then LazyByteString.writeFile path (Builder.toLazyByteString (Builder.byteString "KSL1" <> foldMap (\(index, value) -> Builder.word32LE (fromIntegral index) <> Builder.word8 value) occupied))
+      else RawByteString.writeFile path ("KDL1" <> RawByteString.pack (Vector.toList bytes))
+    handled <- readIORef count
+    context.send (WrkCustom "soak-ledger" (object ["path" .= path, "handled" .= handled]))
 
 readTextInt :: Text -> Maybe Int
 readTextInt = readInt . ByteString.pack . Text.unpack
