@@ -136,9 +136,15 @@ run found replayable violations of commit safety, first-success order, and
 completion at log end. A fixed depth-ten schedule with offsets 3 and 4 each
 retrying once skipped offset 3 and stopped with stored offset 5 of 10.
 The reference depth-one acknowledgement handler passes the same three
-properties in `kenshou-kafka-test`. The released-cohort result is scoped to
-`mori://shinzui/keiro/masterplans/18-make-the-kafka-transport-edge-production-safe-surfaced-by-the-2026-07-transport-review`;
-the live KFK-1 reproduction remains separate work.
+properties in `kenshou-kafka-test`. The released-cohort model result is scoped
+to `mori://shinzui/keiro/masterplans/18-make-the-kafka-transport-edge-production-safe-surfaced-by-the-2026-07-transport-review`.
+
+`kafka/adapter/concurrency/barrier-overwrite-loses-record` reproduces KFK-1
+through a real consumer and private broker. One poll returns offsets 0–9;
+the adapter finalizes retries at 3 and 4 before the next poll. The broker
+redelivers 4–9 and the group commits 10 without any successful decision for
+offset 3. The known, released-cohort failure is
+`mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-5`.
 
 `kafka/adapter/concurrency/sigkill-redelivery-window` runs the adapter in a
 worker process, kills it three times by default, records the consumer group's

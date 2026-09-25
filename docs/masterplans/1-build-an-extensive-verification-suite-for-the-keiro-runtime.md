@@ -291,6 +291,7 @@ Drafting the child plans against real source corrected the research in ways that
 
 ### Upstream issue register
 
+- EP-11 Kafka seek-barrier overwrite finding: [local finding](../findings/8-kafka-later-retry-overwrites-earlier-barrier.md); upstream `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-5`. A real broker redelivered offsets 4–9 after dual retries at 3 and 4, then committed 10 without a successful decision for offset 3.
 - EP-11 Kafka group-rebalance finding: [local finding](../findings/7-kafka-group-rebalance-ends-adapter-consumers.md); upstream `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-4`. Surviving released adapter workers end normally during membership changes; one reduced run retained acknowledged backlog.
 - EP-11 Kafka broker-restart finding: [local finding](../findings/6-kafka-broker-restart-ends-adapter-consumers.md); upstream `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-3`. Two released adapter workers exit after a broker restart with acknowledged records still unhandled; the proxy-blackhole control passes.
 - EP-11 Kafka buffered-successor ordering finding: [local finding](../findings/5-kafka-buffered-successors-run-before-retry.md); upstream `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-2`. A serial released adapter executes offsets 4–9 before the retried offset 3 succeeds.
