@@ -11,7 +11,8 @@ import Kenshou.Suite.Kafka.Correctness.Records qualified as Records
 import Kenshou.Suite.Kafka.Correctness.Retry qualified as Retry
 import Kenshou.Suite.Kafka.Fixture qualified as Fixture
 import Kenshou.Suite.Kafka.Producer qualified as Producer
+import Kenshou.Suite.Kafka.Producer.BatchFailure qualified as BatchFailure
 import Kenshou.Suite.Kafka.Roles qualified as Roles
 
 bundle :: LayerBundle
-bundle = LayerBundle Kafka (Fixture.scenarios <> Ack.scenarios <> Buffered.scenarios <> DeadLetter.scenarios <> Halt.scenarios <> MultiTopic.scenarios <> Records.scenarios <> Retry.scenarios <> Producer.scenarios) Roles.roles
+bundle = LayerBundle Kafka (Fixture.scenarios <> Ack.scenarios <> Buffered.scenarios <> DeadLetter.scenarios <> Halt.scenarios <> MultiTopic.scenarios <> Records.scenarios <> Retry.scenarios <> Producer.scenarios <> BatchFailure.scenarios) Roles.roles

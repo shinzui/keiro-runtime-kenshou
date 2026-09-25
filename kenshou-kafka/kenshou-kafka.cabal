@@ -54,6 +54,7 @@ library
     Kenshou.Suite.Kafka.Correctness.Retry
     Kenshou.Suite.Kafka.Fixture
     Kenshou.Suite.Kafka.Producer
+    Kenshou.Suite.Kafka.Producer.BatchFailure
     Kenshou.Suite.Kafka.Roles
 
   build-depends:

@@ -76,6 +76,13 @@ lag reaches zero, and a new session in the same group sees no old records.
 `produceMessageSync` offsets, 1,000 `produceMessageBatch` enqueues and their
 readback after flush, and ten `produceMessage'` delivery callbacks.
 
+`kafka/producer/concurrency/batch-loop-reports-enqueue-not-delivery` kills
+the run-owned broker, enqueues 100 records in a worker, waits for its flush,
+restarts the broker, and reads the topic. The current API reports zero
+enqueue failures although none of the 100 records was delivered. This is
+the documented nonblocking limitation tracked by
+`mori://shinzui/keiro/plans/120-add-an-acked-batch-publish-api-to-kafka-effectful-and-a-reference-outbox-bridge`.
+
 `kafka/adapter/correctness/multi-topic-partition-key` consumes two
 single-partition topics through one adapter. Message IDs are distinct, but
 the envelope partition key is `"0"` for both. The scenario records the

@@ -1,4 +1,4 @@
-module Kenshou.Suite.Kafka.Roles (roles, adapterConsumerRole) where
+module Kenshou.Suite.Kafka.Roles (roles, adapterConsumerRole, batchProducerRole) where
 
 import Data.Aeson (FromJSON (..), Value, object, withObject, (.:), (.=))
 import Data.Aeson qualified as Aeson
@@ -10,6 +10,7 @@ import Effectful (liftIO, runEff)
 import Effectful.Error.Static (runError)
 import Kafka.Consumer.Types (ConsumerGroupId (..))
 import Kafka.Effectful.Consumer qualified as C
+import Kafka.Effectful.Producer qualified as P
 import Kafka.Types (BrokerAddress (..), KafkaError, TopicName (..))
 import Kenshou.Core.Role (ControlMessage (..), RoleContext (..), RoleName, WorkerInit (..), WorkerMessage (..), WorkerRole (..), mkRoleName)
 import Shibuya.Adapter (Adapter (..))
@@ -22,10 +23,16 @@ import Shibuya.Telemetry.Effect (runTracingNoop)
 import Streamly.Data.Stream qualified as Stream
 
 roles :: [WorkerRole]
-roles = [WorkerRole adapterConsumerRole "Consumes Kafka records through the adapter under a declared handler policy." runAdapterConsumer]
+roles =
+  [ WorkerRole adapterConsumerRole "Consumes Kafka records through the adapter under a declared handler policy." runAdapterConsumer,
+    WorkerRole batchProducerRole "Enqueues a batch and attempts a bounded flush during a broker outage." runBatchProducer
+  ]
 
 adapterConsumerRole :: RoleName
 adapterConsumerRole = either (error . Text.unpack) id (mkRoleName "kafka/adapter-consumer")
+
+batchProducerRole :: RoleName
+batchProducerRole = either (error . Text.unpack) id (mkRoleName "kafka/batch-producer")
 
 data ConsumerArgs = ConsumerArgs
   { brokers :: [Text],
@@ -86,3 +93,41 @@ consumeDeadLetters args = do
 
 readInt :: ByteString.ByteString -> Maybe Int
 readInt bytes = case reads (ByteString.unpack bytes) of [(value, "")] -> Just value; _ -> Nothing
+
+data ProducerArgs = ProducerArgs {brokers :: [Text], topic :: Text, messages :: Int, messageTimeoutMillis :: Int}
+
+instance FromJSON ProducerArgs where
+  parseJSON = withObject "Kafka producer args" \value ->
+    ProducerArgs <$> value .: "brokers" <*> value .: "topic" <*> value .: "messages" <*> value .: "messageTimeoutMillis"
+
+runBatchProducer :: RoleContext -> IO ()
+runBatchProducer context = do
+  args <- either (ioError . userError) pure (fromJson context.init.args :: Either String ProducerArgs)
+  context.send WrkReady
+  command <- context.receive
+  case command of
+    Just CtlStart -> do
+      let props = P.brokersList (fmap BrokerAddress args.brokers) <> P.extraProp "message.timeout.ms" (Text.pack (show args.messageTimeoutMillis))
+          topic = TopicName args.topic
+          records =
+            [ P.ProducerRecord
+                { P.prTopic = topic,
+                  P.prPartition = P.UnassignedPartition,
+                  P.prKey = Just (ByteString.pack (show number)),
+                  P.prValue = Just (ByteString.pack (show number)),
+                  P.prHeaders = mempty
+                }
+            | number <- [0 .. args.messages - 1]
+            ]
+      outcome <- runEff . runError @KafkaError $
+        P.runKafkaProducer props $ do
+          failures <- P.produceMessageBatch records
+          liftIO $ context.send (WrkCustom "enqueue" (object ["failures" .= length failures, "submitted" .= args.messages]))
+          P.flushProducer
+          liftIO $ context.send (WrkCustom "flushed" (object []))
+      case outcome of
+        Left problem -> context.send (WrkError (Text.pack (show problem)))
+        Right () -> pure ()
+      _ <- context.receive
+      pure ()
+    _ -> ioError (userError "batch-producer expected start")
