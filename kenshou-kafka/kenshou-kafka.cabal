@@ -45,6 +45,7 @@ library
     Kenshou.Env.Kafka.Spec
     Kenshou.Env.Kafka.Types
     Kenshou.Suite.Kafka
+    Kenshou.Suite.Kafka.Concurrency.NonSerial
     Kenshou.Suite.Kafka.Correctness.Ack
     Kenshou.Suite.Kafka.Correctness.Buffered
     Kenshou.Suite.Kafka.Correctness.DeadLetter

@@ -111,6 +111,12 @@ partitions, halts on partition zero offset 30, and checks that no later
 handler runs, the group's committed offset remains 30, and a second session
 receives offset 30 first on that partition.
 
+`kafka/adapter/concurrency/non-serial-finalization-commits-past-halt` repeats
+the halt boundary with `Ahead` or `Async` handlers. Both modes committed
+offset 53 and resumed there in the local released-cohort runs, crossing the
+halt at 30. The known nonblocking limitation is
+`mori://shinzui/shibuya-kafka-adapter/okf/capabilities/concepts/CAP-1`.
+
 `kafka/adapter/correctness/dead-letter-drops-record` runs the adapter in a
 child worker so its standard error is captured. Five poison records by
 default return `AckDeadLetter`; the scenario checks every other ID, one
