@@ -17,6 +17,7 @@ import Effectful (liftIO, runEff)
 import Effectful.Error.Static (runError)
 import GHC.Clock (getMonotonicTimeNSec)
 import Kafka.Effectful.Consumer qualified as C
+import Kafka.Effectful.OpenTelemetry.Producer.Interpreter (runKafkaProducerTraced)
 import Kafka.Effectful.Producer qualified as P
 import Kafka.Types (BatchSize (..), KafkaError, Timeout (..), TopicName)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
@@ -33,6 +34,10 @@ import Kenshou.Measure.Phase (Phase (..), enterPhase)
 import Kenshou.Measure.Recorder (OpName (..), OpResult (..), newWorkerRecorder, recordOp, registerOp)
 import Kenshou.Measure.Session (measureConfigFromKnobs, measurementPhaseClock, measurementRecorder, phasePlanFromCore, withMeasurement)
 import Kenshou.Suite.Kafka.Fixture (firstBrokers)
+import Kenshou.Telemetry (TelemetryHandles (..), telemetryKnobs, telemetrySpecFromContext, withTelemetry)
+import OpenTelemetry.Attributes (emptyAttributes)
+import OpenTelemetry.Metric.Core (Counter (..), Meter (..), defaultAdvisoryParameters)
+import OpenTelemetry.Trace.Core (Tracer)
 import Shibuya.Adapter (Adapter (..))
 import Shibuya.Adapter.Kafka (defaultConfig, kafkaAdapterWith, kafkaRebalanceHandler, newKafkaAdapterState)
 import Shibuya.Adapter.Kafka.Config qualified as AdapterConfig
@@ -42,7 +47,7 @@ import Shibuya.Core.Ack (AckDecision (..))
 import Shibuya.Core.AckHandle (AckHandle (..))
 import Shibuya.Core.Ingested (Ingested (..), Message (..))
 import Shibuya.Core.Types (Envelope (..))
-import Shibuya.Telemetry.Effect (runTracingNoop)
+import Shibuya.Telemetry.Effect (runTracing, runTracingNoop)
 import Streamly.Data.Fold qualified as Fold
 import Streamly.Data.Stream qualified as Stream
 import System.Timeout (timeout)
@@ -69,7 +74,8 @@ scenarios =
             intKnob "kafka.prop.fetch.wait.max.ms" 500 0 5000,
             intKnob "kafka.prop.queued.min.messages" 100000 1 1000000
           ]
-            <> measureKnobs Benchmark,
+            <> measureKnobs Benchmark
+            <> telemetryKnobs,
         dimensions = allTelemetryArms noDimensions,
         phases = zeroPhases,
         requires = noEnvironment,
@@ -82,8 +88,9 @@ runPipeline :: RunContext -> IO ScenarioReport
 runPipeline context = case measureConfigFromKnobs context (phasePlanFromCore context.phases) of
   Left reason -> pure (failedWith ["invalid-measure-config"] reason)
   Right measureConfig -> do
+    telemetrySpec <- either (ioError . userError . Text.unpack) pure (telemetrySpecFromContext context)
     spec <- either (ioError . userError . Text.unpack) pure (kafkaEnvSpecFromRunSpec context)
-    withKafkaEnv context spec \env -> do
+    withKafkaEnv context spec \env -> withTelemetry telemetrySpec \telemetry -> do
       let knob key = fromIntegral (knobInt context.knobs (name key)) :: Int
           partitions = knob "kafka.partitions"
           consumers = knob "kafka.consumers"
@@ -99,6 +106,12 @@ runPipeline context = case measureConfigFromKnobs context (phasePlanFromCore con
               <> P.extraProp "acks" (knobText context.knobs (name "kafka.prop.acks"))
               <> P.extraProp "linger.ms" (Text.pack (show (knob "kafka.prop.linger.ms")))
               <> P.extraProp "compression.type" (knobText context.knobs (name "kafka.prop.compression.type"))
+      (producedMetric, handledMetric) <- case telemetry.meter of
+        Nothing -> pure (pure (), pure ())
+        Just meter -> do
+          producedCounter <- meter.meterCreateCounterInt64 "kenshou.kafka.produced" Nothing Nothing defaultAdvisoryParameters
+          handledCounter <- meter.meterCreateCounterInt64 "kenshou.kafka.handled" Nothing Nothing defaultAdvisoryParameters
+          pure (producedCounter.counterAdd 1 emptyAttributes, handledCounter.counterAdd 1 emptyAttributes)
       ((produced, handled, facts, earlyExits, reached, durationSeconds), _) <- withMeasurement context measureConfig \measurement -> do
         handle <- registerOp (measurementRecorder measurement) (OpName "produce-to-handler") >>= flip newWorkerRecorder 0
         offered <- newIORef 0
@@ -113,22 +126,29 @@ runPipeline context = case measureConfigFromKnobs context (phasePlanFromCore con
               Nothing -> pure ()
               Just (number, intended) -> do
                 arrived <- getMonotonicTimeNSec
+                handledMetric
                 recordOp handle intended arrived arrived (OpOk 1)
                 atomicModifyIORef' factCount (\old -> (old + 1, ()))
                 unique <- atomicModifyIORef' seen \old -> let next = Set.insert number old in (next, Set.size next)
                 if unique >= count then void (tryPutMVar done ()) else pure ()
-            consumer state worker = consumePath env state topic group path batch inbox (knob "kafka.prop.fetch.wait.max.ms") (knob "kafka.prop.queued.min.messages") observe worker
+            consumer state worker = consumePath env state topic group path batch inbox (knob "kafka.prop.fetch.wait.max.ms") (knob "kafka.prop.queued.min.messages") telemetry.tracer observe worker
         states <- replicateM consumers newKafkaAdapterState
         workers <- forM (zip states [0 .. consumers - 1]) (\(state, worker) -> async (consumer state worker))
         threadDelay 1000000
         enterPhase (measurementPhaseClock measurement) Steady
         sampleLoadSeries series measurement offered offered completed failed maxLag
         started <- getMonotonicTimeNSec
-        result <- runEff . runError @KafkaError $
-          P.runKafkaProducer producerProps $
-            forM [0 .. count - 1] \index -> do
-              intended <- liftIO getMonotonicTimeNSec
-              P.produceMessageSync (record topic partitions payloadBytes index intended)
+        result <- case telemetry.tracer of
+          Nothing -> runEff . runError @KafkaError $ P.runKafkaProducer producerProps $ forM [0 .. count - 1] \index -> do
+            intended <- liftIO getMonotonicTimeNSec
+            result <- P.produceMessageSync (record topic partitions payloadBytes index intended)
+            liftIO producedMetric
+            pure result
+          Just tracer -> runEff . runError @KafkaError . runTracing tracer $ runKafkaProducerTraced tracer producerProps $ forM [0 .. count - 1] \index -> do
+            intended <- liftIO getMonotonicTimeNSec
+            result <- P.produceMessageSync (record topic partitions payloadBytes index intended)
+            liftIO producedMetric
+            pure result
         produced <- either (ioError . userError . show) (pure . length) result
         reached <- timeout 30000000 (readMVar done)
         ended <- getMonotonicTimeNSec
@@ -162,8 +182,8 @@ runPipeline context = case measureConfigFromKnobs context (phasePlanFromCore con
       putSummary context Verdicts "pipeline" (object ["produced" .= produced, "uniqueHandled" .= Set.size handled, "handlerFacts" .= facts, "prematureConsumerExits" .= earlyExits, "drainedWithinDeadline" .= reached, "groupPartitions" .= length snapshot.offsets])
       pure $ if null failures then passed else failedWith failures ("path=" <> path <> " produced=" <> Text.pack (show produced) <> " handled=" <> Text.pack (show (Set.size handled)))
 
-consumePath :: KafkaEnv -> KafkaAdapterState -> TopicName -> C.ConsumerGroupId -> Text -> Int -> Int -> Int -> Int -> (Maybe ByteString.ByteString -> IO ()) -> Int -> IO ()
-consumePath env state topic group path batch inbox fetchWait queuedMin observe worker = do
+consumePath :: KafkaEnv -> KafkaAdapterState -> TopicName -> C.ConsumerGroupId -> Text -> Int -> Int -> Int -> Int -> Maybe Tracer -> (Maybe ByteString.ByteString -> IO ()) -> Int -> IO ()
+consumePath env state topic group path batch inbox fetchWait queuedMin tracer observe worker = do
   let rebalance consumer event = kafkaRebalanceHandler state consumer event
       props =
         C.brokersList (firstBrokers env)
@@ -175,36 +195,39 @@ consumePath env state topic group path batch inbox fetchWait queuedMin observe w
           <> C.setCallback (C.rebalanceCallback rebalance)
       subscription = C.topics [topic] <> C.offsetReset C.Earliest
       config = (defaultConfig [topic]) {AdapterConfig.batchSize = BatchSize batch}
-  outcome <- runEff . runError @KafkaError . runTracingNoop $ C.runKafkaConsumer props subscription $ case path of
-    "adapter-runapp" -> do
-      adapter <- kafkaAdapterWith state config
-      let handler Message {envelope = Envelope {payload}} = liftIO (observe payload) >> pure AckOk
-      app <- runApp (defaultAppConfig {inboxSize = inbox}) [(ProcessorId ("pipeline-" <> Text.pack (show worker)), mkProcessor adapter handler)]
-      case app of
-        Left problem -> liftIO $ ioError (userError (show problem))
-        Right running -> waitApp running >> stopApp running
-    "adapter-stream" -> do
-      adapter <- kafkaAdapterWith state config
-      let Adapter {source} = adapter
-      Stream.fold Fold.drain $
-        Stream.mapM
-          ( \Ingested {envelope = Envelope {payload}, ack = AckHandle finalize} -> do
-              liftIO (observe payload)
-              finalize AckOk
-          )
-          source
-    _ ->
-      let loop = do
-            stopped <- liftIO (readTVarIO state.shutdownVar)
-            if stopped
-              then pure ()
-              else do
-                candidate <- C.pollMessage (Timeout 100)
-                forM_ candidate \row -> do
-                  liftIO (observe (C.crValue row))
-                  C.commitOffsetMessage C.OffsetCommit row
-                loop
-       in loop
+      consume = C.runKafkaConsumer props subscription $ case path of
+        "adapter-runapp" -> do
+          adapter <- kafkaAdapterWith state config
+          let handler Message {envelope = Envelope {payload}} = liftIO (observe payload) >> pure AckOk
+          app <- runApp (defaultAppConfig {inboxSize = inbox}) [(ProcessorId ("pipeline-" <> Text.pack (show worker)), mkProcessor adapter handler)]
+          case app of
+            Left problem -> liftIO $ ioError (userError (show problem))
+            Right running -> waitApp running >> stopApp running
+        "adapter-stream" -> do
+          adapter <- kafkaAdapterWith state config
+          let Adapter {source} = adapter
+          Stream.fold Fold.drain $
+            Stream.mapM
+              ( \Ingested {envelope = Envelope {payload}, ack = AckHandle finalize} -> do
+                  liftIO (observe payload)
+                  finalize AckOk
+              )
+              source
+        _ ->
+          let loop = do
+                stopped <- liftIO (readTVarIO state.shutdownVar)
+                if stopped
+                  then pure ()
+                  else do
+                    candidate <- C.pollMessage (Timeout 100)
+                    forM_ candidate \row -> do
+                      liftIO (observe (C.crValue row))
+                      C.commitOffsetMessage C.OffsetCommit row
+                    loop
+           in loop
+  outcome <- case tracer of
+    Nothing -> runEff . runError @KafkaError . runTracingNoop $ consume
+    Just active -> runEff . runError @KafkaError . runTracing active $ consume
   either (ioError . userError . show) pure outcome
 
 record :: TopicName -> Int -> Int -> Int -> Word64 -> P.ProducerRecord
