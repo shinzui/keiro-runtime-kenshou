@@ -27,6 +27,11 @@ provenance:
       at: 2026-09-25T12:33:35Z
       mode: "implement"
       note: "Recorded tested storage, lease, and client foundation without live GCP acceptance"
+    - model: "gpt-6"
+      harness: "codex-cli"
+      at: 2026-09-25T12:45:52Z
+      mode: "implement"
+      note: "Recorded validated submission and local client path"
 ---
 
 # Provide leased verification cells in load-testing-infra
@@ -54,6 +59,7 @@ You can see it working with the fixture payloads this plan ships: two terminals 
 - [x] (2026-09-24) Committed the shared and per-cell Pulumi stacks, four NixOS image outputs, cell lifecycle scripts, descriptor and policy schemas, and idle-stop simulation in `mori://shinzui/load-testing-infra` at `f264dce`. The cell Pulumi program compiles after an audited lockfile refresh, Nix evaluates all four image outputs, and both schemas validate. Live GCP acceptance is still pending.
 - [x] (2026-09-25) Defined the draft version-one cell storage protocol, payload, submission, status, and environment schemas, and golden examples in `mori://shinzui/load-testing-infra` at `396ff30`. All six current schemas validated against their examples; negative submissions with an invalid bundle digest, escaping command path, or unsupported protocol version were rejected by schema validation. The agent implementation and live GCP acceptance remain pending.
 - [x] (2026-09-25) Added the Rust storage and lease foundation, the `cellctl lease` commands, a Nix package, and lease/quarantine schemas in `mori://shinzui/load-testing-infra` at `74871bc`. The Nix build passed with checks enabled; ten Rust tests passed, including concurrent single-owner acquisition, expiry and stale-generation fencing, cancellation fencing, a local CLI acquire/release cycle, and an HTTP 412 create-race mapping. Both new JSON examples validated and the Linux package derivation evaluated. The driver service still uses its placeholder; the agent, payload execution, and live GCP lease race remain pending.
+- [x] (2026-09-25) Added typed payload/submission documents and preflight rejection codes in `mori://shinzui/load-testing-infra` at `9650c6b`, then `cellctl submit` with descriptor, active-lease, quarantine, work-digest, and run-ID checks at `013e6f9`. Fourteen Rust tests passed through a checked Nix build, including malformed submissions and a local client cycle that writes work before `submission.json` and refuses reuse. No driver agent has consumed a submission yet; the Cloud Storage path has only the local HTTP precondition test, with live GCP acceptance pending.
 - [ ] Deliver leased, resettable multi-instance verification cells with the generic agent, payload delivery, health gates, immutable result publication, broker, and collector roles; verify the cell protocol in Validation and Acceptance.
 
 ## Surprises & Discoveries
