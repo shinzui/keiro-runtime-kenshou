@@ -1,4 +1,4 @@
-module Kenshou.Suite.Shibuya.Correctness.Metrics (scenarios, readyFailures, liveFailures, counterFailures) where
+module Kenshou.Suite.Shibuya.Correctness.Metrics (scenarios, readyFailures, liveFailures, counterFailures, websocketFlagFailures) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
@@ -23,6 +23,7 @@ import Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter (BrokerStats (..), Synthet
 import Kenshou.Telemetry.Endpoint (reserveFreePort)
 import Network.HTTP.Client (Manager, defaultManagerSettings, httpLbs, newManager, parseRequest, responseBody, responseStatus)
 import Network.HTTP.Types.Status (statusCode)
+import Network.WebSockets qualified as WebSockets
 import Shibuya.App (Master, defaultAppConfig, getAppMaster, mkProcessor, runApp, stopApp, waitApp)
 import Shibuya.Core.Ack (AckDecision (..), RetryDelay (..))
 import Shibuya.Core.Metrics (ProcessorId (..))
@@ -31,7 +32,7 @@ import Shibuya.Telemetry.Effect (runTracingNoop)
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [endpointContract, readyReflectsFailedProcessor, liveReflectsStoppedMaster, countersDistinguishRetries]
+scenarios = [endpointContract, readyReflectsFailedProcessor, liveReflectsStoppedMaster, countersDistinguishRetries, websocketFlagGatesUpgrades]
 
 metricsDimensions :: DimensionSupport
 metricsDimensions = noDimensions {metrics = Supported (Support (MetricsServe :| [MetricsServeScraped]) MetricsServe)}
@@ -79,6 +80,29 @@ countersDistinguishRetries =
               appliesTo = AllCohorts
             },
       run = runCounters
+    }
+
+websocketFlagGatesUpgrades :: Scenario
+websocketFlagGatesUpgrades =
+  Scenario
+    { id = either (error . Text.unpack) id (parseScenarioId "shibuya/metrics/correctness/websocket-flag-gates-upgrades"),
+      revision = 1,
+      summary = "Disabling the WebSocket endpoint prevents an upgrade while the enabled endpoint still serves a snapshot.",
+      tier = TierSmoke,
+      placement = PlaceEither,
+      knobs = [],
+      dimensions = metricsDimensions,
+      phases = zeroPhases,
+      requires = noEnvironment,
+      knownDefect =
+        Just $
+          KnownDefect
+            { reference = "mori://shinzui/shibuya/okf/reviews/concepts/REV-9",
+              summary = "REV-9-F2",
+              expectedFailures = ["REV-9-F2"],
+              appliesTo = OnlyWhen (ResolvedFromHackage "shibuya-metrics" :| [VersionBelow "shibuya-metrics" "0.10.0.0"])
+            },
+      run = \context -> websocketFlagFailures >>= healthReport context "websocket-flag"
     }
 
 healthScenario :: Text -> Text -> Text -> (RunContext -> IO ScenarioReport) -> Scenario
@@ -332,3 +356,32 @@ processorSamples processor body =
   let marker = "processor=\"" <> processor <> "\""
       normalized = "processor=\"<id>\""
    in sort [Text.replace marker normalized line | line <- Text.lines (TextEncoding.decodeUtf8 (LazyByteString.toStrict body)), Text.isInfixOf marker line]
+
+websocketFlagFailures :: IO [Text]
+websocketFlagFailures = do
+  manager <- newManager defaultManagerSettings
+  broker <- newSyntheticBroker defaultSyntheticConfig
+  runEff $ runTracingNoop $ do
+    result <- runApp defaultAppConfig [(ProcessorId "websocket-flag", mkProcessor (syntheticAdapter broker) (\_ -> pure AckOk))]
+    case result of
+      Left err -> pure ["app-start: " <> Text.pack (show err)]
+      Right handle -> do
+        let master = getAppMaster handle
+        failures <- liftIO $ do
+          enabled <- withServer manager defaultConfig master $ \port -> do
+            response <- websocketProbe port
+            pure $ check "enabled-websocket-control" (case response of Just (Right frame) -> lookupPath ["type"] frame == Just (String "snapshot"); _ -> False)
+          disabled <- withServer manager defaultConfig {enableWebSocket = False} master $ \port -> do
+            response <- websocketProbe port
+            pure $ case response of
+              Nothing -> ["disabled-upgrade-timeout"]
+              Just (Left _) -> []
+              Just (Right _) -> ["REV-9-F2"]
+          pure (enabled <> disabled)
+        stopApp handle
+        pure failures
+
+websocketProbe :: Int -> IO (Maybe (Either SomeException LazyByteString.ByteString))
+websocketProbe port =
+  timeout 2000000 $
+    (try (WebSockets.runClient "127.0.0.1" port "/ws" WebSockets.receiveData) :: IO (Either SomeException LazyByteString.ByteString))
