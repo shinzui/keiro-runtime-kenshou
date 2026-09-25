@@ -22,6 +22,11 @@ provenance:
       at: 2026-09-25T05:00:16Z
       mode: "implement"
       note: "Started cell project-isolation plumbing in load-testing-infra"
+    - model: "gpt-6"
+      harness: "codex-cli"
+      at: 2026-09-25T12:33:35Z
+      mode: "implement"
+      note: "Recorded tested storage, lease, and client foundation without live GCP acceptance"
 ---
 
 # Provide leased verification cells in load-testing-infra
@@ -48,9 +53,13 @@ You can see it working with the fixture payloads this plan ships: two terminals 
 - [x] (2026-09-24) Extracted the existing image build, hash, tarball lookup, upload, and registration functions into a sourceable library at commit `d8e0bf4`. Bash syntax and staged-diff checks passed; an image build awaits the cell image outputs.
 - [x] (2026-09-24) Committed the shared and per-cell Pulumi stacks, four NixOS image outputs, cell lifecycle scripts, descriptor and policy schemas, and idle-stop simulation in `mori://shinzui/load-testing-infra` at `f264dce`. The cell Pulumi program compiles after an audited lockfile refresh, Nix evaluates all four image outputs, and both schemas validate. Live GCP acceptance is still pending.
 - [x] (2026-09-25) Defined the draft version-one cell storage protocol, payload, submission, status, and environment schemas, and golden examples in `mori://shinzui/load-testing-infra` at `396ff30`. All six current schemas validated against their examples; negative submissions with an invalid bundle digest, escaping command path, or unsupported protocol version were rejected by schema validation. The agent implementation and live GCP acceptance remain pending.
+- [x] (2026-09-25) Added the Rust storage and lease foundation, the `cellctl lease` commands, a Nix package, and lease/quarantine schemas in `mori://shinzui/load-testing-infra` at `74871bc`. The Nix build passed with checks enabled; ten Rust tests passed, including concurrent single-owner acquisition, expiry and stale-generation fencing, cancellation fencing, a local CLI acquire/release cycle, and an HTTP 412 create-race mapping. Both new JSON examples validated and the Linux package derivation evaluated. The driver service still uses its placeholder; the agent, payload execution, and live GCP lease race remain pending.
 - [ ] Deliver leased, resettable multi-instance verification cells with the generic agent, payload delivery, health gates, immutable result publication, broker, and collector roles; verify the cell protocol in Validation and Acceptance.
 
 ## Surprises & Discoveries
+
+- Observation: The first parallel Rust test run failed one lease acquisition while the isolated expiry case passed. The test stores used process ID and clock nanoseconds for their paths; adding a process-local sequence removed a possible simultaneous path collision. The subsequent full ten-test suite and checked Nix package build passed. This was a test-fixture reliability issue, not a reproduced GCP lease failure.
+  Evidence: `mori://shinzui/load-testing-infra` at project-relative paths `nixos/pkgs/cell-agent/src/src/store.rs` and `nixos/pkgs/cell-agent/src/src/lease.rs` (artifact-level URIs pending), commit `74871bc`.
 
 - Observation: The earlier illustrative submission omitted fields that the standalone payload description required (`schema`, `narHash`, `closurePaths`, and `system`). The draft schema embeds the complete `cell.payload/v1` descriptor in `cell.submission/v1`, so the agent can validate the referenced closure without relying on an unstated side object. This is an interface clarification for EP-17, not live agent evidence.
   Evidence: `mori://shinzui/load-testing-infra` at project-relative paths `schemas/cell/cell.payload.v1.schema.json`, `schemas/cell/cell.submission.v1.schema.json`, and `docs/cells/protocol.md` (artifact-level URIs pending), commit `396ff30`; all golden examples and three malformed-submission controls validated locally.
