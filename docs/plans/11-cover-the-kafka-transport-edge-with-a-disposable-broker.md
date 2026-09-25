@@ -49,7 +49,7 @@ cabal run kenshou -- run kafka/adapter/concurrency/sigkill-redelivery-window --o
 
 - [x] Milestone 1: private Redpanda fixture, two live fixture scenarios, CLI registration, layer guide, and ADR validated on Apple Container and Docker.
 - [ ] Milestone 2: the live AckOk, AckHalt, dead-letter, producer modes, transactional producer, and Keiro record-conversion checks pass; the two-topic partition-key, buffered-retry, and nonserial halt scenarios reproduce scoped, nonblocking counterexamples. The retry scenario's batch-size-one and early-exit controls pass. The batch-loop outage scenario reproduces its documented enqueue-versus-delivery limitation. Rebalance work remains. Milestone 3's buffered-successor ordering check reproduces its scoped counterexample.
-- [ ] Deliver the disposable broker, Kafka adapter correctness and rebalance coverage, real crash/outage/model scenarios, benchmarks, soaks, and telemetry arms; verify the acceptance commands in Validation and Acceptance.
+- [ ] Deliver the disposable broker, Kafka adapter correctness and rebalance coverage, real crash/outage/model scenarios, benchmarks, soaks, and telemetry arms; verify the acceptance commands in Validation and Acceptance. The default 20,000-record, three-kill redelivery scenario now passes locally.
 
 ## Surprises & Discoveries
 
@@ -64,6 +64,8 @@ cabal run kenshou -- run kafka/adapter/concurrency/sigkill-redelivery-window --o
 - A second live run isolated the KFK-2 handler-order effect: offset 3 retried, offsets 4–9 returned `AckOk`, then offset 3 redelivered. The released adapter's serial runner therefore executed successors before the failed record completed. The owner report is `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-2`.
 - The batch producer worker returned no enqueue failures for 100 records with the broker down and completed a flush. After restart, the topic was empty. This confirms the documented `produceMessageBatch` contract does not acknowledge delivery; it does not establish a new implementation bug. The desired acked-batch API is tracked at `mori://shinzui/keiro/plans/120-add-an-acked-batch-publish-api-to-kafka-effectful-and-a-reference-outbox-bridge`.
 - With the halt at offset 30 delayed by two seconds, both Shibuya `Async 4` and `Ahead 4` finalized successors early. The released-cohort consumer group committed 53 and the replacement session began at 53 in both runs. The known CAP-1 serial-only scope turned each concrete boundary violation into a nonblocking result.
+- The first literal live script for KFK-1, with offsets 3 and 4 each retrying once in a 100-record poll batch, did not show loss: delivery order was 0–9, 3, 4 and every offset eventually had an `AckOk` fact. The group committed only 5, matching the separate buffered-retry commit-stall finding rather than the predicted forward seek. That draft oracle was removed pending a schedule that genuinely reproduces the KFK-1 loss; it must not be classified as that known defect without the missing-success counterexample.
+- The default `sigkill-redelivery-window` run completed in 174 seconds on Apple Container. Its three killed consumer incarnations and final replacement produced 20,233 handler facts for 20,000 acknowledged records, with no missing IDs, no post-restart fact below a sampled committed offset, and no duplicate-window bound overrun.
 
 
 ## Decision Log

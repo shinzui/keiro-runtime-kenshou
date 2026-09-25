@@ -46,6 +46,7 @@ library
     Kenshou.Env.Kafka.Types
     Kenshou.Suite.Kafka
     Kenshou.Suite.Kafka.Concurrency.NonSerial
+    Kenshou.Suite.Kafka.Concurrency.Sigkill
     Kenshou.Suite.Kafka.Correctness.Ack
     Kenshou.Suite.Kafka.Correctness.Buffered
     Kenshou.Suite.Kafka.Correctness.DeadLetter
@@ -80,6 +81,7 @@ library
     scientific,
     shibuya-core,
     shibuya-kafka-adapter,
+    stm,
     streamly,
     streamly-core,
     text,

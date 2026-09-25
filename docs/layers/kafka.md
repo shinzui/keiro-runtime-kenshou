@@ -129,6 +129,13 @@ offset 3 of a single partition. On the released adapter, handlers for offsets
 `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-2`.
 The `kafka.batch-size=1` control passes.
 
+`kafka/adapter/concurrency/sigkill-redelivery-window` runs the adapter in a
+worker process, kills it three times by default, records the consumer group's
+committed offsets before each restart, and compares handler facts across
+process incarnations. The default local run acknowledged 20,000 records,
+recorded 20,233 handler facts, lost no IDs, replayed no offset below a sampled
+commit boundary, and stayed inside the declared duplicate bounds.
+
 `kafka/keiro-records/correctness/roundtrip-through-broker` publishes 200
 Keiro integration events through the neutral record conversion and checks
 their decoded events, Kafka delivery references, all six required wire

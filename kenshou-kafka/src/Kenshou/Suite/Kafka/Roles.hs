@@ -1,12 +1,14 @@
 module Kenshou.Suite.Kafka.Roles (roles, adapterConsumerRole, batchProducerRole, transactionWorkerRole) where
 
+import Control.Concurrent.Async (async, cancel, race, waitCatch)
 import Control.Monad (forM_)
 import Data.Aeson (FromJSON (..), Value, object, withObject, (.:), (.=))
 import Data.Aeson qualified as Aeson
 import Data.ByteString.Char8 qualified as ByteString
-import Data.IORef (modifyIORef', newIORef, readIORef)
+import Data.IORef (atomicModifyIORef', modifyIORef', newIORef, readIORef)
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Data.Time (getCurrentTime)
 import Effectful (Eff, liftIO, runEff, (:>))
 import Effectful.Error.Static (runError)
 import Kafka.Consumer.Types (ConsumerGroupId (..))
@@ -19,19 +21,23 @@ import Shibuya.Adapter.Kafka (defaultConfig, kafkaAdapter)
 import Shibuya.App (ProcessorId (..), defaultAppConfig, mkProcessor, runApp, stopApp, waitApp)
 import Shibuya.Core.Ack (AckDecision (..), DeadLetterReason (..), HaltReason (..))
 import Shibuya.Core.Ingested (Message (..))
-import Shibuya.Core.Types (Envelope (..))
+import Shibuya.Core.Types (Cursor (..), Envelope (..))
 import Shibuya.Telemetry.Effect (runTracingNoop)
 import Streamly.Data.Stream qualified as Stream
 
 roles :: [WorkerRole]
 roles =
   [ WorkerRole adapterConsumerRole "Consumes Kafka records through the adapter under a declared handler policy." runAdapterConsumer,
+    WorkerRole crashConsumerRole "Records adapter handler decisions across controlled SIGKILL cycles." runCrashConsumer,
     WorkerRole batchProducerRole "Enqueues a batch and attempts a bounded flush during a broker outage." runBatchProducer,
     WorkerRole transactionWorkerRole "Stages a consume-transform-produce transaction until told to commit." runTransactionWorker
   ]
 
 adapterConsumerRole :: RoleName
 adapterConsumerRole = either (error . Text.unpack) id (mkRoleName "kafka/adapter-consumer")
+
+crashConsumerRole :: RoleName
+crashConsumerRole = either (error . Text.unpack) id (mkRoleName "kafka/crash-consumer")
 
 batchProducerRole :: RoleName
 batchProducerRole = either (error . Text.unpack) id (mkRoleName "kafka/batch-producer")
@@ -98,6 +104,71 @@ consumeDeadLetters args = do
 
 readInt :: ByteString.ByteString -> Maybe Int
 readInt bytes = case reads (ByteString.unpack bytes) of [(value, "")] -> Just value; _ -> Nothing
+
+data CrashConsumerArgs = CrashConsumerArgs
+  { brokers :: [Text],
+    topic :: Text,
+    group :: Text,
+    autoCommitMillis :: Int
+  }
+
+instance FromJSON CrashConsumerArgs where
+  parseJSON = withObject "Kafka crash consumer args" \value ->
+    CrashConsumerArgs <$> value .: "brokers" <*> value .: "topic" <*> value .: "group" <*> value .: "autoCommitMillis"
+
+runCrashConsumer :: RoleContext -> IO ()
+runCrashConsumer context = do
+  args <- either (ioError . userError) pure (fromJson context.init.args :: Either String CrashConsumerArgs)
+  context.send WrkReady
+  command <- context.receive
+  case command of
+    Just CtlStart -> do
+      consumer <- async (consumeCrash context args)
+      next <- race (waitCatch consumer) context.receive
+      case next of
+        Right (Just (CtlStop _)) -> do
+          cancel consumer
+          result <- waitCatch consumer
+          context.send (WrkCustom "stopped" (object ["result" .= show result]))
+        Right _ -> cancel consumer
+        Left result -> context.send (WrkError ("crash-consumer exited before stop: " <> Text.pack (show result)))
+    _ -> ioError (userError "crash-consumer expected start")
+
+consumeCrash :: RoleContext -> CrashConsumerArgs -> IO ()
+consumeCrash context args = do
+  count <- newIORef (0 :: Int)
+  let topic = TopicName args.topic
+      props =
+        C.brokersList (fmap BrokerAddress args.brokers)
+          <> C.groupId (ConsumerGroupId args.group)
+          <> C.noAutoOffsetStore
+          <> C.extraProp "auto.commit.interval.ms" (Text.pack (show args.autoCommitMillis))
+          <> C.extraProp "session.timeout.ms" "6000"
+          <> C.extraProp "heartbeat.interval.ms" "2000"
+      subscription = C.topics [topic] <> C.offsetReset C.Earliest
+  outcome <- runEff . runError @KafkaError . runTracingNoop $
+    C.runKafkaConsumer props subscription $ do
+      adapter <- kafkaAdapter (defaultConfig [topic])
+      let handler Message {envelope = Envelope {payload, partition, cursor}} = do
+            case (payload >>= readInt, partition >>= readTextInt, cursor) of
+              (Just value, Just partitionNumber, Just (CursorInt offset)) -> do
+                liftIO $ do
+                  at <- getCurrentTime
+                  context.send (WrkCustom "ok" (object ["value" .= value, "partition" .= partitionNumber, "offset" .= offset, "at" .= at]))
+                  handled <- atomicModifyIORef' count (\old -> let next = old + 1 in (next, next))
+                  if handled `mod` 10 == 0 then getCurrentTime >>= context.send . WrkProgress (fromIntegral handled) else pure ()
+                pure AckOk
+              _ -> pure (AckHalt (HaltFatal "invalid crash-consumer coordinate"))
+      appResult <- runApp defaultAppConfig [(ProcessorId "crash-consumer", mkProcessor adapter handler)]
+      case appResult of
+        Left problem -> liftIO $ ioError (userError (show problem))
+        Right handle -> waitApp handle >> stopApp handle
+  case outcome of
+    Left problem -> context.send (WrkError (Text.pack (show problem)))
+    Right () -> pure ()
+
+readTextInt :: Text -> Maybe Int
+readTextInt = readInt . ByteString.pack . Text.unpack
 
 data ProducerArgs = ProducerArgs {brokers :: [Text], topic :: Text, messages :: Int, messageTimeoutMillis :: Int}
 
