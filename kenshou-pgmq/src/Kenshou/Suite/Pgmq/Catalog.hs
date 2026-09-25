@@ -79,7 +79,7 @@ pgmqScenario :: ScenarioDef -> Scenario
 pgmqScenario definition =
   Scenario
     { id = either (error . show) id (parseScenarioId definition.identifier),
-      revision = 1,
+      revision = if definition.identifier == "pgmq/effectful/concurrency/backend-termination-recovery" then 2 else 1,
       summary = definition.description,
       tier = definition.tier,
       placement = definition.placement,

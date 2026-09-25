@@ -67,6 +67,7 @@ commonKnobs =
     integer "pgmq.pollers" "Concurrent long pollers" 4 1 256 [3, 4, 8],
     enum "pgmq.sabotage" "Deliberate oracle sabotage" "none" ["none", "unlocked-read"],
     integer "pgmq.fault.interval-seconds" "Seconds between injected faults" 10 1 3600 [1, 10],
+    integer "pgmq.backend-termination-duration-seconds" "Sustained backend termination duration" 120 1 86400 [10, 120],
     integer "pgmq.fault.latency-ms" "Injected network latency" 200 0 60000 [0, 200, 1000],
     integer "pgmq.fault.max-block-seconds" "Maximum permitted network block" 30 1 600 [5, 30],
     integer "pgmq.conn.tcp-user-timeout-ms" "libpq tcp_user_timeout value" 0 0 600000 [0, 5000, 30000],

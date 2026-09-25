@@ -427,19 +427,45 @@ backendTermination :: RunContext -> IO ScenarioReport
 backendTermination context = withPgmqRun context \runtime ->
   withScenarioQueue runtime.pool context runtime.knobs "backend_termination" \queue -> do
     withScenarioQueue runtime.pool context runtime.knobs "backend_termination_data" \dataQueue -> do
-      baseline <- effect runtime (Pgmq.batchSendMessage (Types.BatchSendMessage dataQueue (fmap body [1 .. 100]) Nothing))
-      waiting <- async (runOps runtime.tracer runtime.pool (Pgmq.readWithPoll (Types.ReadWithPollMessage queue 30 Nothing 5 100 Nothing)))
-      threadDelay 200000
-      let fault = terminateBackends (requirePostgres context) (ByApplicationName "kenshou-pgmq-%")
-      handle <- fault.inject
-      interrupted <- wait waiting
-      handle.heal
-      recovered <- retry 20 (runOps runtime.tracer runtime.pool (Pgmq.batchSendMessage (Types.BatchSendMessage dataQueue (fmap body [101 .. 200]) Nothing)))
-      durable <- queueKeys runtime.pool dataQueue
-      metrics <- effect runtime (Pgmq.queueMetrics dataQueue)
-      let expected = Set.fromList ["message-" <> Text.pack (show index) | index <- [1 :: Int .. 200]]
-      putSummary context Verdicts "backend-termination-observations" (object ["interrupted" .= show interrupted, "baselineCount" .= length baseline, "recoveredCount" .= either (const (0 :: Int)) length recovered, "durableCount" .= Set.size durable, "queueLength" .= metrics.queueLength])
-      verdict context "backend-termination" [("transient-error", either Pgmq.isTransient (const False) interrupted), ("same-pool-recovers", either (const False) ((== 100) . length) recovered), ("confirmed-keys-durable", durable == expected), ("queue-length-conserved", metrics.queueLength == 200)]
+      let duration = fromIntegral (knobInt context.knobs (knobName "pgmq.backend-termination-duration-seconds")) :: Int
+          interval = fromIntegral (knobInt context.knobs (knobName "pgmq.fault.interval-seconds")) :: Int
+          rounds = max 1 ((duration + interval - 1) `div` interval)
+          fault = terminateBackends (requirePostgres context) (ByApplicationName "kenshou-pgmq-%")
+      periodStarted <- getMonotonicTimeNSec
+      observations <- forM [1 .. rounds] \roundIndex -> do
+        let firstIndex = (roundIndex - 1) * 200 + 1
+            baselineIndices = [firstIndex .. firstIndex + 99]
+            recoveredIndices = [firstIndex + 100 .. firstIndex + 199]
+            expectedKeys = Set.fromList ["message-" <> Text.pack (show index) | index <- baselineIndices <> recoveredIndices]
+        baseline <- effect runtime (Pgmq.batchSendMessage (Types.BatchSendMessage dataQueue (fmap body baselineIndices) Nothing))
+        waiting <- async (runOps runtime.tracer runtime.pool (Pgmq.readWithPoll (Types.ReadWithPollMessage queue 30 Nothing 5 100 Nothing)))
+        threadDelay 200000
+        faultStarted <- getMonotonicTimeNSec
+        handle <- fault.inject
+        interrupted <- wait waiting
+        interruptedAt <- getMonotonicTimeNSec
+        handle.heal
+        recovered <- retry 20 (runOps runtime.tracer runtime.pool (Pgmq.batchSendMessage (Types.BatchSendMessage dataQueue (fmap body recoveredIndices) Nothing)))
+        durable <- queueKeys runtime.pool dataQueue
+        readResult <- runOps runtime.tracer runtime.pool (Pgmq.readMessage (Types.ReadMessage dataQueue 30 (Just 200) Nothing))
+        let delivered = either (const []) Vector.toList readResult
+        acknowledgements <- forM delivered \message ->
+          runOps runtime.tracer runtime.pool (Pgmq.deleteMessage (Types.MessageQuery dataQueue message.messageId))
+        metrics <- effect runtime (Pgmq.queueMetrics dataQueue)
+        let confirmedIds = Set.fromList (baseline <> either (const []) id recovered)
+            deliveredIds = Set.fromList (fmap (.messageId) delivered)
+            transientError = either Pgmq.isTransient (const False) interrupted
+            recoveredCount = either (const 0) length recovered
+            deliveryComplete = either (const False) (const True) readResult && deliveredIds == confirmedIds && length delivered == 200
+            acknowledged = all (either (const False) id) acknowledgements && length acknowledgements == 200
+            roundObservation = object ["round" .= roundIndex, "interrupted" .= show interrupted, "faultWindowMillis" .= ((interruptedAt - faultStarted) `div` 1000000), "baselineCount" .= length baseline, "recoveredCount" .= recoveredCount, "durableCount" .= Set.size durable, "deliveredCount" .= length delivered, "acknowledgedCount" .= length (filter (either (const False) id) acknowledgements), "queueLength" .= metrics.queueLength]
+        roundEnded <- getMonotonicTimeNSec
+        let targetMicros = min duration (roundIndex * interval) * 1000000
+        threadDelay (max 0 (targetMicros - fromIntegral ((roundEnded - periodStarted) `div` 1000)))
+        pure (transientError, recoveredCount == 100, durable == expectedKeys, deliveryComplete, acknowledged, metrics.queueLength == 0, roundObservation)
+      let allRounds project = all project observations
+      putSummary context Verdicts "backend-termination-observations" (object ["durationSeconds" .= duration, "intervalSeconds" .= interval, "faultRounds" .= rounds, "baselineCount" .= (100 * rounds), "rounds" .= fmap (\(_, _, _, _, _, _, observation) -> observation) observations])
+      verdict context "backend-termination" [("transient-error", allRounds (\(ok, _, _, _, _, _, _) -> ok)), ("same-pool-recovers", allRounds (\(_, ok, _, _, _, _, _) -> ok)), ("confirmed-keys-durable", allRounds (\(_, _, ok, _, _, _, _) -> ok)), ("all-consumed-once", allRounds (\(_, _, _, ok, _, _, _) -> ok)), ("acknowledgements-succeed", allRounds (\(_, _, _, _, ok, _, _) -> ok)), ("queue-drains-each-round", allRounds (\(_, _, _, _, _, ok, _) -> ok))]
 
 postgresRestart :: RunContext -> IO ScenarioReport
 postgresRestart context = withPgmqRun context \runtime ->
