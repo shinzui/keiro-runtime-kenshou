@@ -356,6 +356,26 @@ Their leak verdicts were `InsufficientData`, as intended for a one-minute
 window. These runs verify the mechanism; they do not satisfy the 20-minute
 reduced soak acceptance criterion.
 
+The 20-minute stability run
+`01a0d695-07d4-746e-a47b-77ff160bd75e` acknowledged 120,000 records at
+100/s with no missing IDs, worker errors, or final lag. Its sealed leak
+verdict was inconclusive because the original one-minute diagnostic windows
+left fewer than 30 points. Rejudging the saved samples with the reduced
+profile's corrected 30-second windows gave 41 points and a stable verdict
+on all five selected probes; the sealed run is unchanged and needs a fresh
+repeat to satisfy that acceptance gate.
+
+The 20-minute churn run `01a0d6b5-212e-73ca-b1ae-70bf7f40d055` also
+acknowledged 120,000 records at 100/s and completed with no missing IDs,
+worker errors, or final lag. It wrote diagnoses for all 61 consumers. The
+continuous member's native-memory probe used 124 samples, yielded 42
+reduced points, and returned `Stable` with reason `below-growth-floor`;
+the sixty short-lived members were too brief for leak estimation. This
+lower-rate run did not reproduce the Hackage client's expected
+redirect-race leak, and it does not establish its absence at the planned
+500/s deep-backlog load. The workstation was busy during both runs, so
+resource slopes remain local correctness evidence only.
+
 The pipeline benchmark now installs the selected telemetry runtime. Tracing
 arms use the traced Kafka producer and Shibuya processing spans; metrics
 arms record produced and handled counters through the selected meter. A

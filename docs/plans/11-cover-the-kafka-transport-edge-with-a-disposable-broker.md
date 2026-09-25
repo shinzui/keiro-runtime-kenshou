@@ -50,7 +50,7 @@ cabal run kenshou -- run kafka/adapter/concurrency/sigkill-redelivery-window --o
 - [x] Milestone 1: private Redpanda fixture, two live fixture scenarios, CLI registration, layer guide, and ADR validated on Apple Container and Docker.
 - [ ] Milestone 2: the live AckOk, AckHalt, dead-letter, producer modes, transactional producer, and Keiro record-conversion checks pass; the two-topic partition-key, buffered-retry, and nonserial halt scenarios reproduce scoped, nonblocking counterexamples. The retry scenario's batch-size-one and early-exit controls pass. The batch-loop outage scenario reproduces its documented enqueue-versus-delivery limitation. The rebalance scenario now has no loss, lag, duplicate-boundary, or owner-overlap finding in a 4,000-record reduced run, but its within-assignment order reversal is filed as `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-6` and remains blocking because the scenario's single known-defect slot already identifies BUG-4's distinct early exit. Milestone 3's buffered-successor ordering check reproduces its scoped counterexample.
 - [ ] Deliver the disposable broker, Kafka adapter correctness and rebalance coverage, real crash/outage/model scenarios, benchmarks, soaks, and telemetry arms; verify the acceptance commands in Validation and Acceptance. The default 20,000-record, three-kill redelivery and static membership restart scenarios pass locally. The offset-store crash, released-cohort fencing, and held-open halt scenarios report their specific known counterexamples with passing safety controls.
-- [ ] Milestone 4: all thirty-three IDs are registered, including the four full/reduced soak IDs; both soaks passed their delivery and cleanup checks in one-minute broker-backed smoke runs. A 20-minute stability run acknowledged 120,000 records with no loss, no worker error, and zero lag; its sealed leak verdict was inconclusive because one-minute windows yielded fewer than the toolkit's 30 required points. Rejudging the saved samples with 30-second windows gave 41 points and a stable verdict on all five selected probes. The reduced profile now uses those windows; a fresh sealed verdict and the 20-minute churn run remain. The pipeline benchmark uses the selected tracing and metrics arms. A three-block overhead run recorded all four requested arm comparisons and correctly returned inconclusive on exploratory-grade data from a busy workstation. The poll-cap paired comparison remains.
+- [ ] Milestone 4: all thirty-three IDs are registered, including the four full/reduced soak IDs; both soaks passed their delivery and cleanup checks in one-minute broker-backed smoke runs. A 20-minute stability run acknowledged 120,000 records with no loss, no worker error, and zero lag; its sealed leak verdict was inconclusive because one-minute windows yielded fewer than the toolkit's 30 required points. Rejudging the saved samples with 30-second windows gave 41 points and a stable verdict on all five selected probes. The reduced profile now uses those windows; a fresh sealed stability verdict remains. The 20-minute churn run `01a0d6b5-212e-73ca-b1ae-70bf7f40d055` passed with 120,000 acknowledgements, no loss, zero lag, 61 per-process diagnoses, and a `Stable` native-memory verdict for its long-lived consumer at 100 records/s. That lower rate did not reproduce the expected released-binding leak; the full-rate claim remains open. The pipeline benchmark uses the selected tracing and metrics arms. A three-block overhead run recorded all four requested arm comparisons and correctly returned inconclusive on exploratory-grade data from a busy workstation. The poll-cap paired comparison is deferred at the owner's request while the machine is busy.
 
 ## Surprises & Discoveries
 
@@ -90,6 +90,7 @@ cabal run kenshou -- run kafka/adapter/concurrency/sigkill-redelivery-window --o
 - The first 20-minute stability soak, `01a0d695-07d4-746e-a47b-77ff160bd75e`, delivered 120,000 acknowledged IDs without loss, lag or worker errors. Its 122 ten-second process samples became only about 20 one-minute envelopes after warmup, below `kenshou-diagnose`'s default 30-point minimum; the sealed result is therefore correctly inconclusive. An offline rejudgment of the saved samples with 30-second envelopes returned 41 points and `stable` for heap, native memory, Haskell threads, OS threads, and file descriptors. This verifies the diagnostic window correction, but does not retroactively change the sealed run.
 - The independent raw readback in broker-kill run `01a0d6a9-32d8-76bd-8eed-c94c6710be47` found 983 of 1,000 acknowledged IDs on the restarted topic. The broker log reported `write_caching_default:true` for the disposable Redpanda instance. [Redpanda's topic-property reference](https://docs.redpanda.com/streaming/current/reference/properties/topic-properties/) says write caching can acknowledge before a disk write and `write.caching` overrides the cluster default. The private fixture now sets `write.caching=false` on created topics unless a scenario explicitly supplies another value; external brokers are left to their own configuration. Rerun `01a0d6ac-6636-716c-bd02-de4af109776f` found all 1,000 acknowledged IDs on the broker and in the union of original and replacement handler facts. Its only failures match the scoped adapter-exit report.
 - The final reduced rebalance run `01a0d6b3-b843-7149-a2b2-981e6a1734ef` acknowledged and handled all 4,000 IDs, reached zero lag, and cleared the duplicate and owner-overlap labels. It still saw member 3 process partition 4 offset 200 then 165 within one assignment after the sampled committed position had reached 173. A second independent run showed the same pattern on partition 0. The owner report is `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-6`, committed as `bef1328`; the local evidence is `docs/findings/9-kafka-rebalance-replays-committed-offsets-out-of-order.md`. The adapter versus runner source path is unresolved. The scenario's current single known-defect reference covers BUG-4's early exits; the independent BUG-6 order failure remains blocking.
+- The reduced churn soak `01a0d6b5-212e-73ca-b1ae-70bf7f40d055` completed at 100 records/s and a ten-second join/leave cadence. All 120,000 broker-acknowledged IDs appeared in the fixed-size worker ledgers, no worker reported an error, and the group ended at zero lag. Sixty short-lived members had `InsufficientData` leak diagnoses, as their lifetimes are below the diagnostic window; the continuous member had 124 samples, 42 reduced native-memory points and a `Stable` verdict (`below-growth-floor`). This lower-load run did not exercise the intended deep backlog strongly enough to establish that the released `hw-kafka-client` redirect-race leak is absent. The default-rate and head-cohort contrast remain open.
 
 
 ## Decision Log
@@ -138,10 +139,35 @@ cabal run kenshou -- run kafka/adapter/concurrency/sigkill-redelivery-window --o
   Rationale: The MasterPlan's four milestones do not name those scenario groups; they are correctness work that needs only the fixture (Milestone 2) or the telemetry arms (Milestone 4).
   Date: 2026-09-20
 
+- Decision: Topics created on the private Redpanda fixture default to `write.caching=false`, while explicitly configured topic values and external brokers retain their own settings.
+  Rationale: The disposable broker reported `write_caching_default:true` and an independent readback found 17 acknowledged records absent after `SIGKILL`. Disabling topic write caching made a repeat run retain all 1,000 acknowledged records; broker durability must be defined before judging adapter recovery. This changes the fixture's performance conditions, so earlier local benchmark figures are historical exploratory evidence only.
+  Date: 2026-09-25
+
 
 ## Outcomes & Retrospective
 
-(To be filled during and after implementation.)
+The local implementation registers all 33 planned Kafka scenario IDs and
+provides a run-owned Redpanda broker through Apple Container or Docker,
+adapter and producer correctness checks, process crash and rebalance probes,
+benchmarks, tracing controls, and full/reduced soak pairs. The Kafka package's
+five focused tests pass and the ADR bundle validates. Private broker runs
+verified broker readback after a kill, no-loss replacement controls, and a
+two-lane takeover. The 20-minute stability soak delivered 120,000 records
+without loss or residual lag; its sealed leak verdict was inconclusive due
+to a diagnostic window configuration that has since been corrected, and an
+offline rejudgment of the saved samples was stable. The 20-minute churn soak
+also delivered 120,000 records without loss, residual lag, or worker errors;
+its continuous consumer's native-memory probe was stable at the reduced
+100-record/s rate. That result does not reproduce the expected released
+binding leak under the planned 500-record/s deep-backlog load.
+
+This plan remains In Progress. The rebalance scenario independently found
+within-assignment ordering regression filed as
+`mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-6`.
+Released/head repetitions, the head cohort's `hw-kafka-streamly` pin, the
+assembled-runtime import proof after EP-15, and cell-duration evidence remain.
+Additional benchmark comparisons are deferred while the workstation is busy;
+existing local figures carry only exploratory meaning.
 
 
 ## Context and Orientation
