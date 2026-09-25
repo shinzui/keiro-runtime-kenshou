@@ -25,6 +25,7 @@ library
   exposed-modules:
     Kenshou.Suite.Shibuya
     Kenshou.Suite.Shibuya.Cohort
+    Kenshou.Suite.Shibuya.Concurrency.CoreBatch
     Kenshou.Suite.Shibuya.Concurrency.CoreOrdering
     Kenshou.Suite.Shibuya.Concurrency.CoreRunner
     Kenshou.Suite.Shibuya.Correctness.CoreOrdering
