@@ -258,6 +258,8 @@ EP-16 now has locally tested driver restart recovery (`04502e9`, `574c699`) and 
 
 EP-16's upgrade script now holds an exclusive lease through image apply and descriptor publication, with quarantine on failure. A live no-change upgrade of stopped `cell-alpha` reported ten unchanged resources; a concurrent lease contender returned `busy` for owner `cell-upgrade`, and no lease or quarantine remained afterward. The cell status command now reports unknown agent service health when no state document exists. Health publication itself remains pending.
 
+The SIGKILL recovery tree was fetched and verified again after all cell VMs were stopped, with the same four artifacts and manifest digest. A one-byte change to a separate fetched copy made verification exit 1 naming `submission/work`, and a sealed run-ID resubmission exited 4 with `run-id-already-used`. The agent-credential overwrite attempt and later lifecycle checks remain open.
+
 ## Surprises & Discoveries
 
 Document cross-plan insights, dependency changes, scope adjustments, or unexpected
