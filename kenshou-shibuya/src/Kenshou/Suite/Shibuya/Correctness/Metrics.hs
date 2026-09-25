@@ -1,4 +1,4 @@
-module Kenshou.Suite.Shibuya.Correctness.Metrics (scenarios, readyFailures, liveFailures) where
+module Kenshou.Suite.Shibuya.Correctness.Metrics (scenarios, readyFailures, liveFailures, counterFailures) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
@@ -6,6 +6,7 @@ import Control.Exception (SomeException, bracket, try)
 import Data.Aeson (Value (..), decode, object, (.=))
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString.Lazy qualified as LazyByteString
+import Data.List (sort)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.String (fromString)
 import Data.Text (Text)
@@ -18,19 +19,19 @@ import Kenshou.Core.Env (noEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (CohortScope (..), KnownDefect (..), PackageCondition (..), Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
-import Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter (SyntheticConfig (..), defaultSyntheticConfig, newSyntheticBroker, publish, syntheticAdapter)
+import Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter (BrokerStats (..), SyntheticBroker, SyntheticConfig (..), brokerStats, defaultSyntheticConfig, newSyntheticBroker, publish, syntheticAdapter)
 import Kenshou.Telemetry.Endpoint (reserveFreePort)
 import Network.HTTP.Client (Manager, defaultManagerSettings, httpLbs, newManager, parseRequest, responseBody, responseStatus)
 import Network.HTTP.Types.Status (statusCode)
 import Shibuya.App (Master, defaultAppConfig, getAppMaster, mkProcessor, runApp, stopApp, waitApp)
-import Shibuya.Core.Ack (AckDecision (..))
+import Shibuya.Core.Ack (AckDecision (..), RetryDelay (..))
 import Shibuya.Core.Metrics (ProcessorId (..))
 import Shibuya.Metrics.Server (MetricsServerConfig (..), defaultConfig, startMetricsServer, stopMetricsServer)
 import Shibuya.Telemetry.Effect (runTracingNoop)
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [endpointContract, readyReflectsFailedProcessor, liveReflectsStoppedMaster]
+scenarios = [endpointContract, readyReflectsFailedProcessor, liveReflectsStoppedMaster, countersDistinguishRetries]
 
 metricsDimensions :: DimensionSupport
 metricsDimensions = noDimensions {metrics = Supported (Support (MetricsServe :| [MetricsServeScraped]) MetricsServe)}
@@ -56,6 +57,29 @@ readyReflectsFailedProcessor = healthScenario "shibuya/metrics/correctness/ready
 
 liveReflectsStoppedMaster :: Scenario
 liveReflectsStoppedMaster = healthScenario "shibuya/metrics/correctness/live-reflects-a-stopped-master" "Liveness reports a stopped master as unavailable." "REV-8-F2" runLiveStopped
+
+countersDistinguishRetries :: Scenario
+countersDistinguishRetries =
+  Scenario
+    { id = either (error . Text.unpack) id (parseScenarioId "shibuya/metrics/correctness/counters-distinguish-retries-from-success"),
+      revision = 1,
+      summary = "Prometheus distinguishes a retried delivery from one completed successfully.",
+      tier = TierSmoke,
+      placement = PlaceEither,
+      knobs = [],
+      dimensions = metricsDimensions,
+      phases = zeroPhases,
+      requires = noEnvironment,
+      knownDefect =
+        Just $
+          KnownDefect
+            { reference = "mori://shinzui/shibuya/okf/reviews/concepts/REV-7",
+              summary = "REV-7-A2",
+              expectedFailures = ["REV-7-A2"],
+              appliesTo = AllCohorts
+            },
+      run = runCounters
+    }
 
 healthScenario :: Text -> Text -> Text -> (RunContext -> IO ScenarioReport) -> Scenario
 healthScenario identifier description finding action =
@@ -183,11 +207,14 @@ checkDisabledRoutes manager port = do
   pure $ check "disabled-routes" (all (\response -> response.status == 404 && hasPath ["error"] response.body) responses)
 
 hasPath :: [Text] -> LazyByteString.ByteString -> Bool
-hasPath keys body = maybe False (go keys) (decode body)
+hasPath keys body = maybe False (const True) (lookupPath keys body)
+
+lookupPath :: [Text] -> LazyByteString.ByteString -> Maybe Value
+lookupPath keys body = decode body >>= go keys
   where
-    go [] _ = True
-    go (key : rest) (Object value) = maybe False (go rest) (KeyMap.lookup (fromString (Text.unpack key)) value)
-    go _ _ = False
+    go [] value = Just value
+    go (key : rest) (Object value) = KeyMap.lookup (fromString (Text.unpack key)) value >>= go rest
+    go _ _ = Nothing
 
 check :: Text -> Bool -> [Text]
 check label success = [label | not success]
@@ -243,3 +270,65 @@ healthReport :: RunContext -> Text -> [Text] -> IO ScenarioReport
 healthReport context name failures = do
   putSummary context Verdicts name $ object ["failures" .= failures]
   pure $ if null failures then passed else failedWith failures (Text.intercalate "; " failures)
+
+runCounters :: RunContext -> IO ScenarioReport
+runCounters context = counterFailures >>= healthReport context "retry-counter-truthfulness"
+
+counterFailures :: IO [Text]
+counterFailures = do
+  manager <- newManager defaultManagerSettings
+  retryBroker <- newSyntheticBroker defaultSyntheticConfig
+  successBroker <- newSyntheticBroker defaultSyntheticConfig
+  failures <- runEff $ runTracingNoop $ do
+    let processors =
+          [ (ProcessorId "retry", mkProcessor (syntheticAdapter retryBroker) (\_ -> pure (AckRetry (RetryDelay 60)))),
+            (ProcessorId "success", mkProcessor (syntheticAdapter successBroker) (\_ -> pure AckOk))
+          ]
+    result <- runApp defaultAppConfig processors
+    case result of
+      Left err -> pure ["app-start: " <> Text.pack (show err)]
+      Right handle -> withEffToIO (ConcUnlift Persistent Unlimited) $ \runInIO -> liftIO $
+        withServer manager defaultConfig (getAppMaster handle) $ \port -> do
+          _ <- publish retryBroker Nothing "probe"
+          _ <- publish successBroker Nothing "probe"
+          settled <- timeout 3000000 $ awaitDecisions retryBroker successBroker
+          metricsSettled <- timeout 2000000 $ awaitIdleCounters manager port
+          retryStats <- brokerStats retryBroker
+          successStats <- brokerStats successBroker
+          retryJson <- fetch manager port "/metrics/retry"
+          successJson <- fetch manager port "/metrics/success"
+          prom <- fetch manager port "/metrics/prometheus"
+          runInIO $ stopApp handle
+          let retrySamples = processorSamples "retry" prom.body
+              successSamples = processorSamples "success" prom.body
+          pure $
+            check "decisions-not-settled" (settled == Just ())
+              <> check "metrics-not-settled" (metricsSettled == Just ())
+              <> check "distinct-broker-decisions" (retryStats.retried == 1 && retryStats.finalizedOk == 0 && successStats.finalizedOk == 1 && successStats.retried == 0)
+              <> check "documented-processed-mapping" (all (\response -> response.status == 200 && lookupPath ["stats", "received"] response.body == Just (Number 1) && lookupPath ["stats", "processed"] response.body == Just (Number 1) && lookupPath ["stats", "failed"] response.body == Just (Number 0)) [retryJson, successJson])
+              <> check "prometheus-samples-present" (prom.status == 200 && length retrySamples >= 5 && length successSamples >= 5)
+              <> check "REV-7-A2" (retrySamples /= successSamples)
+  pure failures
+
+awaitDecisions :: SyntheticBroker -> SyntheticBroker -> IO ()
+awaitDecisions retryBroker successBroker = do
+  retry <- brokerStats retryBroker
+  success <- brokerStats successBroker
+  if retry.retried >= 1 && success.finalizedOk >= 1
+    then pure ()
+    else threadDelay 10000 >> awaitDecisions retryBroker successBroker
+
+awaitIdleCounters :: Manager -> Int -> IO ()
+awaitIdleCounters manager port = do
+  retry <- fetch manager port "/metrics/retry"
+  success <- fetch manager port "/metrics/success"
+  let settled response = lookupPath ["stats", "processed"] response.body == Just (Number 1) && lookupPath ["state", "status"] response.body == Just (String "idle")
+  if settled retry && settled success
+    then pure ()
+    else threadDelay 10000 >> awaitIdleCounters manager port
+
+processorSamples :: Text -> LazyByteString.ByteString -> [Text]
+processorSamples processor body =
+  let marker = "processor=\"" <> processor <> "\""
+      normalized = "processor=\"<id>\""
+   in sort [Text.replace marker normalized line | line <- Text.lines (TextEncoding.decodeUtf8 (LazyByteString.toStrict body)), Text.isInfixOf marker line]

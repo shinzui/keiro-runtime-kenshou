@@ -83,6 +83,7 @@ cellsOf scenario = case renderScenarioId scenario of
   "shibuya/metrics/correctness/endpoint-contract" -> [(MetricsHealth, Normal)]
   "shibuya/metrics/correctness/ready-reflects-a-failed-processor" -> [(MetricsHealth, SynchronousException)]
   "shibuya/metrics/correctness/live-reflects-a-stopped-master" -> [(MetricsHealth, Cancellation), (MetricsHealth, RepeatedStop)]
+  "shibuya/metrics/correctness/counters-distinguish-retries-from-success" -> [(MetricsHealth, Normal)]
   _ -> []
 
 -- Add reasons only for cells which cannot be exercised through public APIs.
