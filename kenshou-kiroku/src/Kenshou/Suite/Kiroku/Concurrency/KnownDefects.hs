@@ -47,7 +47,6 @@ multiStreamFreshDeadlock =
     { id = either (error . show) id (parseScenarioId "kiroku/append/concurrency/multi-stream-fresh-deadlock"),
       summary = "Races multi-stream and single-stream fresh appends while auditing transaction atomicity and deadlocks.",
       knobs = storeKnobs <> [intKnob "deadlock.rounds" 500 1 5000, intKnob "deadlock.spinners" 8 0 32],
-      knownDefect = Just (KnownDefect "mori://shinzui/kiroku/okf/improvement-requests/concepts/IR-7" "Fresh-stream append can deadlock" ["deadlock-count-stable"] AllCohorts),
       run = runFreshDeadlock
     }
 
@@ -107,7 +106,7 @@ runFreshDeadlock context = withKirokuStore context \store -> do
             deadlocks = max 0 (after - before)
             cells = [("workers-ready-and-streams-created", infrastructure), ("no-partial-multi-stream-commits", atomic), ("responses-classified", statusesValid), ("same-id-retries-converge", retriesStable), ("deadlock-count-stable", deadlocks == 0)]
         putSummary context Measurements "multi-stream-fresh-deadlock" (object ["rounds" .= rounds, "spinners" .= spinnerCount, "databaseDeadlocksBefore" .= before, "databaseDeadlocksAfter" .= after, "databaseDeadlocks" .= deadlocks, "transientResults" .= length [() | (_, _, _, _, left, right) <- results, Just "transient" <- [left, right]]])
-        recordCells context "multi-stream-fresh-deadlock" [] cells
+        recordCells context "multi-stream-fresh-deadlock" ["deadlock-count-stable"] cells
   where
     spin = replicateM_ 100 yield >> threadDelay 5000 >> spin
 
@@ -117,7 +116,6 @@ reconnectCursorRegression =
     { id = either (error . show) id (parseScenarioId "kiroku/subscription/concurrency/reconnect-cursor-regression"),
       summary = "Expects a live category subscriber to reconnect without replaying its entire live history.",
       knobs = storeKnobs <> [intKnob "workload.live-events" 5000 100 10000, intKnob "workload.after-reconnect" 100 1 1000, intKnob "kiroku.subscription.batch-size" 100 1 1000],
-      knownDefect = Just (KnownDefect "mori://shinzui/kiroku/plans/82-repair-live-reconnect-and-validate-subscription-identity-and-batch-size" "Category reconnect resumes from its old live cursor" ["reconnect-duplicate-bound"] AllCohorts),
       run = runReconnect
     }
 
@@ -173,7 +171,7 @@ runReconnect context = do
               ("reconnect-duplicate-bound", duplicates <= batch)
             ]
       putSummary context Measurements "reconnect-cursor" (object ["beforeEvents" .= beforeCount, "afterEvents" .= afterCount, "backendsTerminated" .= killed, "reconnectEpisodes" .= reconnectCount, "duplicates" .= duplicates, "batchSize" .= batch, "firstCheckpoint" .= fmap (\(GlobalPosition value) -> value) firstCheckpoint, "secondCheckpoint" .= fmap (\(GlobalPosition value) -> value) secondCheckpoint])
-      recordCells context "reconnect-cursor-regression" [] cells
+      recordCells context "reconnect-cursor-regression" ["reconnect-duplicate-bound"] cells
   where
     isRight (Right _) = True
     isRight _ = False
@@ -231,7 +229,6 @@ decodeHookStallsSubscribers =
     { id = either (error . show) id (parseScenarioId "kiroku/subscription/concurrency/decode-hook-stalls-subscribers"),
       summary = "Expects both subscribers to progress or stop when a publisher decode hook fails.",
       phases = PhasePlan 0 60 0,
-      knownDefect = Just (KnownDefect "mori://shinzui/kiroku/plans/83-contain-persistent-publisher-decode-hook-failures" "Persistent publisher decode-hook failures leave subscribers live but stalled" ["subscriber-stalled"] AllCohorts),
       run = runDecodeHook
     }
 
@@ -283,7 +280,7 @@ runDecodeHook context = Stall.withWatchdog context watchdogConfig \watchdog -> d
                 ("subscriber-stalled", firstResolved && secondResolved)
               ]
         putSummary context Measurements "decode-hook" (object ["publisherLoopErrors" .= errors, "firstPositions" .= fmap (\(GlobalPosition value) -> value) (reverse firstPositions), "secondPositions" .= fmap (\(GlobalPosition value) -> value) (reverse secondPositions), "firstResolved" .= firstResolved, "secondResolved" .= secondResolved, "stallClassification" .= Stall.stallClassText diagnosis.classification])
-        recordCells context "decode-hook-stalls-subscribers" [] cells
+        recordCells context "decode-hook-stalls-subscribers" ["subscriber-stalled"] cells
   where
     watchdogConfig = Stall.defaultWatchdogConfig {Stall.deadlineSeconds = 10, Stall.maxCaptures = 0, Stall.onStall = Stall.CaptureAndContinue, Stall.postgres = Just (requirePostgres context).connectionString}
     isRight (Right _) = True
@@ -294,7 +291,6 @@ resizeLeavesGaps =
   batchSizeValidation
     { id = either (error . show) id (parseScenarioId "kiroku/consumer-group/concurrency/resize-leaves-gaps"),
       summary = "Expects a resized consumer group to cover every event or reject the topology change.",
-      knownDefect = Just (KnownDefect "mori://shinzui/kiroku/plans/81-make-consumer-group-topology-durable-and-resize-without-gaps" "Consumer-group resize can skip events" ["coverage-or-topology-refusal"] AllCohorts),
       run = runResize
     }
 
@@ -341,7 +337,7 @@ runResize context = withKirokuStore context \store -> do
           ("coverage-or-topology-refusal", refused || allSeen == Set.fromList [GlobalPosition value | value <- [1 .. 200]])
         ]
   putSummary context Measurements "resize-leaves-gaps" (object ["firstMemberDeliveries" .= length firstRows, "totalDistinctDelivered" .= Set.size allSeen, "topologyRefused" .= refused])
-  recordCells context "resize-leaves-gaps" [] cells
+  recordCells context "resize-leaves-gaps" ["coverage-or-topology-refusal"] cells
   where
     isRight (Right _) = True
     isRight _ = False
@@ -350,7 +346,7 @@ batchSizeValidation :: Scenario
 batchSizeValidation =
   Scenario
     { id = either (error . show) id (parseScenarioId "kiroku/subscription/correctness/batch-size-validation"),
-      revision = 1,
+      revision = 2,
       summary = "Expects zero and negative subscription batch sizes to be rejected promptly.",
       tier = TierStandard,
       placement = PlaceEither,
@@ -364,7 +360,7 @@ batchSizeValidation =
           },
       phases = zeroPhases,
       requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku] [] False)},
-      knownDefect = Just (KnownDefect "mori://shinzui/kiroku/plans/82-repair-live-reconnect-and-validate-subscription-identity-and-batch-size" "Subscription accepts invalid batch sizes" ["zero-refused", "negative-refused"] AllCohorts),
+      knownDefect = Nothing,
       run = runBatchSizeValidation
     }
 
@@ -378,7 +374,7 @@ runBatchSizeValidation context = withKirokuStore context \store -> do
   recordCells
     context
     "batch-size-validation"
-    []
+    ["zero-refused", "negative-refused"]
     [ ("seeded-event", case seeded of Right _ -> True; _ -> False),
       ("zero-refused", zeroRefused && zeroCalls == 0),
       ("negative-refused", negativeRefused && negativeCalls == 0)

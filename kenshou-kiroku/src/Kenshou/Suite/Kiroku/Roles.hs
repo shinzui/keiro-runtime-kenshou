@@ -76,6 +76,7 @@ data SubscriberArgs = SubscriberArgs
     group :: Maybe (Int32, Int32),
     guardEnabled :: Bool,
     emitDeliveries :: Bool,
+    emitRuntimeEvents :: Bool,
     compactDeliveries :: Bool,
     targetName :: Text,
     requestedBatchSize :: Int32,
@@ -86,7 +87,7 @@ runSubscriber :: RoleContext -> IO ()
 runSubscriber context = case (context.init.postgres, parseMaybe parseSubscriberArgs context.init.args) of
   (Nothing, _) -> context.send (WrkError "subscriber requires PostgreSQL")
   (_, Nothing) -> context.send (WrkError "invalid subscriber arguments")
-  (Just postgres, Just args) -> withStore (defaultConnectionSettings postgres.connectionString) \store -> do
+  (Just postgres, Just args) -> withStore ((defaultConnectionSettings postgres.connectionString) {eventHandler = if args.emitRuntimeEvents then Just (subscriberRuntimeTap context) else Nothing}) \store -> do
     delivered <- newIORef ([] :: [Int64])
     emitted <- newIORef (0 :: Int)
     throwAt <- newIORef (Nothing :: Maybe Int64)
@@ -145,11 +146,27 @@ parseSubscriberArgs = withObject "subscriber arguments" \value -> do
   size <- value .:? "size"
   guardEnabled <- value .: "guard"
   emitDeliveries <- maybe False id <$> value .:? "emitDeliveries"
+  emitRuntimeEvents <- maybe False id <$> value .:? "emitRuntimeEvents"
   compactDeliveries <- maybe False id <$> value .:? "compactDeliveries"
   targetName <- maybe "all" id <$> value .:? "target"
   requestedBatchSize <- maybe 100 id <$> value .:? "batchSize"
   handlerDelayMicros <- maybe 0 id <$> value .:? "handlerDelayMicros"
-  pure (SubscriberArgs name api ((,) <$> member <*> size) guardEnabled emitDeliveries compactDeliveries targetName requestedBatchSize handlerDelayMicros)
+  pure (SubscriberArgs name api ((,) <$> member <*> size) guardEnabled emitDeliveries emitRuntimeEvents compactDeliveries targetName requestedBatchSize handlerDelayMicros)
+
+subscriberRuntimeTap :: RoleContext -> KirokuEvent -> IO ()
+subscriberRuntimeTap context event = case event of
+  KirokuEventNotifierReconnecting _ _ -> emit "notifier-reconnecting"
+  KirokuEventNotifierReconnected -> emit "notifier-reconnected"
+  KirokuEventPublisherPoolError _ -> emit "publisher-pool-error"
+  KirokuEventPublisherLoopError _ -> emit "publisher-loop-error"
+  KirokuEventSubscriptionDbError _ _ _ _ -> emit "subscription-db-error"
+  KirokuEventSubscriptionReconnecting _ _ _ -> emit "subscription-reconnecting"
+  KirokuEventSubscriptionCaughtUp _ _ _ -> emit "subscription-caught-up"
+  _ -> pure ()
+  where
+    emit kind = do
+      observedAt <- getCurrentTime
+      context.send (WrkCustom "runtime-event" (object ["kind" .= (kind :: Text), "observedAt" .= observedAt, "detail" .= Text.pack (take 2048 (show event))]))
 
 runPoisonSubscriber :: RoleContext -> IO ()
 runPoisonSubscriber context = case context.init.postgres of

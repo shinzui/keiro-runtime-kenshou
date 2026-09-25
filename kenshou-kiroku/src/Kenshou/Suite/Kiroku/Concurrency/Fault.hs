@@ -254,10 +254,11 @@ networkPartition :: Scenario
 networkPartition =
   postgresRestart
     { id = either (error . show) id (parseScenarioId "kiroku/subscription/concurrency/network-partition"),
+      revision = 4,
       summary = "Resets, blackholes, and delays proxied subscription connections while direct appends continue.",
       placement = PlaceLocal,
       knobs = [if spec.name == keepaliveName then spec {def = VBool True} else spec | spec <- storeKnobs],
-      knownDefect = Just (KnownDefect "mori://shinzui/kiroku/plans/82-repair-live-reconnect-and-validate-subscription-identity-and-batch-size" "Category reconnect can replay its old live cursor after a proxy reset" ["category-order-after-reconnect"] AllCohorts),
+      knownDefect = Nothing,
       run = runNetworkPartition
     }
   where
@@ -274,7 +275,7 @@ runNetworkPartition context = case (requirePostgres context).tcpEndpoint of
         proxiedContext = context {env = context.env {postgres = Just proxiedPostgres}}
     withKirokuStore context \store -> withCheck proxiedContext \check -> withSupervisor check \supervisor -> do
       let names = ["network-all", "network-category", "network-group"] :: [Text]
-          args name = object (["name" .= name, "guard" .= False, "emitDeliveries" .= True, "target" .= (if name == "network-category" then "category" else "all" :: Text)] <> if name == "network-group" then ["member" .= (0 :: Int), "size" .= (1 :: Int)] else [])
+          args name = object (["name" .= name, "guard" .= False, "emitDeliveries" .= True, "emitRuntimeEvents" .= True, "target" .= (if name == "network-category" then "category" else "all" :: Text)] <> if name == "network-group" then ["member" .= (0 :: Int), "size" .= (1 :: Int)] else [])
           entries child = do
             state <- atomically (progress child)
             let rows = [row | (key, payload) <- Map.toList state.marks, "delivery-" `Text.isPrefixOf` key, Just row <- [parseMaybe (withObject "delivery" (\value -> (,) <$> value .: "sequence" <*> value .: "position")) payload :: Maybe (Int, Int64)]]
@@ -340,7 +341,7 @@ runNetworkPartition context = case (requirePostgres context).tcpEndpoint of
               ("checkpoints-monotonic-to-head", all (\samples -> samples == sort samples && last samples == 320) checkpoints)
             ]
       putSummary context Measurements "network-partition" (object ["keepalives" .= keepalives, "resetConnections" .= resetCount, "blackholeResetConnections" .= blackholeResetCount, "resetDistinctAfterFiveSeconds" .= map (Set.size . Set.fromList) afterReset, "blackholeStarted" .= blackholeStarted, "forwardAt" .= forwardAt, "resetObservedAt" .= resetObservedAt, "distinctAtRecoveryDeadline" .= map (maybe 0 (Set.size . Set.fromList)) afterPartition, "waitedAfterForwardSeconds" .= waitedAfterForwardSeconds, "latencyStageSeconds" .= (realToFrac (diffUTCTime latencyCompleted latencyStarted) :: Double), "delivered" .= map length delivered, "checkpointSamples" .= checkpoints])
-      recordCells context "network-partition" [] cells
+      recordCells context "network-partition" ["keepalive-recovery-within-sixty-seconds", "category-order-after-reconnect"] cells
 
 awaitCheckpointHead :: KirokuStore -> [Text] -> Int64 -> IO ()
 awaitCheckpointHead store names target = do

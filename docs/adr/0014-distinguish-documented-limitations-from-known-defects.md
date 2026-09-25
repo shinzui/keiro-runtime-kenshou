@@ -1,7 +1,7 @@
 ---
 type: Architecture Decision Record
 title: Distinguish documented limitations from known defects
-description: Verification distinguishes documented limitations from known defects and links confirmed runtime failures to reproducible owner-repository bug reports.
+description: Verification classifies unpromised behavior as implementation findings and links confirmed contract failures to reproducible owner-repository bug reports.
 timestamp: 2026-09-24T02:30:02Z
 generated:
   by: process:codex
@@ -25,14 +25,14 @@ limitations leaves platform owners without operational evidence.
 
 ## Decision
 
-Kenshou represents a documented limitation as an implementation-class
-invariant whose passing condition is that the observed behavior matches its
-documentation. It attaches `KnownDefect` only when a canonical upstream
-artifact identifies work intended to correct the behavior.
+Kenshou represents a documented limitation or desired improvement as an
+implementation-class invariant. Its measured behavior stays visible even when
+the run passes its published-contract checks. An upstream improvement plan
+alone does not turn an unpromised target into a contract or a `KnownDefect`.
 
-Known-defect references use canonical `mori://` URIs. A new observation without
-an upstream artifact is recorded as evidence and remains blocking according to
-its invariant class; the suite does not invent or claim a defect filing.
+Known-defect references use canonical `mori://` URIs. A new observation is
+recorded as evidence and remains blocking when it violates a contract; the
+suite does not invent or claim a defect filing.
 
 For a newly reproduced failure of behavior the producer already promises,
 file an OKF `Bug Report` in the repository that owns the behavior. State the
@@ -48,24 +48,31 @@ improvement request instead. Only attach `KnownDefect` to the scenario's
 specific failure labels and affected cohorts, so another failure remains
 blocking.
 
-Kiroku scenarios state the desired behavior in their oracle and carry the
-upstream artifact in `KnownDefect`. The released cohort's five probes cover
+Kiroku scenarios state desired behavior in their implementation-class oracles
+and retain upstream artifact links in the layer guide and ExecPlan. The
+released cohort's five probes cover
 fresh-stream deadlock (`mori://shinzui/kiroku/okf/improvement-requests/concepts/IR-7`),
 consumer-group resize gaps (`mori://shinzui/kiroku/plans/81-make-consumer-group-topology-durable-and-resize-without-gaps`),
 category reconnect regression and invalid batch-size acceptance
 (`mori://shinzui/kiroku/plans/82-repair-live-reconnect-and-validate-subscription-identity-and-batch-size`),
 and persistent publisher decode-hook stalls
 (`mori://shinzui/kiroku/plans/83-contain-persistent-publisher-decode-hook-failures`).
-Each run still reports the failed desired-behavior cell and passes its other
-contract cells. A later passing run retains the upstream reference and is
-checked against its resolved cohort before the defect is retired.
+Each run reports the violated desired-behavior cell under
+`implementationFindings` and still checks atomicity, coverage, and monotonic
+checkpoints as contracts. CAP-11–13 and the owner subscription guide allow
+reconnect replay and static group membership; IR-7 explicitly calls the
+multi-versus-single deadlock an improvement. The other probes assert behavior
+that the published APIs do not promise. The 60-second network blackhole
+recovery target and category replay are likewise implementation findings;
+`mori://shinzui/kiroku/okf/improvement-requests/concepts/IR-16` requests
+faster retries after publisher pool errors.
 
 ## Consequences
 
 - Reports demonstrate operational hazards without falsely describing supported
   semantics as regressions.
-- Known defects are traceable to durable upstream ownership and can become
-  cohort-specific when a fix ships.
+- Confirmed contract defects are traceable to durable upstream ownership and
+  can become cohort-specific when a fix ships.
 - Undocumented failures cannot be made non-blocking merely by labeling them
   defects locally.
 - Scenario documentation must state whether it verifies a contract, an
