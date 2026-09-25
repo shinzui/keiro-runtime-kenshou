@@ -1,12 +1,14 @@
-module Kenshou.Suite.Shibuya.Correctness.Metrics (scenarios, readyFailures, liveFailures, counterFailures, websocketFlagFailures, websocketUnsubscribeFailures) where
+module Kenshou.Suite.Shibuya.Correctness.Metrics (scenarios, readyFailures, liveFailures, counterFailures, websocketFlagFailures, websocketUnsubscribeFailures, websocketSlotFailures) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
-import Control.Exception (SomeException, bracket, try)
+import Control.Exception (Exception, SomeException, bracket, fromException, throwIO, try)
+import Control.Monad (when)
 import Data.Aeson (Value (..), decode, encode, object, (.=))
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString.Lazy qualified as LazyByteString
-import Data.List (sort)
+import Data.IORef (newIORef, readIORef, writeIORef)
+import Data.List (nub, sort)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Maybe (catMaybes)
 import Data.String (fromString)
@@ -33,7 +35,7 @@ import Shibuya.Telemetry.Effect (runTracingNoop)
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [endpointContract, readyReflectsFailedProcessor, liveReflectsStoppedMaster, countersDistinguishRetries, websocketFlagGatesUpgrades, websocketUnsubscribeAll]
+scenarios = [endpointContract, readyReflectsFailedProcessor, liveReflectsStoppedMaster, countersDistinguishRetries, websocketFlagGatesUpgrades, websocketUnsubscribeAll, websocketSlotAccounting]
 
 metricsDimensions :: DimensionSupport
 metricsDimensions = noDimensions {metrics = Supported (Support (MetricsServe :| [MetricsServeScraped]) MetricsServe)}
@@ -127,6 +129,29 @@ websocketUnsubscribeAll =
               appliesTo = OnlyWhen (ResolvedFromHackage "shibuya-metrics" :| [VersionBelow "shibuya-metrics" "0.10.0.0"])
             },
       run = \context -> websocketUnsubscribeFailures >>= healthReport context "websocket-unsubscribe-all"
+    }
+
+websocketSlotAccounting :: Scenario
+websocketSlotAccounting =
+  Scenario
+    { id = either (error . Text.unpack) id (parseScenarioId "shibuya/metrics/concurrency/websocket-slot-accounting"),
+      revision = 1,
+      summary = "Repeated clean closes, peer drops and early drops release WebSocket connection slots.",
+      tier = TierSmoke,
+      placement = PlaceEither,
+      knobs = [],
+      dimensions = metricsDimensions,
+      phases = zeroPhases,
+      requires = noEnvironment,
+      knownDefect =
+        Just $
+          KnownDefect
+            { reference = "mori://shinzui/shibuya/okf/reviews/concepts/REV-9",
+              summary = "REV-9-F1",
+              expectedFailures = ["REV-9-F1"],
+              appliesTo = OnlyWhen (ResolvedFromHackage "shibuya-metrics" :| [VersionBelow "shibuya-metrics" "0.10.0.0"])
+            },
+      run = \context -> websocketSlotFailures >>= healthReport context "websocket-slot-accounting"
     }
 
 healthScenario :: Text -> Text -> Text -> (RunContext -> IO ScenarioReport) -> Scenario
@@ -466,3 +491,81 @@ awaitFinalizedPair alphaBroker betaBroker = do
   if alpha.finalizedOk >= 1 && beta.finalizedOk >= 1
     then pure ()
     else threadDelay 10000 >> awaitFinalizedPair alphaBroker betaBroker
+
+data SlotClose = CleanClose | DropAfterSnapshot | DropBeforeSnapshot deriving (Eq, Show)
+
+data IntentionalPeerDrop = IntentionalPeerDrop deriving (Eq, Show)
+
+instance Exception IntentionalPeerDrop
+
+websocketSlotFailures :: IO [Text]
+websocketSlotFailures = do
+  manager <- newManager defaultManagerSettings
+  broker <- newSyntheticBroker defaultSyntheticConfig
+  runEff $ runTracingNoop $ do
+    result <- runApp defaultAppConfig [(ProcessorId "websocket-slots", mkProcessor (syntheticAdapter broker) (\_ -> pure AckOk))]
+    case result of
+      Left err -> pure ["app-start: " <> Text.pack (show err)]
+      Right handle -> do
+        failures <- liftIO $ do
+          let config = defaultConfig {wsMaxConnections = 8}
+          batches <- traverse (\mode -> withServer manager config (getAppMaster handle) (\port -> slotBatch port mode)) [CleanClose, DropAfterSnapshot, DropBeforeSnapshot]
+          pure $ nub $ concat batches
+        stopApp handle
+        pure failures
+
+slotBatch :: Int -> SlotClose -> IO [Text]
+slotBatch port mode = do
+  control <- snapshotAccepted port
+  if not control
+    then pure ["websocket-slot-initial-control-" <> Text.pack (show mode)]
+    else do
+      churned <- churn (24 :: Int)
+      if not churned
+        then pure ["REV-9-F1"]
+        else do
+          threadDelay 50000
+          final <- snapshotAccepted port
+          pure $ check "REV-9-F1" final
+  where
+    churn 0 = pure True
+    churn remaining = do
+      closed <- closeOne port mode
+      threadDelay 10000
+      if closed then churn (remaining - 1) else pure False
+
+snapshotAccepted :: Int -> IO Bool
+snapshotAccepted port = do
+  result <-
+    timeout
+      2000000
+      ( try
+          ( WebSockets.runClient "127.0.0.1" port "/ws" $ \connection -> do
+              frame <- WebSockets.receiveData connection :: IO LazyByteString.ByteString
+              pure $ lookupPath ["type"] frame == Just (String "snapshot")
+          ) ::
+          IO (Either SomeException Bool)
+      )
+  pure $ case result of
+    Just (Right accepted) -> accepted
+    _ -> False
+
+closeOne :: Int -> SlotClose -> IO Bool
+closeOne port mode = do
+  entered <- newIORef False
+  result <- timeout 2000000 $ try $ WebSockets.runClient "127.0.0.1" port "/ws" $ \connection -> do
+    case mode of
+      DropBeforeSnapshot -> pure ()
+      _ -> do
+        frame <- WebSockets.receiveData connection :: IO LazyByteString.ByteString
+        when (lookupPath ["type"] frame /= Just (String "snapshot")) $ fail "missing initial snapshot"
+    writeIORef entered True
+    case mode of
+      CleanClose -> WebSockets.sendClose connection ("done" :: Text)
+      _ -> throwIO IntentionalPeerDrop
+  didEnter <- readIORef entered
+  pure $
+    didEnter && case result of
+      Just (Right ()) -> mode == CleanClose
+      Just (Left err) -> mode /= CleanClose && fromException err == Just IntentionalPeerDrop
+      Nothing -> False
