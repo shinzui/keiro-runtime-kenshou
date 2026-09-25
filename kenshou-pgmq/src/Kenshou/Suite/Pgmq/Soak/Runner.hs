@@ -14,10 +14,11 @@ import Effectful qualified
 import Effectful.Error.Static qualified
 import Hasql.Pool qualified as Pool
 import Kenshou.Core.Context (ArtifactDir (SeriesDir), RunContext (..), SummarySection (Diagnosis, Verdicts), artifactPath, declareMediaType, putSummary)
-import Kenshou.Core.Knob (knobDouble)
+import Kenshou.Core.Knob (knobDouble, knobInt)
 import Kenshou.Core.Outcome (Outcome (Failed, Inconclusive))
 import Kenshou.Core.Scenario (ScenarioReport (..), failedWith, passed)
 import Kenshou.Diagnose.Leak (Aggregation (WindowMedian), Expectation (Bounded), LeakReport (..), LeakSpec (..), LeakVerdict (..), ProbeSpec (..), defaultLeakSpec, judgeLeaks)
+import Kenshou.Diagnose.Leak.MajorGcProbe (withMajorGcProbe)
 import Kenshou.Diagnose.Series (SeriesBinding (..))
 import Kenshou.Measure.Knobs (loadModelFromKnobs)
 import Kenshou.Measure.Load (LoadReport (..), Operation (..), runLoad)
@@ -47,7 +48,8 @@ steadyState identifier context = case (loadModelFromKnobs context.knobs, measure
     withPgmqRun context \runtime ->
       withScenarioQueue runtime.pool context runtime.knobs "steady_state" \queue -> do
         let operation = Operation (OpName "queue-cycle") (soakCycle runtime queue)
-        (_, measurement) <- withQueueDepthSeries context runtime queue baseConfig \config -> withMeasurement context config (\session -> runLoad session loadModel operation)
+            majorGcMs = fromIntegral (knobInt context.knobs (knobName "pgmq.soak.major-gc-interval-ms")) :: Double
+        (_, measurement) <- withMajorGcProbe context majorGcMs $ withQueueDepthSeries context runtime queue baseConfig \config -> withMeasurement context config (\session -> runLoad session loadModel operation)
         threadDelay 1100000
         drainQueue runtime queue
         metrics <- effect runtime (Pgmq.queueMetrics queue)
@@ -57,7 +59,7 @@ steadyState identifier context = case (loadModelFromKnobs context.knobs, measure
             workloadReport = if operationFailures == 0 && queueBound then passed else failedWith ["soak-workload"] ("operation failures=" <> Text.pack (show operationFailures) <> ", queue length=" <> Text.pack (show metrics.queueLength))
         putSummary context Verdicts "pgmq-soak-workload" (object ["operationFailures" .= operationFailures, "queueLength" .= metrics.queueLength, "visibleLength" .= metrics.queueVisibleLength])
         putSummary context Diagnosis "pgmq-bloat" (object ["verdict" .= if queueBound then ("bounded" :: Text) else "growth", "queueRows" .= metrics.queueLength, "archiveRows" .= archived])
-        leak <- judgeLeaks context (leakPolicy identifier)
+        leak <- judgeLeaks context (leakPolicy identifier majorGcMs)
         let measured = workloadReport {outcome = measuredOutcome measurement workloadReport.outcome}
         pure case leak.verdict of
           LeakSuspected -> measured {outcome = Failed, reason = Just "resource leak suspected", failures = "leak-suspected" : measured.failures}
@@ -128,10 +130,10 @@ withQueueDepthSeries context runtime queue baseConfig action = do
         config = watchRelations queue baseConfig {extraSamplers = sampler : baseConfig.extraSamplers}
     action config
 
-leakPolicy :: Text -> LeakSpec
-leakPolicy identifier =
+leakPolicy :: Text -> Double -> LeakSpec
+leakPolicy identifier majorGcMs =
   LeakSpec
-    (base.probes <> [queueDepthProbe])
+    (fmap heapBinding base.probes <> [queueDepthProbe])
     base.warmupCutSeconds
     base.minPoints
     base.minDurationSeconds
@@ -139,6 +141,9 @@ leakPolicy identifier =
     base.resamples
     base.confidence
   where
+    heapBinding probe
+      | probe.name == "heap.live-bytes" && majorGcMs > 0 = probe {binding = SeriesBinding "rts-major.csv" "t_mono_ns" "live_bytes" Map.empty}
+      | otherwise = probe
     base
       | "reduced" `Text.isInfixOf` identifier = defaultLeakSpec {warmupCutSeconds = 60, minPoints = 10, minDurationSeconds = 900, envelopeWindowSeconds = 30}
       | otherwise = defaultLeakSpec

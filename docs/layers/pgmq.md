@@ -65,11 +65,11 @@ The shared knobs directly name their pgmq-hs or workload setting. Important defa
 
 Every benchmark writes native latency histograms, load series, runtime/process series, and PostgreSQL activity, WAL, database, relation, and statement evidence. `policies/pgmq.json` is the controlled-comparison policy. The overhead command uses the telemetry policy; the first tracing study found `sdk-inmemory` above that policy while `noop` and `sdk-otlp` passed, and the first metrics-collection study passed.
 
-The soak uses the same constructor for its four-hour and twenty-minute registrations. It mixes deletion, archiving, and deliberate one-second nacks, drains expired work before judging convergence, watches both queue and archive relations, publishes a bloat verdict, and runs the leak detector over independent sampler series.
+The soak uses the same constructor for its four-hour and twenty-minute registrations. It mixes deletion, archiving, and deliberate one-second nacks, drains expired work before judging convergence, watches both queue and archive relations, publishes a bloat verdict, and runs the leak detector over independent sampler series. `pgmq.soak.major-gc-interval-ms` defaults to 30000 and samples live bytes immediately after a forced major collection; set it to zero to disable that diagnostic probe. Forced collections can perturb latency, so these soak samples are diagnostic evidence and never benchmark evidence.
 
 ## Released-classifier findings
 
-Two disruptive scenarios currently fail their contract check on pgmq-hs 0.6.1.0 even though the same pool recovers. Administrative backend termination can surface as `UnexpectedRowCountStatementError 1 1 1`, and a proxied TCP reset can surface as a server error with an empty SQLSTATE. Neither shape is classified transient by `Pgmq.Effectful.isTransient`. No upstream improvement request currently owns these observations; run evidence is recorded in ExecPlan 8 without claiming a defect filing.
+Three disruptive scenarios fail their retry-classification contract check on pgmq-hs 0.6.1.0 even though the same pool recovers: backend termination can surface as `UnexpectedRowCountStatementError 1 1 1`, while a TCP reset or PostgreSQL restart can surface as a server error with an empty SQLSTATE. `Pgmq.Effectful.isTransient` classifies those shapes as permanent. The owner report is `mori://shinzui/pgmq-hs/okf/bug-reports/concepts/BUG-1`, with remediation requested at `mori://shinzui/pgmq-hs/okf/improvement-requests/concepts/IR-4`.
 
 ## Operating rules demonstrated
 

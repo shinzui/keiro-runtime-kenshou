@@ -4,6 +4,7 @@ module Kenshou.Suite.Pgmq.Knobs
     ReadStrategy (..),
     AckMode (..),
     commonKnobs,
+    soakKnobs,
     resolveKnobs,
     knobName,
   )
@@ -85,6 +86,10 @@ commonKnobs =
     boolean "pgmq.trace.propagate" "Propagate W3C trace context in message headers" False,
     enum "otel.semconv-stability-opt-in" "Semantic-convention stability opt-in" "unset" ["unset", "database", "messaging", "database/dup"]
   ]
+
+soakKnobs :: [KnobSpec]
+soakKnobs =
+  [integer "pgmq.soak.major-gc-interval-ms" "Post-major-GC heap sample interval; zero disables forced collections" 30000 0 60000 [0, 30000]]
 
 resolveKnobs :: RunContext -> Either Text PgmqKnobs
 resolveKnobs context = do

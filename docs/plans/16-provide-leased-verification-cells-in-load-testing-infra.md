@@ -17,6 +17,11 @@ provenance:
       at: 2026-09-24T22:53:09Z
       mode: "update"
       note: "Consolidated Progress into delivered outcomes and remaining acceptance"
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-25T05:00:16Z
+      mode: "implement"
+      note: "Started cell project-isolation plumbing in load-testing-infra"
 ---
 
 # Provide leased verification cells in load-testing-infra
@@ -39,6 +44,8 @@ You can see it working with the fixture payloads this plan ships: two terminals 
 
 ## Progress
 
+- [x] (2026-09-24) Started Milestone 1 in `mori://shinzui/load-testing-infra` at commit `588da3e`: the committed-project allowlist and shared preflight are wired into the disposable-lane scripts. Bash syntax and allowed, wrong-active-project, and disallowed-project probes passed without contacting GCP.
+- [x] (2026-09-24) Extracted the existing image build, hash, tarball lookup, upload, and registration functions into a sourceable library at commit `d8e0bf4`. Bash syntax and staged-diff checks passed; an image build awaits the cell image outputs.
 - [ ] Deliver leased, resettable multi-instance verification cells with the generic agent, payload delivery, health gates, immutable result publication, broker, and collector roles; verify the cell protocol in Validation and Acceptance.
 
 ## Surprises & Discoveries

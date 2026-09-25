@@ -40,7 +40,7 @@ import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (unSeed)
 import Kenshou.Core.Knob (knobInt, knobText)
 import Kenshou.Core.Role (ControlMessage (CtlStart), WorkerMessage (WrkCustom, WrkDone, WrkError, WrkFacts, WrkProgress))
-import Kenshou.Core.Scenario (ScenarioReport, failedWith, passed)
+import Kenshou.Core.Scenario (ScenarioReport (..), failedWith, passed)
 import Kenshou.Suite.Pgmq.Facts (PgmqFact (Leased))
 import Kenshou.Suite.Pgmq.Harness
 import Kenshou.Suite.Pgmq.Knobs (PgmqKnobs (..), knobName)
@@ -575,7 +575,10 @@ networkBlackhole context = case (requirePostgres context).tcpEndpoint of
                     possible = Set.insert workerKey confirmed
                     elapsedSeconds = fromIntegral (finished - started) / 1000000000 :: Double
                 putSummary context Verdicts "network-blackhole-observations" (object ["tcpUserTimeoutMillis" .= timeoutMillis, "maxBlockSeconds" .= bound, "elapsedSeconds" .= elapsedSeconds, "returned" .= returned, "workerLastMessage" .= fmap show snapshot.lastMessage, "workerKeyDurable" .= (workerKey `Set.member` durable), "durableCount" .= Set.size durable, "queueLength" .= metrics.queueLength])
-                verdictClass Implementation context "network-blackhole" [("baseline", either (const False) (const True) baseline), ("client-returned-within-bound", returned), ("same-pool-recovers", either (const False) (const True) recovered), ("confirmed-keys-durable", confirmed `Set.isSubsetOf` durable), ("no-unknown-keys", durable `Set.isSubsetOf` possible), ("queue-length-conserved", metrics.queueLength == fromIntegral (Set.size durable))]
+                contract <- verdict context "network-blackhole-contract" [("baseline", either (const False) (const True) baseline), ("same-pool-recovers", either (const False) (const True) recovered), ("confirmed-keys-durable", confirmed `Set.isSubsetOf` durable), ("no-unknown-keys", durable `Set.isSubsetOf` possible), ("queue-length-conserved", metrics.queueLength == fromIntegral (Set.size durable))]
+                bounded <- verdictClass Implementation context "network-blackhole-bound" [("client-returned-within-bound", returned)]
+                let failures = contract.failures <> bounded.failures
+                pure $ if null failures then passed else failedWith failures ("network-blackhole failed: " <> Text.intercalate ", " failures)
 
 headPerGroupBarrier :: RunContext -> IO ScenarioReport
 headPerGroupBarrier context = withPgmqRun context \runtime ->
