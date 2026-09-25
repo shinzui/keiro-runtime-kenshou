@@ -46,7 +46,9 @@ library
     Kenshou.Env.Kafka.Types
     Kenshou.Suite.Kafka
     Kenshou.Suite.Kafka.Correctness.Ack
+    Kenshou.Suite.Kafka.Correctness.Halt
     Kenshou.Suite.Kafka.Correctness.MultiTopic
+    Kenshou.Suite.Kafka.Correctness.Records
     Kenshou.Suite.Kafka.Correctness.Retry
     Kenshou.Suite.Kafka.Fixture
     Kenshou.Suite.Kafka.Producer
@@ -62,8 +64,11 @@ library
     filepath,
     hw-kafka-client,
     kafka-effectful,
+    keiro,
+    keiro-core,
     kenshou-check,
     kenshou-core,
+    kiroku-store,
     network,
     process,
     scientific,
@@ -74,6 +79,7 @@ library
     text,
     time,
     unix,
+    uuid,
     vector,
 
 test-suite kenshou-kafka-test

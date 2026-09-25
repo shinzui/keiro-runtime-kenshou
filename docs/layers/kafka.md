@@ -90,3 +90,14 @@ adapter and default batch size, all handlers succeed but the group remains
 behind the log end. This is the scoped known defect
 `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-1`;
 other retry failures still block the run.
+
+`kafka/adapter/correctness/halt-leaves-offset-uncommitted` publishes to two
+partitions, halts on partition zero offset 30, and checks that no later
+handler runs, the group's committed offset remains 30, and a second session
+receives offset 30 first on that partition.
+
+`kafka/keiro-records/correctness/roundtrip-through-broker` publishes 200
+Keiro integration events through the neutral record conversion and checks
+their decoded events, Kafka delivery references, all six required wire
+headers, and each `MissingHeader` error. Inputs include optional fields,
+non-ASCII text, and payloads up to 64 KiB.
