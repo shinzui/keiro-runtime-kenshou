@@ -1,7 +1,7 @@
 module MetricsSpec (spec) where
 
 import Kenshou.Suite.Shibuya.Cohort (CoreLine (..), coreLine)
-import Kenshou.Suite.Shibuya.Correctness.Metrics (counterFailures, liveFailures, readyFailures, sustainedLoadFailures, websocketFlagFailures, websocketSlotFailures, websocketUnsubscribeFailures)
+import Kenshou.Suite.Shibuya.Correctness.Metrics (counterFailures, exceptionRecoveryFailures, liveFailures, readyFailures, sustainedLoadFailures, websocketFlagFailures, websocketSlotFailures, websocketUnsubscribeFailures)
 import Test.Hspec (Spec, describe, it, shouldBe)
 
 spec :: Spec
@@ -18,6 +18,9 @@ spec = describe "metrics health lifecycle" $ do
   it "distinguishes steady progress from a genuinely stuck processor" $ do
     failures <- sustainedLoadFailures
     failures `shouldBe` expected "REV-7-F1"
+  it "records readiness after a transient handler exception during continued work" $ do
+    failures <- exceptionRecoveryFailures
+    failures `shouldBe` ["transient-handler-error-sticks-failed-state"]
   it "rejects WebSocket upgrades when the endpoint is disabled on remediated metrics" $ do
     failures <- websocketFlagFailures
     failures `shouldBe` expected "REV-9-F2"

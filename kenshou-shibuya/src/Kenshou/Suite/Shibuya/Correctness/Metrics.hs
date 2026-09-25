@@ -1,4 +1,4 @@
-module Kenshou.Suite.Shibuya.Correctness.Metrics (scenarios, readyFailures, liveFailures, counterFailures, sustainedLoadFailures, websocketFlagFailures, websocketUnsubscribeFailures, websocketSlotFailures) where
+module Kenshou.Suite.Shibuya.Correctness.Metrics (scenarios, readyFailures, liveFailures, counterFailures, sustainedLoadFailures, exceptionRecoveryFailures, websocketFlagFailures, websocketUnsubscribeFailures, websocketSlotFailures) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar, tryPutMVar)
@@ -7,7 +7,7 @@ import Control.Monad (when)
 import Data.Aeson (Value (..), decode, encode, object, (.=))
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString.Lazy qualified as LazyByteString
-import Data.IORef (newIORef, readIORef, writeIORef)
+import Data.IORef (atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (nub, sort)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Maybe (catMaybes)
@@ -36,7 +36,7 @@ import Shibuya.Telemetry.Effect (runTracingNoop)
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [endpointContract, readyReflectsFailedProcessor, liveReflectsStoppedMaster, countersDistinguishRetries, readyNotStuckUnderLoad, websocketFlagGatesUpgrades, websocketUnsubscribeAll, websocketSlotAccounting]
+scenarios = [endpointContract, readyReflectsFailedProcessor, liveReflectsStoppedMaster, countersDistinguishRetries, readyNotStuckUnderLoad, readyRecoversAfterException, websocketFlagGatesUpgrades, websocketUnsubscribeAll, websocketSlotAccounting]
 
 metricsDimensions :: DimensionSupport
 metricsDimensions = noDimensions {metrics = Supported (Support (MetricsServe :| [MetricsServeScraped]) MetricsServe)}
@@ -107,6 +107,29 @@ readyNotStuckUnderLoad =
               appliesTo = OnlyWhen (ResolvedFromHackage "shibuya-core" :| [VersionBelow "shibuya-core" "0.10.0.0"])
             },
       run = \context -> sustainedLoadFailures >>= healthReport context "sustained-load-readiness"
+    }
+
+readyRecoversAfterException :: Scenario
+readyRecoversAfterException =
+  Scenario
+    { id = either (error . Text.unpack) id (parseScenarioId "shibuya/metrics/correctness/ready-recovers-after-transient-handler-exception"),
+      revision = 1,
+      summary = "Readiness recovers after one handler exception is retried and subsequent work makes progress.",
+      tier = TierSmoke,
+      placement = PlaceEither,
+      knobs = [],
+      dimensions = metricsDimensions,
+      phases = zeroPhases,
+      requires = noEnvironment,
+      knownDefect =
+        Just $
+          KnownDefect
+            { reference = "mori://shinzui/shibuya/okf/improvement-requests/concepts/IR-7",
+              summary = "transient-handler-error-sticks-failed-state",
+              expectedFailures = ["transient-handler-error-sticks-failed-state"],
+              appliesTo = AllCohorts
+            },
+      run = \context -> exceptionRecoveryFailures >>= healthReport context "transient-exception-readiness"
     }
 
 websocketFlagGatesUpgrades :: Scenario
@@ -597,15 +620,25 @@ closeOne port mode = do
 sustainedLoadFailures :: IO [Text]
 sustainedLoadFailures = do
   manager <- newManager defaultManagerSettings
-  active <- sustainedProgress manager
+  active <- sustainedProgress manager False
   blocked <- blockedControl manager
   pure $ active <> blocked
 
-sustainedProgress :: Manager -> IO [Text]
-sustainedProgress manager = do
+exceptionRecoveryFailures :: IO [Text]
+exceptionRecoveryFailures = do
+  manager <- newManager defaultManagerSettings
+  sustainedProgress manager True
+
+sustainedProgress :: Manager -> Bool -> IO [Text]
+sustainedProgress manager injectFault = do
   broker <- newSyntheticBroker defaultSyntheticConfig
+  faultAvailable <- newIORef injectFault
   runEff $ runTracingNoop $ do
-    let handler _ = liftIO (threadDelay 100000) >> pure AckOk
+    let handler _ = do
+          fault <- liftIO $ atomicModifyIORef' faultAvailable (\available -> (False, available))
+          when fault $ liftIO $ throwIO $ userError "scripted transient handler exception"
+          liftIO $ threadDelay 100000
+          pure AckOk
         processor = (mkProcessor (syntheticAdapter broker) handler) {concurrency = Async 8}
     result <- runApp defaultAppConfig [(ProcessorId "sustained", processor)]
     case result of
@@ -613,7 +646,7 @@ sustainedProgress manager = do
       Right handle -> do
         checks <- liftIO $ withServer manager defaultConfig {stuckThreshold = 3} (getAppMaster handle) $ \port -> do
           mapM_ (\_ -> publish broker Nothing "work") [1 .. (1200 :: Int)]
-          begun <- timeout 3000000 (awaitInFlight manager port)
+          begun <- timeout 3000000 $ if injectFault then awaitRetried broker else awaitInFlight manager port
           threadDelay 4000000
           first <- activeSnapshot manager port
           threadDelay 3000000
@@ -633,8 +666,11 @@ sustainedProgress manager = do
               controls =
                 check "sustained-load-not-started" (begun == Just ())
                   <> check "sustained-load-not-progressing" (progressed && stats.finalizedOk > 0)
-                  <> check "sustained-load-not-in-flight" activeThroughout
-          pure $ controls <> if null controls then check "REV-7-F1" (all readySample samples) else []
+                  <> if injectFault
+                    then check "transient-exception-not-retried" (stats.retried == 1 && stats.finalizedOk < 1200)
+                    else check "sustained-load-not-in-flight" activeThroughout
+              failureKey = if injectFault then "transient-handler-error-sticks-failed-state" else "REV-7-F1"
+          pure $ controls <> if null controls then check failureKey (all readySample samples) else []
         stopApp handle
         pure checks
 
@@ -650,6 +686,11 @@ awaitInFlight manager port = do
   case lookupPath ["state", "inFlight"] metrics.body of
     Just (Number count) | count > 0 -> pure ()
     _ -> threadDelay 10000 >> awaitInFlight manager port
+
+awaitRetried :: SyntheticBroker -> IO ()
+awaitRetried broker = do
+  stats <- brokerStats broker
+  if stats.retried > 0 then pure () else threadDelay 10000 >> awaitRetried broker
 
 blockedControl :: Manager -> IO [Text]
 blockedControl manager = do

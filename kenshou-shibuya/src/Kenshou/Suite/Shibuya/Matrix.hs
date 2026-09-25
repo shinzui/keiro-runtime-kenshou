@@ -85,6 +85,7 @@ cellsOf scenario = case renderScenarioId scenario of
   "shibuya/metrics/correctness/live-reflects-a-stopped-master" -> [(MetricsHealth, Cancellation), (MetricsHealth, RepeatedStop)]
   "shibuya/metrics/correctness/counters-distinguish-retries-from-success" -> [(MetricsHealth, Normal)]
   "shibuya/metrics/correctness/ready-not-stuck-under-sustained-load" -> [(MetricsHealth, Timeout)]
+  "shibuya/metrics/correctness/ready-recovers-after-transient-handler-exception" -> [(MetricsHealth, SynchronousException)]
   "shibuya/metrics/correctness/websocket-flag-gates-upgrades" -> [(MetricsWebSocket, Timeout)]
   "shibuya/metrics/correctness/websocket-unsubscribe-all-suppresses-updates" -> [(MetricsWebSocket, Timeout)]
   "shibuya/metrics/concurrency/websocket-slot-accounting" -> [(MetricsWebSocket, Normal), (MetricsWebSocket, SynchronousException)]
