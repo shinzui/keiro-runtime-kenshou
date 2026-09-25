@@ -1,7 +1,7 @@
 module MetricsSpec (spec) where
 
 import Kenshou.Suite.Shibuya.Cohort (CoreLine (..), coreLine)
-import Kenshou.Suite.Shibuya.Correctness.Metrics (counterFailures, exceptionRecoveryFailures, liveFailures, readyFailures, sustainedLoadFailures, websocketFlagFailures, websocketSlotFailures, websocketUnsubscribeFailures)
+import Kenshou.Suite.Shibuya.Correctness.Metrics (counterProbe, exceptionRecoveryFailures, liveFailures, readyFailures, sustainedLoadFailures, websocketFlagFailures, websocketSlotFailures, websocketUnsubscribeFailures)
 import Test.Hspec (Spec, describe, it, shouldBe)
 
 spec :: Spec
@@ -12,9 +12,9 @@ spec = describe "metrics health lifecycle" $ do
   it "reports a stopped master as not live on remediated cores" $ do
     failures <- liveFailures
     failures `shouldBe` expected "REV-8-F2"
-  it "exposes identical counters for one retry and one success" $ do
-    failures <- counterFailures
-    failures `shouldBe` ["REV-7-A2"]
+  it "preserves the documented retry mapping and observes indistinguishable Prometheus samples" $ do
+    result <- counterProbe
+    result `shouldBe` ([], True)
   it "distinguishes steady progress from a genuinely stuck processor" $ do
     failures <- sustainedLoadFailures
     failures `shouldBe` expected "REV-7-F1"

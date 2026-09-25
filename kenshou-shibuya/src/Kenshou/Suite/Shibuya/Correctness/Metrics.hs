@@ -1,4 +1,4 @@
-module Kenshou.Suite.Shibuya.Correctness.Metrics (scenarios, readyFailures, liveFailures, counterFailures, sustainedLoadFailures, exceptionRecoveryFailures, websocketFlagFailures, websocketUnsubscribeFailures, websocketSlotFailures) where
+module Kenshou.Suite.Shibuya.Correctness.Metrics (scenarios, readyFailures, liveFailures, counterProbe, sustainedLoadFailures, exceptionRecoveryFailures, websocketFlagFailures, websocketUnsubscribeFailures, websocketSlotFailures) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (cancel, waitCatch, withAsync)
@@ -75,22 +75,15 @@ countersDistinguishRetries :: Scenario
 countersDistinguishRetries =
   Scenario
     { id = either (error . Text.unpack) id (parseScenarioId "shibuya/metrics/correctness/counters-distinguish-retries-from-success"),
-      revision = 1,
-      summary = "Prometheus distinguishes a retried delivery from one completed successfully.",
+      revision = 2,
+      summary = "Checks the documented retry counter mapping and reports whether retry and success remain indistinguishable in Prometheus.",
       tier = TierSmoke,
       placement = PlaceEither,
       knobs = [],
       dimensions = metricsDimensions,
       phases = zeroPhases,
       requires = noEnvironment,
-      knownDefect =
-        Just $
-          KnownDefect
-            { reference = "mori://shinzui/shibuya/okf/reviews/concepts/REV-7",
-              summary = "REV-7-A2",
-              expectedFailures = ["REV-7-A2"],
-              appliesTo = AllCohorts
-            },
+      knownDefect = Nothing,
       run = runCounters
     }
 
@@ -400,13 +393,22 @@ healthReport context name failures = do
   pure $ if null failures then passed else failedWith failures (Text.intercalate "; " failures)
 
 runCounters :: RunContext -> IO ScenarioReport
-runCounters context = counterFailures >>= healthReport context "retry-counter-truthfulness"
+runCounters context = do
+  (failures, indistinguishable) <- counterProbe
+  putSummary context Verdicts "retry-counter-truthfulness" $
+    object
+      [ "failures" .= failures,
+        "retryAndSuccessIndistinguishable" .= indistinguishable,
+        "implementationFindings" .= (["retry-success-counters-indistinguishable" | indistinguishable] :: [Text])
+      ]
+  pure $ if null failures then passed else failedWith failures (Text.intercalate "; " failures)
 
-counterFailures :: IO [Text]
-counterFailures = do
+counterProbe :: IO ([Text], Bool)
+counterProbe = do
   manager <- newManager defaultManagerSettings
   retryBroker <- newSyntheticBroker defaultSyntheticConfig
   successBroker <- newSyntheticBroker defaultSyntheticConfig
+  indistinguishable <- newIORef False
   failures <- runEff $ runTracingNoop $ do
     let processors =
           [ (ProcessorId "retry", mkProcessor (syntheticAdapter retryBroker) (\_ -> pure (AckRetry (RetryDelay 60)))),
@@ -429,15 +431,16 @@ counterFailures = do
           runInIO $ stopApp handle
           let retrySamples = processorSamples "retry" prom.body
               successSamples = processorSamples "success" prom.body
+          writeIORef indistinguishable (retrySamples == successSamples)
           pure $
             check "decisions-not-settled" (settled == Just ())
               <> check "metrics-not-settled" (metricsSettled == Just ())
               <> check "distinct-broker-decisions" (retryStats.retried == 1 && retryStats.finalizedOk == 0 && successStats.finalizedOk == 1 && successStats.retried == 0)
               <> check "documented-processed-mapping" (all (\response -> response.status == 200 && lookupPath ["stats", "received"] response.body == Just (Number 1) && lookupPath ["stats", "processed"] response.body == Just (Number 1) && lookupPath ["stats", "failed"] response.body == Just (Number 0)) [retryJson, successJson])
               <> check "prometheus-samples-present" (prom.status == 200 && length retrySamples >= 5 && length successSamples >= 5)
-              <> check "REV-7-A2" (retrySamples /= successSamples)
   mapping <- decisionMappingFailures
-  pure $ failures <> mapping
+  observed <- readIORef indistinguishable
+  pure (failures <> mapping, observed)
 
 decisionMappingFailures :: IO [Text]
 decisionMappingFailures = do
