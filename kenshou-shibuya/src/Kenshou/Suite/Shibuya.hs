@@ -8,6 +8,7 @@ import Kenshou.Suite.Shibuya.Concurrency.CoreRunner qualified as ConcurrentCoreR
 import Kenshou.Suite.Shibuya.Correctness.CoreBatch qualified as CoreBatch
 import Kenshou.Suite.Shibuya.Correctness.CoreOrdering qualified as CoreOrdering
 import Kenshou.Suite.Shibuya.Correctness.CoreRunner qualified as CoreRunner
+import Kenshou.Suite.Shibuya.Correctness.Metrics qualified as Metrics
 
 bundle :: LayerBundle
-bundle = LayerBundle Shibuya (CoreRunner.scenarios <> ConcurrentCoreRunner.scenarios <> CoreOrdering.scenarios <> ConcurrentCoreOrdering.scenarios <> ConcurrentCoreBatch.scenarios <> CoreBatch.scenarios) []
+bundle = LayerBundle Shibuya (CoreRunner.scenarios <> ConcurrentCoreRunner.scenarios <> CoreOrdering.scenarios <> ConcurrentCoreOrdering.scenarios <> ConcurrentCoreBatch.scenarios <> CoreBatch.scenarios <> Metrics.scenarios) []

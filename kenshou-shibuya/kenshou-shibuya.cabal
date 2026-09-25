@@ -31,6 +31,7 @@ library
     Kenshou.Suite.Shibuya.Correctness.CoreBatch
     Kenshou.Suite.Shibuya.Correctness.CoreOrdering
     Kenshou.Suite.Shibuya.Correctness.CoreRunner
+    Kenshou.Suite.Shibuya.Correctness.Metrics
     Kenshou.Suite.Shibuya.Fixture.Handlers
     Kenshou.Suite.Shibuya.Fixture.RestartLoop
     Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter
@@ -44,8 +45,12 @@ library
     bytestring >=0.12 && <0.13,
     containers >=0.7 && <0.8,
     effectful-core >=2.6 && <2.7,
+    http-client,
+    http-types,
     kenshou-core,
+    kenshou-telemetry,
     shibuya-core,
+    shibuya-metrics,
     stm >=2.5 && <2.6,
     streamly-core >=0.3 && <0.4,
     text >=2.1 && <2.2,
