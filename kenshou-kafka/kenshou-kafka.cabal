@@ -63,6 +63,8 @@ library
     Kenshou.Suite.Kafka.Correctness.Records
     Kenshou.Suite.Kafka.Correctness.Retry
     Kenshou.Suite.Kafka.Fixture
+    Kenshou.Suite.Kafka.Model
+    Kenshou.Suite.Kafka.Model.Simulator
     Kenshou.Suite.Kafka.Producer
     Kenshou.Suite.Kafka.Producer.BatchFailure
     Kenshou.Suite.Kafka.Producer.Transactions
@@ -77,6 +79,7 @@ library
     directory,
     effectful-core,
     filepath,
+    hedgehog,
     hw-kafka-client,
     kafka-effectful,
     keiro,

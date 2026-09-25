@@ -129,6 +129,17 @@ offset 3 of a single partition. On the released adapter, handlers for offsets
 `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-2`.
 The `kafka.batch-size=1` control passes.
 
+`kafka/adapter/correctness/ack-state-machine-model` runs the released
+adapter's `kafkaSource`, `dropStaleRecords`, `mkIngested`, and `mkAckHandle`
+against an in-memory `KafkaConsumer` interpreter. The default 2,000-case
+run found replayable violations of commit safety, first-success order, and
+completion at log end. A fixed depth-ten schedule with offsets 3 and 4 each
+retrying once skipped offset 3 and stopped with stored offset 5 of 10.
+The reference depth-one acknowledgement handler passes the same three
+properties in `kenshou-kafka-test`. The released-cohort result is scoped to
+`mori://shinzui/keiro/masterplans/18-make-the-kafka-transport-edge-production-safe-surfaced-by-the-2026-07-transport-review`;
+the live KFK-1 reproduction remains separate work.
+
 `kafka/adapter/concurrency/sigkill-redelivery-window` runs the adapter in a
 worker process, kills it three times by default, records the consumer group's
 committed offsets before each restart, and compares handler facts across
