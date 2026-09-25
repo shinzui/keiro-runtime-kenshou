@@ -27,7 +27,7 @@ spec = describe "metrics health lifecycle" $ do
   it "suppresses updates after subscribe-all exclusions on remediated metrics" $ do
     failures <- websocketUnsubscribeFailures
     failures `shouldBe` expected "REV-9-F3"
-  it "releases connection slots after repeated peer disconnects" $ do
+  it "releases connection slots after peer disconnects and cancellation, and tolerates repeated server stop" $ do
     failures <- websocketSlotFailures
     failures `shouldBe` expected "REV-9-F1"
   where

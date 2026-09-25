@@ -88,7 +88,7 @@ cellsOf scenario = case renderScenarioId scenario of
   "shibuya/metrics/correctness/ready-recovers-after-transient-handler-exception" -> [(MetricsHealth, SynchronousException)]
   "shibuya/metrics/correctness/websocket-flag-gates-upgrades" -> [(MetricsWebSocket, Timeout)]
   "shibuya/metrics/correctness/websocket-unsubscribe-all-suppresses-updates" -> [(MetricsWebSocket, Timeout)]
-  "shibuya/metrics/concurrency/websocket-slot-accounting" -> [(MetricsWebSocket, Normal), (MetricsWebSocket, SynchronousException)]
+  "shibuya/metrics/concurrency/websocket-slot-accounting" -> [(MetricsWebSocket, Normal), (MetricsWebSocket, SynchronousException), (MetricsWebSocket, Cancellation), (MetricsWebSocket, RepeatedStop)]
   _ -> []
 
 -- Add reasons only for cells which cannot be exercised through public APIs.

@@ -1,13 +1,15 @@
 module Kenshou.Suite.Shibuya.Correctness.Metrics (scenarios, readyFailures, liveFailures, counterFailures, sustainedLoadFailures, exceptionRecoveryFailures, websocketFlagFailures, websocketUnsubscribeFailures, websocketSlotFailures) where
 
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar, tryPutMVar)
+import Control.Concurrent.Async (cancel, waitCatch, withAsync)
+import Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, takeMVar, tryPutMVar)
 import Control.Concurrent.STM qualified as STM
 import Control.Exception (Exception, SomeException, bracket, finally, fromException, throwIO, try)
 import Control.Monad (when)
 import Data.Aeson (Value (..), decode, encode, object, (.=))
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString.Lazy qualified as LazyByteString
+import Data.Either (isLeft, isRight)
 import Data.IORef (atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (nub, sort)
 import Data.List.NonEmpty (NonEmpty (..))
@@ -188,8 +190,8 @@ websocketSlotAccounting :: Scenario
 websocketSlotAccounting =
   Scenario
     { id = either (error . Text.unpack) id (parseScenarioId "shibuya/metrics/concurrency/websocket-slot-accounting"),
-      revision = 1,
-      summary = "Repeated clean closes, peer drops and early drops release WebSocket connection slots.",
+      revision = 2,
+      summary = "Clean closes, peer drops and cancelled clients release WebSocket slots; stopping the server twice remains safe.",
       tier = TierSmoke,
       placement = PlaceEither,
       knobs = [],
@@ -592,7 +594,9 @@ websocketSlotFailures = do
         failures <- liftIO $ do
           let config = defaultConfig {wsMaxConnections = 8}
           batches <- traverse (\mode -> withSlotServer config (getAppMaster handle) (\port state -> slotBatch port state mode)) [CleanClose, DropAfterSnapshot, DropBeforeSnapshot]
-          pure $ nub $ concat batches
+          cancelled <- withSlotServer config (getAppMaster handle) cancellationBatch
+          stopped <- repeatedServerStop (getAppMaster handle)
+          pure $ nub $ concat batches <> cancelled <> stopped
         stopApp handle
         pure failures
 
@@ -631,6 +635,51 @@ awaitSlotRelease state = do
     count <- STM.readTVar state.connectionCount
     STM.check (count == 0)
   pure $ released == Just ()
+
+cancellationBatch :: Int -> WebSocketState -> IO [Text]
+cancellationBatch port state = do
+  control <- snapshotAccepted port
+  if not control
+    then pure ["websocket-cancellation-initial-control"]
+    else do
+      churned <- churn (24 :: Int)
+      released <- awaitSlotRelease state
+      final <- snapshotAccepted port
+      finalReleased <- awaitSlotRelease state
+      pure $ check "REV-9-F1" (churned && released && final && finalReleased)
+  where
+    churn 0 = pure True
+    churn remaining = do
+      entered <- newEmptyMVar
+      release <- newEmptyMVar :: IO (MVar ())
+      closed <- withAsync
+        ( WebSockets.runClient "127.0.0.1" port "/ws" $ \connection -> do
+            frame <- WebSockets.receiveData connection :: IO LazyByteString.ByteString
+            when (lookupPath ["type"] frame /= Just (String "snapshot")) $ fail "missing initial snapshot"
+            putMVar entered ()
+            takeMVar release
+        )
+        $ \client -> do
+          began <- timeout 2000000 (takeMVar entered)
+          cancel client
+          ended <- waitCatch client
+          released <- awaitSlotRelease state
+          pure $ began == Just () && isLeft ended && released
+      if closed then churn (remaining - 1) else pure False
+
+repeatedServerStop :: Master -> IO [Text]
+repeatedServerStop master = do
+  manager <- newManager defaultManagerSettings
+  port <- reserveFreePort
+  bracket
+    (startMetricsServer defaultConfig {port = port} master)
+    stopMetricsServer
+    ( \server -> do
+        ready <- awaitResponse manager port "/health/live"
+        first <- try (stopMetricsServer server) :: IO (Either SomeException ())
+        second <- try (stopMetricsServer server) :: IO (Either SomeException ())
+        pure $ check "websocket-repeated-stop" (ready && isRight first && isRight second)
+    )
 
 snapshotAccepted :: Int -> IO Bool
 snapshotAccepted port = do
