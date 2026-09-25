@@ -197,6 +197,25 @@ crashed when the harness canceled its thread; a graceful adapter shutdown
 removed the crash in one and two consumer controls. The leaked private
 containers from those two unsealed crash probes were stopped and deleted.
 
+`kafka/telemetry/correctness/context-leak-regression` uses the in-memory SDK
+arm and one traced Kafka batch containing a record with `traceparent`, a
+headerless record, and a second independent `traceparent`. It requires three
+consumer spans, the two inbound trace IDs, a new root for the headerless
+record, and unchanged ambient context after the batch. Private broker run
+`01a0d67a-a345-70d5-99da-01b3f611938e` passed. The first probe showed
+three isolated root spans because the toolkit had configured W3C only on its
+provider. `startTracing` now installs the same W3C propagator globally for
+active tracing arms, as required by the traced kafka-effectful interpreters.
+
+`kafka/telemetry/correctness/w3c-context-continuity` sends inside a parent
+span through `runKafkaProducerTraced`, reads `traceparent` back from the
+broker, and checks the producer span's trace and span IDs. A Shibuya runner
+span must be a child of that producer span and carry Kafka system, partition,
+and offset attributes. The `kafka.consumer-tracing` knob selects `shibuya`,
+`kafka-effectful`, or `both`; the latter also checks the traced consumer's
+parent and trace ID. Default run `01a0d67d-0a52-7567-a42f-2c2a7f2c3134`
+and `both` run `01a0d67d-479f-7454-914d-067b5d6598c0` passed.
+
 `kafka/adapter/concurrency/sigkill-redelivery-window` runs the adapter in a
 worker process, kills it three times by default, records the consumer group's
 committed offsets before each restart, and compares handler facts across

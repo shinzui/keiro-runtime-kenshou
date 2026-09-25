@@ -7,6 +7,7 @@ module Kenshou.Telemetry.Tracing
   )
 where
 
+import Control.Monad (when)
 import Data.Text qualified as Text
 import Kenshou.Telemetry.Spec
 import Kenshou.Telemetry.Tracing.Pipeline
@@ -16,6 +17,7 @@ import OpenTelemetry.Exporter.Span (SpanExporter)
 import OpenTelemetry.Processor.Batch.Span qualified as Batch
 import OpenTelemetry.Processor.Simple.Span qualified as Simple
 import OpenTelemetry.Processor.Span (SpanProcessor)
+import OpenTelemetry.Propagator (setGlobalTextMapPropagator)
 import OpenTelemetry.Propagator.W3CTraceContext (w3cTraceContextPropagator)
 import OpenTelemetry.Resource (materializeResources, mkResource, (.=))
 import OpenTelemetry.Trace.Core
@@ -30,22 +32,24 @@ data TracingRuntime = TracingRuntime
   }
 
 startTracing :: TelemetrySpec -> IO TracingRuntime
-startTracing spec = case spec.tracing of
-  TracingOff -> pure (TracingRuntime Nothing Nothing Nothing Nothing)
-  TracingNoop -> do
-    provider <- createTracerProvider [] (providerOptions spec)
-    pure (runtime provider Nothing Nothing)
-  TracingSdkInMemory -> do
-    stats <- newPipelineStats
-    (probe, probeProcessor) <- newSpanProbe spec.probeRetain
-    provider <- createTracerProvider [countingProcessor stats, instrumentProcessorSuccess stats probeProcessor] (providerOptions spec)
-    pure (runtime provider (Just probe) (Just stats))
-  TracingSdkOtlp -> do
-    stats <- newPipelineStats
-    exporter <- instrumentExporter stats <$> OtlpSpan.otlpExporter (otlpExporterConfig spec)
-    processor <- makeProcessor spec.processor exporter
-    provider <- createTracerProvider [countingProcessor stats, processor] (providerOptions spec)
-    pure (runtime provider Nothing (Just stats))
+startTracing spec = do
+  when (spec.tracing /= TracingOff) (setGlobalTextMapPropagator w3cTraceContextPropagator)
+  case spec.tracing of
+    TracingOff -> pure (TracingRuntime Nothing Nothing Nothing Nothing)
+    TracingNoop -> do
+      provider <- createTracerProvider [] (providerOptions spec)
+      pure (runtime provider Nothing Nothing)
+    TracingSdkInMemory -> do
+      stats <- newPipelineStats
+      (probe, probeProcessor) <- newSpanProbe spec.probeRetain
+      provider <- createTracerProvider [countingProcessor stats, instrumentProcessorSuccess stats probeProcessor] (providerOptions spec)
+      pure (runtime provider (Just probe) (Just stats))
+    TracingSdkOtlp -> do
+      stats <- newPipelineStats
+      exporter <- instrumentExporter stats <$> OtlpSpan.otlpExporter (otlpExporterConfig spec)
+      processor <- makeProcessor spec.processor exporter
+      provider <- createTracerProvider [countingProcessor stats, processor] (providerOptions spec)
+      pure (runtime provider Nothing (Just stats))
   where
     runtime provider probe pipeline = TracingRuntime (Just (makeTracer provider (instrumentationLibrary "kenshou" "0.1.0.0") tracerOptions)) (Just provider) probe pipeline
 

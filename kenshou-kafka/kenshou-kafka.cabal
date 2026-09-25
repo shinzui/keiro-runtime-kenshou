@@ -73,6 +73,7 @@ library
     Kenshou.Suite.Kafka.Producer.BatchFailure
     Kenshou.Suite.Kafka.Producer.Transactions
     Kenshou.Suite.Kafka.Roles
+    Kenshou.Suite.Kafka.Telemetry.Context
 
   build-depends:
     aeson,
@@ -84,6 +85,7 @@ library
     effectful-core,
     filepath,
     hedgehog,
+    hs-opentelemetry-api,
     hw-kafka-client,
     kafka-effectful,
     keiro,
@@ -91,6 +93,7 @@ library
     kenshou-check,
     kenshou-core,
     kenshou-measure,
+    kenshou-telemetry,
     kiroku-store,
     network,
     process,
