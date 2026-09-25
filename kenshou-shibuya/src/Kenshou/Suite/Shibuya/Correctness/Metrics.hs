@@ -15,6 +15,7 @@ import Data.String (fromString)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
+import Data.Time.Clock (getCurrentTime)
 import Effectful (Limit (..), Persistence (..), UnliftStrategy (..), liftIO, runEff, withEffToIO)
 import Kenshou.Core.Context (RunContext, SummarySection (..), putSummary)
 import Kenshou.Core.Dimension (DimensionSupport (..), MetricsArm (..), Support (..), Supported (..), noDimensions)
@@ -29,7 +30,7 @@ import Network.HTTP.Types.Status (statusCode)
 import Network.WebSockets qualified as WebSockets
 import Shibuya.App (Master, QueueProcessor (..), defaultAppConfig, getAppMaster, mkProcessor, runApp, stopApp, waitApp)
 import Shibuya.Core.Ack (AckDecision (..), RetryDelay (..))
-import Shibuya.Core.Metrics (ProcessorId (..))
+import Shibuya.Core.Metrics (AckDecisionMetric (..), ProcessorId (..), beginProcessing, finishProcessing, incrementReceived, newMetricsHandle, sampleMetrics)
 import Shibuya.Metrics.Server (MetricsServerConfig (..), defaultConfig, startMetricsServer, stopMetricsServer)
 import Shibuya.Policy (Concurrency (..))
 import Shibuya.Telemetry.Effect (runTracingNoop)
@@ -428,7 +429,37 @@ counterFailures = do
               <> check "documented-processed-mapping" (all (\response -> response.status == 200 && lookupPath ["stats", "received"] response.body == Just (Number 1) && lookupPath ["stats", "processed"] response.body == Just (Number 1) && lookupPath ["stats", "failed"] response.body == Just (Number 0)) [retryJson, successJson])
               <> check "prometheus-samples-present" (prom.status == 200 && length retrySamples >= 5 && length successSamples >= 5)
               <> check "REV-7-A2" (retrySamples /= successSamples)
-  pure failures
+  mapping <- decisionMappingFailures
+  pure $ failures <> mapping
+
+decisionMappingFailures :: IO [Text]
+decisionMappingFailures = do
+  now <- getCurrentTime
+  outcomes <-
+    traverse
+      ( \(name, decision, processed, failed, state) -> do
+          handle <- newMetricsHandle now
+          incrementReceived handle
+          _ <- beginProcessing handle 1
+          finishProcessing handle decision
+          snapshot <- sampleMetrics handle
+          let body = encode snapshot
+          pure $
+            check
+              ("decision-mapping-" <> name)
+              ( lookupPath ["stats", "received"] body == Just (Number 1)
+                  && lookupPath ["stats", "processed"] body == Just (Number processed)
+                  && lookupPath ["stats", "failed"] body == Just (Number failed)
+                  && lookupPath ["state", "status"] body == Just (String state)
+              )
+      )
+      [ ("ok", Right CountProcessed, 1, 0, "idle"),
+        ("retry", Right CountProcessed, 1, 0, "idle"),
+        ("dead-letter", Right CountFailed, 0, 1, "idle"),
+        ("exception", Left "scripted handler exception", 0, 1, "failed"),
+        ("halt", Right (CountHalt "scripted halt"), 0, 0, "failed")
+      ]
+  pure $ concat outcomes
 
 awaitDecisions :: SyntheticBroker -> SyntheticBroker -> IO ()
 awaitDecisions retryBroker successBroker = do
