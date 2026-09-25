@@ -46,6 +46,7 @@ library
     Kenshou.Env.Kafka.Types
     Kenshou.Suite.Kafka
     Kenshou.Suite.Kafka.Concurrency.AutoOffsetStore
+    Kenshou.Suite.Kafka.Concurrency.BrokerOutage
     Kenshou.Suite.Kafka.Concurrency.Fencing
     Kenshou.Suite.Kafka.Concurrency.HaltAssignment
     Kenshou.Suite.Kafka.Concurrency.NonSerial

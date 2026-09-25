@@ -123,7 +123,8 @@ data CrashConsumerArgs = CrashConsumerArgs
     haltOffset :: Maybe Int,
     holdAfterHalt :: Bool,
     maxPollMillis :: Maybe Int,
-    sessionMillis :: Maybe Int
+    sessionMillis :: Maybe Int,
+    serviceMillis :: Int
   }
 
 instance FromJSON CrashConsumerArgs where
@@ -141,6 +142,7 @@ instance FromJSON CrashConsumerArgs where
       <*> (fromMaybe False <$> value .:? "holdAfterHalt")
       <*> value .:? "maxPollMillis"
       <*> value .:? "sessionMillis"
+      <*> (fromMaybe 0 <$> value .:? "serviceMillis")
 
 runCrashConsumer :: RoleContext -> IO ()
 runCrashConsumer context = do
@@ -186,6 +188,7 @@ consumeCrash context args = do
                     pure (AckHalt (HaltFatal "kenshou assignment hold"))
                   else do
                     liftIO $ do
+                      if args.serviceMillis > 0 then threadDelay (args.serviceMillis * 1000) else pure ()
                       if Just offset == args.blockOffset
                         then do
                           context.send (WrkCustom "entered-block" (object ["offset" .= offset]))

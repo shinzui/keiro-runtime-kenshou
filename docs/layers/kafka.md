@@ -161,6 +161,16 @@ remained at 10; after the first member was killed, the second handled offset
 10 and drained the partition. The assignment claim is the nonblocking CAP-2
 limitation at `mori://shinzui/shibuya-kafka-adapter/okf/capabilities/concepts/CAP-2`.
 
+`kafka/adapter/concurrency/broker-outage-and-reconnect` injects a broker kill
+or a proxy blackhole while two adapter workers and an open-loop producer stay
+active. The reduced blackhole arm recovered with all 1,000 acknowledged IDs
+handled. Broker-kill arms instead saw both workers exit with backlog; the
+released 0.9.0.1 result is tracked as
+`mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-3`.
+Replacement workers are run as a control after this failure. One control
+recovered every ID; another reached zero lag with nine IDs lacking handler
+facts, which remains a blocking, separately labeled result.
+
 `kafka/keiro-records/correctness/roundtrip-through-broker` publishes 200
 Keiro integration events through the neutral record conversion and checks
 their decoded events, Kafka delivery references, all six required wire
