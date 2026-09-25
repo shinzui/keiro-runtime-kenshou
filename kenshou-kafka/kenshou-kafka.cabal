@@ -54,6 +54,7 @@ library
     Kenshou.Suite.Kafka.Concurrency.Sigkill
     Kenshou.Suite.Kafka.Concurrency.StaleBarrier
     Kenshou.Suite.Kafka.Concurrency.StaticMembership
+    Kenshou.Suite.Kafka.Concurrency.Zombie
     Kenshou.Suite.Kafka.Correctness.Ack
     Kenshou.Suite.Kafka.Correctness.Buffered
     Kenshou.Suite.Kafka.Correctness.DeadLetter

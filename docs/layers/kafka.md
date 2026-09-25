@@ -188,6 +188,18 @@ rebalance callback installed, A handled all 100 new records at offsets
 only `roundtrip-new-records`: the stale barrier discarded the new records.
 This demonstrates why callers must install the callback.
 
+`kafka/adapter/concurrency/partitioned-consumer-becomes-zombie` uses two
+broker-proxy lanes and blackholes A's lane for twice its session timeout.
+In a reduced 2,000-record run, B took over A's partitions, every
+acknowledged ID had a handler fact, and sampled committed offsets did not
+decrease. Both workers nevertheless ended normally before stop, leaving
+lag 388 on each of A's former partitions. This matches the scoped
+rebalance-exit report `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-4`.
+There were 312 duplicate facts against a proxy bound of 241 computed from
+A's uncommitted handler facts and two 100-record poll batches. The worker
+does not expose exact buffer occupancy, so that bound remains a blocking
+estimate rather than a confirmed adapter contract violation.
+
 `kafka/keiro-records/correctness/roundtrip-through-broker` publishes 200
 Keiro integration events through the neutral record conversion and checks
 their decoded events, Kafka delivery references, all six required wire

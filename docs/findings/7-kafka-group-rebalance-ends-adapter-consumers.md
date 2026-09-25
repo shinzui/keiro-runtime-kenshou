@@ -28,6 +28,14 @@ scope covers only the unexpected worker exit and its immediate no-loss and
 lag consequences on Hackage adapter 0.9.0.1. Versions above 0.9.0.1 are not
 verified here.
 
+The two-lane network-partition run
+`01a0d64b-ca41-7466-8518-d3f227601385` also recorded two early normal
+exits after A's lane was blackholed for twelve seconds and B took over A's
+partitions. All 2,000 acknowledged IDs had handler facts, but committed
+offsets remained 388 behind on each former A partition. This extends the
+BUG-4 reproduction to group eviction and reassignment after a network
+partition. Its duplicate-bound estimate is tracked separately in the plan.
+
 Reproduce with:
 
 ```bash
