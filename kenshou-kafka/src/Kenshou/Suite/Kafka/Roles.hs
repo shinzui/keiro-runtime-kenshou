@@ -19,7 +19,7 @@ import Kafka.Effectful.Producer qualified as P
 import Kafka.Types (BrokerAddress (..), KafkaError, PartitionId (..), Timeout (..), TopicName (..))
 import Kenshou.Core.Role (ControlMessage (..), RoleContext (..), RoleName, WorkerInit (..), WorkerMessage (..), WorkerRole (..), mkRoleName)
 import Shibuya.Adapter (Adapter (..))
-import Shibuya.Adapter.Kafka (defaultConfig, kafkaAdapter)
+import Shibuya.Adapter.Kafka (defaultConfig, kafkaAdapter, kafkaAdapterWith, kafkaRebalanceHandler, newKafkaAdapterState)
 import Shibuya.App (ProcessorId (..), defaultAppConfig, mkProcessor, runApp, stopApp, waitApp)
 import Shibuya.Core.Ack (AckDecision (..), DeadLetterReason (..), HaltReason (..))
 import Shibuya.Core.Ingested (Message (..))
@@ -124,7 +124,8 @@ data CrashConsumerArgs = CrashConsumerArgs
     holdAfterHalt :: Bool,
     maxPollMillis :: Maybe Int,
     sessionMillis :: Maybe Int,
-    serviceMillis :: Int
+    serviceMillis :: Int,
+    installRebalanceHandler :: Bool
   }
 
 instance FromJSON CrashConsumerArgs where
@@ -143,6 +144,7 @@ instance FromJSON CrashConsumerArgs where
       <*> value .:? "maxPollMillis"
       <*> value .:? "sessionMillis"
       <*> (fromMaybe 0 <$> value .:? "serviceMillis")
+      <*> (fromMaybe True <$> value .:? "installRebalanceHandler")
 
 runCrashConsumer :: RoleContext -> IO ()
 runCrashConsumer context = do
@@ -165,7 +167,18 @@ runCrashConsumer context = do
 consumeCrash :: RoleContext -> CrashConsumerArgs -> IO ()
 consumeCrash context args = do
   count <- newIORef (0 :: Int)
+  state <- newKafkaAdapterState
   let topic = TopicName args.topic
+      rebalance consumer event = do
+        kafkaRebalanceHandler state consumer event
+        at <- getCurrentTime
+        let (kind, partitions) = case event of
+              RebalanceBeforeAssign values -> ("before-assign" :: Text, values)
+              RebalanceAssign values -> ("assign", values)
+              RebalanceBeforeRevoke values -> ("before-revoke", values)
+              RebalanceRevoke values -> ("revoke", values)
+            coordinates = [number | (_, PartitionId number) <- partitions]
+        context.send (WrkCustom "rebalance" (object ["kind" .= kind, "partitions" .= coordinates, "at" .= at]))
       props =
         C.brokersList (fmap BrokerAddress args.brokers)
           <> C.groupId (ConsumerGroupId args.group)
@@ -175,10 +188,11 @@ consumeCrash context args = do
           <> C.extraProp "heartbeat.interval.ms" "2000"
           <> maybe mempty (C.extraProp "group.instance.id") args.instanceId
           <> maybe mempty (C.extraProp "max.poll.interval.ms" . Text.pack . show) args.maxPollMillis
+          <> (if args.installRebalanceHandler then C.setCallback (C.rebalanceCallback rebalance) else mempty)
       subscription = C.topics [topic] <> C.offsetReset C.Earliest
   outcome <- runEff . runError @KafkaError . runTracingNoop $
     C.runKafkaConsumer props subscription $ do
-      adapter <- kafkaAdapter (defaultConfig [topic])
+      adapter <- kafkaAdapterWith state (defaultConfig [topic])
       let handler Message {envelope = Envelope {payload, partition, cursor}} = do
             case (payload >>= readInt, partition >>= readTextInt, cursor) of
               (Just value, Just partitionNumber, Just (CursorInt offset)) -> do

@@ -28,6 +28,15 @@ worker exits and their immediate no-loss and recovery failures on Hackage
 adapter 0.9.0.1. It does not cover the separate restart-control failure or
 unverified versions, including the newly published 0.9.1.0.
 
+The first runs omitted the caller-installed `kafkaRebalanceHandler`. After
+installing it and logging each rebalance callback, reduced kill run
+`01a0d634-0897-71b4-8cfa-51b3c86e0bdb` still acknowledged all 1,000
+records and both workers exited before stop. The original workers handled
+380 records, and the group remained behind. This confirms the exit also
+occurs with the intended callback installed. Its replacement-worker control
+reached zero lag but lacked handler facts for some acknowledged IDs; that
+separate result remains blocking.
+
 Reproduce from this repository with:
 
 ```bash
