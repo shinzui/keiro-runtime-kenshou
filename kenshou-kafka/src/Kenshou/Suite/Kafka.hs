@@ -2,6 +2,7 @@ module Kenshou.Suite.Kafka (bundle) where
 
 import Kenshou.Core.Bundle (LayerBundle (..))
 import Kenshou.Core.Id (Layer (Kafka))
+import Kenshou.Suite.Kafka.Benchmark.PollCap qualified as PollCap
 import Kenshou.Suite.Kafka.Benchmark.ProducerModes qualified as ProducerModes
 import Kenshou.Suite.Kafka.Concurrency.AutoOffsetStore qualified as AutoOffsetStore
 import Kenshou.Suite.Kafka.Concurrency.BarrierOverwrite qualified as BarrierOverwrite
@@ -29,4 +30,4 @@ import Kenshou.Suite.Kafka.Producer.Transactions qualified as Transactions
 import Kenshou.Suite.Kafka.Roles qualified as Roles
 
 bundle :: LayerBundle
-bundle = LayerBundle Kafka (Fixture.scenarios <> Ack.scenarios <> Buffered.scenarios <> DeadLetter.scenarios <> Halt.scenarios <> MultiTopic.scenarios <> Records.scenarios <> Retry.scenarios <> NonSerial.scenarios <> Sigkill.scenarios <> AutoOffsetStore.scenarios <> StaticMembership.scenarios <> Fencing.scenarios <> HaltAssignment.scenarios <> BrokerOutage.scenarios <> GroupRebalance.scenarios <> StaleBarrier.scenarios <> Zombie.scenarios <> BarrierOverwrite.scenarios <> Model.scenarios <> Producer.scenarios <> ProducerModes.scenarios <> BatchFailure.scenarios <> Transactions.scenarios) Roles.roles
+bundle = LayerBundle Kafka (Fixture.scenarios <> Ack.scenarios <> Buffered.scenarios <> DeadLetter.scenarios <> Halt.scenarios <> MultiTopic.scenarios <> Records.scenarios <> Retry.scenarios <> NonSerial.scenarios <> Sigkill.scenarios <> AutoOffsetStore.scenarios <> StaticMembership.scenarios <> Fencing.scenarios <> HaltAssignment.scenarios <> BrokerOutage.scenarios <> GroupRebalance.scenarios <> StaleBarrier.scenarios <> Zombie.scenarios <> BarrierOverwrite.scenarios <> Model.scenarios <> Producer.scenarios <> ProducerModes.scenarios <> PollCap.scenarios <> BatchFailure.scenarios <> Transactions.scenarios) Roles.roles

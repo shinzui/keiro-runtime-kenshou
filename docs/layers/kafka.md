@@ -162,6 +162,23 @@ cell throughput claims. Their IDs are `01a0d663-575e-769b-91ec-44cdc38e08dc`,
 `01a0d663-c641-746a-b976-992fe7baf749`, and
 `01a0d663-f453-73ca-b38b-f0690d7b6724` respectively.
 
+`kafka/adapter/benchmark/poll-cap-latency` drives the released adapter's
+`kafkaSource` with open-loop intended timestamps. Knobs are
+`kafka.rate-per-second`, `kafka.poll-timeout-ms`, `kafka.batch-size`, and
+`kafka.messages`. It records intended-to-poll p50/p90/p99/p99.9 through the
+measurement toolkit, then checks every broker-acknowledged ID and zero group
+lag. Three local, 100-record, 100-record/s exploratory runs all passed:
+batch 100 and requested timeout 1000 ms yielded p50 242 ms, p99 496 ms;
+batch 100 and timeout 50 ms yielded p50 207 ms, p99 536 ms; batch 1 and
+timeout 1000 ms yielded p50 9.93 s and p99 19.38 s, at only 4.84 records/s.
+The last result is much slower than the drafted batch-size-one expectation;
+the short runs include assignment and catch-up effects, so they do not
+establish a steady-state latency curve. The run IDs are
+`01a0d667-fbf6-732d-b479-4ef6adb3279d`,
+`01a0d668-b342-71f2-92f7-4369d9da9ba7`, and
+`01a0d668-4921-754d-8dc4-6db197914ac7` respectively. Idle consumer CPU
+still needs a process-isolated measurement.
+
 `kafka/adapter/concurrency/sigkill-redelivery-window` runs the adapter in a
 worker process, kills it three times by default, records the consumer group's
 committed offsets before each restart, and compares handler facts across

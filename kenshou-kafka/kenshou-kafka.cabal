@@ -45,6 +45,7 @@ library
     Kenshou.Env.Kafka.Spec
     Kenshou.Env.Kafka.Types
     Kenshou.Suite.Kafka
+    Kenshou.Suite.Kafka.Benchmark.PollCap
     Kenshou.Suite.Kafka.Benchmark.ProducerModes
     Kenshou.Suite.Kafka.Concurrency.AutoOffsetStore
     Kenshou.Suite.Kafka.Concurrency.BarrierOverwrite
