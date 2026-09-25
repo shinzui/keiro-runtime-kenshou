@@ -171,6 +171,15 @@ Replacement workers are run as a control after this failure. One control
 recovered every ID; another reached zero lag with nine IDs lacking handler
 facts, which remains a blocking, separately labeled result.
 
+`kafka/adapter/concurrency/group-rebalance-with-inflight` changes membership
+four times while an open-loop producer sends acknowledged records. It checks
+no loss, assignment-period offset order, duplicate windows, disjoint
+ownership, and group lag. Two reduced runs on the released adapter recorded
+surviving workers ending normally before stop. That scoped exit is tracked at
+`mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-4`.
+Offset-order reversals in both runs and duplicates beyond the declared
+windows in one remain blocking, separately labeled results.
+
 `kafka/keiro-records/correctness/roundtrip-through-broker` publishes 200
 Keiro integration events through the neutral record conversion and checks
 their decoded events, Kafka delivery references, all six required wire

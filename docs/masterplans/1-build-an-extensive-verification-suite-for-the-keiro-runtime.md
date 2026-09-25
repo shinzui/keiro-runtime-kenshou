@@ -291,6 +291,7 @@ Drafting the child plans against real source corrected the research in ways that
 
 ### Upstream issue register
 
+- EP-11 Kafka group-rebalance finding: [local finding](../findings/7-kafka-group-rebalance-ends-adapter-consumers.md); upstream `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-4`. Surviving released adapter workers end normally during membership changes; one reduced run retained acknowledged backlog.
 - EP-11 Kafka broker-restart finding: [local finding](../findings/6-kafka-broker-restart-ends-adapter-consumers.md); upstream `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-3`. Two released adapter workers exit after a broker restart with acknowledged records still unhandled; the proxy-blackhole control passes.
 - EP-11 Kafka buffered-successor ordering finding: [local finding](../findings/5-kafka-buffered-successors-run-before-retry.md); upstream `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-2`. A serial released adapter executes offsets 4–9 before the retried offset 3 succeeds.
 - EP-11 Kafka buffered-retry finding: [local finding](../findings/4-kafka-buffered-retry-leaves-successors-uncommitted.md); upstream `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-1`. The released adapter can leave successful buffered successors uncommitted after a retry; a batch-size-one control passes.
