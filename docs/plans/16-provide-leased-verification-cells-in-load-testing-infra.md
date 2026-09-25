@@ -47,15 +47,23 @@ You can see it working with the fixture payloads this plan ships: two terminals 
 - [x] (2026-09-24) Started Milestone 1 in `mori://shinzui/load-testing-infra` at commit `588da3e`: the committed-project allowlist and shared preflight are wired into the disposable-lane scripts. Bash syntax and allowed, wrong-active-project, and disallowed-project probes passed without contacting GCP.
 - [x] (2026-09-24) Extracted the existing image build, hash, tarball lookup, upload, and registration functions into a sourceable library at commit `d8e0bf4`. Bash syntax and staged-diff checks passed; an image build awaits the cell image outputs.
 - [x] (2026-09-24) Committed the shared and per-cell Pulumi stacks, four NixOS image outputs, cell lifecycle scripts, descriptor and policy schemas, and idle-stop simulation in `mori://shinzui/load-testing-infra` at `f264dce`. The cell Pulumi program compiles after an audited lockfile refresh, Nix evaluates all four image outputs, and both schemas validate. Live GCP acceptance is still pending.
+- [x] (2026-09-25) Defined the draft version-one cell storage protocol, payload, submission, status, and environment schemas, and golden examples in `mori://shinzui/load-testing-infra` at `396ff30`. All six current schemas validated against their examples; negative submissions with an invalid bundle digest, escaping command path, or unsupported protocol version were rejected by schema validation. The agent implementation and live GCP acceptance remain pending.
 - [ ] Deliver leased, resettable multi-instance verification cells with the generic agent, payload delivery, health gates, immutable result publication, broker, and collector roles; verify the cell protocol in Validation and Acceptance.
 
 ## Surprises & Discoveries
+
+- Observation: The earlier illustrative submission omitted fields that the standalone payload description required (`schema`, `narHash`, `closurePaths`, and `system`). The draft schema embeds the complete `cell.payload/v1` descriptor in `cell.submission/v1`, so the agent can validate the referenced closure without relying on an unstated side object. This is an interface clarification for EP-17, not live agent evidence.
+  Evidence: `mori://shinzui/load-testing-infra` at project-relative paths `schemas/cell/cell.payload.v1.schema.json`, `schemas/cell/cell.submission.v1.schema.json`, and `docs/cells/protocol.md` (artifact-level URIs pending), commit `396ff30`; all golden examples and three malformed-submission controls validated locally.
 
 - Observation: the copied Pulumi lockfile initially held `@pulumi/pulumi` 3.239.0 and `@pulumi/gcp` 8.41.1 and reported 27 transitive advisories. Refreshing the new cell program's lockfile within its existing direct version bounds resolved all reported advisories; the disposable program retains its own lockfile. The Nixpkgs revision names the standalone `rpk` package `redpanda-client`, and its Business Source License requires a package-specific Nix allowance.
   Evidence: the npm registry and upstream tags identified Pulumi SDK 3.264.0 as current; the GCP provider's latest 8.x release remains 8.41.1. The refreshed `infra/cells/package-lock.json` resolves SDK 3.264.0, provider 8.41.1, and `tar` 7.5.22; `npm ci`, `npm run build`, and `npm audit` report zero vulnerabilities. `nix eval --raw .#packages.x86_64-linux.cell-image-driver.drvPath` passed after a `redpanda-rpk`-specific `allowUnfreePredicate` was added.
 
 
 ## Decision Log
+
+- Decision: A `cell.submission/v1` embeds the complete `cell.payload/v1` descriptor, including NAR hash, closure paths, target system, and command. The descriptor is separately printable by the payload publisher and can be reused unchanged across submissions.
+  Rationale: The agent can validate one self-contained submission against a stable JSON Schema and verify the content-addressed closure before import. The earlier illustrative submission omitted fields that its payload producer was already required to emit.
+  Date: 2026-09-25
 
 - Decision: Build cells as a second Pulumi program, `infra/cells/`, with one stack per cell (`cell-<name>`) plus one `shared` stack, and leave the existing program `infra/pulumi/` (stack `dev`) untouched.
   Rationale: The existing program hard-codes instance names and is driven by per-run configuration edits; a cell must be durable and must never be reconfigured per run. Separate state also means a mistake in one lane cannot destroy the other.
