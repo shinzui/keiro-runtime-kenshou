@@ -11,7 +11,7 @@ default:
     just --list
 
 [group('meta')]
-verify: process-compose-check fmt-check haskell-build haskell-test link-proof cohort-assert-released cohort-check graph-check adr-validate schemas-check selftest
+verify: process-compose-check fmt-check haskell-build haskell-test link-proof cohort-assert-released cohort-check graph-check adr-validate evidence-validate evidence-index-check evidence-profile-test schemas-check selftest
 
 [group('verification')]
 graph-check:
@@ -23,6 +23,22 @@ adr-validate:
       --profile docs/adr/profile.dhall \
       --profile-enforce \
       --log-enforce
+
+[group('verification')]
+evidence-validate:
+    okf validate docs/verification --strict \
+      --profile docs/verification/profile.dhall \
+      --profile-enforce \
+      --log-enforce
+
+[group('verification')]
+evidence-index-check:
+    okf index docs/verification --write
+    git diff --exit-code -- docs/verification
+
+[group('verification')]
+evidence-profile-test:
+    bash scripts/test-verification-profile.sh
 
 [group('verification')]
 schemas-check:

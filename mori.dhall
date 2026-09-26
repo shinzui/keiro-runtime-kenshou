@@ -104,5 +104,13 @@ in  Schema.Project::{
         , okfVersion = "0.2"
         , description = Some "Durable architecture decisions"
         }
+      , Schema.OkfBundle::{
+        , name = "verification"
+        , path = "docs/verification"
+        , profile = Some "docs/verification/profile.dhall"
+        , okfVersion = "0.2"
+        , description = Some
+            "Immutable verification run and attestation records with versioned computation definitions"
+        }
       ]
     }

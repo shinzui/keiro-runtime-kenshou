@@ -22,6 +22,11 @@ provenance:
       at: 2026-09-24T22:53:09Z
       mode: "update"
       note: "Consolidated Progress into delivered outcomes and remaining acceptance"
+    - model: "gpt-6"
+      harness: "codex"
+      at: 2026-09-26T19:57:37Z
+      mode: "implement"
+      note: "Implemented the local OKF verification bundle, profile, definitions, and rejection gate."
 ---
 
 # Record runs and attestations in a historic OKF evidence bundle
@@ -42,11 +47,12 @@ You can see it working at the end by running `just verify`, which validates the 
 
 ## Progress
 
-- [ ] Deliver the historic evidence bundle, profile and computations, `record`, `attest`, and `history` commands, digest/revision validation, and a seeded corpus; verify the acceptance commands in Validation and Acceptance.
+- [x] (2026-09-26) Completed Milestone 1: the local OKF v0.2 bundle, pinned Dhall profile, three source-checked computation definitions, reference scripts, Mori registration, two ADRs, and repository recipes are present. Strict enforcement reports `OK: 3 concepts`; `okf computations` shows executor and attester for each definition; `okf id list` resolves `VC-1` through `VC-3`; 20 isolated invalid-shape probes and the missing-attester-resource control reject as expected; `mori validate` and the index check pass.
+- [ ] Deliver Milestones 2–4: `record`, `attest`, `history`, digest and revision checks, and a seeded corpus under the acceptance commands below.
 
 ## Surprises & Discoveries
 
-(None yet.)
+- Observation: the current runner records the `ScenarioReport.outcome` supplied by each scenario. It does not fold all `verdicts/` and `diagnosis/` files into an outcome, as the drafting example for `VC-1` assumed. The definition now describes the actual runner and known-defect disposition. A generic attester can verify internal consistency and digests, but must report an incomplete verdict-recomputation check unless the scenario's domain oracle can be replayed from saved inputs. Milestone 3 needs a concrete recomputation seam before it can claim confirmed attestations. See `Kenshou.Core.Run.executeRun`, `Kenshou.Core.Run.defectDisposition`, and [ADR-18](../adr/0018-keep-verification-records-immutable-and-derive-baselines.md).
 
 
 ## Decision Log
@@ -801,8 +807,7 @@ Register the bundle by adding this element to the `okfBundles` list of `mori.dha
 , Schema.OkfBundle::{
   , name = "verification"
   , path = "docs/verification"
-  , profileBinding = Some
-      (Schema.ProfileBinding.Local "docs/verification/profile.dhall")
+  , profile = Some "docs/verification/profile.dhall"
   , okfVersion = "0.2"
   , description = Some
       "Immutable records of verification runs and attestations, with the definitions of how their verdicts are computed"

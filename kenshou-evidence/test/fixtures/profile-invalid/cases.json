@@ -1,0 +1,22 @@
+[
+  {"name":"unknown-field","target":"run","op":"set","path":"/p99Millis","value":12,"expect":"frontmatter field not declared by profile: p99Millis"},
+  {"name":"non-durable-uri","target":"run","op":"set","path":"/data/0/uri","value":"file:///tmp/sample","expect":"data"},
+  {"name":"duplicate-data-uri","target":"run","op":"copy","from":"/data/0","path":"/data/-","expect":"duplicate"},
+  {"name":"dangling-computation","target":"run","op":"set","path":"/computations/0","value":"VC-9","expect":"VC-9"},
+  {"name":"dangling-previous-run","target":"run","op":"set","path":"/previousRun","value":"/runs/selftest/2026/09/missing","expect":"previousRun"},
+  {"name":"missing-cohort","target":"run","op":"remove","path":"/cohort","expect":"missing profile-required field: cohort"},
+  {"name":"git-component-without-revision","target":"run","op":"set","path":"/components/0/source","value":"git","expect":"revision"},
+  {"name":"textual-seed","target":"run","op":"set","path":"/seed","value":"one","expect":"seed"},
+  {"name":"textual-dirty-flag","target":"run","op":"set","path":"/harnessDirty","value":"false","expect":"harnessDirty"},
+  {"name":"unknown-outcome","target":"run","op":"set","path":"/outcome","value":"succeeded","expect":"outcome"},
+  {"name":"invalid-layer","target":"run","op":"set","path":"/layer","value":"other","expect":"layer"},
+  {"name":"invalid-kind","target":"run","op":"set","path":"/kind","value":"performance","expect":"kind"},
+  {"name":"missing-generated","target":"run","op":"remove","path":"/generated","expect":"generated"},
+  {"name":"wrong-run-path","target":"run","op":"set","path":"/purpose","value":"baseline","file":"misc/wrong-path","expect":"path"},
+  {"name":"missing-comparison","target":"comparison","op":"remove","path":"/comparison","expect":"comparison"},
+  {"name":"dangling-baseline","target":"comparison","op":"set","path":"/comparison/baselineRuns/0","value":"/runs/selftest/2026/09/missing","expect":"baselineRuns"},
+  {"name":"non-actor-attester","target":"attestation","op":"set","path":"/attester","value":"automated","expect":"attester"},
+  {"name":"nonhuman-exception","target":"attestation","op":"set","path":"/exception","value":{"authority":"process:robot","reason":"fixture"},"expect":"authority"},
+  {"name":"duplicate-check","target":"attestation","op":"copy","from":"/checks/0","path":"/checks/-","expect":"duplicate"},
+  {"name":"unknown-check","target":"attestation","op":"set","path":"/checks/0/name","value":"made-up","expect":"checks"}
+]

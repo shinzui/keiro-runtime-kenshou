@@ -1,6 +1,8 @@
 # Bundle Update Log
 
 ## 2026-09-26
+* **Decision**: Accepted stable evidence type and field names with only relaxing profile changes after records are committed.
+* **Decision**: Accepted immutable digest-linked verification records with baselines derived from confirmed history.
 * **Changed**: Allow index-pinned, scope-labeled isolated layer cohorts when assembled-runtime bounds exclude a current release.
 
 ## 2026-09-24
