@@ -1,6 +1,8 @@
 module Main (main) where
 
+import Control.Exception (bracket_)
 import Data.Aeson (Value (..), encode, object, toJSON, (.=))
+import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteString.Char8
 import Data.ByteString.Lazy qualified as LazyByteString
@@ -27,14 +29,14 @@ import Kenshou.Evidence.Source (ComparisonSource (..), ComparisonView (..), Veri
 import Kenshou.Evidence.Store (ObjectStat (..), ObjectStore (..), PutResult (..), StoreError (..), directoryStore, gcloudStoreWith, memoryStore)
 import Kenshou.Evidence.Types (DataKind (..), DataLink (..), Purpose (..), Revision (..), Sha256 (..), SubjectKind (..), mkRevision, mkSha256, sha256Bytes)
 import Okf.Actor (Actor (ProcessActor))
-import Okf.Document (OKFDocument (..), Verification (..), parseDocument, serializeDocument, setField, setVerified)
+import Okf.Document (OKFDocument (..), Verification (..), frontmatterLookup, parseDocument, readVerified, serializeDocument, setField, setVerified)
 import Settei (ResolveResult (..))
 import Settei.Env (envSnapshot)
 import Settei.Optparse (DiagnosticMode (NoDiagnostic), cliOverride, cliSources)
-import System.Directory (Permissions (..), createDirectoryIfMissing, doesFileExist, getPermissions, setPermissions)
+import System.Directory (Permissions (..), createDirectoryIfMissing, doesFileExist, getCurrentDirectory, getPermissions, setCurrentDirectory, setPermissions)
 import System.FilePath (takeDirectory, (</>))
 import System.IO.Temp (withSystemTempDirectory)
-import System.Process (callProcess)
+import System.Process (callProcess, readProcess)
 import Test.Hspec
 
 main :: IO ()
@@ -127,6 +129,14 @@ main = hspec do
         attested `shouldSatisfy` \case
           Right result -> result.verdict == "incomplete"
           Left _ -> False
+        case attested of
+          Right result -> do
+            attestation <- Text.IO.readFile (bundle </> result.path) >>= either (fail . show) pure . parseDocument
+            let recomputationPassed = case frontmatterLookup "checks" attestation.frontmatter of
+                  Just (Array values) -> any (\case Object fields -> KeyMap.lookup "name" fields == Just (String "verdict-recomputed") && KeyMap.lookup "result" fields == Just (String "passed"); _ -> False) values
+                  _ -> False
+            recomputationPassed `shouldBe` True
+          Left err -> fail (show err)
         checkBundle (CheckOptions bundle Nothing False False) `shouldReturn` Right []
         let tamperedStore =
               store
@@ -207,6 +217,41 @@ main = hspec do
         Text.IO.writeFile (attestations </> "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e59.md") (attestation "refuted" "2026-09-27T00:00:04Z")
         refutedHistory <- history bundle (HistoryQuery scenario Nothing [] Nothing False) >>= either (fail . show) pure
         (refutedHistory.entries !! 0).trust `shouldBe` "unverified"
+
+  describe "attest" do
+    it "confirms a clean self-test run and appends one verified entry across two attestations" do
+      withSystemTempDirectory "kenshou-confirmed-attestation" $ \root -> do
+        let attester = root </> "attester"
+            bundle = root </> "bundle"
+            runDirectory = root </> "run"
+            recordPath = "runs/selftest/2026/09/01997f3a-5b7c-7e21-8a44-0d6c2f9b1e55.md"
+        createDirectoryIfMissing True attester
+        createDirectoryIfMissing True bundle
+        createDirectoryIfMissing True runDirectory
+        callProcess "git" ["-C", attester, "init", "-q"]
+        callProcess "git" ["-C", attester, "config", "user.name", "Kenshou Test"]
+        callProcess "git" ["-C", attester, "config", "user.email", "kenshou@example.invalid"]
+        ByteString.Char8.writeFile (attester </> "README") "clean attester\n"
+        callProcess "git" ["-C", attester, "add", "README"]
+        callProcess "git" ["-C", attester, "commit", "-qm", "test: create clean attester"]
+        revision <- Text.strip . Text.pack <$> readProcess "git" ["-C", attester, "rev-parse", "HEAD"] ""
+        callProcess "cp" ["-R", "../docs/verification/.", bundle]
+        writeRunFixtureWithRevision runDirectory revision
+        source <- loadRunSource runDirectory >>= either (fail . show) pure
+        store <- memoryStore
+        links <- publishRunData store (PublishOptions "gs://bucket/runs" UploadMissing False False) runDirectory source >>= either (fail . show) pure
+        record <- either (fail . show) pure (buildRunRecord (RecordInput Baseline (UTCTime (fromGregorian 2026 9 26) 0) False Nothing [] Nothing) source links)
+        writeRunRecord bundle record >>= (`shouldSatisfy` isRight)
+        originalDirectory <- getCurrentDirectory
+        bracket_ (setCurrentDirectory attester) (setCurrentDirectory originalDirectory) do
+          first <- attest store coreRecomputers (AttestOptions bundle True False Nothing) (Text.pack recordPath)
+          first `shouldSatisfy` \case Right result -> result.verdict == "confirmed"; Left _ -> False
+          checkBundle (CheckOptions bundle Nothing False False) `shouldReturn` Right []
+          second <- attest store coreRecomputers (AttestOptions bundle True False Nothing) record.runId
+          second `shouldSatisfy` \case Right result -> result.verdict == "confirmed"; Left _ -> False
+          checkBundle (CheckOptions bundle Nothing False False) `shouldReturn` Right []
+        confirmedRun <- Text.IO.readFile (bundle </> recordPath) >>= either (fail . show) pure . parseDocument
+        length (readVerified confirmedRun.frontmatter) `shouldBe` 1
 
   describe "evidence configuration" do
     it "uses built-ins, ordered YAML, environment, then named flags" do
@@ -492,7 +537,10 @@ checkRoundTrip base sensitive = do
   serializeDocument document `shouldBe` rendered
 
 writeRunFixture :: FilePath -> IO ()
-writeRunFixture root = do
+writeRunFixture root = writeRunFixtureWithRevision root (Text.replicate 40 "f")
+
+writeRunFixtureWithRevision :: FilePath -> Text -> IO ()
+writeRunFixtureWithRevision root harnessRevision = do
   let runId = "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e55" :: Text
       spec = object ["schema" .= ("kenshou.run-spec/v1" :: Text), "runId" .= runId, "scenario" .= ("selftest/kernel/correctness/always-pass" :: Text), "seed" .= (7 :: Int)]
       specBytes = LazyByteString.toStrict (encode spec)
@@ -509,7 +557,7 @@ writeRunFixture root = do
             "spec" .= object ["sha256" .= sha256Hex specBytes],
             "timings" .= object ["startedAt" .= ("2026-09-26T00:00:00Z" :: Text), "endedAt" .= ("2026-09-26T00:00:01Z" :: Text)],
             "cohort" .= cohort,
-            "fingerprint" .= object ["host" .= object ["os" .= ("darwin" :: Text), "arch" .= ("aarch64" :: Text), "cpuModel" .= ("fixture cpu" :: Text), "logicalCores" .= (4 :: Int), "memoryBytes" .= (4096 :: Int)], "runtime" .= object ["ghc" .= ("9.12.4" :: Text)], "kenshou" .= object ["revision" .= Text.replicate 40 "f", "dirty" .= False], "postgres" .= object ["serverVersion" .= ("18.0" :: Text)]],
+            "fingerprint" .= object ["host" .= object ["os" .= ("darwin" :: Text), "arch" .= ("aarch64" :: Text), "cpuModel" .= ("fixture cpu" :: Text), "logicalCores" .= (4 :: Int), "memoryBytes" .= (4096 :: Int)], "runtime" .= object ["ghc" .= ("9.12.4" :: Text)], "kenshou" .= object ["revision" .= harnessRevision, "dirty" .= False], "postgres" .= object ["serverVersion" .= ("18.0" :: Text)]],
             "compatibility" .= object ["comparisonKey" .= fullDigest]
           ]
   ByteString.writeFile (root </> "run-spec.json") specBytes

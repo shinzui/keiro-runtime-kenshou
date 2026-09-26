@@ -21,9 +21,9 @@ import Data.Text.IO qualified as Text.IO
 import Data.Time (UTCTime, defaultTimeLocale, formatTime, getCurrentTime)
 import Kenshou.Core.Cohort (CohortIdentity (..), PlanHash (..), ResolvedComponent (..), ResolvedPackage (..))
 import Kenshou.Core.Cohort qualified as Cohort
-import Kenshou.Core.Id (newRunId, parseRunId, renderRunId)
+import Kenshou.Core.Id (newRunId, parseRunId, renderRunId, renderScenarioId)
 import Kenshou.Core.Manifest (Manifest (..), ManifestFile (..))
-import Kenshou.Core.Outcome (Outcome)
+import Kenshou.Core.Outcome (Outcome (Passed))
 import Kenshou.Core.RunSpec (CohortExpectation (..), RunSpec (..))
 import Kenshou.Evidence.Bundle (BundleWriteError, BundleWriteResult (..), writeAttestationRecord)
 import Kenshou.Evidence.Frontmatter (AttestationCheck (..), AttestationEvidence (..), EvidenceRecord (..), recordFromDocument)
@@ -75,9 +75,26 @@ data AttestError
   deriving stock (Eq, Show)
 
 -- A generic run result does not contain enough information to replay its
--- scenario oracle. Domain packages must register a recomputer explicitly.
+-- scenario oracle. The fixed self-test is the one core scenario with an
+-- independent outcome that can be derived from its identity alone.
 coreRecomputers :: [Recomputer]
-coreRecomputers = []
+coreRecomputers = [selftestOutcomeRecomputer]
+
+selftestOutcomeRecomputer :: Recomputer
+selftestOutcomeRecomputer = Recomputer "run-outcome" 1 $ \root -> do
+  loaded <- loadRunSource root
+  pure case loaded of
+    Left err -> Left (Text.pack (show err))
+    Right source
+      | renderScenarioId source.result.resultScenario == "selftest/kernel/correctness/always-pass" ->
+          Right
+            Recomputation
+              { agreesWithDocuments = source.spec.scenario == source.result.resultScenario && source.result.resultOutcome == Passed,
+                outcome = Just Passed,
+                comparisonVerdict = Nothing,
+                detail = "the fixed always-pass self-test independently requires a passed outcome"
+              }
+      | otherwise -> Left "no domain outcome oracle is registered for this scenario"
 
 attest :: ObjectStore -> [Recomputer] -> AttestOptions -> Text -> IO (Either AttestError AttestResult)
 attest store recomputers options rawTarget = do
