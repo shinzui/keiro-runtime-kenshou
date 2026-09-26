@@ -1,9 +1,11 @@
 module Kenshou.Suite.Shibuya.Fixture.KirokuWorker (role) where
 
+import Control.Concurrent (threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, takeMVar)
+import Control.Monad (when)
 import Data.Aeson (Value, object, withObject, (.!=), (.:), (.:?), (.=))
 import Data.Aeson.Types (Parser, parseEither)
-import Data.Int (Int32)
+import Data.Int (Int32, Int64)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time.Clock (getCurrentTime)
@@ -33,7 +35,11 @@ data Args = Args
     groupSize :: !Int32,
     processIndex :: !Int32,
     retryAlways :: !Bool,
-    gateAfterAttemptTwo :: !Bool
+    gateAfterAttemptTwo :: !Bool,
+    gateOnPosition :: !(Maybe Int64),
+    delayAfterEffectMicros :: !Int,
+    batchSize :: !Int32,
+    target :: !Text
   }
 
 parseArgs :: Value -> Parser Args
@@ -46,7 +52,11 @@ parseArgs = withObject "Kiroku consumer arguments" $ \value -> do
   processIndex <- value .: "processIndex"
   retryAlways <- value .:? "retryAlways" .!= False
   gateAfterAttemptTwo <- value .:? "gateAfterAttemptTwo" .!= False
-  pure Args {subscription, category, arm, member, groupSize, processIndex, retryAlways, gateAfterAttemptTwo}
+  gateOnPosition <- value .:? "gateOnPosition"
+  delayAfterEffectMicros <- value .:? "delayAfterEffectMicros" .!= 0
+  batchSize <- value .:? "batchSize" .!= 100
+  target <- value .:? "target" .!= "category"
+  pure Args {subscription, category, arm, member, groupSize, processIndex, retryAlways, gateAfterAttemptTwo, gateOnPosition, delayAfterEffectMicros, batchSize, target}
 
 worker :: RoleContext -> IO ()
 worker context = do
@@ -61,8 +71,9 @@ worker context = do
   withKirokuConnectionPool connection applicationName $ \pool ->
     withStore settings $ \store -> do
       let config =
-            (defaultKirokuAdapterConfig (SubscriptionName args.subscription) (Category (CategoryName args.category)))
-              { consumerGroup = if args.groupSize == 0 then Nothing else Just (ConsumerGroup args.member args.groupSize)
+            (defaultKirokuAdapterConfig (SubscriptionName args.subscription) (if args.target == "all-streams" then AllStreams else Category (CategoryName args.category)))
+              { consumerGroup = if args.groupSize == 0 then Nothing else Just (ConsumerGroup args.member args.groupSize),
+                batchSize = args.batchSize
               }
           handler message = do
             let GlobalPosition position = message.envelope.payload.globalPosition
@@ -70,6 +81,10 @@ worker context = do
                 attempt = maybe (-1) (\(Attempt index) -> fromIntegral index) message.envelope.attempt
             at <- liftIO getCurrentTime
             liftIO $ insertEffect pool args.arm (EffectRow position eventId args.member args.processIndex attempt at)
+            when (args.delayAfterEffectMicros > 0) (liftIO (threadDelay args.delayAfterEffectMicros))
+            if args.gateOnPosition == Just position || args.gateOnPosition == Just (-1)
+              then liftIO $ context.send (WrkCustom "effect-gate" (object ["position" .= position, "attempt" .= attempt])) >> takeMVar retryGate
+              else pure ()
             if args.gateAfterAttemptTwo && attempt == 2
               then liftIO $ context.send (WrkCustom "retry-gate" (object ["position" .= position, "attempt" .= attempt])) >> takeMVar retryGate
               else pure ()

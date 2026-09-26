@@ -9,6 +9,7 @@ import Kenshou.Suite.Shibuya.Concurrency.KeyedModel qualified as KeyedModel
 import Kenshou.Suite.Shibuya.Concurrency.KirokuGroupAcquisition qualified as KirokuGroupAcquisition
 import Kenshou.Suite.Shibuya.Concurrency.KirokuOutage qualified as KirokuOutage
 import Kenshou.Suite.Shibuya.Concurrency.KirokuRetryRestart qualified as KirokuRetryRestart
+import Kenshou.Suite.Shibuya.Concurrency.KirokuSigkillReplay qualified as KirokuSigkillReplay
 import Kenshou.Suite.Shibuya.Concurrency.KirokuStaticGroup qualified as KirokuStaticGroup
 import Kenshou.Suite.Shibuya.Concurrency.KirokuTwoOwners qualified as KirokuTwoOwners
 import Kenshou.Suite.Shibuya.Correctness.CoreBatch qualified as CoreBatch
@@ -22,4 +23,4 @@ import Kenshou.Suite.Shibuya.Correctness.PgmqAdapter qualified as PgmqAdapter
 import Kenshou.Suite.Shibuya.Roles qualified as Roles
 
 bundle :: LayerBundle
-bundle = LayerBundle Shibuya (CoreRunner.scenarios <> ConcurrentCoreRunner.scenarios <> CoreOrdering.scenarios <> ConcurrentCoreOrdering.scenarios <> [KeyedModel.scenario] <> ConcurrentCoreBatch.scenarios <> CoreBatch.scenarios <> Metrics.scenarios <> PgmqAdapter.scenarios <> [KirokuAckMapping.scenario, KirokuDepth.scenario, KirokuReplay.scenario, KirokuTwoOwners.scenario, KirokuRetryRestart.scenario, KirokuStaticGroup.scenario, KirokuGroupAcquisition.scenario, KirokuOutage.scenario]) Roles.roles
+bundle = LayerBundle Shibuya (CoreRunner.scenarios <> ConcurrentCoreRunner.scenarios <> CoreOrdering.scenarios <> ConcurrentCoreOrdering.scenarios <> [KeyedModel.scenario] <> ConcurrentCoreBatch.scenarios <> CoreBatch.scenarios <> Metrics.scenarios <> PgmqAdapter.scenarios <> [KirokuAckMapping.scenario, KirokuDepth.scenario, KirokuReplay.scenario, KirokuTwoOwners.scenario, KirokuRetryRestart.scenario, KirokuStaticGroup.scenario, KirokuGroupAcquisition.scenario, KirokuOutage.scenario, KirokuSigkillReplay.scenario]) Roles.roles

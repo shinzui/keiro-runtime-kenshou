@@ -1,0 +1,11 @@
+{
+  "schema": "kenshou.run-spec/v1",
+  "scenario": "shibuya/kiroku-adapter/concurrency/sigkill-replay-window",
+  "dimensions": { "pg.durability": "durable", "pg.version": "18" },
+  "knobs": {
+    "kiroku-adapter.batch-size": 100,
+    "kiroku-adapter.target": "all-streams",
+    "kiroku-adapter.phase": "live"
+  },
+  "environment": { "placement": "local", "postgres": { "mode": "ephemeral" } }
+}

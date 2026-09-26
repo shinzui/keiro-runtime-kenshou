@@ -102,6 +102,11 @@ provenance:
       at: 2026-09-26T17:31:00Z
       mode: "implement"
       note: "Added Kiroku backend and postmaster outage comparisons with checkpoint and replay evidence."
+    - model: "gpt-6"
+      harness: "codex"
+      at: 2026-09-26T18:00:35Z
+      mode: "implement"
+      note: "Verified Kiroku SIGKILL replay across fifty-two released/current PostgreSQL 17/18 shapes."
 ---
 
 # Cover shibuya core and its PGMQ and kiroku adapters
@@ -144,6 +149,7 @@ After this plan a maintainer can, from this repository, run `kenshou list --laye
 - [x] (2026-09-26) Registered `consumer-group-is-static` with a four-member helper in one process and four independent workers. It rejects invalid group size and per-member concurrency, verifies disjoint stream ownership and order, kills member 0 for twenty seconds while its partition lags without reassignment, then restarts that member and checks complete, duplicate-free recovery and final partition checkpoints. Historical and current adapters pass on PostgreSQL 17/18; sealed run IDs are below.
 - [x] (2026-09-26) Registered `group-acquisition-failure-strands-nothing` with 200 cancellation boundaries, a throwing member factory and cleanup callback, and two real eight-member Kiroku acquisition arms including backend termination. Historical adapter 0.5.1.2 reproduces REV-13-F1 on PostgreSQL 17/18: only the first throwing cleanup runs, the primary error is replaced and subscription threads remain. Current 0.5.1.3 releases all four acquired members, preserves the primary exception and returns to its per-arm thread baseline. The checked-in specs and sealed results are below. A `pg_stat_statements` read-call stabilization oracle remains to be added.
 - [x] (2026-09-26) Registered `postgres-outage-and-reconnect` with a named subscription backend fault, ten-second postmaster stop, retrying appender, durable effects, 200 ms checkpoint samples and a bounded replacement. Historical and current adapters on PostgreSQL 17/18 preserve all 80 events per arm. Backend termination delivers the next 40 but leaves the checkpoint at 40 during a 60-second observation; an explicit replacement replays those 40 and advances to 80. Postmaster restart catches up and checkpoints automatically with no duplicate effects. The backend checkpoint lag is an implementation finding under the owner's documented save-failure replay behavior; the contract checks pass. The fixture records named backend victims, while a separate assertion that the victim was specifically the `LISTEN` connection remains open.
+- [x] (2026-09-26) Registered `sigkill-replay-window` with twenty effect-gated process kills and seeded timed kills while a second thread appends events. Every combination of batch size 1/10/100, category/all-streams target and catch-up/live phase passed on historical 0.5.1.2 and current 0.5.1.3 on PostgreSQL 17/18. The four lanes also passed random-timing controls with 8–9 duplicate positions. Across 52 sealed runs, all 100 live or 200 catch-up events reached durable effects, each worker's positions increased, 200 ms checkpoint samples never decreased, duplicates stayed in killed uncheckpointed windows and maximum adjacent-incarnation replay stayed within the declared batch/publisher bound. The script and result ranges are below.
 - [ ] Implement and verify the Kiroku adapter scenarios, including durable crash and recovery arms on PostgreSQL 17 and 18.
 - [ ] Deliver benchmarks, soaks, telemetry comparisons, layer guide, upstream finding audit, and ADR/outcome distillation.
 
@@ -170,7 +176,7 @@ Every ID in this table names a sealed `runs/<id>/run-result.json` file from the 
 
 ### Kiroku adapter smoke results
 
-Each run is sealed in `runs/<id>/run-result.json`. The current lane uses Kiroku adapter 0.5.1.3, while the released lane uses 0.5.1.2. The sixteen `specs/shibuya-kiroku-*.json` files reproduce the current lane with `kenshou-shibuya-run` and either lane's PostgreSQL version.
+Each run is sealed in `runs/<id>/run-result.json`. The current lane uses Kiroku adapter 0.5.1.3, while the released lane uses 0.5.1.2. The twenty-one `specs/shibuya-kiroku-*.json` files reproduce the named cases with `kenshou-shibuya-run` and either lane's PostgreSQL version; the matrix script generates its remaining shape specs.
 
 | Scenario | Released PG18 / PG17 | Current PG18 / PG17 | Oracle |
 | --- | --- | --- | --- |
@@ -182,6 +188,9 @@ Each run is sealed in `runs/<id>/run-result.json`. The current lane uses Kiroku 
 | Static four-member group | `01a0de70-b03e-73c5-a288-ab93c88a2d93` / `01a0de71-3305-7343-9735-98173542a352` | `01a0de6e-ed4c-722c-b4e6-5508bc5b9cd1` / `01a0de6e-6f44-77e6-878b-09de75355947` | Invalid configurations rejected; 48 local and 192 process events handled once, static lag under `SIGKILL`, no reassignment, ordered restart recovery and final checkpoints. |
 | Partial eight-member acquisition | `01a0de80-8f6d-71b8-827c-ffa666511056` / `01a0de80-f94c-709a-b0d7-2e4eb24b7d16` | `01a0de82-a996-76f3-bca4-6085837ef281` / `01a0de83-03d3-7633-9b98-76b06ac9dc7b` | Historical REV-13-F1 reproduced as a scoped nonblocking known defect; current release cleans all members and preserves the primary exception. Both run 200 cancellation controls and two real-store arms, including four killed backends. |
 | Backend termination and postmaster restart | `01a0dec1-b59b-7590-9e20-4a6ec8a965b0` / `01a0dec3-462a-74a3-a08c-34350575670f` | `01a0debd-2cbb-73ab-8e39-61bef45aa4c4` / `01a0debe-dc53-7351-a440-f81cd894f4b1` | Eighty IDs conserved per arm. Backend save stays at 40 during 60 seconds, then an explicit replacement replays 40 and checkpoints 80; postmaster restart checkpoints its new 40 automatically without replay. |
+| Twenty-kill replay, category catch-up batch 10 | `01a0ded9-b815-73e3-80f1-18f45aea8668` / `01a0ded8-e08f-75fc-85c8-689c5fb9c1d5` | `01a0ded6-ac11-726d-b3c6-1845a18d3801` / `01a0ded5-e6a3-737d-8eca-add9b50c5ecf` | Two hundred events conserved per run, twenty duplicate positions in uncheckpointed kill windows, maximum replay ten against bound ten, monotonic checkpoint. |
+
+Run `nix develop -c bash scripts/run-shibuya-kiroku-sigkill-matrix.sh cohort/shibuya-current.project` for the current adapter, or pass `cabal.project` for the historical cohort. Each invocation runs twelve gated shapes and one seeded random control on both PostgreSQL majors. The current result range is `runs/01a0ded5-d773-737f-891b-1cefddf3b813/run-result.json` through `runs/01a0ded7-509d-70d6-8b69-b2edfb9047f3/run-result.json`; the historical range is `runs/01a0ded8-d167-7434-a68c-1efe4955ba03/run-result.json` through `runs/01a0deda-67af-71a6-83a3-ab3eace4caee/run-result.json`. All fifty-two outcomes are `passed`. The largest observed replay was one for batch size one, ten for batch size ten, and twenty for batch size one hundred or live all-streams; bounds are respectively the configured batch size or the publisher's 1000-event live all-streams batch. The four random controls recorded 8–9 duplicate positions. The script fixes twenty kills per run, and every result retains its generated spec, seed and resolved cohort.
 
 ## Surprises & Discoveries
 

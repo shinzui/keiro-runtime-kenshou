@@ -137,6 +137,13 @@ The group-acquisition fault case uses
 `specs/shibuya-kiroku-group-acquisition-pg18.json` and its `pg17` counterpart.
 The backend and postmaster outage case uses
 `specs/shibuya-kiroku-outage-pg18.json` and its `pg17` counterpart.
+The 20-kill crash-window case uses `specs/shibuya-kiroku-sigkill-pg18.json`
+and its `pg17` counterpart. Seeded timed-kill controls have `-random-` specs;
+the live all-streams control has
+`specs/shibuya-kiroku-sigkill-live-all-streams-pg18.json`. Run the full
+batch-size, target and phase matrix with
+`nix develop -c bash scripts/run-shibuya-kiroku-sigkill-matrix.sh cohort/shibuya-current.project`;
+pass `cabal.project` to compare the historical adapter.
 These check persisted checkpoints, dead-letter rows, restart replay, static
 partition ownership, partial acquisition cleanup, database recovery and durable
 effects on both supported PostgreSQL versions.

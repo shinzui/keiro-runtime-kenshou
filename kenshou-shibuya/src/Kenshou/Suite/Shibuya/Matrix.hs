@@ -113,6 +113,7 @@ cellsOf scenario = case renderScenarioId scenario of
   "shibuya/kiroku-adapter/concurrency/consumer-group-is-static" -> [(KirokuPersistence, Normal)]
   "shibuya/kiroku-adapter/concurrency/group-acquisition-failure-strands-nothing" -> [(KirokuPersistence, Cancellation)]
   "shibuya/kiroku-adapter/concurrency/postgres-outage-and-reconnect" -> [(KirokuPersistence, SynchronousException), (KirokuPersistence, Timeout)]
+  "shibuya/kiroku-adapter/concurrency/sigkill-replay-window" -> [(KirokuPersistence, Cancellation)]
   _ -> []
 
 -- Add reasons only for cells which cannot be exercised through public APIs.
