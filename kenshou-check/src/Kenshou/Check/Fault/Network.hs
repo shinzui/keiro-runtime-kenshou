@@ -6,8 +6,10 @@ module Kenshou.Check.Fault.Network
     proxyPort,
     setProxyMode,
     armQueryBarrier,
+    armResponseBarrier,
     queryBarrierReached,
     releaseQueryBarrier,
+    releaseResponseBarrier,
     resetConnections,
     proxyFault,
     proxiedConnectionString,
@@ -37,6 +39,7 @@ data TcpProxy = TcpProxy
     port :: !PortNumber,
     mode :: !(TVar ProxyMode),
     queryBarrier :: !(TVar (Maybe QueryBarrier)),
+    responseBarrier :: !(TVar (Maybe QueryBarrier)),
     connections :: !(MVar [Socket]),
     acceptor :: !(Async ())
   }
@@ -61,20 +64,35 @@ setProxyMode proxy mode = atomically (writeTVar proxy.mode mode)
 -- forwarding it to PostgreSQL. The caller can change database state after
 -- 'queryBarrierReached' and then release the exact request boundary.
 armQueryBarrier :: TcpProxy -> ByteString.ByteString -> IO QueryBarrier
-armQueryBarrier proxy needle = do
+armQueryBarrier proxy = armBarrier proxy.queryBarrier
+
+-- | Hold the first upstream response containing the supplied bytes before
+-- forwarding it to the client. Useful for stopping an adapter after PostgreSQL
+-- has read a row but before the adapter receives that row.
+armResponseBarrier :: TcpProxy -> ByteString.ByteString -> IO QueryBarrier
+armResponseBarrier proxy = armBarrier proxy.responseBarrier
+
+armBarrier :: TVar (Maybe QueryBarrier) -> ByteString.ByteString -> IO QueryBarrier
+armBarrier barrierSlot needle = do
   reached <- newEmptyMVar
   resume <- newEmptyMVar
   armed <- newTVarIO True
   let barrier = QueryBarrier needle reached resume armed
-  atomically (writeTVar proxy.queryBarrier (Just barrier))
+  atomically (writeTVar barrierSlot (Just barrier))
   pure barrier
 
 queryBarrierReached :: QueryBarrier -> IO ()
 queryBarrierReached = readMVar . (.reached)
 
 releaseQueryBarrier :: TcpProxy -> QueryBarrier -> IO ()
-releaseQueryBarrier proxy barrier = do
-  atomically (writeTVar proxy.queryBarrier Nothing)
+releaseQueryBarrier proxy = releaseBarrier proxy.queryBarrier
+
+releaseResponseBarrier :: TcpProxy -> QueryBarrier -> IO ()
+releaseResponseBarrier proxy = releaseBarrier proxy.responseBarrier
+
+releaseBarrier :: TVar (Maybe QueryBarrier) -> QueryBarrier -> IO ()
+releaseBarrier barrierSlot barrier = do
+  atomically (writeTVar barrierSlot Nothing)
   void (tryPutMVar barrier.resume ())
 
 resetConnections :: TcpProxy -> IO Int
@@ -108,9 +126,10 @@ startProxy upstream = do
   port <- socketPort listening
   mode <- newTVarIO Forward
   queryBarrier <- newTVarIO Nothing
+  responseBarrier <- newTVarIO Nothing
   connections <- newMVar []
-  acceptor <- async (acceptLoop upstream listening mode queryBarrier connections)
-  pure (TcpProxy listening port mode queryBarrier connections acceptor)
+  acceptor <- async (acceptLoop upstream listening mode queryBarrier responseBarrier connections)
+  pure (TcpProxy listening port mode queryBarrier responseBarrier connections acceptor)
 
 stopProxy :: TcpProxy -> IO ()
 stopProxy proxy = do
@@ -118,8 +137,8 @@ stopProxy proxy = do
   close proxy.listening `catch` ignore
   void (resetConnections proxy)
 
-acceptLoop :: IO (HostName, PortNumber) -> Socket -> TVar ProxyMode -> TVar (Maybe QueryBarrier) -> MVar [Socket] -> IO ()
-acceptLoop upstream listening mode queryBarrier connections = forever do
+acceptLoop :: IO (HostName, PortNumber) -> Socket -> TVar ProxyMode -> TVar (Maybe QueryBarrier) -> TVar (Maybe QueryBarrier) -> MVar [Socket] -> IO ()
+acceptLoop upstream listening mode queryBarrier responseBarrier connections = forever do
   (downstream, _) <- accept listening
   current <- readTVarIO mode
   if current == RefuseNew
@@ -128,7 +147,7 @@ acceptLoop upstream listening mode queryBarrier connections = forever do
       (host, port) <- upstream
       upstreamSocket <- connectTo host port
       modifyMVar_ connections (pure . (downstream :) . (upstreamSocket :))
-      race_ (pump mode queryBarrier True downstream upstreamSocket) (pump mode queryBarrier False upstreamSocket downstream) `finally` do
+      race_ (pump mode queryBarrier downstream upstreamSocket) (pump mode responseBarrier upstreamSocket downstream) `finally` do
         close downstream `catch` ignore
         close upstreamSocket `catch` ignore
 
@@ -138,13 +157,13 @@ connectTo host port = do
     [] -> ioError (userError "proxy upstream did not resolve")
     address : _ -> bracketOnError (socket (addrFamily address) Stream defaultProtocol) close \socket -> connect socket (addrAddress address) >> pure socket
 
-pump :: TVar ProxyMode -> TVar (Maybe QueryBarrier) -> Bool -> Socket -> Socket -> IO ()
-pump mode queryBarrier inspect source destination = go ByteString.empty
+pump :: TVar ProxyMode -> TVar (Maybe QueryBarrier) -> Socket -> Socket -> IO ()
+pump mode barrier source destination = go ByteString.empty
   where
     go carry = do
       chunk <- Socket.recv source 32768
       unless (ByteString.null chunk) do
-        nextCarry <- if inspect then pauseOnQuery queryBarrier carry chunk else pure ByteString.empty
+        nextCarry <- pauseOnQuery barrier carry chunk
         awaitMode mode chunk
         current <- readTVarIO mode
         case current of

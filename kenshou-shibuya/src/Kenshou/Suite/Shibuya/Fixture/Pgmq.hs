@@ -1,6 +1,7 @@
 module Kenshou.Suite.Shibuya.Fixture.Pgmq
   ( PgmqFixture (..),
     withPgmqFixture,
+    withPgmqConnectionPool,
     runPgmqStack,
     queueRows,
     archiveRows,
@@ -39,20 +40,24 @@ data PgmqFixture = PgmqFixture {pool :: !Pool, queue :: !QueueName}
 
 withPgmqFixture :: RunContext -> Text -> Int -> (PgmqFixture -> IO a) -> IO a
 withPgmqFixture context suffix poolSize action =
-  bracket acquire Pool.release $ \pool -> do
+  withPgmqConnectionPool (requirePostgres context).connectionString poolSize $ \pool -> do
     let queue = queueFor context suffix
     created <- runPgmqStack pool (createQueue queue)
     case created of
       Left err -> ioError (userError (show err))
       Right () -> action (PgmqFixture pool queue) `finally` dropFixtureQueue pool queue
-  where
-    acquire =
-      Pool.acquire $
+
+withPgmqConnectionPool :: Text -> Int -> (Pool -> IO a) -> IO a
+withPgmqConnectionPool connection poolSize =
+  bracket
+    ( Pool.acquire $
         PoolConfig.settings
           [ PoolConfig.size poolSize,
             PoolConfig.acquisitionTimeout 5,
-            PoolConfig.staticConnectionSettings (Connection.connectionString (requirePostgres context).connectionString <> Connection.applicationName "kenshou-shibuya-pgmq")
+            PoolConfig.staticConnectionSettings (Connection.connectionString connection <> Connection.applicationName "kenshou-shibuya-pgmq")
           ]
+    )
+    Pool.release
 
 queueFor :: RunContext -> Text -> QueueName
 queueFor context suffix =
