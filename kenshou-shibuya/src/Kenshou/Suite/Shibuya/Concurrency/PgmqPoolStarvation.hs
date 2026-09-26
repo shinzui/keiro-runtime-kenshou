@@ -42,7 +42,7 @@ scenario =
             { reference = "mori://shinzui/shibuya-pgmq-adapter/okf/bug-reports/concepts/BUG-1",
               summary = "Long polls can defer AckOk and transactional dead-letter acknowledgement until shutdown",
               expectedFailures = ["acknowledgement-deadline"],
-              appliesTo = OnlyWhen (VersionBelow "shibuya-pgmq-adapter" "0.16.1.0" :| [])
+              appliesTo = OnlyWhen (VersionBelow "shibuya-pgmq-adapter" "0.16.2.0" :| [])
             },
       run = runPoolStarvation
     }

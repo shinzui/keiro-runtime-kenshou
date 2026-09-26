@@ -6,11 +6,20 @@ import Data.Text qualified as Text
 import Hedgehog (forAll, (===))
 import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
-import Kenshou.Core.Bundle (LayerBundle (..))
-import Kenshou.Core.Scenario (Scenario (..))
+import Kenshou.Core.Bundle (LayerBundle (..), mkRegistry)
+import Kenshou.Core.Context (Environment (..), RunContext (..), newRunState, readRunState)
+import Kenshou.Core.Env (EnvRequirements (..))
+import Kenshou.Core.Env.Postgres (withPostgresEnv)
+import Kenshou.Core.Id (renderRunId)
+import Kenshou.Core.Log (nullLogger)
+import Kenshou.Core.Outcome (Outcome (..))
+import Kenshou.Core.RunSpec (EffectiveRunSpec (..), EnvironmentSpec (..), RunSpec (..), SpecPlacement (..))
+import Kenshou.Core.RunSpec.Resolve (resolveRunSpec)
+import Kenshou.Core.Scenario (Scenario (..), ScenarioReport (..))
 import Kenshou.Suite.Shibuya (bundle)
 import Kenshou.Suite.Shibuya.Cohort (CoreLine (..), coreLine, knownOnReleasedCore, rev)
 import Kenshou.Suite.Shibuya.Concurrency.KeyedModel (Action (..), Item (..), ModelCase (..), modelProperty, runCase)
+import Kenshou.Suite.Shibuya.Concurrency.PgmqPoolStarvation qualified as PgmqPoolStarvation
 import Kenshou.Suite.Shibuya.Knobs (DecisionPattern (..), PartitionMode (..), parseConcurrency, parseDecisions, parseOrdering, parsePartitions, parseStrategy, renderDecisions, renderPartitions)
 import Kenshou.Suite.Shibuya.Matrix (allCells, cellsOf, uncovered)
 import Kenshou.Suite.Shibuya.Roles (runGcMode)
@@ -18,7 +27,7 @@ import MetricsSpec qualified
 import Shibuya.Policy (Concurrency (..), OrderingPolicy (..), validatePolicy)
 import SyntheticSpec qualified
 import System.Environment (getArgs, getExecutablePath)
-import System.Exit (ExitCode (..))
+import System.Exit (ExitCode (..), exitFailure)
 import System.Process (proc, readCreateProcessWithExitCode)
 import System.Timeout (timeout)
 import Test.Hspec
@@ -28,7 +37,29 @@ main :: IO ()
 main =
   getArgs >>= \case
     ["--gc-probe", mode] -> runGcMode (Text.pack mode)
+    ["--pgmq-live-probe", version] -> runPgmqLiveProbe version
     _ -> hspec spec
+
+runPgmqLiveProbe :: String -> IO ()
+runPgmqLiveProbe version = do
+  let scenario = PgmqPoolStarvation.scenario
+      input = RunSpec Nothing scenario.id Nothing [] [("pg.version", Text.pack version)] Nothing Nothing Nothing (EnvironmentSpec RunLocal Nothing Nothing mempty Nothing Nothing) Nothing Nothing mempty
+  registry <- either (fail . show) pure (mkRegistry [bundle])
+  (_, resolved) <- resolveRunSpec registry input >>= either (fail . show) pure
+  let directory = "/tmp/kenshou-shibuya-pgmq-live-" <> Text.unpack (renderRunId resolved.runId)
+  case (scenario.requires.postgres, resolved.environment.postgres) of
+    (Just requirement, Just postgresSpec) -> do
+      result <- withPostgresEnv nullLogger directory resolved.runId requirement postgresSpec resolved.dimensions $ \postgres -> do
+        state <- newRunState
+        let probeContext = RunContext resolved.runId scenario.id resolved.knobs resolved.dimensions resolved.seed resolved.phases (Environment (Just postgres) mempty) resolved.environment resolved.comparison directory nullLogger state
+        report <- scenario.run probeContext
+        (summaries, _, _, _) <- readRunState state
+        print summaries
+        pure report
+      case result of
+        Left err -> print err >> exitFailure
+        Right report -> print report >> if report.outcome == Passed then pure () else exitFailure
+    _ -> fail "PGMQ live probe requires a PostgreSQL environment"
 
 spec :: Spec
 spec = do
