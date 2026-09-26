@@ -12,14 +12,29 @@ import Kenshou.Suite.Shibuya (bundle)
 import Kenshou.Suite.Shibuya.Cohort (CoreLine (..), coreLine, knownOnReleasedCore, rev)
 import Kenshou.Suite.Shibuya.Knobs (DecisionPattern (..), PartitionMode (..), parseConcurrency, parseDecisions, parseOrdering, parsePartitions, parseStrategy, renderDecisions, renderPartitions)
 import Kenshou.Suite.Shibuya.Matrix (allCells, cellsOf, uncovered)
+import Kenshou.Suite.Shibuya.Roles (runGcMode)
 import MetricsSpec qualified
 import Shibuya.Policy (Concurrency (..), OrderingPolicy (..), validatePolicy)
 import SyntheticSpec qualified
+import System.Environment (getArgs, getExecutablePath)
+import System.Exit (ExitCode (..))
+import System.Process (proc, readCreateProcessWithExitCode)
+import System.Timeout (timeout)
 import Test.Hspec
 import Test.Hspec.Hedgehog (hedgehog)
 
 main :: IO ()
-main = hspec $ do
+main =
+  getArgs >>= \case
+    ["--gc-probe", mode] -> runGcMode (Text.pack mode)
+    _ -> hspec spec
+
+spec :: Spec
+spec = do
+  describe "process-isolated GC liveness" $
+    it "keeps the Shibuya caller alive with and without a retained application handle" $ do
+      executable <- getExecutablePath
+      mapM_ (checkMode executable) ["live-idle", "finite-ignore", "finite-stop-all", "halted", "failed-source"]
   MetricsSpec.spec
   SyntheticSpec.spec
   describe "lifecycle matrix" $ do
@@ -78,3 +93,9 @@ main = hspec $ do
       length (nub tags) `shouldBe` length tags
       all (`elem` allCells) tags `shouldBe` True
     exercised = concatMap (cellsOf . (.id)) bundle.scenarios
+    checkMode executable mode = do
+      outcome <- timeout 12000000 $ readCreateProcessWithExitCode (proc executable ["--gc-probe", mode]) ""
+      case outcome of
+        Nothing -> expectationFailure (mode <> ": GC probe timed out")
+        Just (ExitSuccess, _, _) -> pure ()
+        Just (exitCode, _, stderrText) -> expectationFailure (mode <> ": " <> show exitCode <> ": " <> stderrText)

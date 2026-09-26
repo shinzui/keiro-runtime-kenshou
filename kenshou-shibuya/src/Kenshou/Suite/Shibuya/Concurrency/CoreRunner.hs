@@ -15,12 +15,15 @@ import Data.Text qualified as Text
 import Data.Time.Clock (diffUTCTime, getCurrentTime)
 import Effectful (IOE, Limit (..), Persistence (..), UnliftStrategy (..), liftIO, runEff, withEffToIO, (:>))
 import GHC.Conc (listThreads)
+import Kenshou.Check.Process (awaitMark, awaitReady, roleProcess, sendCommand, spawn, stopGracefully, withSupervisor)
+import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension (noDimensions)
 import Kenshou.Core.Env (noEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobInt, knobText, mkKnobName, renderKnobName)
 import Kenshou.Core.Phase (zeroPhases)
+import Kenshou.Core.Role (ControlMessage (..))
 import Kenshou.Core.Scenario (KnownDefect (..), Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
 import Kenshou.Suite.Shibuya.Cohort (knownOnReleasedCore, rev)
 import Kenshou.Suite.Shibuya.Fixture.Handlers (HandlerScript (..), HandlerStats (..), defaultHandlerScript, handlerStats, newHandlerProbe, scriptedHandler)
@@ -36,11 +39,45 @@ import Shibuya.Core.Types (MessageId (..), mkEnvelope)
 import Shibuya.Policy (Concurrency (..), OrderingPolicy)
 import Shibuya.Telemetry.Effect (runTracingNoop)
 import Streamly.Data.Stream qualified as Stream
+import System.Exit (ExitCode (..))
 import System.Mem (performMajorGC)
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [haltWakesIdleIntake, leasedButUnfinalizedUpperBound, haltStrandsLeases, finalizationFailure, stopAllOnFailure, adapterShutdownFailure, blockingAdapterShutdown, forcedShutdownConserves, startupCancellation]
+scenarios = [haltWakesIdleIntake, leasedButUnfinalizedUpperBound, haltStrandsLeases, finalizationFailure, stopAllOnFailure, gcLiveness, adapterShutdownFailure, blockingAdapterShutdown, forcedShutdownConserves, startupCancellation]
+
+gcLiveness :: Scenario
+gcLiveness =
+  Scenario
+    { id = either (error . Text.unpack) id (parseScenarioId "shibuya/core-runner/concurrency/gc-liveness-with-dropped-handle"),
+      revision = 1,
+      summary = "A caller survives major collections with a live idle processor or after its AppHandle is dropped.",
+      tier = TierSmoke,
+      placement = PlaceEither,
+      knobs = [],
+      dimensions = noDimensions,
+      phases = zeroPhases,
+      requires = noEnvironment,
+      knownDefect = Nothing,
+      run = \context -> do
+        failures <- withCheck context $ \checkEnv -> withSupervisor checkEnv $ \supervisor -> do
+          concat <$> mapM (uncurry (runArm checkEnv supervisor)) (zip [0 ..] ["live-idle", "finite-ignore", "finite-stop-all", "halted", "failed-source"])
+        putSummary context Verdicts "gc-liveness" (object ["modes" .= (["live-idle", "finite-ignore", "finite-stop-all", "halted", "failed-source"] :: [Text]), "failures" .= failures])
+        pure $ if null failures then passed else failedWith failures (Text.intercalate "; " failures)
+    }
+  where
+    runArm checkEnv supervisor index mode = do
+      result <- try @SomeException $ do
+        specification <- roleProcess checkEnv "shibuya/gc-probe" index (object ["mode" .= mode])
+        child <- spawn supervisor specification
+        awaitReady child 5000
+        sendCommand child CtlStart
+        awaitMark child "survived" 12000
+        stopGracefully supervisor child 2000
+      pure $ case result of
+        Right ExitSuccess -> []
+        Right exitCode -> [mode <> ": worker exited " <> Text.pack (show exitCode)]
+        Left exception -> [mode <> ": " <> Text.pack (Exception.displayException exception)]
 
 startupCancellation :: Scenario
 startupCancellation =

@@ -37,6 +37,7 @@ library
     Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter
     Kenshou.Suite.Shibuya.Knobs
     Kenshou.Suite.Shibuya.Matrix
+    Kenshou.Suite.Shibuya.Roles
 
   build-depends:
     aeson >=2.2 && <2.3,
@@ -47,6 +48,7 @@ library
     effectful-core >=2.6 && <2.7,
     http-client,
     http-types,
+    kenshou-check,
     kenshou-core,
     kenshou-measure,
     kenshou-telemetry,
@@ -79,6 +81,7 @@ test-suite kenshou-shibuya-test
     hspec-hedgehog >=0.0 && <0.4,
     kenshou-core,
     kenshou-shibuya,
+    process,
     shibuya-core,
     stm >=2.5 && <2.6,
     text >=2.1 && <2.2,

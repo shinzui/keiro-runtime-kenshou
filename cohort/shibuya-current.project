@@ -3,6 +3,7 @@
 -- Cabal resolves package paths from the working directory at the repo root.
 packages:
   kenshou-core/kenshou-core.cabal,
+  kenshou-check/kenshou-check.cabal,
   kenshou-measure/kenshou-measure.cabal,
   kenshou-telemetry/kenshou-telemetry.cabal,
   kenshou-shibuya/kenshou-shibuya.cabal

@@ -37,6 +37,11 @@ provenance:
       at: 2026-09-25T19:14:42Z
       mode: "implement"
       note: "Continued Shibuya core lifecycle coverage with bounded shutdown scenario"
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-26T00:33:18Z
+      mode: "implement"
+      note: "Added process-isolated GC liveness coverage and current-release execution."
 ---
 
 # Cover shibuya core and its PGMQ and kiroku adapters
@@ -56,12 +61,14 @@ After this plan a maintainer can, from this repository, run `kenshou list --laye
 ## Progress
 
 - [x] (2026-09-23) Core baseline: the Shibuya package, knobs, synthetic adapter, eleven registered scenarios, cohort capability probe, and twenty package tests run on the released cohort; focused current-release tests also pass.
-- [ ] Complete the core lifecycle, ordering, batching, metrics and boundary-matrix scenarios; run cohort-sensitive cases on released, head, and isolated current-release lanes.
+- [x] (2026-09-25) Registered `gc-liveness-with-dropped-handle` with five process-isolated ownership states. The full CLI scenario passed on historical 0.9.0.3 and pinned remediation; the isolated Hackage 0.10.0.0 package test passed the same five subprocess probes.
+- [ ] Complete the remaining core ordering model and lifecycle matrix accounting; run the other cohort-sensitive cases on released, head, and isolated current-release lanes.
 - [ ] Implement and verify the PGMQ and Kiroku adapter scenarios, including durable crash and recovery arms on PostgreSQL 17 and 18.
 - [ ] Deliver benchmarks, soaks, telemetry comparisons, layer guide, upstream finding audit, and ADR/outcome distillation.
 
 ## Surprises & Discoveries
 
+- The live-idle and childless-supervisor GC cases require different ownership states. One worker waits with a live idle processor; four others let `waitApp` return, drop the application handle, and run fifty major collections before reporting survival. Keeping these in separate processes prevents the parent harness from retaining the handle or absorbing a linked exception. Sealed historical run `runs/01a0db1b-fdd1-7300-9c6d-3b260469cac7/run-result.json` and pinned-remediation run `runs/01a0db1e-0b98-76e4-bf38-0b8844ba4c8f/run-result.json` passed; each has five distinct worker control logs with `survived` and `done`. The isolated current-release project passed 30 package examples, including the same five process probes.
 - The host shell does not contain `ghc-9.12.4`; all Cabal commands in this implementation need `nix develop -c`. The full build and both prerequisite worker self-tests passed inside that shell on 2026-09-23.
 - The local upstream shibuya checkout now declares `shibuya-core` 0.10.0.0, while both checked-in cohorts still pin 0.9.0.3; the PGMQ and kiroku adapter checkouts similarly declare 0.16.1.0 and 0.5.1.3 versus cohort pins 0.16.0.0 and 0.5.1.2. The implementation targets the checked-in cohort contract and must test both pins explicitly. The plan's claim that the upstream head has the same package version was true of its pinned head commit, not the checkout's current tip.
 - The released-core duplicate-ID scenario reproduced REV-3-F2: `runApp` accepted duplicate IDs and pulled a source. The run result `runs/01a0ce7f-e937-746a-a328-322fbf03641b/run-result.json` records `knownDefect.status = reproduced` and `blocking = false`. The invalid-configuration scenario passed on the same cohort.
