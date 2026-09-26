@@ -106,6 +106,11 @@ provenance:
       at: 2026-09-26T05:17:41Z
       mode: "implement"
       note: "Recorded EP-10 PGMQ effect-gated SIGKILL and retry-budget evidence."
+    - model: "gpt-6"
+      harness: "codex"
+      at: 2026-09-26T14:02:39Z
+      mode: "implement"
+      note: "Recorded EP-10 PGMQ postmaster and backend termination recovery across historical and current PostgreSQL 17/18 lanes."
 ---
 
 # Build an extensive verification suite for the keiro runtime
@@ -302,6 +307,7 @@ The SIGKILL recovery tree was fetched and verified again after all cell VMs were
 
 ## Surprises & Discoveries
 
+- EP-10's gated PGMQ outage scenarios now have sealed historical and current-release PostgreSQL 17/18 results for both postmaster restart and backend termination. All default-workload producer IDs reached durable handler effects and both arms drained in every run. Isolated current Shibuya 0.10.0.0 and adapter 0.16.1.0 passed postmaster restart (`runs/01a0de0e-274c-76f0-b197-fb148c673ef4/run-result.json`, `runs/01a0de0e-c680-76ca-a57b-8acd846289bf/run-result.json`). Historical adapter 0.16.0.0 reproduced only its missing exhausted-acknowledgement callback. Backend termination reproduced the existing `mori://shinzui/pgmq-hs/okf/bug-reports/concepts/BUG-1` disconnect classification on both pgmq-effectful 0.6.1.0 and 0.6.1.1; the external restart loop recovered every message. A pre-crash Hasql oracle pool initially hung after postmaster recovery, so the fixture now acquires fresh pools for the effect ledger, recovery checks and queue cleanup. EP-10 records all run paths and keeps the other current-release PGMQ scenarios open.
 - EP-10's direct-DLQ conservation probe moved 10,000 messages per fault arm on historical PostgreSQL 17/18 with no missing or duplicate IDs. Pinned remediation still links adapter 0.16.0.0 and reproduced REV-11-F1: nine extra DLQ copies at 10,000 messages under backend termination, with no source loss (`runs/01a0ddbe-0d8f-74c9-b010-9478ea1edc9f/run-result.json`). The owner changelog and `mori://shinzui/shibuya/plans/41-verify-pgmq-acknowledgement-and-dead-letter-recovery-under-faults` place the delete-first fix in 0.16.1.0, so only duplicate-copy verdicts are nonblocking below that version. A new Shibuya-only executable links isolated Hackage 0.16.1.0 and emits sealed run results with an explicit, index-pinned layer cohort identity; its full atomic-move scenario passed on PostgreSQL 17/18 (`runs/01a0ddd6-4b62-779d-b81c-cf3f50bfcef5/run-result.json`, `runs/01a0ddd5-f6cd-74fa-8a0c-e9412f4b6ba3/run-result.json`). [ADR-2](../adr/0002-every-result-carries-a-resolved-cohort-identity.md) limits that evidence to the named layer. The producer-owned bug report and current-release runs of the other PGMQ scenarios remain open.
 - EP-10's first prefetch probe used ordinary graceful shutdown, which drained all 20 messages before it could observe buffered leases. The bounded-inbox forced-stop probe leaves 10 prefetched rows leased and four without prefetch on every tested line; no message is lost. Its normal arm could not distinguish adapter reads from already leased core-inbox rows. A new PostgreSQL-to-client response barrier stops a normal adapter after a committed read but before delivery. Historical 0.16.0.0 on PostgreSQL 17/18, pinned remediation on PostgreSQL 18, and isolated current 0.16.1.0 on PostgreSQL 17/18 all confirm immediate lease release, no adapter delivery and direct redelivery at count two. The EP-10 Surprises section records the sealed historical and remediation runs; the current-release CLI lane remains unsealed.
 

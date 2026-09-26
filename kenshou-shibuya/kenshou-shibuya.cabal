@@ -33,6 +33,7 @@ library
     Kenshou.Suite.Shibuya.Concurrency.PgmqHandlerOutlivesLease
     Kenshou.Suite.Shibuya.Concurrency.PgmqLeaseSizing
     Kenshou.Suite.Shibuya.Concurrency.PgmqMultiProcess
+    Kenshou.Suite.Shibuya.Concurrency.PgmqOutageRestart
     Kenshou.Suite.Shibuya.Concurrency.PgmqPoolStarvation
     Kenshou.Suite.Shibuya.Concurrency.PgmqPrefetchShutdown
     Kenshou.Suite.Shibuya.Concurrency.PgmqShutdownRelease

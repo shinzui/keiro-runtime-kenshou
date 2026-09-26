@@ -55,7 +55,9 @@ withPgmqFixture context suffix poolSize action =
     created <- runPgmqStack pool (createQueue queue)
     case created of
       Left err -> ioError (userError (show err))
-      Right () -> action (PgmqFixture pool queue) `finally` dropFixtureQueue pool queue
+      Right () ->
+        action (PgmqFixture pool queue)
+          `finally` withPgmqConnectionPool (requirePostgres context).connectionString poolSize (\cleanupPool -> dropFixtureQueue cleanupPool queue)
 
 withPgmqConnectionPool :: Text -> Int -> (Pool -> IO a) -> IO a
 withPgmqConnectionPool connection poolSize =

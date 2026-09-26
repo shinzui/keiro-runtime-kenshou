@@ -1,0 +1,7 @@
+{
+  "schema": "kenshou.run-spec/v1",
+  "scenario": "shibuya/pgmq-adapter/concurrency/postgres-outage-and-the-restart-loop",
+  "dimensions": { "pg.durability": "durable", "pg.version": "17" },
+  "knobs": { "workload.messages": 100, "outage.seconds": 10 },
+  "environment": { "placement": "local", "postgres": { "mode": "ephemeral" } }
+}

@@ -22,6 +22,7 @@ import Kenshou.Suite.Shibuya.Concurrency.PgmqDeadLetterAtomic qualified as PgmqD
 import Kenshou.Suite.Shibuya.Concurrency.PgmqHandlerOutlivesLease qualified as PgmqHandlerOutlivesLease
 import Kenshou.Suite.Shibuya.Concurrency.PgmqLeaseSizing qualified as PgmqLeaseSizing
 import Kenshou.Suite.Shibuya.Concurrency.PgmqMultiProcess qualified as PgmqMultiProcess
+import Kenshou.Suite.Shibuya.Concurrency.PgmqOutageRestart qualified as PgmqOutageRestart
 import Kenshou.Suite.Shibuya.Concurrency.PgmqPoolStarvation qualified as PgmqPoolStarvation
 import Kenshou.Suite.Shibuya.Concurrency.PgmqPrefetchShutdown qualified as PgmqPrefetchShutdown
 import Kenshou.Suite.Shibuya.Concurrency.PgmqShutdownRelease qualified as PgmqShutdownRelease
@@ -36,7 +37,7 @@ import Shibuya.Core.Metrics (ProcessorId (..))
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [PgmqAckMapping.scenario, shutdownLatency, autoDeadLetterCountsDeliveries, PgmqPoolStarvation.scenario, PgmqPrefetchShutdown.scenario, PgmqShutdownRelease.scenario, PgmqLeaseSizing.scenario, PgmqHandlerOutlivesLease.scenario, PgmqMultiProcess.scenario, PgmqSigkillAck.scenario, PgmqDeadLetterAtomic.scenario]
+scenarios = [PgmqAckMapping.scenario, shutdownLatency, autoDeadLetterCountsDeliveries, PgmqPoolStarvation.scenario, PgmqPrefetchShutdown.scenario, PgmqShutdownRelease.scenario, PgmqLeaseSizing.scenario, PgmqHandlerOutlivesLease.scenario, PgmqMultiProcess.scenario, PgmqSigkillAck.scenario, PgmqDeadLetterAtomic.scenario, PgmqOutageRestart.scenario, PgmqOutageRestart.backendScenario]
 
 autoDeadLetterCountsDeliveries :: Scenario
 autoDeadLetterCountsDeliveries =

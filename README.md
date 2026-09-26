@@ -120,6 +120,14 @@ The same spec for PostgreSQL 17 is
 `cohort/shibuya-current.json` identity and writes the usual run result and
 manifest under `runs/`.
 
+PostgreSQL outage and backend termination comparisons use the same runner with
+`specs/shibuya-current-outage-pg18.json` and
+`specs/shibuya-current-backend-termination-pg18.json`; corresponding `pg17`
+specs are checked in. The backend termination scenario has a scoped known
+PGMQ disconnect-classification defect. Its exit code is zero when the only
+failure matches that defect; inspect `knownDefect.status` and `failures` in
+`run-result.json` for the actual verdict.
+
 ## Related
 
 - `mori://shinzui/keiro` — the runtime family under verification
