@@ -29,6 +29,7 @@ library
     Kenshou.Suite.Shibuya.Concurrency.CoreOrdering
     Kenshou.Suite.Shibuya.Concurrency.CoreRunner
     Kenshou.Suite.Shibuya.Concurrency.KeyedModel
+    Kenshou.Suite.Shibuya.Concurrency.PgmqPoolStarvation
     Kenshou.Suite.Shibuya.Correctness.CoreBatch
     Kenshou.Suite.Shibuya.Correctness.CoreOrdering
     Kenshou.Suite.Shibuya.Correctness.CoreRunner

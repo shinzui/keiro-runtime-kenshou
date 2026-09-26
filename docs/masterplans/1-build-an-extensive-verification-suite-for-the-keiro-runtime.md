@@ -258,6 +258,8 @@ The following cross-plan decisions should become ADRs in `docs/adr/` when the ow
 
 ## Progress
 
+EP-10 now registers the PGMQ long-poll pool-starvation probe. Two processors sharing a two-connection consumer pool handle one message each, but both acknowledgements stall for 25 seconds while two PostgreSQL long polls stay active; shutdown then completes `AckOk` and the transactional dead-letter move. Historical PostgreSQL 17/18 and pinned remediation PostgreSQL 18 reproduce the failure. Owner `mori://shinzui/shibuya-pgmq-adapter/okf/bug-reports/concepts/BUG-1` records the broken published acknowledgement behavior, and the scenario's known-defect exception is scoped below adapter 0.16.1.0. The isolated 0.16.1.0 project compiles the new case and passes 33 package examples; a live current-release run and the remaining PGMQ scenarios remain open.
+
 EP-10 added a process-isolated Shibuya GC liveness scenario covering a live idle processor and four completed or failed ownership states after the application handle is dropped. Historical 0.9.0.3 and pinned remediation full-CLI runs passed all five workers; the isolated Hackage 0.10.0.0 package suite passed the same subprocess probes. The keyed-scheduler model also passed 200 seeded cases on historical and pinned remediation cohorts, checking per-key order and serialization, finalization, concurrency bounds, and repeated graceful stop; Hackage 0.10.0.0 passed 100 generated cases and focused model arms in a 33-example package suite. The remaining lifecycle matrix accounting, adapter and duration work are open.
 
 EP-10's real PostgreSQL PGMQ adapter fixture now covers idle shutdown and automatic dead lettering. The retry-budget scenario passed on historical releases against PostgreSQL 17 and 18, including a zero-budget PostgreSQL 18 arm, and on the pinned remediation cohort against PostgreSQL 18. It shows that raw reads consume the delivery budget before any handler failure; direct-DLQ SQL and callback counts agree, with no source rows left. The isolated current-release project compiles both scenarios and passes 33 Shibuya package tests. The other PGMQ cases and a sealed live run on the isolated current release remain open.
@@ -285,6 +287,8 @@ EP-16's upgrade script now holds an exclusive lease through image apply and desc
 The SIGKILL recovery tree was fetched and verified again after all cell VMs were stopped, with the same four artifacts and manifest digest. A one-byte change to a separate fetched copy made verification exit 1 naming `submission/work`, and a sealed run-ID resubmission exited 4 with `run-id-already-used`. The agent-credential overwrite attempt and later lifecycle checks remain open.
 
 ## Surprises & Discoveries
+
+- EP-10 found that a shared pool sized exactly to two long-polling processors can defer both `AckOk` and a transactional dead-letter move until application shutdown. Its SQL oracle uses a separate pool and observes both source rows still present, no DLQ row and two active long polls at 25 seconds. The owner report is `mori://shinzui/shibuya-pgmq-adapter/okf/bug-reports/concepts/BUG-1`; local details and run paths are in `docs/findings/15-shibuya-pgmq-long-poll-pool-starvation.md`. The precise known-defect key is `acknowledgement-deadline` for adapter versions below 0.16.1.0; the current release still needs live testing.
 
 Document cross-plan insights, dependency changes, scope adjustments, or unexpected
 interactions between child plans. Provide concise evidence.

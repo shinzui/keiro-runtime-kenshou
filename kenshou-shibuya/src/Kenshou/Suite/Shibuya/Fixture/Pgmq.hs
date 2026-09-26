@@ -7,6 +7,7 @@ module Kenshou.Suite.Shibuya.Fixture.Pgmq
     queueReadState,
     queuePayloads,
     dlqRowsWithReason,
+    activeLongPolls,
   )
 where
 
@@ -111,4 +112,14 @@ dlqRowsWithReason fixture reason = do
           (Encoders.param (Encoders.nonNullable Encoders.text))
           (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
   result <- Pool.use fixture.pool (Session.statement reason statement)
+  either (ioError . userError . show) pure result
+
+activeLongPolls :: PgmqFixture -> IO Int64
+activeLongPolls fixture = do
+  let statement =
+        Statement.preparable
+          "select count(*) from pg_stat_activity where pid <> pg_backend_pid() and application_name = 'kenshou-shibuya-pgmq' and state = 'active' and query like '%pgmq.read_with_poll%'"
+          Encoders.noParams
+          (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
+  result <- Pool.use fixture.pool (Session.statement () statement)
   either (ioError . userError . show) pure result
