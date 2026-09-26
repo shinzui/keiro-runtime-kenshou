@@ -3,6 +3,7 @@ module Kenshou.Suite.Shibuya.Fixture.Pgmq
     withPgmqFixture,
     runPgmqStack,
     queueRows,
+    dlqRowsWithReason,
   )
 where
 
@@ -69,4 +70,15 @@ queueRows fixture = do
   let table = "pgmq.q_" <> queueNameToText fixture.queue
       statement = Statement.preparable ("select count(*) from " <> table) Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
   result <- Pool.use fixture.pool (Session.statement () statement)
+  either (ioError . userError . show) pure result
+
+dlqRowsWithReason :: PgmqFixture -> Text -> IO Int64
+dlqRowsWithReason fixture reason = do
+  let table = "pgmq.q_" <> queueNameToText fixture.queue
+      statement =
+        Statement.preparable
+          ("select count(*) from " <> table <> " where message->>'dead_letter_reason_code' = $1")
+          (Encoders.param (Encoders.nonNullable Encoders.text))
+          (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
+  result <- Pool.use fixture.pool (Session.statement reason statement)
   either (ioError . userError . show) pure result
