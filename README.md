@@ -120,6 +120,11 @@ The same spec for PostgreSQL 17 is
 `cohort/shibuya-current.json` identity and writes the usual run result and
 manifest under `runs/`.
 
+The isolated executable also handles the hidden `worker --role` protocol used
+by Shibuya's child-process scenarios. Calling `run` starts those workers
+automatically. Checked-in specs cover every registered PGMQ scenario on
+PostgreSQL 17 and 18.
+
 PostgreSQL outage and backend termination comparisons use the same runner with
 `specs/shibuya-current-outage-pg18.json` and
 `specs/shibuya-current-backend-termination-pg18.json`; corresponding `pg17`

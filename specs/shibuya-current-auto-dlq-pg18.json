@@ -1,0 +1,7 @@
+{
+  "schema": "kenshou.run-spec/v1",
+  "scenario": "shibuya/pgmq-adapter/correctness/auto-dead-letter-counts-deliveries",
+  "dimensions": { "pg.durability": "durable", "pg.version": "18" },
+  "knobs": {},
+  "environment": { "placement": "local", "postgres": { "mode": "ephemeral" } }
+}

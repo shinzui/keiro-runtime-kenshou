@@ -1,0 +1,7 @@
+{
+  "schema": "kenshou.run-spec/v1",
+  "scenario": "shibuya/pgmq-adapter/concurrency/sigkill-between-handler-success-and-ack",
+  "dimensions": { "pg.durability": "durable", "pg.version": "17" },
+  "knobs": { "crash.kills": 20, "pgmq-adapter.visibility-timeout-seconds": 5 },
+  "environment": { "placement": "local", "postgres": { "mode": "ephemeral" } }
+}

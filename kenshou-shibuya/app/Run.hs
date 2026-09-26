@@ -9,6 +9,8 @@ import Kenshou.Core.Bundle (mkRegistry)
 import Kenshou.Core.Canonical (sha256Hex)
 import Kenshou.Core.Cohort (identityFromPlan, loadCohortDescriptor)
 import Kenshou.Core.Outcome (renderOutcome)
+import Kenshou.Core.Role (mkRoleName)
+import Kenshou.Core.Role.Dispatch (runWorker)
 import Kenshou.Core.Run (RunOutput (..), RunnerConfig (..), executeRun)
 import Kenshou.Core.RunResult (RunResult (..))
 import Kenshou.Core.RunSpec (RunSpec)
@@ -22,6 +24,10 @@ main = do
   arguments <- getArgs
   case arguments of
     ["run", specPath, outRoot] -> runCurrent arguments specPath outRoot
+    ["worker", "--role", roleText] -> do
+      registry <- either (fail . show . NonEmpty.toList) pure (mkRegistry [bundle])
+      role <- either (fail . Text.unpack) pure (mkRoleName (Text.pack roleText))
+      exitWith =<< runWorker registry role
     _ -> do
       hPutStrLn stderr "usage: kenshou-shibuya-run run RUN-SPEC.json OUT-DIR"
       exitWith (ExitFailure 2)
