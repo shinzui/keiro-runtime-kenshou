@@ -15,6 +15,7 @@ import Kenshou.Core.Bundle (LayerBundle)
 import Kenshou.Core.Cli (CliCommand, HelpTopic)
 import Kenshou.Core.Selftest qualified as Selftest
 import Kenshou.Diagnose.SelfTest qualified as DiagnoseSelftest
+import Kenshou.Evidence.Cli (recordCommand)
 import Kenshou.Measure.Cli qualified as Measure
 import Kenshou.Measure.Selftest qualified as MeasureSelftest
 import Kenshou.Suite.Kafka qualified as Kafka
@@ -30,7 +31,7 @@ bundles :: [LayerBundle]
 bundles = [Selftest.bundle, MeasureSelftest.bundle, CheckSelftest.bundle, DiagnoseSelftest.bundle, TelemetrySelftest.selfTestBundle, Pgmq.bundle, Kiroku.bundle, Keiro.bundle, Shibuya.bundle, Kafka.bundle]
 
 commands :: [CliCommand]
-commands = [listCommand, planCommand, Help.helpCommand, runCommand, executeCommand, overheadCommand, Measure.summarizeCommand, Measure.compareCommand, Diagnose.diagnoseCommand, workerCommand, cohortCommand, completionsCommand]
+commands = [listCommand, planCommand, Help.helpCommand, runCommand, executeCommand, overheadCommand, Measure.summarizeCommand, Measure.compareCommand, Diagnose.diagnoseCommand, recordCommand, workerCommand, cohortCommand, completionsCommand]
 
 topics :: [HelpTopic]
 topics = Help.topics

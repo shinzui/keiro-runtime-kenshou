@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/record-result-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "status", "message", "exitCode"],
+  "properties": {
+    "schema": {"const": "kenshou.record-result/v1"},
+    "status": {"enum": ["ok", "error"]},
+    "message": {"type": "string"},
+    "exitCode": {"enum": [0, 1, 2, 4]},
+    "path": {"type": "string", "pattern": "^runs/[a-z]+/[0-9]{4}/[0-9]{2}/[0-9a-f-]+\\.md$"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "ok"}}},
+      "then": {"required": ["path"], "properties": {"exitCode": {"const": 0}}},
+      "else": {"properties": {"exitCode": {"enum": [1, 2, 4]}}}
+    }
+  ]
+}

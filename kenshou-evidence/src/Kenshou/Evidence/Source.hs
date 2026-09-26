@@ -47,6 +47,7 @@ data RunResultView = RunResultView
   { resultRunId :: !RunId,
     resultScenario :: !ScenarioId,
     resultOutcome :: !Outcome,
+    resultTier :: !Text,
     resultSeed :: !Word64,
     resultSpecSha256 :: !Text,
     resultStartedAt :: !UTCTime,
@@ -68,6 +69,7 @@ instance FromJSON RunResultView where
       <$> value .: "runId"
       <*> value .: "scenario"
       <*> value .: "outcome"
+      <*> value .: "tier"
       <*> value .: "seed"
       <*> spec .: "sha256"
       <*> timings .: "startedAt"

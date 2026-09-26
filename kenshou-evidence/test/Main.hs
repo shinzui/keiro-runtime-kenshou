@@ -1,26 +1,112 @@
 module Main (main) where
 
-import Data.Aeson (Value, encode, object, (.=))
+import Data.Aeson (Value (..), encode, object, (.=))
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteString.Char8
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Data.Text.IO qualified as Text.IO
+import Data.Time (UTCTime (..), fromGregorian)
 import Kenshou.Core.Canonical (sha256Hex)
-import Kenshou.Core.Id (parseRunId)
+import Kenshou.Core.Id (parseRunId, parseScenarioId)
 import Kenshou.Core.Manifest (writeManifest)
+import Kenshou.Core.Outcome (Outcome (Passed))
+import Kenshou.Evidence.Bundle (BundleWriteError (..), BundleWriteResult (..), runRecordPath, writeRunRecordWith)
+import Kenshou.Evidence.Frontmatter (EvidenceRecord (..), recordFromDocument, recordToDocument)
 import Kenshou.Evidence.Publish (PublishError (..), PublishOptions (..), UploadMode (..), publishRunData)
+import Kenshou.Evidence.Record (RecordInput (..), RecordOptions (..), RecordOutcome (..), buildRunRecord, recordRunWith)
 import Kenshou.Evidence.Source (loadRunSource)
 import Kenshou.Evidence.Store (ObjectStat (..), ObjectStore (..), PutResult (..), StoreError (..), directoryStore, gcloudStoreWith, memoryStore)
-import Kenshou.Evidence.Types (DataKind (..), DataLink (..), Sha256 (..), mkRevision, mkSha256, sha256Bytes)
-import System.Directory (Permissions (..), getPermissions, setPermissions)
+import Kenshou.Evidence.Types (DataKind (..), DataLink (..), Purpose (..), Revision (..), Sha256 (..), SubjectKind (..), mkRevision, mkSha256, sha256Bytes)
+import Okf.Document (parseDocument, serializeDocument)
+import System.Directory (Permissions (..), createDirectoryIfMissing, doesFileExist, getPermissions, setPermissions)
 import System.FilePath ((</>))
 import System.IO.Temp (withSystemTempDirectory)
 import Test.Hspec
 
 main :: IO ()
 main = hspec do
+  describe "recordRunWith" do
+    it "records once and reports the same fact on replay" do
+      withSystemTempDirectory "kenshou-record-command" $ \root -> do
+        let runDirectory = root </> "run"
+            bundle = root </> "bundle"
+            options = RecordOptions bundle "gs://bucket/runs" Baseline UploadMissing False False False Nothing []
+            timestamp = UTCTime (fromGregorian 2026 9 26) 0
+            path = "runs/selftest/2026/09/01997f3a-5b7c-7e21-8a44-0d6c2f9b1e55.md"
+            accept _ = pure (Right ())
+        createDirectoryIfMissing True runDirectory
+        createDirectoryIfMissing True bundle
+        writeRunFixture runDirectory
+        store <- memoryStore
+        recordRunWith (writeRunRecordWith accept) timestamp store options runDirectory `shouldReturn` Right (Recorded path)
+        recordRunWith (writeRunRecordWith accept) timestamp store options runDirectory `shouldReturn` Right (AlreadyRecorded path)
+
+  describe "buildRunRecord" do
+    it "derives a round-trippable run record from verified source and links" do
+      withSystemTempDirectory "kenshou-record" $ \root -> do
+        writeRunFixture root
+        source <- loadRunSource root >>= either (fail . show) pure
+        store <- memoryStore
+        links <- publishRunData store (PublishOptions "gs://bucket/runs" UploadMissing False False) root source >>= either (fail . show) pure
+        let input = RecordInput Baseline (UTCTime (fromGregorian 2026 9 26) 0) False Nothing [] Nothing
+        record <- either (fail . show) pure (buildRunRecord input source links)
+        recordFromDocument (recordToDocument record) `shouldBe` Right record
+        let path = "runs/selftest/2026/09/01997f3a-5b7c-7e21-8a44-0d6c2f9b1e55.md"
+            logPath = root </> "runs/selftest/2026/09/log.md"
+            accept _ = pure (Right ())
+        runRecordPath record `shouldBe` Right path
+        writeRunRecordWith accept root record `shouldReturn` Right (RecordCreated path)
+        originalLog <- Text.IO.readFile logPath
+        writeRunRecordWith accept root record `shouldReturn` Right (RecordPresent path)
+        Text.IO.readFile logPath `shouldReturn` originalLog
+        writeRunRecordWith accept root (record {title = "changed"}) `shouldReturn` Left (RecordConflict path)
+        let another = record {runId = "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e56"}
+            rejectedPath = "runs/selftest/2026/09/01997f3a-5b7c-7e21-8a44-0d6c2f9b1e56.md"
+        writeRunRecordWith (\_ -> pure (Left (BundleInvalid "fixture rejection"))) root another `shouldReturn` Left (BundleInvalid "fixture rejection")
+        doesFileExist (root </> rejectedPath) `shouldReturn` False
+        Text.IO.readFile logPath `shouldReturn` originalLog
+
+  describe "record frontmatter" do
+    it "round-trips YAML-sensitive strings and a numeric-looking digest" do
+      scenario <- either (fail . show) pure (parseScenarioId "selftest/kernel/correctness/always-pass")
+      let digest = Sha256 (Text.replicate 31 "0" <> "e" <> Text.replicate 32 "0")
+          base =
+            EvidenceRecord
+              { title = "Run: title # with punctuation",
+                description = "A fixed description",
+                generatedAt = "2026-09-26T20:00:00Z",
+                runId = "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e55",
+                purpose = Investigation,
+                scenario,
+                tier = "smoke",
+                placement = "local",
+                outcome = Passed,
+                startedAt = "2026-09-26T19:59:00Z",
+                finishedAt = "2026-09-26T20:00:00Z",
+                subject = "mori://shinzui/keiro-runtime-kenshou",
+                subjectKind = SubjectProject,
+                harnessRevision = Revision (Text.replicate 40 "f"),
+                harnessDirty = True,
+                computations = ["VC-1"],
+                dataLinks = [DataLink ManifestData "gs://bucket/manifest.json" digest "application/json" 42],
+                cohort = "head",
+                solverPlanHash = digest,
+                components = [],
+                environment = object ["os" .= ("darwin" :: Text)],
+                seed = 7,
+                compatibilityKey = digest,
+                knobs = [],
+                dimensions = [],
+                knownDefects = [],
+                produced = [],
+                previousRun = Nothing,
+                body = "The computation is [VC-1](/computations/run-outcome.md).\n"
+              }
+      mapM_ (checkRoundTrip base) ["off", "on", "no", "yes", "null", "~", "true", "18", "1e10"]
+
   describe "gcloudStore" do
     it "requires the active project and reads size and SHA-256 metadata" do
       withSystemTempDirectory "kenshou-gcloud-store" $ \root -> do
@@ -48,7 +134,7 @@ main = hspec do
           Left err -> expectationFailure (show err)
           Right links -> map (.kind) links `shouldBe` [RunSpecData, RunResultData, ManifestData]
         publishRunData store options root source `shouldReturn` published
-        let verifyOnly = options {uploadMode = VerifyOnly}
+        let verifyOnly = PublishOptions "gs://bucket/runs" VerifyOnly True False
         publishRunData store verifyOnly root source `shouldReturn` published
         original <- ByteString.readFile (root </> "run-result.json")
         ByteString.Char8.appendFile (root </> "run-result.json") "changed"
@@ -139,24 +225,34 @@ isLeft = either (const True) (const False)
 isRight :: Either left right -> Bool
 isRight = not . isLeft
 
+checkRoundTrip :: EvidenceRecord -> Text -> IO ()
+checkRoundTrip base sensitive = do
+  let record = base {knobs = [("sensitive", String sensitive)], dimensions = [("sensitive", sensitive)]}
+      rendered = serializeDocument (recordToDocument record)
+  document <- either (fail . show) pure (parseDocument rendered)
+  recordFromDocument document `shouldBe` Right record
+  serializeDocument document `shouldBe` rendered
+
 writeRunFixture :: FilePath -> IO ()
 writeRunFixture root = do
   let runId = "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e55" :: Text
       spec = object ["schema" .= ("kenshou.run-spec/v1" :: Text), "runId" .= runId, "scenario" .= ("selftest/kernel/correctness/always-pass" :: Text), "seed" .= (7 :: Int)]
       specBytes = LazyByteString.toStrict (encode spec)
-      cohort = object ["schema" .= ("kenshou.cohort-identity/v1" :: Text), "cohort" .= ("fixture" :: Text), "compiler" .= ("ghc" :: Text), "cabalVersion" .= ("3.14" :: Text), "os" .= ("darwin" :: Text), "arch" .= ("aarch64" :: Text), "planHash" .= ("sha256:" :: Text), "descriptorSha256" .= ("sha256:" :: Text), "components" .= ([] :: [Value])]
+      fullDigest = "sha256:" <> Text.replicate 64 "a"
+      cohort = object ["schema" .= ("kenshou.cohort-identity/v1" :: Text), "cohort" .= ("fixture" :: Text), "compiler" .= ("ghc" :: Text), "cabalVersion" .= ("3.14" :: Text), "os" .= ("darwin" :: Text), "arch" .= ("aarch64" :: Text), "planHash" .= fullDigest, "descriptorSha256" .= fullDigest, "components" .= [object ["id" .= ("selftest" :: Text), "moriUri" .= ("mori://shinzui/keiro-runtime-kenshou" :: Text), "packages" .= [object ["name" .= ("kenshou-core" :: Text), "version" .= ("0.1.0.0" :: Text), "source" .= object ["type" .= ("hackage" :: Text)]]]]]]
       result =
         object
           [ "schema" .= ("kenshou.run-result/v1" :: Text),
             "runId" .= runId,
             "scenario" .= ("selftest/kernel/correctness/always-pass" :: Text),
             "outcome" .= ("passed" :: Text),
+            "tier" .= ("smoke" :: Text),
             "seed" .= (7 :: Int),
             "spec" .= object ["sha256" .= sha256Hex specBytes],
             "timings" .= object ["startedAt" .= ("2026-09-26T00:00:00Z" :: Text), "endedAt" .= ("2026-09-26T00:00:01Z" :: Text)],
             "cohort" .= cohort,
-            "fingerprint" .= object [],
-            "compatibility" .= object []
+            "fingerprint" .= object ["host" .= object ["os" .= ("darwin" :: Text), "arch" .= ("aarch64" :: Text), "cpuModel" .= ("fixture cpu" :: Text), "logicalCores" .= (4 :: Int), "memoryBytes" .= (4096 :: Int)], "runtime" .= object ["ghc" .= ("9.12.4" :: Text)], "kenshou" .= object ["revision" .= Text.replicate 40 "f", "dirty" .= False], "postgres" .= object ["serverVersion" .= ("18.0" :: Text)]],
+            "compatibility" .= object ["comparisonKey" .= fullDigest]
           ]
   ByteString.writeFile (root </> "run-spec.json") specBytes
   LazyByteString.writeFile (root </> "run-result.json") (encode result)

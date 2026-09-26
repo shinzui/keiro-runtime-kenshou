@@ -13,6 +13,10 @@ main = hspec do
     it "returns success for help" do
       runWithArgs ["--help"] `shouldReturnCode` ExitSuccess
 
+    it "returns success for command-specific help" do
+      runWithArgs ["record", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["run", "--help"] `shouldReturnCode` ExitSuccess
+
     it "returns 2 for an unknown subcommand" do
       runWithArgs ["cohort", "bogus"] `shouldReturnCode` ExitFailure 2
 

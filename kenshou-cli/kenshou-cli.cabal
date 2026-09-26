@@ -68,6 +68,7 @@ library
     kenshou-check,
     kenshou-core,
     kenshou-diagnose,
+    kenshou-evidence,
     kenshou-kafka,
     kenshou-keiro,
     kenshou-kiroku,

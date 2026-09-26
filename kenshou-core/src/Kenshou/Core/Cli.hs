@@ -74,8 +74,8 @@ commandParser commands = visibleParser <|> hiddenParser
     groupParser groupValue = subparser (groupModifier groupValue <> foldMap commandModifier (commandsIn groupValue))
     groupModifier Internal = mempty
     groupModifier groupValue = commandGroup (groupLabel groupValue)
-    commandModifier commandValue = command commandValue.name (info commandValue.parser (progDesc commandValue.description))
-    hiddenCommand commandValue = command commandValue.name (info commandValue.parser (progDesc commandValue.description)) <> internal
+    commandModifier commandValue = command commandValue.name (info (commandValue.parser <**> helper) (progDesc commandValue.description))
+    hiddenCommand commandValue = command commandValue.name (info (commandValue.parser <**> helper) (progDesc commandValue.description)) <> internal
 
 groupLabel :: CliGroup -> String
 groupLabel Discovery = "Discovery"
