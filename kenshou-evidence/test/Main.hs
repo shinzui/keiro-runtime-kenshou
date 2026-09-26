@@ -15,7 +15,7 @@ import Kenshou.Core.Cli.Config (ConfigInputs (..))
 import Kenshou.Core.Id (parseRunId, parseScenarioId)
 import Kenshou.Core.Manifest (writeManifest)
 import Kenshou.Core.Outcome (Outcome (Passed))
-import Kenshou.Evidence.Attest (AttestOptions (..), AttestResult (..), attest, coreRecomputers)
+import Kenshou.Evidence.Attest (AttestOptions (..), AttestResult (..), Recomputation (..), Recomputer (..), attest, coreRecomputers)
 import Kenshou.Evidence.Bundle (BundleWriteError (..), BundleWriteResult (..), runRecordPath, writeAttestationRecord, writeRunRecord, writeRunRecordWith)
 import Kenshou.Evidence.Check (CheckOptions (..), Finding (..), checkBundle, checkBundleWithStore, checkDocument)
 import Kenshou.Evidence.Config (EvidenceDefaults (..), bundleRootKey, dataBaseUriKey, projectKey, resolveEvidenceDefaults)
@@ -139,6 +139,12 @@ main = hspec do
                 }
         tampered <- attest tamperedStore coreRecomputers (AttestOptions bundle False False Nothing) baselineId
         tampered `shouldSatisfy` \case
+          Right result -> result.verdict == "refuted"
+          Left _ -> False
+        checkBundle (CheckOptions bundle Nothing False False) `shouldReturn` Right []
+        let disagreeing = Recomputer "run-outcome" 1 (\_ -> pure (Right (Recomputation False (Just Passed) Nothing "replayed outcome differs")))
+        recomputed <- attest store [disagreeing] (AttestOptions bundle False False Nothing) baselineId
+        recomputed `shouldSatisfy` \case
           Right result -> result.verdict == "refuted"
           Left _ -> False
         checkBundle (CheckOptions bundle Nothing False False) `shouldReturn` Right []

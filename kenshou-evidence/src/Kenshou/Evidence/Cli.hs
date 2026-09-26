@@ -1,4 +1,4 @@
-module Kenshou.Evidence.Cli (recordCommand, attestCommand, evidenceCommand) where
+module Kenshou.Evidence.Cli (recordCommand, attestCommand, attestCommandWith, evidenceCommand) where
 
 import Control.Exception (IOException, try)
 import Data.Aeson (encode, object, (.=))
@@ -8,7 +8,7 @@ import Data.Text qualified as Text
 import Data.Text.IO qualified as Text.IO
 import Kenshou.Core.Cli (CliCommand (..), CliEnv, CliGroup (Evidence))
 import Kenshou.Core.Cli.Config (ConfigInputs (..), configInputsParser)
-import Kenshou.Evidence.Attest (AttestError (..), AttestOptions (..), AttestResult (..), attest, coreRecomputers)
+import Kenshou.Evidence.Attest (AttestError (..), AttestOptions (..), AttestResult (..), Recomputer, attest, coreRecomputers)
 import Kenshou.Evidence.Bundle (BundleWriteError (..))
 import Kenshou.Evidence.Check (CheckError (..), CheckOptions (..), Finding (..), checkBundleWithStore)
 import Kenshou.Evidence.Config (EvidenceDefaults (..), bundleRootKey, dataBaseUriKey, evidenceConfig, projectKey, resolveEvidenceDefaults)
@@ -48,7 +48,10 @@ recordCommand :: CliCommand
 recordCommand = CliCommand "record" "Publish a finished run or comparison as an OKF evidence record" Evidence False (recordHandler <$> recordParser)
 
 attestCommand :: CliCommand
-attestCommand = CliCommand "attest" "Verify a recorded run and append an attestation" Evidence False (attestHandler <$> attestParser)
+attestCommand = attestCommandWith coreRecomputers
+
+attestCommandWith :: [Recomputer] -> CliCommand
+attestCommandWith recomputers = CliCommand "attest" "Verify a recorded run and append an attestation" Evidence False (attestHandler recomputers <$> attestParser)
 
 data AttestCli = AttestCli
   { target :: !Text,
@@ -79,8 +82,8 @@ attestParser =
     <*> parserOptionGroup "Human exception" (optional (Text.pack <$> strOption (long "reason" <> metavar "TEXT" <> help "Reason for accepting the anomaly")))
     <*> parserOptionGroup "Output" (switch (long "json" <> help "Emit one JSON attestation result"))
 
-attestHandler :: AttestCli -> CliEnv -> IO ExitCode
-attestHandler options _
+attestHandler :: [Recomputer] -> AttestCli -> CliEnv -> IO ExitCode
+attestHandler recomputers options _
   | Just output <- schemaDiagnostic options.config.diagnostic (describe evidenceConfig) = Text.IO.putStr output >> pure ExitSuccess
   | otherwise = do
       processEnvironment <- fmap (fmap (\(name, setting) -> (Text.pack name, Text.pack setting))) getEnvironment
@@ -106,7 +109,7 @@ attestHandler options _
                   case selected of
                     Left message -> attestResponse options.json 2 message Nothing
                     Right store -> do
-                      attested <- attest store coreRecomputers (AttestOptions (Text.unpack defaults.bundleRoot) options.offline options.linkedOnly accepted) options.target
+                      attested <- attest store recomputers (AttestOptions (Text.unpack defaults.bundleRoot) options.offline options.linkedOnly accepted) options.target
                       case attested of
                         Left err -> attestResponse options.json (attestExitCode err) (Text.pack (show err)) Nothing
                         Right observed -> attestResponse options.json (case observed.verdict of "confirmed" -> 0; "refuted" -> 1; _ -> 3) observed.verdict (Just observed.path)

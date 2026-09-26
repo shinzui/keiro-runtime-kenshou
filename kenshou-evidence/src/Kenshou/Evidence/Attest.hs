@@ -11,7 +11,7 @@ where
 
 import Control.Exception (IOException, try)
 import Control.Monad (forM)
-import Data.Aeson (Value (..), eitherDecodeStrict', object, (.=))
+import Data.Aeson (Result (..), Value (..), eitherDecodeStrict', fromJSON, object, (.=))
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString qualified as ByteString
 import Data.List (find, nub, sort)
@@ -32,7 +32,7 @@ import Kenshou.Evidence.Source (RunResultView (..), RunSource (..), loadRunSourc
 import Kenshou.Evidence.Store (ObjectStore (..))
 import Kenshou.Evidence.Types (ComponentRef (..), ComponentSource (FromGit), DataKind (..), DataLink (..), Revision (..), Sha256 (..), mkRevision, sha256Bytes)
 import Okf.Actor (Actor (ProcessActor))
-import Okf.Document (OKFDocument (..), Verification (..), parseDocument, readVerified, serializeDocument, setVerified)
+import Okf.Document (OKFDocument (..), Verification (..), frontmatterLookup, parseDocument, readVerified, serializeDocument, setVerified)
 import System.Directory (doesDirectoryExist, listDirectory)
 import System.Environment (getEnvironment)
 import System.Exit (ExitCode (..))
@@ -139,7 +139,7 @@ attestRun store recomputers options relative = do
               let cohort = checkCohort now record source
                   environment = checkEnvironment now record source
                   clean = checkClean record source attesterDirty
-              recomputed <- checkRecomputation recomputers scratch record source
+              recomputed <- checkRecomputation options.bundleRoot recomputers scratch record source
               let checks = [digestCheck, revisions, cohort, recomputed, environment, clean]
                   verdict = deriveVerdict checks
                   run = "/" <> Text.pack relative
@@ -377,20 +377,48 @@ checkClean record source attesterDirty =
             then check "clean-worktree" "passed" "run and attester worktrees are clean"
             else check "clean-worktree" "skipped" "run dirty state is unavailable"
 
-checkRecomputation :: [Recomputer] -> FilePath -> EvidenceRecord -> Maybe RunSource -> IO AttestationCheck
-checkRecomputation _ _ _ Nothing = pure (check "verdict-recomputed" "skipped" "source documents are unavailable")
-checkRecomputation recomputers root record _ = do
-  let needed = ["run-outcome" | "VC-1" `elem` record.computations] <> ["kenshou-summary" | "VC-2" `elem` record.computations]
-      selected = [recomputer | name <- needed, recomputer <- recomputers, recomputer.algorithm == name && recomputer.algorithmVersion == 1]
-  if length selected /= length needed || null needed
-    then pure (check "verdict-recomputed" "skipped" "a scenario oracle or computation recomputer is not registered")
-    else do
-      results <- forM selected (\recomputer -> recomputer.recompute root)
-      pure case sequence results of
-        Left reason -> check "verdict-recomputed" "failed" reason
-        Right recomputed
-          | all (\result -> result.agreesWithDocuments && maybe True (== record.outcome) result.outcome) recomputed -> check "verdict-recomputed" "passed" "registered recomputers agree with the source documents"
-          | otherwise -> check "verdict-recomputed" "failed" "registered recomputation disagrees with the record"
+checkRecomputation :: FilePath -> [Recomputer] -> FilePath -> EvidenceRecord -> Maybe RunSource -> IO AttestationCheck
+checkRecomputation _ _ _ _ Nothing = pure (check "verdict-recomputed" "skipped" "source documents are unavailable")
+checkRecomputation bundle recomputers root record _ = do
+  definitions <- computationDefinitions bundle
+  let configured =
+        [ (handle, lookup handle definitions >>= \(name, version) -> find (\candidate -> candidate.algorithm == name && candidate.algorithmVersion == version) recomputers)
+        | handle <- record.computations
+        ]
+      missing = [handle | (handle, Nothing) <- configured]
+  results <- forM [(handle, recomputer) | (handle, Just recomputer) <- configured] $ \(handle, recomputer) -> do
+    result <- recomputer.recompute root
+    pure (handle, result)
+  let contradictions =
+        [ handle
+        | (handle, Right result) <- results,
+          not result.agreesWithDocuments || maybe False (/= record.outcome) result.outcome
+        ]
+      unavailable = missing <> [handle | (handle, Left _) <- results]
+  pure $
+    if not (null contradictions)
+      then check "verdict-recomputed" "failed" ("recomputation disagrees with the record: " <> Text.intercalate ", " contradictions)
+      else
+        if null configured
+          then check "verdict-recomputed" "skipped" "run names no computation definitions"
+          else
+            if not (null unavailable)
+              then check "verdict-recomputed" "skipped" ("recomputer unavailable for " <> Text.intercalate ", " unavailable)
+              else check "verdict-recomputed" "passed" "registered recomputers agree with the source documents"
+
+computationDefinitions :: FilePath -> IO [(Text, (Text, Integer))]
+computationDefinitions bundle = do
+  let folder = bundle </> "computations"
+  names <- ifMDirectory folder listDirectory
+  fmap concat $ forM [name | name <- names, takeExtension name == ".md"] $ \name -> do
+    content <- Text.IO.readFile (folder </> name)
+    pure case parseDocument content of
+      Left _ -> []
+      Right document -> case (frontmatterLookup "computationId" document.frontmatter, frontmatterLookup "algorithm" document.frontmatter, frontmatterLookup "algorithmVersion" document.frontmatter) of
+        (Just (String handle), Just (String algorithm), Just rawVersion) -> case fromJSON rawVersion of
+          Success version -> [(handle, (algorithm, version))]
+          Error _ -> []
+        _ -> []
 
 deriveVerdict :: [AttestationCheck] -> Text
 deriveVerdict checks

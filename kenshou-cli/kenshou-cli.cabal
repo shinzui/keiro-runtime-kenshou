@@ -36,6 +36,7 @@ library
   hs-source-dirs: src
   exposed-modules:
     Kenshou.Cli
+    Kenshou.Cli.Attest
     Kenshou.Cli.Cohort
     Kenshou.Cli.Command.Cohort
     Kenshou.Cli.Command.Execute
