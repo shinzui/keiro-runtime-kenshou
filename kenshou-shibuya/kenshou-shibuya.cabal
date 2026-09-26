@@ -33,7 +33,9 @@ library
     Kenshou.Suite.Shibuya.Correctness.CoreOrdering
     Kenshou.Suite.Shibuya.Correctness.CoreRunner
     Kenshou.Suite.Shibuya.Correctness.Metrics
+    Kenshou.Suite.Shibuya.Correctness.PgmqAdapter
     Kenshou.Suite.Shibuya.Fixture.Handlers
+    Kenshou.Suite.Shibuya.Fixture.Pgmq
     Kenshou.Suite.Shibuya.Fixture.RestartLoop
     Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter
     Kenshou.Suite.Shibuya.Knobs
@@ -47,6 +49,8 @@ library
     bytestring >=0.12 && <0.13,
     containers >=0.7 && <0.8,
     effectful-core >=2.6 && <2.7,
+    hasql,
+    hasql-pool,
     hedgehog >=1.4 && <1.8,
     http-client,
     http-types,
@@ -54,8 +58,10 @@ library
     kenshou-core,
     kenshou-measure,
     kenshou-telemetry,
+    pgmq-effectful,
     shibuya-core,
     shibuya-metrics,
+    shibuya-pgmq-adapter,
     stm >=2.5 && <2.6,
     streamly-core >=0.3 && <0.4,
     text >=2.1 && <2.2,
