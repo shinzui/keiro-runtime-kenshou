@@ -1,0 +1,7 @@
+{
+  "schema": "kenshou.run-spec/v1",
+  "scenario": "shibuya/kiroku-adapter/concurrency/two-processes-one-member",
+  "dimensions": { "pg.durability": "durable", "pg.version": "18" },
+  "knobs": {},
+  "environment": { "placement": "local", "postgres": { "mode": "ephemeral" } }
+}

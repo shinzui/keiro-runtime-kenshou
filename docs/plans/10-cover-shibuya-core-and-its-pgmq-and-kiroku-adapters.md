@@ -77,6 +77,11 @@ provenance:
       at: 2026-09-26T15:15:00Z
       mode: "implement"
       note: "Added halt and forced-shutdown batch replay verification on PostgreSQL 17/18."
+    - model: "gpt-6"
+      harness: "codex"
+      at: 2026-09-26T15:25:00Z
+      mode: "implement"
+      note: "Added process-backed Kiroku same-member ownership probe with durable duplicate-effect evidence."
 ---
 
 # Cover shibuya core and its PGMQ and kiroku adapters
@@ -114,6 +119,7 @@ After this plan a maintainer can, from this repository, run `kenshou list --laye
 - [x] (2026-09-26) Executed all 13 registered PGMQ adapter scenarios through the isolated current-release runner on PostgreSQL 17 and 18, including both shutdown polling modes and the three process-role scenarios. The only reproduced failures are the scoped long-poll pool starvation and backend-disconnect findings. Checked-in specs reproduce every run below.
 - [x] (2026-09-26) Started the Kiroku adapter milestone with a run-scoped category, real Kiroku store, SQL checkpoint and dead-letter oracles, and two registered smoke scenarios. Historical adapter 0.5.1.2 and current 0.5.1.3 each passed acknowledgement mapping and depth-one delivery on PostgreSQL 17 and 18; checked-in specs and sealed run IDs are below.
 - [x] (2026-09-26) Added halt and forced mid-batch shutdown replay. Both historical and current adapters passed on PostgreSQL 17 and 18: halt at event 3 and forced stop with event 5 in the handler left checkpoint 0, then a final run replayed all eight events and checkpointed at 8. Each incarnation observed an ordered prefix and no event was skipped.
+- [x] (2026-09-26) Added a Kiroku consumer worker role and durable PostgreSQL effect ledger. `two-processes-one-member` passed on historical 0.5.1.2 and current 0.5.1.3 on PostgreSQL 17/18: both processes handled all 40 events, producing 80 effects, a duplicate factor of exactly 2, with checkpoint samples 0→40 and clean worker exits. This is reported as the cost of the adapter leaving the Kiroku startup guard off; [the local finding](../findings/16-shibuya-kiroku-same-member-duplicate-work.md) recommends exposing that guard.
 - [ ] Implement and verify the Kiroku adapter scenarios, including durable crash and recovery arms on PostgreSQL 17 and 18.
 - [ ] Deliver benchmarks, soaks, telemetry comparisons, layer guide, upstream finding audit, and ADR/outcome distillation.
 
@@ -140,13 +146,14 @@ Every ID in this table names a sealed `runs/<id>/run-result.json` file from the 
 
 ### Kiroku adapter smoke results
 
-Each run is sealed in `runs/<id>/run-result.json`. The current lane uses Kiroku adapter 0.5.1.3, while the released lane uses 0.5.1.2. The six `specs/shibuya-kiroku-*.json` files reproduce the current lane with `kenshou-shibuya-run` and either lane's PostgreSQL version.
+Each run is sealed in `runs/<id>/run-result.json`. The current lane uses Kiroku adapter 0.5.1.3, while the released lane uses 0.5.1.2. The eight `specs/shibuya-kiroku-*.json` files reproduce the current lane with `kenshou-shibuya-run` and either lane's PostgreSQL version.
 
 | Scenario | Released PG18 / PG17 | Current PG18 / PG17 | Oracle |
 | --- | --- | --- | --- |
 | In-flight depth one | `01a0de36-7405-72b9-81bc-6d1eb557338d` / `01a0de36-f30f-770f-ae9a-8239afd8aeb7` | `01a0de3c-0a19-73c9-9df1-042e4d6d6a7a` / `01a0de3c-397e-7586-adf6-2b1d50572d77` | One active handler at the gate and at high water, 24 deliveries, final checkpoint, clean drain. |
 | Ack decision mapping | `01a0de3a-0ffc-73be-939c-13ebfedd9404` / `01a0de3a-54b7-738e-b412-24d1c4624e16` | `01a0de3b-cf74-71c3-bb5a-c271a02e85c1` / `01a0de3c-8251-75c5-81cf-56ea6ff84663` | Retry delay and attempts, five-delivery exhaustion, four direct reasons, filtered final event, exact dead-letter rows and final checkpoint. |
 | Halt and forced shutdown replay | `01a0de43-a4bf-72ed-bf23-be14d7818ad2` / `01a0de44-0393-701e-8e08-cf347cf95780` | `01a0de45-5c48-7441-bcb4-e28ace64fdd9` / `01a0de45-89fa-77c4-9fdd-46ca2fe6d5b5` | Halt at event 3, force stop at event 5, checkpoint sequence 0→0→8, final eight-event replay within one batch. |
+| Two processes, one member | `01a0de4e-a98f-7685-a754-7e2af923f04f` / `01a0de4e-f36d-74b5-bf33-8b52ab8a9573` | `01a0de50-71be-7233-b052-0e758e894d38` / `01a0de50-ae7c-73f4-9883-86755d8f160c` | Forty events, two effects per event, both workers active, monotonic checkpoint 0→40, no loss. |
 
 ## Surprises & Discoveries
 

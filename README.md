@@ -127,9 +127,10 @@ PostgreSQL 17 and 18.
 
 The Kiroku adapter smoke cases use `specs/shibuya-kiroku-depth-pg18.json`,
 `specs/shibuya-kiroku-ack-mapping-pg18.json` and
-`specs/shibuya-kiroku-replay-pg18.json`, with matching `pg17` specs. They check
-persisted checkpoints, dead-letter rows and restart replay on both supported
-PostgreSQL versions.
+`specs/shibuya-kiroku-replay-pg18.json`, with matching `pg17` specs. The
+process-backed same-member case uses `specs/shibuya-kiroku-two-owners-pg18.json`
+and its `pg17` counterpart. These check persisted checkpoints, dead-letter
+rows, restart replay and durable effects on both supported PostgreSQL versions.
 
 PostgreSQL outage and backend termination comparisons use the same runner with
 `specs/shibuya-current-outage-pg18.json` and

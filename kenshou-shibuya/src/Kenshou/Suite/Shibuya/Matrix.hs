@@ -108,6 +108,7 @@ cellsOf scenario = case renderScenarioId scenario of
   "shibuya/kiroku-adapter/correctness/in-flight-depth-is-one" -> [(Dispatch, Normal)]
   "shibuya/kiroku-adapter/correctness/ack-decision-mapping" -> [(KirokuPersistence, Normal), (RetryLease, Normal)]
   "shibuya/kiroku-adapter/correctness/halt-and-shutdown-replay" -> [(KirokuPersistence, RepeatedStop), (KirokuPersistence, Cancellation)]
+  "shibuya/kiroku-adapter/concurrency/two-processes-one-member" -> [(KirokuPersistence, SynchronousException)]
   _ -> []
 
 -- Add reasons only for cells which cannot be exercised through public APIs.

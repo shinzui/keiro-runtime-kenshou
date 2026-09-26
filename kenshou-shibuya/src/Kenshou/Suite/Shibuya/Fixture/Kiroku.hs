@@ -2,12 +2,17 @@ module Kenshou.Suite.Shibuya.Fixture.Kiroku
   ( KirokuFixture (..),
     DeadLetterRow (..),
     withKirokuFixture,
+    withKirokuConnectionPool,
     subscriptionFor,
     appendEvents,
     appendTypedEvents,
     eventPositions,
     checkpointOf,
     deadLettersOf,
+    EffectRow (..),
+    ensureEffectsTable,
+    insertEffect,
+    effectsOf,
   )
 where
 
@@ -17,6 +22,7 @@ import Data.Functor.Contravariant (contramap)
 import Data.Int (Int32, Int64)
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Data.Time.Clock (UTCTime)
 import Hasql.Connection.Settings qualified as Connection
 import Hasql.Decoders qualified as Decoders
 import Hasql.Encoders qualified as Encoders
@@ -46,6 +52,15 @@ data DeadLetterRow = DeadLetterRow
   }
   deriving stock (Eq, Show)
 
+data EffectRow = EffectRow
+  { position :: !Int64,
+    eventId :: !Text,
+    member :: !Int32,
+    process :: !Int32,
+    at :: !UTCTime
+  }
+  deriving stock (Eq, Show)
+
 withKirokuFixture :: RunContext -> (KirokuFixture -> IO a) -> IO a
 withKirokuFixture context action = do
   let connection = (requirePostgres context).connectionString
@@ -53,15 +68,20 @@ withKirokuFixture context action = do
       category = CategoryName ("ks" <> tag)
       stream = StreamName ("ks" <> tag <> "-1")
       prefix = "ks-" <> renderRunId context.runId
-      poolSettings =
-        PoolConfig.settings
-          [ PoolConfig.size 10,
-            PoolConfig.acquisitionTimeout 5,
-            PoolConfig.staticConnectionSettings (Connection.connectionString connection <> Connection.applicationName "kenshou-shibuya-kiroku-oracle")
-          ]
-  bracket (Pool.acquire poolSettings) Pool.release $ \pool ->
+  withKirokuConnectionPool connection "kenshou-shibuya-kiroku-oracle" $ \pool ->
     withStore (defaultConnectionSettings connection) $ \store ->
       action (KirokuFixture store pool category stream prefix)
+
+withKirokuConnectionPool :: Text -> Text -> (Pool -> IO a) -> IO a
+withKirokuConnectionPool connection applicationName =
+  bracket (Pool.acquire settings) Pool.release
+  where
+    settings =
+      PoolConfig.settings
+        [ PoolConfig.size 10,
+          PoolConfig.acquisitionTimeout 5,
+          PoolConfig.staticConnectionSettings (Connection.connectionString connection <> Connection.applicationName applicationName)
+        ]
 
 subscriptionFor :: KirokuFixture -> Text -> SubscriptionName
 subscriptionFor fixture suffix = SubscriptionName (fixture.prefix <> "-" <> suffix)
@@ -109,6 +129,42 @@ deadLettersOf fixture (SubscriptionName name) member =
         "select global_position, event_id::text, reason, attempt_count from kiroku.dead_letters where subscription_name = $1 and consumer_group_member = $2 order by global_position"
         (contramap fst (Encoders.param (Encoders.nonNullable Encoders.text)) <> contramap snd (Encoders.param (Encoders.nonNullable Encoders.int4)))
         (Decoders.rowList (DeadLetterRow <$> Decoders.column (Decoders.nonNullable Decoders.int8) <*> Decoders.column (Decoders.nonNullable Decoders.text) <*> Decoders.column (Decoders.nonNullable Decoders.jsonb) <*> Decoders.column (Decoders.nonNullable Decoders.int4)))
+
+ensureEffectsTable :: Pool -> IO ()
+ensureEffectsTable pool =
+  query pool $ Session.statement () statement
+  where
+    statement =
+      Statement.unpreparable
+        "create table if not exists kenshou_shibuya_kiroku_effects (arm text not null, global_position bigint not null, event_id text not null, member integer not null, process integer not null, at timestamptz not null)"
+        Encoders.noParams
+        Decoders.noResult
+
+insertEffect :: Pool -> Text -> EffectRow -> IO ()
+insertEffect pool arm row =
+  query pool $ Session.statement (arm, row) statement
+  where
+    statement =
+      Statement.preparable
+        "insert into kenshou_shibuya_kiroku_effects (arm, global_position, event_id, member, process, at) values ($1, $2, $3, $4, $5, $6)"
+        ( contramap fst (Encoders.param (Encoders.nonNullable Encoders.text))
+            <> contramap (\(_, effect) -> effect.position) (Encoders.param (Encoders.nonNullable Encoders.int8))
+            <> contramap (\(_, effect) -> effect.eventId) (Encoders.param (Encoders.nonNullable Encoders.text))
+            <> contramap (\(_, effect) -> effect.member) (Encoders.param (Encoders.nonNullable Encoders.int4))
+            <> contramap (\(_, effect) -> effect.process) (Encoders.param (Encoders.nonNullable Encoders.int4))
+            <> contramap (\(_, effect) -> effect.at) (Encoders.param (Encoders.nonNullable Encoders.timestamptz))
+        )
+        Decoders.noResult
+
+effectsOf :: Pool -> Text -> IO [EffectRow]
+effectsOf pool arm =
+  query pool $ Session.statement arm statement
+  where
+    statement =
+      Statement.preparable
+        "select global_position, event_id, member, process, at from kenshou_shibuya_kiroku_effects where arm = $1 order by at, global_position"
+        (Encoders.param (Encoders.nonNullable Encoders.text))
+        (Decoders.rowList (EffectRow <$> Decoders.column (Decoders.nonNullable Decoders.int8) <*> Decoders.column (Decoders.nonNullable Decoders.text) <*> Decoders.column (Decoders.nonNullable Decoders.int4) <*> Decoders.column (Decoders.nonNullable Decoders.int4) <*> Decoders.column (Decoders.nonNullable Decoders.timestamptz)))
 
 query :: Pool -> Session.Session a -> IO a
 query pool session = do

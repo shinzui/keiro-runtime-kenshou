@@ -29,6 +29,7 @@ library
     Kenshou.Suite.Shibuya.Concurrency.CoreOrdering
     Kenshou.Suite.Shibuya.Concurrency.CoreRunner
     Kenshou.Suite.Shibuya.Concurrency.KeyedModel
+    Kenshou.Suite.Shibuya.Concurrency.KirokuTwoOwners
     Kenshou.Suite.Shibuya.Concurrency.PgmqDeadLetterAtomic
     Kenshou.Suite.Shibuya.Concurrency.PgmqHandlerOutlivesLease
     Kenshou.Suite.Shibuya.Concurrency.PgmqLeaseSizing
@@ -49,6 +50,7 @@ library
     Kenshou.Suite.Shibuya.Correctness.PgmqAdapter
     Kenshou.Suite.Shibuya.Fixture.Handlers
     Kenshou.Suite.Shibuya.Fixture.Kiroku
+    Kenshou.Suite.Shibuya.Fixture.KirokuWorker
     Kenshou.Suite.Shibuya.Fixture.Pgmq
     Kenshou.Suite.Shibuya.Fixture.PgmqProducer
     Kenshou.Suite.Shibuya.Fixture.PgmqWorker
