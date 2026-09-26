@@ -19,6 +19,7 @@ import Kenshou.Evidence.Bundle (BundleWriteError (..), BundleWriteResult (..), r
 import Kenshou.Evidence.Check (CheckOptions (..), Finding (..), checkBundle, checkBundleWithStore, checkDocument)
 import Kenshou.Evidence.Config (EvidenceDefaults (..), bundleRootKey, dataBaseUriKey, projectKey, resolveEvidenceDefaults)
 import Kenshou.Evidence.Frontmatter (EvidenceRecord (..), recordFromDocument, recordToDocument)
+import Kenshou.Evidence.History (HistoryDocument (..), HistoryEntry (..), HistoryQuery (..), deriveBaseline, history)
 import Kenshou.Evidence.Publish (PublishError (..), PublishOptions (..), UploadMode (..), publishComparisonData, publishRunData)
 import Kenshou.Evidence.Record (RecordInput (..), RecordOptions (..), RecordOutcome (..), buildRunRecord, recordComparison, recordRunWith)
 import Kenshou.Evidence.Source (ComparisonSource (..), ComparisonView (..), VerifiedFile (..), loadComparisonSource, loadRunSource)
@@ -120,6 +121,23 @@ main = hspec do
         recorded <- Text.IO.readFile (bundle </> recordedPath) >>= either (fail . show) pure . parseDocument
         let wrongOutcome = recorded {frontmatter = setField "outcome" (String "failed") recorded.frontmatter}
         map (.rule) (checkDocument recordedPath wrongOutcome) `shouldContain` ["comparison-outcome"]
+        scenario <- either (fail . show) pure (parseScenarioId "selftest/kernel/correctness/always-pass")
+        observed <- history bundle (HistoryQuery scenario Nothing [] Nothing False) >>= either (fail . show) pure
+        length observed.entries `shouldBe` 3
+        map (.recordKind) observed.entries `shouldBe` ["run", "run", "comparison"]
+        let baselineEntry = (observed.entries !! 0) {trust = "machine-confirmed", attestations = [object ["verdict" .= ("confirmed" :: Text), "attestedAt" .= ("2026-09-26T00:00:03Z" :: Text)]]}
+            laterEntry = (observed.entries !! 1 :: HistoryEntry) {startedAt = "2026-09-26T00:00:02Z"}
+        deriveBaseline [baselineEntry, laterEntry] laterEntry `shouldBe` Just baselineEntry.concept
+        let attestations = bundle </> "attestations/2026/09"
+            target = "/runs/selftest/2026/09/01997f3a-5b7c-7e21-8a44-0d6c2f9b1e55.md"
+            attestation verdict at = Text.unlines ["---", "type: Attestation", "run: " <> target, "verdict: " <> verdict, "attestedAt: " <> at, "---"]
+        createDirectoryIfMissing True attestations
+        Text.IO.writeFile (attestations </> "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e58.md") (attestation "confirmed" "2026-09-26T00:00:03Z")
+        confirmedHistory <- history bundle (HistoryQuery scenario Nothing [] Nothing False) >>= either (fail . show) pure
+        (confirmedHistory.entries !! 0).trust `shouldBe` "machine-confirmed"
+        Text.IO.writeFile (attestations </> "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e59.md") (attestation "refuted" "2026-09-26T00:00:04Z")
+        refutedHistory <- history bundle (HistoryQuery scenario Nothing [] Nothing False) >>= either (fail . show) pure
+        (refutedHistory.entries !! 0).trust `shouldBe` "unverified"
 
   describe "evidence configuration" do
     it "uses built-ins, ordered YAML, environment, then named flags" do

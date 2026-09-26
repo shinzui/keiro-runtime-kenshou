@@ -15,7 +15,11 @@ main = hspec do
 
     it "returns success for command-specific help" do
       runWithArgs ["record", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["history", "--help"] `shouldReturnCode` ExitSuccess
       runWithArgs ["run", "--help"] `shouldReturnCode` ExitSuccess
+
+    it "reads scenario history from a bundle" do
+      runWithArgs ["history", "--bundle", "../docs/verification", "--scenario", "selftest/kernel/correctness/always-pass", "--json"] `shouldReturnCode` ExitSuccess
 
     it "requires one record source" do
       runWithArgs ["record", "--purpose", "release"] `shouldReturnCode` ExitFailure 2

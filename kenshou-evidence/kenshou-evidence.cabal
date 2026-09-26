@@ -38,6 +38,8 @@ library
     Kenshou.Evidence.Cli
     Kenshou.Evidence.Config
     Kenshou.Evidence.Frontmatter
+    Kenshou.Evidence.History
+    Kenshou.Evidence.HistoryCli
     Kenshou.Evidence.Publish
     Kenshou.Evidence.Record
     Kenshou.Evidence.Source

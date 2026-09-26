@@ -10,7 +10,6 @@ module Kenshou.Evidence.Record
   )
 where
 
-import Control.Exception (IOException, try)
 import Control.Monad (forM, unless, when)
 import Data.Aeson (FromJSON (..), Result (..), ToJSON (..), Value (..), fromJSON, object, withObject, (.:), (.:?), (.=))
 import Data.Aeson.Key qualified as Key
@@ -21,10 +20,9 @@ import Data.Map.Strict qualified as Map
 import Data.Maybe (mapMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Data.Text.IO qualified as Text.IO
 import Data.Time (UTCTime, defaultTimeLocale, formatTime, getCurrentTime)
 import Kenshou.Core.Cohort (CohortIdentity (..), CohortName (..), PackageSource (..), PlanHash (..), ResolvedComponent (..), ResolvedPackage (..))
-import Kenshou.Core.Id (Kind (..), Layer (..), RunId, ScenarioId (..), parseRunId, renderRunId, renderScenarioId)
+import Kenshou.Core.Id (Kind (..), Layer (..), RunId, ScenarioId (..), renderRunId, renderScenarioId)
 import Kenshou.Core.Outcome (Outcome (..), renderOutcome)
 import Kenshou.Core.RunSpec (EnvironmentSpec (..), RunSpec (..), SpecPlacement (..))
 import Kenshou.Evidence.Bundle (BundleWriteError, BundleWriteResult (..), writeComparisonRecord, writeRunRecord)
@@ -34,10 +32,8 @@ import Kenshou.Evidence.Source (ComparisonSource (..), ComparisonView (..), RunR
 import Kenshou.Evidence.Store (ObjectStore)
 import Kenshou.Evidence.Types (ComponentRef (..), DataKind (..), DataLink (..), Purpose (..), Sha256, SubjectKind (..), mkRevision, mkSha256)
 import Kenshou.Evidence.Types qualified as EvidenceTypes
+import Okf.Bundle (conceptDocument, conceptSourcePath, walkBundle)
 import Okf.ConceptId (parseConceptId, renderConceptLink)
-import Okf.Document (parseDocument)
-import System.Directory (doesDirectoryExist, listDirectory)
-import System.FilePath (makeRelative, takeBaseName, takeExtension, (</>))
 
 data RecordInput = RecordInput
   { purpose :: !Purpose,
@@ -134,37 +130,15 @@ recordComparison store options path = do
 
 loadRecordedArms :: FilePath -> [RunId] -> IO (Either RecordError [(FilePath, EvidenceRecord)])
 loadRecordedArms root identifiers = do
-  found <- try (scan (root </> "runs")) :: IO (Either IOException [(FilePath, EvidenceRecord)])
+  found <- walkBundle root
   pure do
-    records <- either (Left . RecordError . Text.pack . show) Right found
+    concepts <- either (Left . RecordError . Text.pack . show) Right found
+    let records = [(conceptSourcePath concept, record) | concept <- concepts, Right record <- [recordFromDocument (conceptDocument concept)]]
     let byId = Map.fromListWith (<>) [(record.runId, [(path, record)]) | (path, record) <- records]
     forM identifiers $ \identifier -> case Map.lookup (renderRunId identifier) byId of
       Just [entry] -> Right entry
       Just _ -> Left (RecordError ("recorded arm has duplicate concepts: " <> renderRunId identifier))
       Nothing -> Left (RecordError ("comparison arm is not recorded: " <> renderRunId identifier))
-  where
-    scan directory = do
-      exists <- doesDirectoryExist directory
-      if not exists
-        then pure []
-        else do
-          names <- listDirectory directory
-          concat <$> forM names (visit directory)
-    visit directory name = do
-      let path = directory </> name
-      isDirectory <- doesDirectoryExist path
-      if isDirectory
-        then scan path
-        else
-          if takeExtension path == ".md" && either (const False) (const True) (parseRunId (Text.pack (takeBaseName path)))
-            then do
-              content <- Text.IO.readFile path
-              pure case parseDocument content of
-                Right document -> case recordFromDocument document of
-                  Right record -> [(makeRelative root path, record)]
-                  Left _ -> []
-                Left _ -> []
-            else pure []
 
 comparisonFields :: RecordOptions -> ComparisonSource -> [(FilePath, EvidenceRecord)] -> Either RecordError (UTCTime -> DataLink -> ComparisonEvidence)
 comparisonFields options source arms = do

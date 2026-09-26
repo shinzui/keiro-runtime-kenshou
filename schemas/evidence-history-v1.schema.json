@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/evidence-history-v1.schema.json",
+  "type": "object",
+  "required": ["schema", "bundle", "query", "entries"],
+  "properties": {
+    "schema": {"const": "kenshou.evidence-history/v1"},
+    "bundle": {"const": "mori://shinzui/keiro-runtime-kenshou/okf/verification"},
+    "query": {
+      "type": "object",
+      "required": ["scenario"],
+      "properties": {
+        "scenario": {"type": "string"},
+        "cohortComponent": {"type": "string"},
+        "outcomes": {"type": "array", "items": {"enum": ["passed", "failed", "errored", "inconclusive", "infrastructure-failure"]}},
+        "since": {"type": "string", "format": "date"},
+        "confirmedOnly": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["concept", "ref", "record", "trust", "attestations", "derivedBaseline"],
+        "properties": {
+          "concept": {"type": "string"},
+          "ref": {"type": "string", "pattern": "^mori://shinzui/keiro-runtime-kenshou/okf/verification/concepts/"},
+          "record": {"type": "object"},
+          "trust": {"enum": ["unverified", "machine-confirmed", "human-reviewed"]},
+          "attestations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["concept", "verdict", "attestedAt"],
+              "properties": {
+                "concept": {"type": "string"},
+                "verdict": {"enum": ["confirmed", "refuted", "incomplete"]},
+                "attestedAt": {"type": "string", "format": "date-time"}
+              },
+              "additionalProperties": false
+            }
+          },
+          "derivedBaseline": {"type": ["string", "null"]}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
