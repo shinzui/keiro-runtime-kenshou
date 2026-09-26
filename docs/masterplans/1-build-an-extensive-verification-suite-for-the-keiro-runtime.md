@@ -146,6 +146,11 @@ provenance:
       at: 2026-09-26T18:00:35Z
       mode: "implement"
       note: "Recorded EP-10 Kiroku crash-window matrix evidence across both adapter releases and PostgreSQL majors."
+    - model: "gpt-6"
+      harness: "codex"
+      at: 2026-09-26T18:48:15Z
+      mode: "implement"
+      note: "Recorded EP-10 parameterized core lease-bound evidence."
 ---
 
 # Build an extensive verification suite for the keiro runtime
@@ -307,6 +312,8 @@ The following cross-plan decisions should become ADRs in `docs/adr/` when the ow
 
 
 ## Progress
+
+EP-10 tightened its core leased-message bound probe: it now waits for 500 ms without source pulls and accepts inbox, concurrency and slack knobs. Three sealed serial, ahead and async runs saturated their handlers, remained within `inboxSize + 3n + slack`, finalized all 1,000 messages, and left no leases. The child plan records the measured values and run IDs.
 
 EP-10's Kiroku outage scenario now has a separate dedicated-listener fault: it identifies the consumer's new `kiroku-listener` PID against a pre-start backend baseline, verifies the `LISTEN` query, and terminates that PID. Historical adapter 0.5.1.2 and current 0.5.1.3 passed the expanded PostgreSQL 18 scenario with automatic listener recovery, all 80 events handled once, and final checkpoints. The PostgreSQL 17 listener-specific rerun remains in the later compatibility pass.
 

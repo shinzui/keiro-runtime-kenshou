@@ -27,7 +27,7 @@ import Kenshou.Core.Role (ControlMessage (..))
 import Kenshou.Core.Scenario (KnownDefect (..), Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
 import Kenshou.Suite.Shibuya.Cohort (knownOnReleasedCore, rev)
 import Kenshou.Suite.Shibuya.Fixture.Handlers (HandlerScript (..), HandlerStats (..), defaultHandlerScript, handlerStats, newHandlerProbe, scriptedHandler)
-import Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter (BrokerEvent (..), BrokerStats (..), FinalizerOutcome (..), ShutdownBehaviour (..), SyntheticConfig (..), brokerEvents, brokerStats, closeInput, defaultSyntheticConfig, newSyntheticBroker, publish, reopenSource, syntheticAdapter)
+import Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter (BrokerEvent (..), BrokerStats (..), FinalizerOutcome (..), ShutdownBehaviour (..), SyntheticBroker, SyntheticConfig (..), brokerEvents, brokerStats, closeInput, defaultSyntheticConfig, newSyntheticBroker, publish, reopenSource, syntheticAdapter)
 import Kenshou.Suite.Shibuya.Knobs (coreKnobs, parseConcurrency, parseOrdering)
 import Shibuya.Adapter (Adapter (..))
 import Shibuya.App (AppConfig (..), QueueProcessor (..), ShutdownConfig (..), SupervisionStrategy (..), defaultAppConfig, defaultShutdownConfig, mkProcessor, runApp, stopApp, stopAppGracefully, waitApp)
@@ -624,11 +624,15 @@ leasedButUnfinalizedUpperBound :: Scenario
 leasedButUnfinalizedUpperBound =
   Scenario
     { id = either (error . Text.unpack) id (parseScenarioId "shibuya/core-runner/concurrency/leased-but-unfinalized-upper-bound"),
-      revision = 1,
+      revision = 2,
       summary = "Bounds outstanding leases while every handler waits on a gate.",
       tier = TierSmoke,
       placement = PlaceEither,
-      knobs = [],
+      knobs =
+        [ KnobSpec (knobName "shibuya.inbox-size") "Inbox capacity for the bound probe" KnobInt (VInt 100) (IntRange 1 256) [],
+          KnobSpec (knobName "shibuya.concurrency") "serial, ahead:N, or async:N" KnobText (VText "async:4") AnyValue [],
+          KnobSpec (knobName "bound.slack") "Allowance above inboxSize + 3n" KnobInt (VInt 2) (IntRange 0 100) []
+        ],
       dimensions = noDimensions,
       phases = zeroPhases,
       requires = noEnvironment,
@@ -638,41 +642,76 @@ leasedButUnfinalizedUpperBound =
 
 runLeasedBound :: RunContext -> IO ScenarioReport
 runLeasedBound context = do
-  broker <- newSyntheticBroker defaultSyntheticConfig
-  mapM_ (\number -> publish broker Nothing (ByteString.pack ("message-" <> show number))) [1 .. 1000 :: Int]
-  closeInput broker
-  gate <- newTVarIO False
-  probe <- newHandlerProbe defaultHandlerScript {gate = Just gate}
-  observed <- timeout 10000000 $ runEff $ runTracingNoop $ do
-    let processor = (mkProcessor (syntheticAdapter broker) (scriptedHandler probe)) {concurrency = Async 4}
-    result <- runApp defaultAppConfig {inboxSize = 100} [(ProcessorId "leased-bound", processor)]
-    case result of
-      Left err -> error (show err)
-      Right handle -> do
-        liftIO $ threadDelay 1000000
-        brokerAtGate <- liftIO $ brokerStats broker
-        handlersAtGate <- liftIO $ handlerStats probe
-        liftIO $ atomically $ writeTVar gate True
-        waitApp handle
-        stopApp handle
-        finalStats <- liftIO $ brokerStats broker
-        pure (brokerAtGate, handlersAtGate, finalStats)
-  case observed of
-    Nothing -> pure $ failedWith ["bound-timeout"] "application did not finish after opening the handler gate"
-    Just (atGate, handlers, finalStats) -> do
-      let bound = 100 + 3 * 4 + 2
-          failures =
-            ["bound-exceeded" | atGate.leasedUnfinalizedHighWater > bound]
-              <> ["gate-not-saturated" | handlers.highWater < 4]
-              <> ["messages-not-conserved" | finalStats.finalizedOk /= 1000 || finalStats.leasedUnfinalized /= 0]
-      putSummary context Verdicts "leased-but-unfinalized-upper-bound" $
-        object
-          [ "leasedUnfinalizedHighWater" .= atGate.leasedUnfinalizedHighWater,
-            "bound" .= bound,
-            "handlerHighWater" .= handlers.highWater,
-            "finalized" .= finalStats.finalizedOk
-          ]
-      pure $ if null failures then passed else failedWith failures (Text.intercalate "; " failures)
+  let inbox = fromIntegral (knobInt context.knobs (knobName "shibuya.inbox-size"))
+      concurrencyText = knobText context.knobs (knobName "shibuya.concurrency")
+      slack = fromIntegral (knobInt context.knobs (knobName "bound.slack"))
+  case parseConcurrency concurrencyText of
+    Left err -> pure $ failedWith ["invalid-concurrency"] err
+    Right concurrency -> case concurrency of
+      Serial -> exercise inbox concurrencyText concurrency 1 slack
+      Ahead n | n > 0 && n <= 64 -> exercise inbox concurrencyText concurrency n slack
+      Async n | n > 0 && n <= 64 -> exercise inbox concurrencyText concurrency n slack
+      _ -> pure $ failedWith ["invalid-concurrency"] "concurrency must be between 1 and 64"
+  where
+    exercise inbox concurrencyText concurrency workers slack = do
+      broker <- newSyntheticBroker defaultSyntheticConfig
+      mapM_ (\number -> publish broker Nothing (ByteString.pack ("message-" <> show number))) [1 .. 1000 :: Int]
+      closeInput broker
+      gate <- newTVarIO False
+      probe <- newHandlerProbe defaultHandlerScript {gate = Just gate}
+      observed <- timeout 15000000 $ runEff $ runTracingNoop $ do
+        let processor = (mkProcessor (syntheticAdapter broker) (scriptedHandler probe)) {concurrency}
+        result <- runApp defaultAppConfig {inboxSize = inbox} [(ProcessorId "leased-bound", processor)]
+        case result of
+          Left err -> error (show err)
+          Right handle -> do
+            settled <- liftIO $ waitForQuietPulls broker
+            brokerAtGate <- liftIO $ brokerStats broker
+            handlersAtGate <- liftIO $ handlerStats probe
+            liftIO $ atomically $ writeTVar gate True
+            waitApp handle
+            stopApp handle
+            finalStats <- liftIO $ brokerStats broker
+            pure (settled, brokerAtGate, handlersAtGate, finalStats)
+      case observed of
+        Nothing -> pure $ failedWith ["bound-timeout"] "application did not finish after opening the handler gate"
+        Just (settled, atGate, handlers, finalStats) -> do
+          let bound = inbox + 3 * workers + slack
+              failures =
+                ["source-did-not-settle" | not settled]
+                  <> ["bound-exceeded" | atGate.leasedUnfinalizedHighWater > bound]
+                  <> ["gate-not-saturated" | handlers.highWater < workers]
+                  <> ["fixture-did-not-fill-inbox" | atGate.leasedUnfinalized < inbox]
+                  <> ["messages-not-conserved" | finalStats.finalizedOk /= 1000 || finalStats.leasedUnfinalized /= 0]
+          putSummary context Verdicts "leased-but-unfinalized-upper-bound" $
+            object
+              [ "inboxSize" .= inbox,
+                "concurrency" .= concurrencyText,
+                "workers" .= workers,
+                "slack" .= slack,
+                "sourceSettledForMs" .= (if settled then (500 :: Int) else 0),
+                "leasedAtGate" .= atGate.leasedUnfinalized,
+                "leasedUnfinalizedHighWater" .= atGate.leasedUnfinalizedHighWater,
+                "bound" .= bound,
+                "handlerHighWater" .= handlers.highWater,
+                "finalized" .= finalStats.finalizedOk
+              ]
+          pure $ if null failures then passed else failedWith failures (Text.intercalate "; " failures)
+
+-- The bound is read only after the source has stopped acquiring leases for
+-- half a second. A fixed delay can sample a still-growing pipeline.
+waitForQuietPulls :: SyntheticBroker -> IO Bool
+waitForQuietPulls broker = do
+  initial <- (.sourcePulls) <$> brokerStats broker
+  loop (0 :: Int) (0 :: Int) initial
+  where
+    loop elapsed quiet previous
+      | quiet >= 500 = pure True
+      | elapsed >= 5000 = pure False
+      | otherwise = do
+          threadDelay 50000
+          current <- (.sourcePulls) <$> brokerStats broker
+          loop (elapsed + 50) (if current == previous then quiet + 50 else 0) current
 
 haltWakesIdleIntake :: Scenario
 haltWakesIdleIntake =

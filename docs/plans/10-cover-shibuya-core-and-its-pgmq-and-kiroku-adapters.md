@@ -107,6 +107,11 @@ provenance:
       at: 2026-09-26T18:00:35Z
       mode: "implement"
       note: "Verified Kiroku SIGKILL replay across fifty-two released/current PostgreSQL 17/18 shapes."
+    - model: "gpt-6"
+      harness: "codex"
+      at: 2026-09-26T18:48:11Z
+      mode: "implement"
+      note: "Tightened core lease-bound probe and recorded three parameterized runs."
 ---
 
 # Cover shibuya core and its PGMQ and kiroku adapters
@@ -126,6 +131,7 @@ After this plan a maintainer can, from this repository, run `kenshou list --laye
 ## Progress
 
 - [x] (2026-09-23) Core baseline: the Shibuya package, knobs, synthetic adapter, eleven registered scenarios, cohort capability probe, and twenty package tests run on the released cohort; focused current-release tests also pass.
+- [x] (2026-09-26) Revised `leased-but-unfinalized-upper-bound` to vary inbox size, serial/ahead/async concurrency and bound slack, and to require a 500 ms quiet source interval before sampling. The default `async:4` run observed 105 leases against a bound of 114; a one-slot serial run observed 3 against 6; an eight-slot `ahead:4` run with zero slack observed 13 against 20. Each saturated its handlers, finalized all 1,000 messages, and left no leases. Sealed run IDs are `01a0df0a-61ae-731f-afb0-0bb9da6b5d7c`, `01a0df0a-d6bb-7130-9b40-413e730e4138`, and `01a0df0b-1b9b-730d-927a-a25f03169f59`.
 - [x] (2026-09-25) Registered `gc-liveness-with-dropped-handle` with five process-isolated ownership states. The full CLI scenario passed on historical 0.9.0.3 and pinned remediation; the isolated Hackage 0.10.0.0 package test passed the same five subprocess probes.
 - [x] (2026-09-25) Registered the seeded keyed-scheduler queue model with a replayable 200-case verdict, per-key ordering and non-overlap, decision/finalization conservation, concurrency bounds, and repeated graceful-stop checks. Historical 0.9.0.3 and pinned remediation each passed 200 generated cases; the isolated Hackage 0.10.0.0 package suite passed 100 generated cases plus focused retry, exception, dead-letter, and stop arms.
 - [ ] Complete lifecycle matrix accounting and run the other cohort-sensitive cases on released, head, and isolated current-release lanes.
