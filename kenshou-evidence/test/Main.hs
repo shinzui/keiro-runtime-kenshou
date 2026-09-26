@@ -4,17 +4,20 @@ import Data.Aeson (Value (..), encode, object, toJSON, (.=))
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteString.Char8
 import Data.ByteString.Lazy qualified as LazyByteString
+import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.IO qualified as Text.IO
 import Data.Time (UTCTime (..), fromGregorian)
 import Kenshou.Core.Canonical (sha256Hex)
+import Kenshou.Core.Cli.Config (ConfigInputs (..))
 import Kenshou.Core.Id (parseRunId, parseScenarioId)
 import Kenshou.Core.Manifest (writeManifest)
 import Kenshou.Core.Outcome (Outcome (Passed))
 import Kenshou.Evidence.Bundle (BundleWriteError (..), BundleWriteResult (..), runRecordPath, writeRunRecordWith)
 import Kenshou.Evidence.Check (CheckOptions (..), Finding (..), checkBundle, checkDocument)
+import Kenshou.Evidence.Config (EvidenceDefaults (..), bundleRootKey, dataBaseUriKey, projectKey, resolveEvidenceDefaults)
 import Kenshou.Evidence.Frontmatter (EvidenceRecord (..), recordFromDocument, recordToDocument)
 import Kenshou.Evidence.Publish (PublishError (..), PublishOptions (..), UploadMode (..), publishRunData)
 import Kenshou.Evidence.Record (RecordInput (..), RecordOptions (..), RecordOutcome (..), buildRunRecord, recordRunWith)
@@ -22,6 +25,9 @@ import Kenshou.Evidence.Source (loadRunSource)
 import Kenshou.Evidence.Store (ObjectStat (..), ObjectStore (..), PutResult (..), StoreError (..), directoryStore, gcloudStoreWith, memoryStore)
 import Kenshou.Evidence.Types (DataKind (..), DataLink (..), Purpose (..), Revision (..), Sha256 (..), SubjectKind (..), mkRevision, mkSha256, sha256Bytes)
 import Okf.Document (OKFDocument (..), parseDocument, serializeDocument, setField)
+import Settei (ResolveResult (..))
+import Settei.Env (envSnapshot)
+import Settei.Optparse (DiagnosticMode (NoDiagnostic), cliOverride, cliSources)
 import System.Directory (Permissions (..), createDirectoryIfMissing, doesFileExist, getPermissions, setPermissions)
 import System.FilePath (takeDirectory, (</>))
 import System.IO.Temp (withSystemTempDirectory)
@@ -30,6 +36,36 @@ import Test.Hspec
 
 main :: IO ()
 main = hspec do
+  describe "evidence configuration" do
+    it "uses built-ins, ordered YAML, environment, then named flags" do
+      withSystemTempDirectory "kenshou-evidence-config" $ \root -> do
+        let first = root </> "first.yaml"
+            second = root </> "second.yaml"
+            flags = cliSources "named flags" [cliOverride bundleRootKey "flag-bundle", cliOverride projectKey "flag-project", cliOverride dataBaseUriKey "gs://flag/runs"]
+            inputs = ConfigInputs [first, second] flags NoDiagnostic
+            snapshot = envSnapshot [("KENSHOU_EVIDENCE_BUNDLE", "env-bundle"), ("KENSHOU_GCP_PROJECT", "env-project"), ("KENSHOU_EVIDENCE_DATA_BASE_URI", "gs://env/runs")]
+        writeFile first "evidence:\n  bundle-root: first-bundle\n  data-base-uri: gs://first/runs\ngcp:\n  project: first-project\n"
+        writeFile second "evidence:\n  bundle-root: second-bundle\n  data-base-uri: gs://second/runs\ngcp:\n  project: second-project\n"
+        resolved <- resolveEvidenceDefaults snapshot inputs
+        case resolved of
+          Right result -> result.answer `shouldBe` Right (EvidenceDefaults "flag-bundle" (Just "flag-project") (Just "gs://flag/runs"))
+          Left err -> expectationFailure (Text.unpack err)
+        builtIn <- resolveEvidenceDefaults (envSnapshot []) (ConfigInputs [] [] NoDiagnostic)
+        case builtIn of
+          Right result -> result.answer `shouldBe` Right (EvidenceDefaults "docs/verification" Nothing Nothing)
+          Left err -> expectationFailure (Text.unpack err)
+
+    it "rejects purpose and anomaly authority as unknown configuration" do
+      withSystemTempDirectory "kenshou-evidence-config" $ \root -> do
+        let file = root </> "invalid.yaml"
+        writeFile file "evidence:\n  purpose: release\n  anomaly-authority: process:someone\n"
+        resolved <- resolveEvidenceDefaults (envSnapshot []) (ConfigInputs [file] [] NoDiagnostic)
+        case resolved of
+          Right result -> case result.answer of
+            Left problems -> length (NonEmpty.toList problems) `shouldSatisfy` (>= 2)
+            Right _ -> expectationFailure "unexpectedly accepted unknown configuration"
+          Left err -> expectationFailure (Text.unpack err)
+
   describe "evidence check" do
     it "detects event keys, coerced strings and changed committed records" do
       withSystemTempDirectory "kenshou-evidence-check" $ \root -> do

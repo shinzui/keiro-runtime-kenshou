@@ -7,15 +7,21 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.IO qualified as Text.IO
 import Kenshou.Core.Cli (CliCommand (..), CliEnv, CliGroup (Evidence))
+import Kenshou.Core.Cli.Config (ConfigInputs (..), configInputsParser)
 import Kenshou.Evidence.Bundle (BundleWriteError (..))
 import Kenshou.Evidence.Check (CheckError (..), CheckOptions (..), Finding (..), checkBundle)
+import Kenshou.Evidence.Config (EvidenceDefaults (..), bundleRootKey, dataBaseUriKey, evidenceConfig, projectKey, resolveEvidenceDefaults)
 import Kenshou.Evidence.Publish (PublishError (..), UploadMode (..))
 import Kenshou.Evidence.Record (RecordError (..), RecordOptions (..), RecordOutcome (..), recordRun)
 import Kenshou.Evidence.Source (SourceError (..))
 import Kenshou.Evidence.Store (ObjectStore, StoreError (..), directoryStore, gcloudStore)
 import Kenshou.Evidence.Types (Purpose (..), SubjectKind (..))
 import Options.Applicative
+import Settei (ResolveResult (..), describe, renderErrorsText)
+import Settei.Env (envSnapshot)
+import Settei.Optparse (namedOption, resolutionDiagnostic, schemaDiagnostic)
 import System.Directory (canonicalizePath, doesDirectoryExist)
+import System.Environment (getEnvironment)
 import System.Exit (ExitCode (..))
 import System.FilePath (isAbsolute, makeRelative, splitDirectories)
 import System.IO (stderr)
@@ -23,10 +29,8 @@ import System.Process (readProcess)
 
 data RecordCli = RecordCli
   { runDirectory :: !FilePath,
-    bundle :: !FilePath,
-    baseUri :: !Text,
+    config :: !ConfigInputs,
     purpose :: !Purpose,
-    project :: !(Maybe Text),
     storeRoot :: !(Maybe FilePath),
     verifyOnly :: !Bool,
     deepVerify :: !Bool,
@@ -47,7 +51,7 @@ evidenceCommand =
     hsubparser (command "check" (info (checkHandler <$> checkParser) (progDesc "Check record identity, local rules and immutability")))
 
 data CheckCli = CheckCli
-  { bundle :: !FilePath,
+  { config :: !ConfigInputs,
     baseRef :: !(Maybe Text),
     json :: !Bool
   }
@@ -55,16 +59,27 @@ data CheckCli = CheckCli
 checkParser :: Parser CheckCli
 checkParser =
   CheckCli
-    <$> parserOptionGroup "Bundle selection" (strOption (long "bundle" <> metavar "DIR" <> value "docs/verification" <> showDefault <> help "OKF evidence bundle"))
+    <$> configInputsParser ((: []) <$> namedOption "--bundle" bundleRootKey (long "bundle" <> metavar "DIR" <> help "OKF evidence bundle"))
     <*> parserOptionGroup "History scope" (optional (Text.pack <$> strOption (long "base" <> metavar "GIT-REF" <> help "Check committed changes from this base through HEAD")))
     <*> parserOptionGroup "Output" (switch (long "json" <> help "Emit one JSON result document"))
 
 checkHandler :: CheckCli -> CliEnv -> IO ExitCode
-checkHandler options _ = do
-  checked <- checkBundle (CheckOptions options.bundle options.baseRef)
-  case checked of
-    Left (CheckError message) -> checkResponse options.json 4 message []
-    Right findings -> checkResponse options.json (if null findings then 0 else 1) (if null findings then "evidence clean" else "evidence findings") findings
+checkHandler options _
+  | Just output <- schemaDiagnostic options.config.diagnostic (describe evidenceConfig) = Text.IO.putStr output >> pure ExitSuccess
+  | otherwise = do
+      processEnvironment <- fmap (fmap (\(name, setting) -> (Text.pack name, Text.pack setting))) getEnvironment
+      resolved <- resolveEvidenceDefaults (envSnapshot processEnvironment) options.config
+      case resolved of
+        Left message -> checkResponse options.json 2 message []
+        Right result -> case result.answer of
+          Left problems -> checkResponse options.json 2 (renderErrorsText problems) []
+          Right defaults -> case resolutionDiagnostic options.config.diagnostic result of
+            Just output -> Text.IO.putStr output >> pure ExitSuccess
+            Nothing -> do
+              checked <- checkBundle (CheckOptions (Text.unpack defaults.bundleRoot) options.baseRef)
+              case checked of
+                Left (CheckError message) -> checkResponse options.json 4 message []
+                Right findings -> checkResponse options.json (if null findings then 0 else 1) (if null findings then "evidence clean" else "evidence findings") findings
 
 checkResponse :: Bool -> Int -> Text -> [Finding] -> IO ExitCode
 checkResponse machine code message findings = do
@@ -87,10 +102,13 @@ recordParser :: Parser RecordCli
 recordParser =
   RecordCli
     <$> parserOptionGroup "Record source" (strArgument (metavar "RUN-DIR" <> help "Finished kenshou run directory"))
-    <*> parserOptionGroup "Evidence destination" (strOption (long "bundle" <> metavar "DIR" <> value "docs/verification" <> showDefault <> help "OKF evidence bundle"))
-    <*> parserOptionGroup "Evidence destination" (Text.pack <$> strOption (long "data-base-uri" <> metavar "gs://BUCKET/PREFIX" <> help "Durable object prefix"))
+    <*> configInputsParser
+      ( (\bundle project baseUri -> [bundle, project, baseUri])
+          <$> namedOption "--bundle" bundleRootKey (long "bundle" <> metavar "DIR" <> help "OKF evidence bundle")
+          <*> namedOption "--project" projectKey (long "project" <> metavar "PROJECT" <> help "Explicit GCP project")
+          <*> namedOption "--data-base-uri" dataBaseUriKey (long "data-base-uri" <> metavar "gs://BUCKET/PREFIX" <> help "Durable object prefix")
+      )
     <*> parserOptionGroup "Evidence destination" (option (eitherReader parsePurpose) (long "purpose" <> metavar "nightly|release|baseline|investigation" <> help "Why this run is recorded"))
-    <*> parserOptionGroup "Evidence destination" (optional (Text.pack <$> strOption (long "project" <> metavar "PROJECT" <> help "Explicit GCP project")))
     <*> parserOptionGroup "Evidence destination" (optional (strOption (long "store-root" <> metavar "DIR" <> internal <> help "Scratch object store")))
     <*> parserOptionGroup "Verification" (switch (long "verify-only" <> help "Require every object to exist; upload none"))
     <*> parserOptionGroup "Verification" (switch (long "deep-verify" <> help "Download published objects and compare SHA-256"))
@@ -104,25 +122,37 @@ recordParser =
 recordHandler :: RecordCli -> CliEnv -> IO ExitCode
 recordHandler options _
   | options.subject == Nothing && options.subjectKind == SubjectPackage = respond options.json 2 "--subject-kind package requires --subject" Nothing
+  | Just output <- schemaDiagnostic options.config.diagnostic (describe evidenceConfig) = Text.IO.putStr output >> pure ExitSuccess
   | otherwise = do
-      selected <- selectStore options
-      case selected of
+      processEnvironment <- fmap (fmap (\(name, value) -> (Text.pack name, Text.pack value))) getEnvironment
+      resolved <- resolveEvidenceDefaults (envSnapshot processEnvironment) options.config
+      case resolved of
         Left message -> respond options.json 2 message Nothing
-        Right store -> do
-          let mode = if options.verifyOnly then VerifyOnly else UploadMissing
-              recordOptions = RecordOptions options.bundle options.baseUri options.purpose mode options.deepVerify options.allowDirty options.linkLogs ((,options.subjectKind) <$> options.subject) options.produced
-          recorded <- recordRun store recordOptions options.runDirectory
-          case recorded of
-            Left err -> respond options.json (recordExitCode err) (recordMessage err) Nothing
-            Right (Recorded path) -> respond options.json 0 "recorded" (Just path)
-            Right (AlreadyRecorded path) -> respond options.json 0 "already recorded" (Just path)
+        Right result -> case result.answer of
+          Left problems -> respond options.json 2 (renderErrorsText problems) Nothing
+          Right defaults -> case resolutionDiagnostic options.config.diagnostic result of
+            Just output -> Text.IO.putStr output >> pure ExitSuccess
+            Nothing -> case defaults.dataBaseUri of
+              Nothing -> respond options.json 2 "--data-base-uri or evidence.data-base-uri is required" Nothing
+              Just baseUri -> do
+                selected <- selectStore options defaults
+                case selected of
+                  Left message -> respond options.json 2 message Nothing
+                  Right store -> do
+                    let mode = if options.verifyOnly then VerifyOnly else UploadMissing
+                        recordOptions = RecordOptions (Text.unpack defaults.bundleRoot) baseUri options.purpose mode options.deepVerify options.allowDirty options.linkLogs ((,options.subjectKind) <$> options.subject) options.produced
+                    recorded <- recordRun store recordOptions options.runDirectory
+                    case recorded of
+                      Left err -> respond options.json (recordExitCode err) (recordMessage err) Nothing
+                      Right (Recorded path) -> respond options.json 0 "recorded" (Just path)
+                      Right (AlreadyRecorded path) -> respond options.json 0 "already recorded" (Just path)
 
-selectStore :: RecordCli -> IO (Either Text ObjectStore)
-selectStore options = case options.storeRoot of
+selectStore :: RecordCli -> EvidenceDefaults -> IO (Either Text ObjectStore)
+selectStore options defaults = case options.storeRoot of
   Just root -> do
-    allowed <- scratchBundleOutsideRepo options.bundle
+    allowed <- scratchBundleOutsideRepo (Text.unpack defaults.bundleRoot)
     pure $ if allowed then Right (directoryStore root) else Left "--store-root requires --bundle outside this repository"
-  Nothing -> pure $ case options.project of
+  Nothing -> pure $ case defaults.project of
     Just project | not (Text.null project) -> Right (gcloudStore project)
     _ -> Left "--project is required for GCS storage"
 
