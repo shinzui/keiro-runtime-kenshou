@@ -87,6 +87,11 @@ provenance:
       at: 2026-09-26T15:40:00Z
       mode: "implement"
       note: "Added effect-gated Kiroku retry-budget restart probe with real process kill."
+    - model: "gpt-6"
+      harness: "codex"
+      at: 2026-09-26T15:58:00Z
+      mode: "implement"
+      note: "Added one-process and four-process Kiroku static-group ownership and restart checks."
 ---
 
 # Cover shibuya core and its PGMQ and kiroku adapters
@@ -126,6 +131,7 @@ After this plan a maintainer can, from this repository, run `kenshou list --laye
 - [x] (2026-09-26) Added halt and forced mid-batch shutdown replay. Both historical and current adapters passed on PostgreSQL 17 and 18: halt at event 3 and forced stop with event 5 in the handler left checkpoint 0, then a final run replayed all eight events and checkpointed at 8. Each incarnation observed an ordered prefix and no event was skipped.
 - [x] (2026-09-26) Added a Kiroku consumer worker role and durable PostgreSQL effect ledger. `two-processes-one-member` passed on historical 0.5.1.2 and current 0.5.1.3 on PostgreSQL 17/18: both processes handled all 40 events, producing 80 effects, a duplicate factor of exactly 2, with checkpoint samples 0→40 and clean worker exits. This is reported as the cost of the adapter leaving the Kiroku startup guard off; [the local finding](../findings/16-shibuya-kiroku-same-member-duplicate-work.md) recommends exposing that guard.
 - [x] (2026-09-26) Extended the durable ledger with attempt numbers and registered `retry-budget-resets-on-restart`. The first process gates inside its third delivery and is killed with `SIGKILL`; the replacement resumes from the unchanged checkpoint. Released and current adapters on PostgreSQL 17/18 all recorded attempts 0–2 before kill and 0–4 after restart, then one dead letter at `attempt_count=5` and a final checkpoint. The same-member current PG18 scenario passed after the ledger extension.
+- [x] (2026-09-26) Registered `consumer-group-is-static` with a four-member helper in one process and four independent workers. It rejects invalid group size and per-member concurrency, verifies disjoint stream ownership and order, kills member 0 for twenty seconds while its partition lags without reassignment, then restarts that member and checks complete, duplicate-free recovery and final partition checkpoints. Historical and current adapters pass on PostgreSQL 17/18; sealed run IDs are below.
 - [ ] Implement and verify the Kiroku adapter scenarios, including durable crash and recovery arms on PostgreSQL 17 and 18.
 - [ ] Deliver benchmarks, soaks, telemetry comparisons, layer guide, upstream finding audit, and ADR/outcome distillation.
 
@@ -152,7 +158,7 @@ Every ID in this table names a sealed `runs/<id>/run-result.json` file from the 
 
 ### Kiroku adapter smoke results
 
-Each run is sealed in `runs/<id>/run-result.json`. The current lane uses Kiroku adapter 0.5.1.3, while the released lane uses 0.5.1.2. The ten `specs/shibuya-kiroku-*.json` files reproduce the current lane with `kenshou-shibuya-run` and either lane's PostgreSQL version.
+Each run is sealed in `runs/<id>/run-result.json`. The current lane uses Kiroku adapter 0.5.1.3, while the released lane uses 0.5.1.2. The twelve `specs/shibuya-kiroku-*.json` files reproduce the current lane with `kenshou-shibuya-run` and either lane's PostgreSQL version.
 
 | Scenario | Released PG18 / PG17 | Current PG18 / PG17 | Oracle |
 | --- | --- | --- | --- |
@@ -161,6 +167,7 @@ Each run is sealed in `runs/<id>/run-result.json`. The current lane uses Kiroku 
 | Halt and forced shutdown replay | `01a0de43-a4bf-72ed-bf23-be14d7818ad2` / `01a0de44-0393-701e-8e08-cf347cf95780` | `01a0de45-5c48-7441-bcb4-e28ace64fdd9` / `01a0de45-89fa-77c4-9fdd-46ca2fe6d5b5` | Halt at event 3, force stop at event 5, checkpoint sequence 0→0→8, final eight-event replay within one batch. |
 | Two processes, one member | `01a0de4e-a98f-7685-a754-7e2af923f04f` / `01a0de4e-f36d-74b5-bf33-8b52ab8a9573` | `01a0de50-71be-7233-b052-0e758e894d38` / `01a0de50-ae7c-73f4-9883-86755d8f160c` | Forty events, two effects per event, both workers active, monotonic checkpoint 0→40, no loss. |
 | Retry budget after process kill | `01a0de58-c389-7647-9aa6-5045cf99257a` / `01a0de59-15bc-76ed-a353-5ed3ac0a87cb` | `01a0de5a-8736-7404-8495-c1e8d0baa43a` / `01a0de5a-b8aa-76bb-b685-eb72f26dfd8b` | Attempts 0–2 before `SIGKILL`, 0–4 after restart, one dead letter with five attempts, final checkpoint. |
+| Static four-member group | `01a0de70-b03e-73c5-a288-ab93c88a2d93` / `01a0de71-3305-7343-9735-98173542a352` | `01a0de6e-ed4c-722c-b4e6-5508bc5b9cd1` / `01a0de6e-6f44-77e6-878b-09de75355947` | Invalid configurations rejected; 48 local and 192 process events handled once, static lag under `SIGKILL`, no reassignment, ordered restart recovery and final checkpoints. |
 
 ## Surprises & Discoveries
 

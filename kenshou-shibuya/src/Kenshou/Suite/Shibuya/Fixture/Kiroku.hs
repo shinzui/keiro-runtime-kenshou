@@ -6,6 +6,7 @@ module Kenshou.Suite.Shibuya.Fixture.Kiroku
     subscriptionFor,
     appendEvents,
     appendTypedEvents,
+    appendMoreEvents,
     eventPositions,
     checkpointOf,
     deadLettersOf,
@@ -91,13 +92,20 @@ appendEvents :: KirokuFixture -> Int -> IO ()
 appendEvents fixture count = appendTypedEvents fixture [(number, "Kenshou") | number <- [1 .. count]]
 
 appendTypedEvents :: KirokuFixture -> [(Int, Text)] -> IO ()
-appendTypedEvents fixture eventsToAppend = do
+appendTypedEvents = appendWithVersion NoStream
+
+appendMoreEvents :: KirokuFixture -> Int -> Int -> IO ()
+appendMoreEvents fixture first count =
+  appendWithVersion AnyVersion fixture [(number, "Kenshou") | number <- take count [first ..]]
+
+appendWithVersion :: ExpectedVersion -> KirokuFixture -> [(Int, Text)] -> IO ()
+appendWithVersion version fixture eventsToAppend = do
   let events =
         [ EventData Nothing (EventType eventType) (object ["sequence" .= number, "stream" .= streamName]) Nothing Nothing Nothing
         | (number, eventType) <- eventsToAppend
         ]
       StreamName streamName = fixture.stream
-  result <- runStoreIO fixture.store (appendToStream fixture.stream NoStream events)
+  result <- runStoreIO fixture.store (appendToStream fixture.stream version events)
   either (ioError . userError . show) (const (pure ())) result
 
 eventPositions :: KirokuFixture -> IO [Int64]

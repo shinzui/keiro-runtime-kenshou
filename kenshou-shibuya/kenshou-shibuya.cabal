@@ -30,6 +30,7 @@ library
     Kenshou.Suite.Shibuya.Concurrency.CoreRunner
     Kenshou.Suite.Shibuya.Concurrency.KeyedModel
     Kenshou.Suite.Shibuya.Concurrency.KirokuRetryRestart
+    Kenshou.Suite.Shibuya.Concurrency.KirokuStaticGroup
     Kenshou.Suite.Shibuya.Concurrency.KirokuTwoOwners
     Kenshou.Suite.Shibuya.Concurrency.PgmqDeadLetterAtomic
     Kenshou.Suite.Shibuya.Concurrency.PgmqHandlerOutlivesLease

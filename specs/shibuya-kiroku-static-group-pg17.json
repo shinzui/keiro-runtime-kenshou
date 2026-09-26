@@ -1,0 +1,7 @@
+{
+  "schema": "kenshou.run-spec/v1",
+  "scenario": "shibuya/kiroku-adapter/concurrency/consumer-group-is-static",
+  "dimensions": { "pg.durability": "durable", "pg.version": "17" },
+  "knobs": {},
+  "environment": { "placement": "local", "postgres": { "mode": "ephemeral" } }
+}
