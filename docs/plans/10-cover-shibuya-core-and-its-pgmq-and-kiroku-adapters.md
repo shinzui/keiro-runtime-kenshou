@@ -97,6 +97,11 @@ provenance:
       at: 2026-09-26T16:20:00Z
       mode: "implement"
       note: "Added cancellation and real-store partial-group acquisition probes across historical and current releases."
+    - model: "gpt-6"
+      harness: "codex"
+      at: 2026-09-26T17:31:00Z
+      mode: "implement"
+      note: "Added Kiroku backend and postmaster outage comparisons with checkpoint and replay evidence."
 ---
 
 # Cover shibuya core and its PGMQ and kiroku adapters
@@ -138,6 +143,7 @@ After this plan a maintainer can, from this repository, run `kenshou list --laye
 - [x] (2026-09-26) Extended the durable ledger with attempt numbers and registered `retry-budget-resets-on-restart`. The first process gates inside its third delivery and is killed with `SIGKILL`; the replacement resumes from the unchanged checkpoint. Released and current adapters on PostgreSQL 17/18 all recorded attempts 0–2 before kill and 0–4 after restart, then one dead letter at `attempt_count=5` and a final checkpoint. The same-member current PG18 scenario passed after the ledger extension.
 - [x] (2026-09-26) Registered `consumer-group-is-static` with a four-member helper in one process and four independent workers. It rejects invalid group size and per-member concurrency, verifies disjoint stream ownership and order, kills member 0 for twenty seconds while its partition lags without reassignment, then restarts that member and checks complete, duplicate-free recovery and final partition checkpoints. Historical and current adapters pass on PostgreSQL 17/18; sealed run IDs are below.
 - [x] (2026-09-26) Registered `group-acquisition-failure-strands-nothing` with 200 cancellation boundaries, a throwing member factory and cleanup callback, and two real eight-member Kiroku acquisition arms including backend termination. Historical adapter 0.5.1.2 reproduces REV-13-F1 on PostgreSQL 17/18: only the first throwing cleanup runs, the primary error is replaced and subscription threads remain. Current 0.5.1.3 releases all four acquired members, preserves the primary exception and returns to its per-arm thread baseline. The checked-in specs and sealed results are below. A `pg_stat_statements` read-call stabilization oracle remains to be added.
+- [x] (2026-09-26) Registered `postgres-outage-and-reconnect` with a named subscription backend fault, ten-second postmaster stop, retrying appender, durable effects, 200 ms checkpoint samples and a bounded replacement. Historical and current adapters on PostgreSQL 17/18 preserve all 80 events per arm. Backend termination delivers the next 40 but leaves the checkpoint at 40 during a 60-second observation; an explicit replacement replays those 40 and advances to 80. Postmaster restart catches up and checkpoints automatically with no duplicate effects. The backend checkpoint lag is an implementation finding under the owner's documented save-failure replay behavior; the contract checks pass. The fixture records named backend victims, while a separate assertion that the victim was specifically the `LISTEN` connection remains open.
 - [ ] Implement and verify the Kiroku adapter scenarios, including durable crash and recovery arms on PostgreSQL 17 and 18.
 - [ ] Deliver benchmarks, soaks, telemetry comparisons, layer guide, upstream finding audit, and ADR/outcome distillation.
 
@@ -164,7 +170,7 @@ Every ID in this table names a sealed `runs/<id>/run-result.json` file from the 
 
 ### Kiroku adapter smoke results
 
-Each run is sealed in `runs/<id>/run-result.json`. The current lane uses Kiroku adapter 0.5.1.3, while the released lane uses 0.5.1.2. The fourteen `specs/shibuya-kiroku-*.json` files reproduce the current lane with `kenshou-shibuya-run` and either lane's PostgreSQL version.
+Each run is sealed in `runs/<id>/run-result.json`. The current lane uses Kiroku adapter 0.5.1.3, while the released lane uses 0.5.1.2. The sixteen `specs/shibuya-kiroku-*.json` files reproduce the current lane with `kenshou-shibuya-run` and either lane's PostgreSQL version.
 
 | Scenario | Released PG18 / PG17 | Current PG18 / PG17 | Oracle |
 | --- | --- | --- | --- |
@@ -175,6 +181,7 @@ Each run is sealed in `runs/<id>/run-result.json`. The current lane uses Kiroku 
 | Retry budget after process kill | `01a0de58-c389-7647-9aa6-5045cf99257a` / `01a0de59-15bc-76ed-a353-5ed3ac0a87cb` | `01a0de5a-8736-7404-8495-c1e8d0baa43a` / `01a0de5a-b8aa-76bb-b685-eb72f26dfd8b` | Attempts 0–2 before `SIGKILL`, 0–4 after restart, one dead letter with five attempts, final checkpoint. |
 | Static four-member group | `01a0de70-b03e-73c5-a288-ab93c88a2d93` / `01a0de71-3305-7343-9735-98173542a352` | `01a0de6e-ed4c-722c-b4e6-5508bc5b9cd1` / `01a0de6e-6f44-77e6-878b-09de75355947` | Invalid configurations rejected; 48 local and 192 process events handled once, static lag under `SIGKILL`, no reassignment, ordered restart recovery and final checkpoints. |
 | Partial eight-member acquisition | `01a0de80-8f6d-71b8-827c-ffa666511056` / `01a0de80-f94c-709a-b0d7-2e4eb24b7d16` | `01a0de82-a996-76f3-bca4-6085837ef281` / `01a0de83-03d3-7633-9b98-76b06ac9dc7b` | Historical REV-13-F1 reproduced as a scoped nonblocking known defect; current release cleans all members and preserves the primary exception. Both run 200 cancellation controls and two real-store arms, including four killed backends. |
+| Backend termination and postmaster restart | `01a0dec1-b59b-7590-9e20-4a6ec8a965b0` / `01a0dec3-462a-74a3-a08c-34350575670f` | `01a0debd-2cbb-73ab-8e39-61bef45aa4c4` / `01a0debe-dc53-7351-a440-f81cd894f4b1` | Eighty IDs conserved per arm. Backend save stays at 40 during 60 seconds, then an explicit replacement replays 40 and checkpoints 80; postmaster restart checkpoints its new 40 automatically without replay. |
 
 ## Surprises & Discoveries
 
@@ -575,7 +582,7 @@ Scope: the nine scenarios of component `kiroku-adapter`. `Kenshou/Suite/Shibuya/
 
 `shibuya/kiroku-adapter/concurrency/retry-budget-resets-on-restart` feeds a poison event to a handler that always retries and kills the process after the third delivery. Oracle (contract): the event is dead-lettered exactly once and the checkpoint then advances; (implementation) `attempt` restarts at zero and the total deliveries are at most five times one plus the restart count; the figure is reported. Tier smoke. Cell: `retry-lease/repeatedStop`.
 
-`shibuya/kiroku-adapter/concurrency/postgres-outage-and-reconnect` terminates the subscription's backends (including the `LISTEN` connection, found by `application_name`) and then restarts the postmaster for ten seconds. Oracle (contract): either the subscription reconnects by itself and continues from its cursor, or `source` ends with the worker's exception and the restart loop resumes it; in both cases nothing is lost, order holds and `last_seen` never decreases. `durable` only. Tier standard. Cells: `kiroku-persistence/synchronousException`, `kiroku-persistence/timeout`.
+`shibuya/kiroku-adapter/concurrency/postgres-outage-and-reconnect` terminates a backend selected by the subscription's `application_name` and separately restarts the postmaster for ten seconds while an appender retries. Oracle (contract): every appended event reaches a handler, each incarnation preserves position order, `last_seen` never decreases, and any checkpoint-save failure permits replay from the prior checkpoint when a replacement starts. The owner's `mori://shinzui/kiroku/docs/architecture/subscriptions` documents that save failures mean replay on restart. The local 60-second automatic checkpoint recovery observation is an implementation finding; an explicit replacement must ultimately persist the checkpoint. The fixture still needs an assertion identifying the selected backend as the `LISTEN` connection. `durable` only. Tier standard. Cells: `kiroku-persistence/synchronousException`, `kiroku-persistence/timeout`.
 
 `shibuya/kiroku-adapter/concurrency/group-acquisition-failure-strands-nothing` cancels the thread building an eight-member group at varied boundaries in 200 iterations, then injects a later member's construction error and a throwing cleanup. Two real-store arms exercise that error with and without backend termination. Oracle (contract): all acquired members receive a shutdown attempt, the original construction error survives cleanup failure, and the real subscription thread count returns to its per-arm baseline five seconds later; `pg_stat_activity` records the named backend count and fault victims. The read statement's call count in `pg_stat_statements` has not yet been added. REV-13-F1 applies to adapter versions below 0.5.1.3; current 0.5.1.3 passes. Tier standard. Cell: `kiroku-persistence/cancellation`.
 
