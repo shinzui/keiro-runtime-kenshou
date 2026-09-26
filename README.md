@@ -133,8 +133,11 @@ and its `pg17` counterpart. The process-kill retry case uses
 `specs/shibuya-kiroku-retry-restart-pg18.json` and its `pg17` counterpart.
 The four-member static group case uses
 `specs/shibuya-kiroku-static-group-pg18.json` and its `pg17` counterpart.
+The group-acquisition fault case uses
+`specs/shibuya-kiroku-group-acquisition-pg18.json` and its `pg17` counterpart.
 These check persisted checkpoints, dead-letter rows, restart replay, static
-partition ownership and durable effects on both supported PostgreSQL versions.
+partition ownership, partial acquisition cleanup and durable effects on both
+supported PostgreSQL versions.
 
 PostgreSQL outage and backend termination comparisons use the same runner with
 `specs/shibuya-current-outage-pg18.json` and
