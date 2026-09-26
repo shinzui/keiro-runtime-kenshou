@@ -12,6 +12,7 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Effectful (IOE, liftIO, runEff)
 import Kenshou.Core.Role (ControlMessage (..), RoleContext (..), RoleName, WorkerInit (..), WorkerMessage (..), WorkerRole (..), mkRoleName)
+import Kenshou.Suite.Shibuya.Fixture.PgmqProducer qualified as PgmqProducer
 import Kenshou.Suite.Shibuya.Fixture.PgmqWorker qualified as PgmqWorker
 import Shibuya.Adapter (Adapter (..))
 import Shibuya.App (AppConfig (..), SupervisionStrategy (..), defaultAppConfig, mkProcessor, runApp, waitApp)
@@ -27,7 +28,7 @@ import System.Mem (performMajorGC)
 import System.Timeout (timeout)
 
 roles :: [WorkerRole]
-roles = [WorkerRole gcRoleName "Probes Shibuya caller liveness after dropping an application handle." gcProbe, PgmqWorker.role]
+roles = [WorkerRole gcRoleName "Probes Shibuya caller liveness after dropping an application handle." gcProbe, PgmqWorker.role, PgmqProducer.role]
 
 gcRoleName :: RoleName
 gcRoleName = either (error . Text.unpack) id (mkRoleName "shibuya/gc-probe")

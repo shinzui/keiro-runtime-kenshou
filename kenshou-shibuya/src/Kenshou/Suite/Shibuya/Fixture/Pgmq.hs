@@ -15,6 +15,7 @@ module Kenshou.Suite.Shibuya.Fixture.Pgmq
     insertEffect,
     effectRows,
     effectIntervals,
+    effectDeliveries,
   )
 where
 
@@ -184,6 +185,16 @@ effectIntervals pool arm = do
           "select message_id, started_at, completed_at from kenshou_shibuya_effects where arm = $1"
           (Encoders.param (Encoders.nonNullable Encoders.text))
           (Decoders.rowList ((,,) <$> Decoders.column (Decoders.nonNullable Decoders.text) <*> Decoders.column (Decoders.nonNullable Decoders.timestamptz) <*> Decoders.column (Decoders.nonNullable Decoders.timestamptz)))
+  result <- Pool.use pool (Session.statement arm statement)
+  either (ioError . userError . show) pure result
+
+effectDeliveries :: Pool -> Text -> IO [(Text, Int64, UTCTime, UTCTime)]
+effectDeliveries pool arm = do
+  let statement =
+        Statement.preparable
+          "select message_id, attempt, started_at, completed_at from kenshou_shibuya_effects where arm = $1"
+          (Encoders.param (Encoders.nonNullable Encoders.text))
+          (Decoders.rowList ((,,,) <$> Decoders.column (Decoders.nonNullable Decoders.text) <*> Decoders.column (Decoders.nonNullable Decoders.int8) <*> Decoders.column (Decoders.nonNullable Decoders.timestamptz) <*> Decoders.column (Decoders.nonNullable Decoders.timestamptz)))
   result <- Pool.use pool (Session.statement arm statement)
   either (ioError . userError . show) pure result
 

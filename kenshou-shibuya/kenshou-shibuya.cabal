@@ -31,6 +31,7 @@ library
     Kenshou.Suite.Shibuya.Concurrency.KeyedModel
     Kenshou.Suite.Shibuya.Concurrency.PgmqHandlerOutlivesLease
     Kenshou.Suite.Shibuya.Concurrency.PgmqLeaseSizing
+    Kenshou.Suite.Shibuya.Concurrency.PgmqMultiProcess
     Kenshou.Suite.Shibuya.Concurrency.PgmqPoolStarvation
     Kenshou.Suite.Shibuya.Concurrency.PgmqPrefetchShutdown
     Kenshou.Suite.Shibuya.Concurrency.PgmqShutdownRelease
@@ -42,6 +43,7 @@ library
     Kenshou.Suite.Shibuya.Correctness.PgmqAdapter
     Kenshou.Suite.Shibuya.Fixture.Handlers
     Kenshou.Suite.Shibuya.Fixture.Pgmq
+    Kenshou.Suite.Shibuya.Fixture.PgmqProducer
     Kenshou.Suite.Shibuya.Fixture.PgmqWorker
     Kenshou.Suite.Shibuya.Fixture.RestartLoop
     Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter
