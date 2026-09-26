@@ -1,6 +1,6 @@
 # Shibuya layer verification
 
-The `shibuya` layer exercises the framework, its metrics server, and its PGMQ and Kiroku adapters through public service-facing APIs. Core and metrics scenarios use synthetic sources or local HTTP and WebSocket servers. Adapter scenarios use real PostgreSQL, and the process cases keep effects in a durable ledger across worker deaths. Run `kenshou list --layer shibuya --json` for the executable catalogue and `kenshou run <scenario-id> --out runs` for one case. The catalogue below reflects the 52 scenarios registered on 2026-09-26; planned benchmarks, soaks and trace-continuity cases are still absent.
+The `shibuya` layer exercises the framework, its metrics server, and its PGMQ and Kiroku adapters through public service-facing APIs. Core and metrics scenarios use synthetic sources or local HTTP and WebSocket servers. Adapter scenarios use real PostgreSQL, and the process cases keep effects in a durable ledger across worker deaths. Run `kenshou list --layer shibuya --json` for the executable catalogue and `kenshou run <scenario-id> --out runs` for one case. The catalogue below reflects the 53 scenarios registered on 2026-09-26; four planned benchmarks, soaks and trace-continuity cases are still absent.
 
 The core knobs include `shibuya.inbox-size`, `shibuya.concurrency` (`serial`, `ahead:N`, `async:N`), `shibuya.ordering`, `shibuya.strategy`, `shibuya.processor-kind`, `shibuya.messages`, `shibuya.partitions` and `shibuya.decisions`. Individual cases expose only the knobs they actually read. The leased-message bound probe additionally exposes `bound.slack` and waits for 500 ms without source pulls before sampling. PGMQ cases expose polling, batch, prefetch, visibility-timeout and pool controls; Kiroku cases expose subscription target, batch size, consumer-group size and checkpoint policy. Read the scenario definitions and checked-in run specs in `specs/` for the actual knobs before changing a workload.
 
@@ -24,10 +24,11 @@ Each row gives the full CLI identifier and the behavior checked or measured. `co
 | `shibuya/core-ordering/concurrency/keyed-worker-failure-stops-intake` | A keyed worker exception stops the scheduler and bounds successor starts. |
 | `shibuya/core-ordering/correctness/policy-matrix` | Checks source and per-partition order across every valid ordering and concurrency pair. |
 
-### core-runner (15)
+### core-runner (16)
 
 | Scenario | Check |
 |---|---|
+| `shibuya/core-runner/benchmark/framework-tax` | Measures bare Streamly and serial Shibuya over the same forced message list, with per-message samples. |
 | `shibuya/core-runner/concurrency/adapter-shutdown-failure-does-not-skip-siblings` | A throwing adapter shutdown still shuts down sibling adapters and reports the exception to every stopper. |
 | `shibuya/core-runner/concurrency/blocking-adapter-shutdown-is-bounded` | A permanently blocked adapter shutdown respects the application's total shutdown deadline. |
 | `shibuya/core-runner/concurrency/finalization-failure-is-a-failure-not-a-halt` | Transient finalizer faults preserve the decision, and an exhausted retry budget triggers supervision. |
@@ -98,7 +99,7 @@ Each row gives the full CLI identifier and the behavior checked or measured. `co
 |---|---:|---:|---:|---:|---:|
 | startup-registration | 1 | 2 | 1 | 0 | 1 |
 | ingestion-backpressure | 2 | 1 | 1 | 2 | 0 |
-| dispatch | 3 | 1 | 1 | 1 | 0 |
+| dispatch | 4 | 1 | 1 | 1 | 0 |
 | keyed-ordering | 3 | 2 | 1 | 0 | 1 |
 | batching | 1 | 1 | 1 | 0 | 1 |
 | retry-lease | 2 | 0 | 1 | 2 | 1 |
@@ -125,6 +126,12 @@ The released core is Shibuya 0.9.0.3. The pinned remediation line carries lifecy
 
 The retry and success Prometheus counters remain indistinguishable in the measured release; the [local finding](../findings/14-shibuya-retry-and-success-counters-are-indistinguishable.md) records that documented limitation. The transient-handler readiness probe reproduces a sticky failed state tracked by `mori://shinzui/shibuya/okf/improvement-requests/concepts/IR-7`. Two processes claiming one Kiroku member each process every event, so the [local guard finding](../findings/16-shibuya-kiroku-same-member-duplicate-work.md) recommends exposing the store guard. The Kiroku live all-streams crash probe permits a 1,000-event publisher replay window and reports the observed replay separately from contract loss checks.
 
+## Framework benchmark
+
+`framework-tax` runs one serial Streamly drain or Shibuya application over the same fully forced list of 100,000 or 1,000,000 messages per pass. Both arms update one counter and record one sample per message; Shibuya's sample runs from source delivery through acknowledgement. The measurement toolkit writes message and pass histograms, throughput, p50/p99/p99.9, RTS series and an allocation-per-message figure. The steady phase ends after a completed pass count. Its aggregate pass sample threshold is one because each pass contains at least 1,000 messages, which the scenario checks separately. The in-process driver is CPU-bound by design, so this case disables the toolkit's driver CPU saturation gate and records that choice. Local runs are indicative; cell placement is needed for authoritative comparisons.
+
+Three interleaved 100,000-message local pairs, with matching seeds per pair, passed and produced a `kenshou.comparison/v1` result under `policies/shibuya-framework-tax.json`. The verdict was `inconclusive`: the measured Shibuya p99 exceeded the strict reference limit, but the three-pair confidence interval was wider than the policy permits. The two 1,000,000-message arms also passed with complete histograms. The result measures framework overhead and does not establish a production performance budget. The run IDs and comparison ID are recorded in the child ExecPlan.
+
 ## Sizing and recovery
 
 The gated synthetic broker observed 105 outstanding leases under `inboxSize=100`, `async:4`, against `inboxSize + 3n + bound.slack = 114`. A one-slot serial run observed 3 against 6; an eight-slot `ahead:4` run with zero slack observed 13 against 20. All three finalized 1,000 messages after the gate opened. The bound describes the core's single-message processor pipeline at the tested settings.
@@ -135,4 +142,4 @@ Shibuya does not automatically restart a failed processor. An application restar
 
 ## Remaining acceptance
 
-The lifecycle matrix has uncovered cells and the isolated current-release CLI sweep for the core and metrics cases is incomplete. The five Shibuya benchmarks, four soak pairs, trace-continuity cases, overhead comparisons, and upstream finding audit described by the ExecPlan remain to be implemented and run. PostgreSQL 18 is the first repair-and-rerun checkpoint; PostgreSQL 17 compatibility acceptance follows the MasterPlan's later pass.
+The lifecycle matrix has uncovered cells and the isolated current-release CLI sweep for the core and metrics cases is incomplete. Four Shibuya benchmarks, four soak pairs, trace-continuity cases, overhead comparisons, and upstream finding audit described by the ExecPlan remain to be implemented and run. The framework-tax comparison needs a controlled cell rerun to narrow its confidence interval. PostgreSQL 18 is the first repair-and-rerun checkpoint; PostgreSQL 17 compatibility acceptance follows the MasterPlan's later pass.

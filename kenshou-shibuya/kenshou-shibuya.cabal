@@ -24,6 +24,7 @@ library
   hs-source-dirs: src
   exposed-modules:
     Kenshou.Suite.Shibuya
+    Kenshou.Suite.Shibuya.Bench.FrameworkTax
     Kenshou.Suite.Shibuya.Cohort
     Kenshou.Suite.Shibuya.Concurrency.CoreBatch
     Kenshou.Suite.Shibuya.Concurrency.CoreOrdering
@@ -71,6 +72,7 @@ library
     base >=4.21 && <4.22,
     bytestring >=0.12 && <0.13,
     containers >=0.7 && <0.8,
+    deepseq,
     effectful-core >=2.6 && <2.7,
     hasql,
     hasql-pool,

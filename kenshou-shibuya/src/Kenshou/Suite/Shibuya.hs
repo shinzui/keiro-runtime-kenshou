@@ -2,6 +2,7 @@ module Kenshou.Suite.Shibuya (bundle) where
 
 import Kenshou.Core.Bundle (LayerBundle (..))
 import Kenshou.Core.Id (Layer (Shibuya))
+import Kenshou.Suite.Shibuya.Bench.FrameworkTax qualified as FrameworkTax
 import Kenshou.Suite.Shibuya.Concurrency.CoreBatch qualified as ConcurrentCoreBatch
 import Kenshou.Suite.Shibuya.Concurrency.CoreOrdering qualified as ConcurrentCoreOrdering
 import Kenshou.Suite.Shibuya.Concurrency.CoreRunner qualified as ConcurrentCoreRunner
@@ -23,4 +24,4 @@ import Kenshou.Suite.Shibuya.Correctness.PgmqAdapter qualified as PgmqAdapter
 import Kenshou.Suite.Shibuya.Roles qualified as Roles
 
 bundle :: LayerBundle
-bundle = LayerBundle Shibuya (CoreRunner.scenarios <> ConcurrentCoreRunner.scenarios <> CoreOrdering.scenarios <> ConcurrentCoreOrdering.scenarios <> [KeyedModel.scenario] <> ConcurrentCoreBatch.scenarios <> CoreBatch.scenarios <> Metrics.scenarios <> PgmqAdapter.scenarios <> [KirokuAckMapping.scenario, KirokuDepth.scenario, KirokuReplay.scenario, KirokuTwoOwners.scenario, KirokuRetryRestart.scenario, KirokuStaticGroup.scenario, KirokuGroupAcquisition.scenario, KirokuOutage.scenario, KirokuSigkillReplay.scenario]) Roles.roles
+bundle = LayerBundle Shibuya (CoreRunner.scenarios <> ConcurrentCoreRunner.scenarios <> [FrameworkTax.scenario] <> CoreOrdering.scenarios <> ConcurrentCoreOrdering.scenarios <> [KeyedModel.scenario] <> ConcurrentCoreBatch.scenarios <> CoreBatch.scenarios <> Metrics.scenarios <> PgmqAdapter.scenarios <> [KirokuAckMapping.scenario, KirokuDepth.scenario, KirokuReplay.scenario, KirokuTwoOwners.scenario, KirokuRetryRestart.scenario, KirokuStaticGroup.scenario, KirokuGroupAcquisition.scenario, KirokuOutage.scenario, KirokuSigkillReplay.scenario]) Roles.roles

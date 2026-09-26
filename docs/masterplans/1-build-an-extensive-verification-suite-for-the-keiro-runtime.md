@@ -315,7 +315,9 @@ The following cross-plan decisions should become ADRs in `docs/adr/` when the ow
 
 EP-10 tightened its core leased-message bound probe: it now waits for 500 ms without source pulls and accepts inbox, concurrency and slack knobs. Three sealed serial, ahead and async runs saturated their handlers, remained within `inboxSize + 3n + slack`, finalized all 1,000 messages, and left no leases. The child plan records the measured values and run IDs.
 
-EP-10 added `docs/layers/shibuya.md` with all 52 currently registered scenarios, the lifecycle cell counts from the executable matrix, cohort findings, sizing evidence and restart guidance. The guide names the unfinished benchmark, soak, telemetry and matrix acceptance explicitly.
+EP-10 added `docs/layers/shibuya.md`, initially cataloguing 52 registered scenarios, the lifecycle cell counts from the executable matrix, cohort findings, sizing evidence and restart guidance. The guide names the unfinished benchmark, soak, telemetry and matrix acceptance explicitly.
+
+EP-10 registered its first Shibuya benchmark, `core-runner/benchmark/framework-tax`, and updated the guide to 53 executable scenarios. Three interleaved local pairs at 100,000 messages and one pair at 1,000,000 passed with per-message histograms, allocation evidence and complete message conservation. The three-pair comparison returned `inconclusive` under the strict local policy because its confidence intervals were too wide. A controlled cell comparison and four further Shibuya benchmarks remain open.
 
 EP-10's Kiroku outage scenario now has a separate dedicated-listener fault: it identifies the consumer's new `kiroku-listener` PID against a pre-start backend baseline, verifies the `LISTEN` query, and terminates that PID. Historical adapter 0.5.1.2 and current 0.5.1.3 passed the expanded PostgreSQL 18 scenario with automatic listener recovery, all 80 events handled once, and final checkpoints. The PostgreSQL 17 listener-specific rerun remains in the later compatibility pass.
 

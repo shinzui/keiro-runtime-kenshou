@@ -67,6 +67,7 @@ cellsOf scenario = case renderScenarioId scenario of
   "shibuya/core-runner/correctness/duplicate-processor-ids-are-rejected" -> [(StartupRegistration, SynchronousException)]
   "shibuya/core-runner/correctness/nonpositive-concurrency-is-rejected" -> [(Dispatch, SynchronousException)]
   "shibuya/core-runner/correctness/a-failed-processor-is-never-restarted" -> [(IngestionBackpressure, SynchronousException), (Supervision, Normal)]
+  "shibuya/core-runner/benchmark/framework-tax" -> [(Dispatch, Normal)]
   "shibuya/core-runner/concurrency/halt-wakes-idle-intake" -> [(Dispatch, Timeout)]
   "shibuya/core-runner/concurrency/finalization-failure-is-a-failure-not-a-halt" -> [(Finalization, SynchronousException), (Finalization, Timeout), (Supervision, SynchronousException)]
   "shibuya/core-runner/concurrency/stop-all-on-failure-delivers-once" -> [(Supervision, SynchronousException), (Supervision, Normal)]
