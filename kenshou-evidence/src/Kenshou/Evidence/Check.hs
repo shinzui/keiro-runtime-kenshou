@@ -24,7 +24,8 @@ import Data.Time (UTCTime, defaultTimeLocale, formatTime, parseTimeM)
 import Kenshou.Core.Id (ScenarioId (..), parseRunId, parseScenarioId, renderLayer)
 import Kenshou.Evidence.Store (ObjectStat (..), ObjectStore (..))
 import Kenshou.Evidence.Types (mkRevision, mkSha256, sha256Bytes)
-import Okf.Document (OKFDocument (..), frontmatterKeys, frontmatterLookup, parseDocument, removeField)
+import Okf.Actor (renderActor)
+import Okf.Document (OKFDocument (..), Verification (..), frontmatterKeys, frontmatterLookup, parseDocument, readVerified, removeField)
 import System.Directory (canonicalizePath, doesDirectoryExist, listDirectory)
 import System.Exit (ExitCode (..))
 import System.FilePath (makeRelative, splitDirectories, takeExtension, (</>))
@@ -87,7 +88,7 @@ check store options = do
         pure (local <> references <> historyFindings <> remoteFindings)
 
 checkReferences :: [(FilePath, Text)] -> [Finding]
-checkReferences current = concatMap inspect parsed
+checkReferences current = concatMap inspect parsed <> concatMap attestationConsistency parsed
   where
     parsed = [(path, document) | (path, content) <- current, Right document <- [parseDocument content]]
     byPath = Map.fromList parsed
@@ -114,6 +115,45 @@ checkReferences current = concatMap inspect parsed
            in previous <> concatMap (target path (field document "scenario")) arms
       | field document "type" == Just (String "Attestation") =
           maybe [] (target path Nothing) (asText (field document "run"))
+      | otherwise = []
+    attestationConsistency (path, document)
+      | field document "type" == Just (String "Attestation") =
+          let checks = case field document "checks" of
+                Just (Array values) -> foldr (:) [] values
+                _ -> []
+              names = mapMaybe (\value -> asText (nested "name" (Just value))) checks
+              required = ["digests-match", "revisions-resolve", "cohort-matches-plan", "verdict-recomputed", "environment-captured", "clean-worktree"]
+              outcomes = [(name, asText (nested "result" (Just value))) | value <- checks, Just name <- [asText (nested "name" (Just value))]]
+              contradicted = any (\name -> lookup name outcomes == Just (Just "failed")) ["digests-match", "cohort-matches-plan", "verdict-recomputed"]
+              complete = all (\(_, result) -> result == Just "passed") outcomes
+              expected = if contradicted then "refuted" else if complete then "confirmed" else "incomplete"
+              matched = sort names == sort required
+              verdictIssue = [Finding path "attestation-consistency" "attestation verdict disagrees with its checks" | matched, field document "verdict" /= Just (String expected)]
+              namesIssue = [Finding path "attestation-consistency" "attestation must have all six distinct check names" | not matched]
+              runReference = asText (field document "run")
+              digestsIssue = case runReference >>= (\ref -> Map.lookup (Text.unpack (Text.dropWhile (== '/') ref)) byPath) of
+                Just runDocument
+                  | lookup "digests-match" outcomes == Just (Just "passed") ->
+                      let recorded = case field runDocument "data" of
+                            Just (Array values) -> sort (mapMaybe (\value -> asText (nested "digest" (Just value))) (foldr (:) [] values))
+                            _ -> []
+                          attested = case field document "dataDigests" of
+                            Just (Array values) -> sort [value | String value <- foldr (:) [] values]
+                            _ -> []
+                       in [Finding path "attestation-consistency" "dataDigests must cover the run's linked data" | not (all (`elem` attested) recorded)]
+                _ -> []
+              verifiedIssue = case runReference >>= (\ref -> Map.lookup (Text.unpack (Text.dropWhile (== '/') ref)) byPath) of
+                Just runDocument
+                  | field document "verdict" == Just (String "confirmed") ->
+                      let actor = asText (field document "attester")
+                          backed = any (\entry -> Just (renderActor entry.verificationBy) == actor) (readVerified runDocument.frontmatter)
+                       in [Finding path "attestation-consistency" "confirmed attestation has no matching verified entry on the run" | not backed]
+                _ -> []
+           in namesIssue <> verdictIssue <> digestsIssue <> verifiedIssue
+      | field document "type" == Just (String "Verification Run") =
+          let processEntries = [(renderActor entry.verificationBy, entry.verificationAt) | entry <- readVerified document.frontmatter, "process:" `Text.isPrefixOf` renderActor entry.verificationBy]
+              matching actor at = any (\(_, attestation) -> field attestation "type" == Just (String "Attestation") && field attestation "run" == Just (String ("/" <> Text.pack path)) && field attestation "verdict" == Just (String "confirmed") && field attestation "attester" == Just (String actor) && field attestation "attestedAt" == (String <$> at)) parsed
+           in [Finding path "attestation-consistency" "verified process entry has no matching confirmed attestation" | (actor, at) <- processEntries, not (matching actor at)]
       | otherwise = []
     checkPrevious path document ref =
       let relative = Text.unpack (Text.dropWhile (== '/') ref)
@@ -276,7 +316,22 @@ checkDocument path document =
               _ -> Nothing
          in [issue "comparison-outcome" "comparison verdict and outcome disagree" | expected /= field "outcome"]
               <> [issue "data-completeness" "comparison must link exactly one comparison document" | mapMaybe (entryText "kind") (entries "data") /= ["comparison"]]
-      attestationChecks = [issue "event-keys" (name <> " belongs only on runs") | name <- ["layer", "tier"], field name /= Nothing]
+      attestationChecks =
+        [issue "event-keys" (name <> " belongs only on runs") | name <- ["layer", "tier"], field name /= Nothing]
+          <> requireText "attestationId"
+          <> requireText "attesterRevision"
+          <> requireText "attestedAt"
+          <> revision "attesterRevision"
+          <> [issue "id-shape" "attestationId must be a UUIDv7" | maybe True (either (const True) (const False) . parseRunId) (textField "attestationId")]
+          <> ( case (textField "attestationId", textField "attestedAt") of
+                 (Just identifier, Just at) -> case parseUtc at of
+                   Just time ->
+                     let expected = "attestations/" <> formatTime defaultTimeLocale "%Y/%m" time <> "/" <> Text.unpack identifier <> ".md"
+                      in [issue "path-consistency" ("expected " <> Text.pack expected) | path /= expected]
+                   Nothing -> [issue "time-order" "attestedAt must be RFC 3339 UTC"]
+                 _ -> []
+             )
+          <> [issue "hex-shape" "dataDigests must be 64 lowercase hexadecimal characters" | value <- entries "dataDigests", case value of String digestValue -> either (const True) (const False) (mkSha256 digestValue); _ -> True]
    in common <> (if run then runChecks else []) <> (if attestation then attestationChecks else [])
   where
     isString (String _) = True

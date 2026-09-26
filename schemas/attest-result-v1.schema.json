@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/attest-result-v1.schema.json",
+  "type": "object",
+  "required": ["schema", "status", "message", "exitCode"],
+  "properties": {
+    "schema": {"const": "kenshou.attest-result/v1"},
+    "status": {"enum": ["confirmed", "refuted", "incomplete", "error"]},
+    "message": {"type": "string"},
+    "exitCode": {"enum": [0, 1, 2, 3, 4]},
+    "path": {"type": "string"}
+  },
+  "additionalProperties": false
+}

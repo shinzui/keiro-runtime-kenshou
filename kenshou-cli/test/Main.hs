@@ -15,6 +15,7 @@ main = hspec do
 
     it "returns success for command-specific help" do
       runWithArgs ["record", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["attest", "--help"] `shouldReturnCode` ExitSuccess
       runWithArgs ["history", "--help"] `shouldReturnCode` ExitSuccess
       runWithArgs ["run", "--help"] `shouldReturnCode` ExitSuccess
 
@@ -24,6 +25,9 @@ main = hspec do
     it "requires one record source" do
       runWithArgs ["record", "--purpose", "release"] `shouldReturnCode` ExitFailure 2
       runWithArgs ["record", "a-run", "--comparison", "comparison.json", "--purpose", "release"] `shouldReturnCode` ExitFailure 2
+
+    it "rejects a human anomaly exception without an interactive terminal" do
+      runWithArgs ["attest", "invalid", "--project", "fixture", "--accept-anomaly", "--authority", "human:fixture", "--reason", "fixture"] `shouldReturnCode` ExitFailure 2
 
     it "returns 2 for an unknown subcommand" do
       runWithArgs ["cohort", "bogus"] `shouldReturnCode` ExitFailure 2

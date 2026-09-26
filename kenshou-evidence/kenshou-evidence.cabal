@@ -33,6 +33,7 @@ library
   import: warnings
   hs-source-dirs: src
   exposed-modules:
+    Kenshou.Evidence.Attest
     Kenshou.Evidence.Bundle
     Kenshou.Evidence.Check
     Kenshou.Evidence.Cli

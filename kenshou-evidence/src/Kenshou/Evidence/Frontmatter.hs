@@ -1,9 +1,12 @@
 module Kenshou.Evidence.Frontmatter
   ( EvidenceRecord (..),
     ComparisonEvidence (..),
+    AttestationEvidence (..),
+    AttestationCheck (..),
     FieldError (..),
     recordToDocument,
     comparisonToDocument,
+    attestationToDocument,
     recordFromDocument,
   )
 where
@@ -16,7 +19,7 @@ import Data.Word (Word64)
 import Kenshou.Core.Id (ScenarioId (..), renderKind, renderLayer, renderScenarioId, unSegment)
 import Kenshou.Core.Outcome (Outcome, renderOutcome)
 import Kenshou.Evidence.Types (ComponentRef (..), ComponentSource (..), DataKind (..), DataLink (..), Purpose (..), Revision (..), Sha256 (..), SubjectKind (..), mkRevision, mkSha256)
-import Okf.Actor (Actor (ProducerActor), parseActor)
+import Okf.Actor (Actor (ProcessActor, ProducerActor), parseActor)
 import Okf.Document (Generated (..), OKFDocument (..), OkfCommon (..), frontmatterLookup, okfCommon, readGenerated, setField, setGenerated)
 
 newtype FieldError = FieldError Text deriving stock (Eq, Show)
@@ -76,6 +79,55 @@ data ComparisonEvidence = ComparisonEvidence
     body :: !Text
   }
   deriving stock (Eq, Show)
+
+data AttestationCheck = AttestationCheck
+  { name :: !Text,
+    result :: !Text,
+    detail :: !(Maybe Text)
+  }
+  deriving stock (Eq, Show)
+
+instance ToJSON AttestationCheck where
+  toJSON check = object (["name" .= check.name, "result" .= check.result] <> maybe [] (\detail -> ["detail" .= detail]) check.detail)
+
+data AttestationEvidence = AttestationEvidence
+  { title :: !Text,
+    description :: !Text,
+    generatedAt :: !Text,
+    attestationId :: !Text,
+    run :: !Text,
+    attesterRevision :: !Revision,
+    attestedAt :: !Text,
+    verdict :: !Text,
+    checks :: ![AttestationCheck],
+    dataDigests :: ![Sha256],
+    exception :: !(Maybe Value),
+    body :: !Text
+  }
+  deriving stock (Eq, Show)
+
+attestationToDocument :: AttestationEvidence -> OKFDocument
+attestationToDocument record =
+  OKFDocument
+    { frontmatter = foldl (\front (name, value) -> setField name value front) generated fields,
+      body = record.body
+    }
+  where
+    generated =
+      setGenerated
+        Generated {generatedBy = ProcessActor "kenshou-attester/0.1.0.0", generatedAt = Just record.generatedAt}
+        (okfCommon OkfCommon {commonType = "Attestation", commonTitle = Just record.title, commonDescription = Just record.description, commonTimestamp = Nothing})
+    fields =
+      [ ("attestationId", String record.attestationId),
+        ("run", String record.run),
+        ("attester", String "process:kenshou-attester/0.1.0.0"),
+        ("attesterRevision", toJSON record.attesterRevision),
+        ("attestedAt", String record.attestedAt),
+        ("verdict", String record.verdict),
+        ("checks", toJSON record.checks),
+        ("dataDigests", toJSON record.dataDigests)
+      ]
+        <> maybe [] (\value -> [("exception", value)]) record.exception
 
 comparisonToDocument :: ComparisonEvidence -> OKFDocument
 comparisonToDocument record =

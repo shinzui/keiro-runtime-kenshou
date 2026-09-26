@@ -15,17 +15,19 @@ import Kenshou.Core.Cli.Config (ConfigInputs (..))
 import Kenshou.Core.Id (parseRunId, parseScenarioId)
 import Kenshou.Core.Manifest (writeManifest)
 import Kenshou.Core.Outcome (Outcome (Passed))
-import Kenshou.Evidence.Bundle (BundleWriteError (..), BundleWriteResult (..), runRecordPath, writeRunRecord, writeRunRecordWith)
+import Kenshou.Evidence.Attest (AttestOptions (..), AttestResult (..), attest, coreRecomputers)
+import Kenshou.Evidence.Bundle (BundleWriteError (..), BundleWriteResult (..), runRecordPath, writeAttestationRecord, writeRunRecord, writeRunRecordWith)
 import Kenshou.Evidence.Check (CheckOptions (..), Finding (..), checkBundle, checkBundleWithStore, checkDocument)
 import Kenshou.Evidence.Config (EvidenceDefaults (..), bundleRootKey, dataBaseUriKey, projectKey, resolveEvidenceDefaults)
-import Kenshou.Evidence.Frontmatter (EvidenceRecord (..), recordFromDocument, recordToDocument)
+import Kenshou.Evidence.Frontmatter (AttestationCheck (..), AttestationEvidence (..), EvidenceRecord (..), recordFromDocument, recordToDocument)
 import Kenshou.Evidence.History (HistoryDocument (..), HistoryEntry (..), HistoryQuery (..), deriveBaseline, history)
 import Kenshou.Evidence.Publish (PublishError (..), PublishOptions (..), UploadMode (..), publishComparisonData, publishRunData)
 import Kenshou.Evidence.Record (RecordInput (..), RecordOptions (..), RecordOutcome (..), buildRunRecord, recordComparison, recordRunWith)
 import Kenshou.Evidence.Source (ComparisonSource (..), ComparisonView (..), VerifiedFile (..), loadComparisonSource, loadRunSource)
 import Kenshou.Evidence.Store (ObjectStat (..), ObjectStore (..), PutResult (..), StoreError (..), directoryStore, gcloudStoreWith, memoryStore)
 import Kenshou.Evidence.Types (DataKind (..), DataLink (..), Purpose (..), Revision (..), Sha256 (..), SubjectKind (..), mkRevision, mkSha256, sha256Bytes)
-import Okf.Document (OKFDocument (..), parseDocument, serializeDocument, setField)
+import Okf.Actor (Actor (ProcessActor))
+import Okf.Document (OKFDocument (..), Verification (..), parseDocument, serializeDocument, setField, setVerified)
 import Settei (ResolveResult (..))
 import Settei.Env (envSnapshot)
 import Settei.Optparse (DiagnosticMode (NoDiagnostic), cliOverride, cliSources)
@@ -121,6 +123,51 @@ main = hspec do
         recorded <- Text.IO.readFile (bundle </> recordedPath) >>= either (fail . show) pure . parseDocument
         let wrongOutcome = recorded {frontmatter = setField "outcome" (String "failed") recorded.frontmatter}
         map (.rule) (checkDocument recordedPath wrongOutcome) `shouldContain` ["comparison-outcome"]
+        attested <- attest store coreRecomputers (AttestOptions bundle False False Nothing) "runs/selftest/2026/09/01997f3a-5b7c-7e21-8a44-0d6c2f9b1e55.md"
+        attested `shouldSatisfy` \case
+          Right result -> result.verdict == "incomplete"
+          Left _ -> False
+        checkBundle (CheckOptions bundle Nothing False False) `shouldReturn` Right []
+        let tamperedStore =
+              store
+                { fetchObject = \uri destination -> do
+                    fetched <- store.fetchObject uri destination
+                    case fetched of
+                      Right () | "/run-result.json" `Text.isSuffixOf` uri -> ByteString.Char8.appendFile destination "tampered"
+                      _ -> pure ()
+                    pure fetched
+                }
+        tampered <- attest tamperedStore coreRecomputers (AttestOptions bundle False False Nothing) baselineId
+        tampered `shouldSatisfy` \case
+          Right result -> result.verdict == "refuted"
+          Left _ -> False
+        checkBundle (CheckOptions bundle Nothing False False) `shouldReturn` Right []
+        let attestationRecord =
+              AttestationEvidence
+                { title = "Attestation of baseline — incomplete",
+                  description = "The source data was checked; outcome recomputation is pending.",
+                  generatedAt = "2026-09-26T00:00:02Z",
+                  attestationId = "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e5a",
+                  run = "/runs/selftest/2026/09/01997f3a-5b7c-7e21-8a44-0d6c2f9b1e55.md",
+                  attesterRevision = Revision (Text.replicate 40 "f"),
+                  attestedAt = "2026-09-26T00:00:02Z",
+                  verdict = "incomplete",
+                  checks = [AttestationCheck name "skipped" Nothing | name <- ["digests-match", "revisions-resolve", "cohort-matches-plan", "verdict-recomputed", "environment-captured", "clean-worktree"]],
+                  dataDigests = map (.digest) baseline.dataLinks,
+                  exception = Nothing,
+                  body = "The attestation is incomplete.\n"
+                }
+        writeAttestationRecord bundle attestationRecord >>= (`shouldSatisfy` isRight)
+        checkBundle (CheckOptions bundle Nothing False False) `shouldReturn` Right []
+        let attestationPath = bundle </> "attestations/2026/09/01997f3a-5b7c-7e21-8a44-0d6c2f9b1e5a.md"
+        originalAttestation <- Text.IO.readFile attestationPath
+        attestationDocument <- either (fail . show) pure (parseDocument originalAttestation)
+        Text.IO.writeFile attestationPath (serializeDocument (attestationDocument {frontmatter = setField "verdict" (String "confirmed") attestationDocument.frontmatter}))
+        invalidAttestation <- checkBundle (CheckOptions bundle Nothing False False)
+        invalidAttestation `shouldSatisfy` \case
+          Right findings -> any (\finding -> finding.rule == "attestation-consistency") findings
+          Left _ -> False
+        Text.IO.writeFile attestationPath originalAttestation
         scenario <- either (fail . show) pure (parseScenarioId "selftest/kernel/correctness/always-pass")
         observed <- history bundle (HistoryQuery scenario Nothing [] Nothing False) >>= either (fail . show) pure
         length observed.entries `shouldBe` 3
@@ -128,14 +175,30 @@ main = hspec do
         let baselineEntry = (observed.entries !! 0) {trust = "machine-confirmed", attestations = [object ["verdict" .= ("confirmed" :: Text), "attestedAt" .= ("2026-09-26T00:00:03Z" :: Text)]]}
             laterEntry = (observed.entries !! 1 :: HistoryEntry) {startedAt = "2026-09-26T00:00:02Z"}
         deriveBaseline [baselineEntry, laterEntry] laterEntry `shouldBe` Just baselineEntry.concept
+        let runPath = bundle </> "runs/selftest/2026/09/01997f3a-5b7c-7e21-8a44-0d6c2f9b1e55.md"
+            actor = ProcessActor "kenshou-attester/0.1.0.0"
+            firstTime = "2026-09-26T00:00:03Z"
+            confirmedAttestation =
+              attestationRecord
+                { attestationId = "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e5b",
+                  generatedAt = firstTime,
+                  attestedAt = firstTime,
+                  verdict = "confirmed",
+                  checks = [AttestationCheck name "passed" Nothing | name <- ["digests-match", "revisions-resolve", "cohort-matches-plan", "verdict-recomputed", "environment-captured", "clean-worktree"]]
+                }
+        runDocument <- Text.IO.readFile runPath >>= either (fail . show) pure . parseDocument
+        Text.IO.writeFile runPath (serializeDocument (runDocument {frontmatter = setVerified [Verification actor (Just firstTime)] runDocument.frontmatter}))
+        writeAttestationRecord bundle confirmedAttestation >>= (`shouldSatisfy` isRight)
+        writeAttestationRecord bundle (confirmedAttestation {attestationId = "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e5c", generatedAt = "2026-09-26T00:00:04Z", attestedAt = "2026-09-26T00:00:04Z"}) >>= (`shouldSatisfy` isRight)
+        checkBundle (CheckOptions bundle Nothing False False) `shouldReturn` Right []
         let attestations = bundle </> "attestations/2026/09"
             target = "/runs/selftest/2026/09/01997f3a-5b7c-7e21-8a44-0d6c2f9b1e55.md"
             attestation verdict at = Text.unlines ["---", "type: Attestation", "run: " <> target, "verdict: " <> verdict, "attestedAt: " <> at, "---"]
         createDirectoryIfMissing True attestations
-        Text.IO.writeFile (attestations </> "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e58.md") (attestation "confirmed" "2026-09-26T00:00:03Z")
+        Text.IO.writeFile (attestations </> "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e58.md") (attestation "confirmed" "2026-09-27T00:00:03Z")
         confirmedHistory <- history bundle (HistoryQuery scenario Nothing [] Nothing False) >>= either (fail . show) pure
         (confirmedHistory.entries !! 0).trust `shouldBe` "machine-confirmed"
-        Text.IO.writeFile (attestations </> "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e59.md") (attestation "refuted" "2026-09-26T00:00:04Z")
+        Text.IO.writeFile (attestations </> "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e59.md") (attestation "refuted" "2026-09-27T00:00:04Z")
         refutedHistory <- history bundle (HistoryQuery scenario Nothing [] Nothing False) >>= either (fail . show) pure
         (refutedHistory.entries !! 0).trust `shouldBe` "unverified"
 
