@@ -39,6 +39,14 @@ in  Schema.Project::{
         , description = Some
             "Operator interface and aggregate runtime verification executable"
         }
+      , Schema.Package::{
+        , name = "kenshou-evidence"
+        , type = Schema.PackageType.Library
+        , language = Schema.Language.Haskell
+        , path = Some "./kenshou-evidence"
+        , description = Some
+            "Historic verification records and durable evidence storage"
+        }
       ]
     , dependencies =
       [ "shinzui/keiro"
@@ -55,6 +63,7 @@ in  Schema.Project::{
       , "shinzui/pg-migrate"
       , "shinzui/ephemeral-pg"
       , "iand675/hs-opentelemetry"
+      , "shinzui/okf"
       ]
     , dependencyRefs =
       [ Schema.MoriRef::{ namespace = "shinzui", name = "keiro" }
@@ -83,6 +92,7 @@ in  Schema.Project::{
         , namespace = "iand675"
         , name = "hs-opentelemetry"
         }
+      , Schema.MoriRef::{ namespace = "shinzui", name = "okf" }
       ]
     , docs =
       [ Schema.DocRef::{

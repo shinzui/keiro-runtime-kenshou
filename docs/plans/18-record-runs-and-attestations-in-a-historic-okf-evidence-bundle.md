@@ -48,11 +48,14 @@ You can see it working at the end by running `just verify`, which validates the 
 ## Progress
 
 - [x] (2026-09-26) Completed Milestone 1: the local OKF v0.2 bundle, pinned Dhall profile, three source-checked computation definitions, reference scripts, Mori registration, two ADRs, and repository recipes are present. Strict enforcement reports `OK: 3 concepts`; `okf computations` shows executor and attester for each definition; `okf id list` resolves `VC-1` through `VC-3`; 20 isolated invalid-shape probes and the missing-attester-resource control reject as expected; `mori validate` and the index check pass.
+- [ ] (2026-09-26) Milestone 2 is underway: `kenshou-evidence` now has typed digest and revision boundaries, create-only scratch and memory object stores, and a run source reader that checks manifest coverage, digests, sizes, safe paths and run document identity before producing evidence inputs. Its package tests pass. Recording, the GCS store, the repository check and CLI commands remain to be built.
 - [ ] Deliver Milestones 2–4: `record`, `attest`, `history`, digest and revision checks, and a seeded corpus under the acceptance commands below.
 
 ## Surprises & Discoveries
 
 - Observation: the current runner records the `ScenarioReport.outcome` supplied by each scenario. It does not fold all `verdicts/` and `diagnosis/` files into an outcome, as the drafting example for `VC-1` assumed. The definition now describes the actual runner and known-defect disposition. A generic attester can verify internal consistency and digests, but must report an incomplete verdict-recomputation check unless the scenario's domain oracle can be replayed from saved inputs. Milestone 3 needs a concrete recomputation seam before it can claim confirmed attestations. See `Kenshou.Core.Run.executeRun`, `Kenshou.Core.Run.defectDisposition`, and [ADR-18](../adr/0018-keep-verification-records-immutable-and-derive-baselines.md).
+- Observation: `Kenshou.Core.Canonical.sha256Hex` and the run manifest use `sha256:`-prefixed digests, while the OKF profile requires bare lowercase hexadecimal digests. The evidence boundary verifies the kernel form before stripping the prefix for data links. Also, `Kenshou.Core.Manifest.verifyManifest` only checks the digest of listed files; it does not check their sizes, reject extra files or guard listed paths, so `Kenshou.Evidence.Source` performs these checks itself.
+- Observation: `Kenshou.Core.RunResult` has a `ToJSON` instance but no `FromJSON` instance. `Kenshou.Evidence.Source` uses a typed evidence-facing reader for the versioned run-result schema and keeps the larger diagnostic document as linked data.
 
 
 ## Decision Log
