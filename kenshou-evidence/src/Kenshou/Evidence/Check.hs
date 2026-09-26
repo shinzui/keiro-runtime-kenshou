@@ -15,6 +15,7 @@ import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString qualified as ByteString
 import Data.List (isPrefixOf, nub, sort)
+import Data.Map.Strict qualified as Map
 import Data.Maybe (mapMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -72,6 +73,7 @@ check store options = do
                   Right document -> checkDocument path document
               )
               current
+          references = checkReferences current
       historical <- checkHistory options
       remote <-
         if options.network
@@ -82,7 +84,54 @@ check store options = do
       pure $ do
         historyFindings <- historical
         remoteFindings <- remote
-        pure (local <> historyFindings <> remoteFindings)
+        pure (local <> references <> historyFindings <> remoteFindings)
+
+checkReferences :: [(FilePath, Text)] -> [Finding]
+checkReferences current = concatMap inspect parsed
+  where
+    parsed = [(path, document) | (path, content) <- current, Right document <- [parseDocument content]]
+    byPath = Map.fromList parsed
+    field document name = frontmatterLookup name document.frontmatter
+    asText (Just (String value)) = Just value
+    asText _ = Nothing
+    nested name = \case
+      Just (Object fields) -> KeyMap.lookup (Key.fromText name) fields
+      _ -> Nothing
+    paths = \case
+      Just (Array values) -> [value | String value <- foldr (:) [] values]
+      _ -> []
+    target path ref =
+      let relative = Text.unpack (Text.dropWhile (== '/') ref)
+       in case Map.lookup relative byPath of
+            Nothing -> [Finding path "reference-targets" ("missing run target: " <> ref)]
+            Just document | field document "type" /= Just (String "Verification Run") || field document "recordKind" /= Just (String "run") -> [Finding path "reference-targets" ("target is not a recorded run: " <> ref)]
+            Just _ -> []
+    inspect (path, document)
+      | field document "type" == Just (String "Verification Run") =
+          let previous = maybe [] (\ref -> target path ref <> checkPrevious path document ref) (asText (field document "previousRun"))
+              comparison = field document "comparison"
+              arms = paths (nested "baselineRuns" comparison) <> paths (nested "candidateRuns" comparison)
+           in previous <> concatMap (target path) arms
+      | field document "type" == Just (String "Attestation") =
+          maybe [] (target path) (asText (field document "run"))
+      | otherwise = []
+    checkPrevious path document ref =
+      let relative = Text.unpack (Text.dropWhile (== '/') ref)
+       in case Map.lookup relative byPath of
+            Nothing -> []
+            Just previous ->
+              [ Finding path "reference-targets" "previousRun must have the same scenario and compatibility key, and start earlier"
+              | field document "scenario" /= field previous "scenario"
+                  || field document "compatibilityKey" /= field previous "compatibilityKey"
+                  || maybe
+                    True
+                    not
+                    ( do
+                        now <- asText (field document "startedAt") >>= parseUtc
+                        thenTime <- asText (field previous "startedAt") >>= parseUtc
+                        pure (thenTime < now)
+                    )
+              ]
 
 checkNetwork :: ObjectStore -> Bool -> [(FilePath, Text)] -> IO (Either CheckError [Finding])
 checkNetwork store deep current = withSystemTempDirectory "kenshou-evidence-network" $ \scratch -> do

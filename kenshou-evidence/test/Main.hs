@@ -96,6 +96,12 @@ main = hspec do
         missing `shouldSatisfy` \case
           Right findings -> any (\finding -> finding.rule == "network" && "missing" `Text.isInfixOf` finding.message) findings
           Left _ -> False
+        let selfReference = document {frontmatter = setField "previousRun" (String ("/" <> Text.pack path)) document.frontmatter}
+        Text.IO.writeFile (bundle </> path) (serializeDocument selfReference)
+        referenced <- checkBundle (CheckOptions bundle Nothing False False)
+        referenced `shouldSatisfy` \case
+          Right findings -> any (\finding -> finding.rule == "reference-targets") findings
+          Left _ -> False
         let changed = document {frontmatter = setField "outcome" (String "failed") document.frontmatter}
         Text.IO.writeFile (bundle </> path) (serializeDocument changed)
         checked <- checkBundle (CheckOptions bundle Nothing False False)
