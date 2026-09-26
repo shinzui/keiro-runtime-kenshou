@@ -9,7 +9,7 @@ import Data.Text.IO qualified as Text.IO
 import Kenshou.Core.Cli (CliCommand (..), CliEnv, CliGroup (Evidence))
 import Kenshou.Core.Cli.Config (ConfigInputs (..), configInputsParser)
 import Kenshou.Evidence.Bundle (BundleWriteError (..))
-import Kenshou.Evidence.Check (CheckError (..), CheckOptions (..), Finding (..), checkBundle)
+import Kenshou.Evidence.Check (CheckError (..), CheckOptions (..), Finding (..), checkBundleWithStore)
 import Kenshou.Evidence.Config (EvidenceDefaults (..), bundleRootKey, dataBaseUriKey, evidenceConfig, projectKey, resolveEvidenceDefaults)
 import Kenshou.Evidence.Publish (PublishError (..), UploadMode (..))
 import Kenshou.Evidence.Record (RecordError (..), RecordOptions (..), RecordOutcome (..), recordRun)
@@ -53,18 +53,27 @@ evidenceCommand =
 data CheckCli = CheckCli
   { config :: !ConfigInputs,
     baseRef :: !(Maybe Text),
+    network :: !Bool,
+    deep :: !Bool,
     json :: !Bool
   }
 
 checkParser :: Parser CheckCli
 checkParser =
   CheckCli
-    <$> configInputsParser ((: []) <$> namedOption "--bundle" bundleRootKey (long "bundle" <> metavar "DIR" <> help "OKF evidence bundle"))
+    <$> configInputsParser
+      ( (\bundle project -> [bundle, project])
+          <$> namedOption "--bundle" bundleRootKey (long "bundle" <> metavar "DIR" <> help "OKF evidence bundle")
+          <*> namedOption "--project" projectKey (long "project" <> metavar "PROJECT" <> help "GCP project for --network")
+      )
     <*> parserOptionGroup "History scope" (optional (Text.pack <$> strOption (long "base" <> metavar "GIT-REF" <> help "Check committed changes from this base through HEAD")))
+    <*> parserOptionGroup "Verification" (switch (long "network" <> help "Check recorded objects in GCS"))
+    <*> parserOptionGroup "Verification" (switch (long "deep" <> help "Download objects and verify SHA-256"))
     <*> parserOptionGroup "Output" (switch (long "json" <> help "Emit one JSON result document"))
 
 checkHandler :: CheckCli -> CliEnv -> IO ExitCode
 checkHandler options _
+  | options.deep && not options.network = checkResponse options.json 2 "--deep requires --network" []
   | Just output <- schemaDiagnostic options.config.diagnostic (describe evidenceConfig) = Text.IO.putStr output >> pure ExitSuccess
   | otherwise = do
       processEnvironment <- fmap (fmap (\(name, setting) -> (Text.pack name, Text.pack setting))) getEnvironment
@@ -75,11 +84,14 @@ checkHandler options _
           Left problems -> checkResponse options.json 2 (renderErrorsText problems) []
           Right defaults -> case resolutionDiagnostic options.config.diagnostic result of
             Just output -> Text.IO.putStr output >> pure ExitSuccess
-            Nothing -> do
-              checked <- checkBundle (CheckOptions (Text.unpack defaults.bundleRoot) options.baseRef)
-              case checked of
-                Left (CheckError message) -> checkResponse options.json 4 message []
-                Right findings -> checkResponse options.json (if null findings then 0 else 1) (if null findings then "evidence clean" else "evidence findings") findings
+            Nothing -> case (options.network, defaults.project) of
+              (True, Nothing) -> checkResponse options.json 2 "--network requires --project or gcp.project" []
+              _ -> do
+                let store = if options.network then gcloudStore <$> defaults.project else Nothing
+                checked <- checkBundleWithStore store (CheckOptions (Text.unpack defaults.bundleRoot) options.baseRef options.network options.deep)
+                case checked of
+                  Left (CheckError message) -> checkResponse options.json 4 message []
+                  Right findings -> checkResponse options.json (if null findings then 0 else 1) (if null findings then "evidence clean" else "evidence findings") findings
 
 checkResponse :: Bool -> Int -> Text -> [Finding] -> IO ExitCode
 checkResponse machine code message findings = do

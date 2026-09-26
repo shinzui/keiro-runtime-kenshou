@@ -12,4 +12,4 @@ For a local rehearsal, copy the verification bundle outside the repository and p
 
 `--json` prints one `kenshou.record-result/v1` document and sends errors to standard error. A repeat with the same record content succeeds and reports `already recorded`; different content at the same record path is a conflict.
 
-`kenshou evidence check` checks record paths, IDs, digest and revision shapes, textual fields, event-only keys, timestamps, required data links, and changes to committed records. `--base REF` limits the Git history span. The command exits 0 when clean, 1 for findings, and 4 when it cannot check. `--json` prints one `kenshou.evidence-check/v1` document.
+`kenshou evidence check` checks record paths, IDs, digest and revision shapes, textual fields, event-only keys, timestamps, required data links, and changes to committed records. `--base REF` limits the Git history span. `--network --project PROJECT` checks object size and SHA-256 metadata, and `--deep` downloads bytes to verify each digest. The command exits 0 when clean, 1 for findings, and 4 when it cannot check. `--json` prints one `kenshou.evidence-check/v1` document.

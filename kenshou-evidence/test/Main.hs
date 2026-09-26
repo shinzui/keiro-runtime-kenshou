@@ -16,7 +16,7 @@ import Kenshou.Core.Id (parseRunId, parseScenarioId)
 import Kenshou.Core.Manifest (writeManifest)
 import Kenshou.Core.Outcome (Outcome (Passed))
 import Kenshou.Evidence.Bundle (BundleWriteError (..), BundleWriteResult (..), runRecordPath, writeRunRecordWith)
-import Kenshou.Evidence.Check (CheckOptions (..), Finding (..), checkBundle, checkDocument)
+import Kenshou.Evidence.Check (CheckOptions (..), Finding (..), checkBundle, checkBundleWithStore, checkDocument)
 import Kenshou.Evidence.Config (EvidenceDefaults (..), bundleRootKey, dataBaseUriKey, projectKey, resolveEvidenceDefaults)
 import Kenshou.Evidence.Frontmatter (EvidenceRecord (..), recordFromDocument, recordToDocument)
 import Kenshou.Evidence.Publish (PublishError (..), PublishOptions (..), UploadMode (..), publishRunData)
@@ -89,16 +89,22 @@ main = hspec do
         callProcess "git" ["init", "-q", repo]
         callProcess "git" ["-C", repo, "-c", "user.name=Kenshou", "-c", "user.email=kenshou@example.invalid", "add", "."]
         callProcess "git" ["-C", repo, "-c", "user.name=Kenshou", "-c", "user.email=kenshou@example.invalid", "commit", "-qm", "test: record evidence fixture"]
-        checkBundle (CheckOptions bundle Nothing) `shouldReturn` Right []
+        checkBundle (CheckOptions bundle Nothing False False) `shouldReturn` Right []
+        checkBundleWithStore (Just store) (CheckOptions bundle Nothing True True) `shouldReturn` Right []
+        absent <- memoryStore
+        missing <- checkBundleWithStore (Just absent) (CheckOptions bundle Nothing True False)
+        missing `shouldSatisfy` \case
+          Right findings -> any (\finding -> finding.rule == "network" && "missing" `Text.isInfixOf` finding.message) findings
+          Left _ -> False
         let changed = document {frontmatter = setField "outcome" (String "failed") document.frontmatter}
         Text.IO.writeFile (bundle </> path) (serializeDocument changed)
-        checked <- checkBundle (CheckOptions bundle Nothing)
+        checked <- checkBundle (CheckOptions bundle Nothing False False)
         checked `shouldSatisfy` \case
           Right findings -> any (\finding -> finding.rule == "immutability" && finding.concept == path && "outcome" `Text.isInfixOf` finding.message) findings
           Left _ -> False
         callProcess "git" ["-C", repo, "add", "."]
         callProcess "git" ["-C", repo, "-c", "user.name=Kenshou", "-c", "user.email=kenshou@example.invalid", "commit", "-qm", "test: change evidence fixture"]
-        committed <- checkBundle (CheckOptions bundle Nothing)
+        committed <- checkBundle (CheckOptions bundle Nothing False False)
         committed `shouldSatisfy` \case
           Right findings -> any (\finding -> finding.rule == "immutability" && finding.concept == path && "outcome" `Text.isInfixOf` finding.message) findings
           Left _ -> False

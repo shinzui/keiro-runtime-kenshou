@@ -3,15 +3,17 @@ module Kenshou.Evidence.Check
     CheckError (..),
     Finding (..),
     checkBundle,
+    checkBundleWithStore,
     checkDocument,
   )
 where
 
 import Control.Exception (IOException, try)
 import Control.Monad (forM)
-import Data.Aeson (Value (..))
+import Data.Aeson (Result (..), Value (..), fromJSON)
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
+import Data.ByteString qualified as ByteString
 import Data.List (isPrefixOf, nub, sort)
 import Data.Maybe (mapMaybe)
 import Data.Text (Text)
@@ -19,16 +21,20 @@ import Data.Text qualified as Text
 import Data.Text.IO qualified as Text.IO
 import Data.Time (UTCTime, defaultTimeLocale, formatTime, parseTimeM)
 import Kenshou.Core.Id (ScenarioId (..), parseRunId, parseScenarioId, renderLayer)
-import Kenshou.Evidence.Types (mkRevision, mkSha256)
+import Kenshou.Evidence.Store (ObjectStat (..), ObjectStore (..))
+import Kenshou.Evidence.Types (mkRevision, mkSha256, sha256Bytes)
 import Okf.Document (OKFDocument (..), frontmatterKeys, frontmatterLookup, parseDocument, removeField)
 import System.Directory (canonicalizePath, doesDirectoryExist, listDirectory)
 import System.Exit (ExitCode (..))
 import System.FilePath (makeRelative, splitDirectories, takeExtension, (</>))
+import System.IO.Temp (withSystemTempDirectory)
 import System.Process (readProcessWithExitCode)
 
 data CheckOptions = CheckOptions
   { bundleRoot :: !FilePath,
-    baseRef :: !(Maybe Text)
+    baseRef :: !(Maybe Text),
+    network :: !Bool,
+    deep :: !Bool
   }
   deriving stock (Eq, Show)
 
@@ -42,12 +48,15 @@ data Finding = Finding
   deriving stock (Eq, Show)
 
 checkBundle :: CheckOptions -> IO (Either CheckError [Finding])
-checkBundle options = do
-  result <- try (check options) :: IO (Either IOException (Either CheckError [Finding]))
+checkBundle = checkBundleWithStore Nothing
+
+checkBundleWithStore :: Maybe ObjectStore -> CheckOptions -> IO (Either CheckError [Finding])
+checkBundleWithStore store options = do
+  result <- try (check store options) :: IO (Either IOException (Either CheckError [Finding]))
   pure $ either (Left . CheckError . Text.pack . show) id result
 
-check :: CheckOptions -> IO (Either CheckError [Finding])
-check options = do
+check :: Maybe ObjectStore -> CheckOptions -> IO (Either CheckError [Finding])
+check store options = do
   exists <- doesDirectoryExist options.bundleRoot
   if not exists
     then pure (Left (CheckError "evidence bundle does not exist"))
@@ -64,7 +73,58 @@ check options = do
               )
               current
       historical <- checkHistory options
-      pure ((local <>) <$> historical)
+      remote <-
+        if options.network
+          then case store of
+            Nothing -> pure (Left (CheckError "--network requires an object store and GCP project"))
+            Just objectStore -> checkNetwork objectStore options.deep current
+          else pure (Right [])
+      pure $ do
+        historyFindings <- historical
+        remoteFindings <- remote
+        pure (local <> historyFindings <> remoteFindings)
+
+checkNetwork :: ObjectStore -> Bool -> [(FilePath, Text)] -> IO (Either CheckError [Finding])
+checkNetwork store deep current = withSystemTempDirectory "kenshou-evidence-network" $ \scratch -> do
+  results <- forM current $ \(path, content) -> case parseDocument content of
+    Left _ -> pure (Right [])
+    Right document -> do
+      let links = case frontmatterLookup "data" document.frontmatter of
+            Just (Array values) -> foldr (:) [] values
+            _ -> []
+      fmap (fmap concat . sequence) $ forM links $ \link -> case networkLink link of
+        Nothing -> pure (Right [])
+        Just (uri, digest, expectedBytes) -> do
+          observed <- store.statObject uri
+          case observed of
+            Left err -> pure (Left (CheckError (Text.pack (show err))))
+            Right Nothing -> pure (Right [Finding path "network" ("object is missing: " <> uri)])
+            Right (Just stat) ->
+              if stat.bytes /= expectedBytes || stat.recordedSha256 /= Just digest
+                then pure (Right [Finding path "network" ("object metadata differs: " <> uri)])
+                else
+                  if not deep
+                    then pure (Right [])
+                    else do
+                      let destination = scratch </> "object"
+                      fetched <- store.fetchObject uri destination
+                      case fetched of
+                        Left err -> pure (Left (CheckError (Text.pack (show err))))
+                        Right () -> do
+                          actual <- sha256Bytes <$> ByteString.readFile destination
+                          pure (Right [Finding path "network" ("object bytes differ: " <> uri) | actual /= digest])
+  pure (concat <$> sequence results)
+  where
+    networkLink (Object fields) = do
+      String uri <- KeyMap.lookup "uri" fields
+      String rawDigest <- KeyMap.lookup "digest" fields
+      digest <- either (const Nothing) Just (mkSha256 rawDigest)
+      rawBytes <- KeyMap.lookup "bytes" fields
+      bytes <- case fromJSON rawBytes of
+        Success parsed -> Just parsed
+        Error _ -> Nothing
+      pure (uri, digest, bytes)
+    networkLink _ = Nothing
 
 conceptFiles :: FilePath -> IO [FilePath]
 conceptFiles root = do
