@@ -57,6 +57,7 @@ data EffectRow = EffectRow
     eventId :: !Text,
     member :: !Int32,
     process :: !Int32,
+    attempt :: !Int64,
     at :: !UTCTime
   }
   deriving stock (Eq, Show)
@@ -131,12 +132,18 @@ deadLettersOf fixture (SubscriptionName name) member =
         (Decoders.rowList (DeadLetterRow <$> Decoders.column (Decoders.nonNullable Decoders.int8) <*> Decoders.column (Decoders.nonNullable Decoders.text) <*> Decoders.column (Decoders.nonNullable Decoders.jsonb) <*> Decoders.column (Decoders.nonNullable Decoders.int4)))
 
 ensureEffectsTable :: Pool -> IO ()
-ensureEffectsTable pool =
+ensureEffectsTable pool = do
   query pool $ Session.statement () statement
+  query pool $ Session.statement () addAttempt
   where
     statement =
       Statement.unpreparable
-        "create table if not exists kenshou_shibuya_kiroku_effects (arm text not null, global_position bigint not null, event_id text not null, member integer not null, process integer not null, at timestamptz not null)"
+        "create table if not exists kenshou_shibuya_kiroku_effects (arm text not null, global_position bigint not null, event_id text not null, member integer not null, process integer not null, attempt bigint not null, at timestamptz not null)"
+        Encoders.noParams
+        Decoders.noResult
+    addAttempt =
+      Statement.unpreparable
+        "alter table kenshou_shibuya_kiroku_effects add column if not exists attempt bigint not null default 0"
         Encoders.noParams
         Decoders.noResult
 
@@ -146,12 +153,13 @@ insertEffect pool arm row =
   where
     statement =
       Statement.preparable
-        "insert into kenshou_shibuya_kiroku_effects (arm, global_position, event_id, member, process, at) values ($1, $2, $3, $4, $5, $6)"
+        "insert into kenshou_shibuya_kiroku_effects (arm, global_position, event_id, member, process, attempt, at) values ($1, $2, $3, $4, $5, $6, $7)"
         ( contramap fst (Encoders.param (Encoders.nonNullable Encoders.text))
             <> contramap (\(_, effect) -> effect.position) (Encoders.param (Encoders.nonNullable Encoders.int8))
             <> contramap (\(_, effect) -> effect.eventId) (Encoders.param (Encoders.nonNullable Encoders.text))
             <> contramap (\(_, effect) -> effect.member) (Encoders.param (Encoders.nonNullable Encoders.int4))
             <> contramap (\(_, effect) -> effect.process) (Encoders.param (Encoders.nonNullable Encoders.int4))
+            <> contramap (\(_, effect) -> effect.attempt) (Encoders.param (Encoders.nonNullable Encoders.int8))
             <> contramap (\(_, effect) -> effect.at) (Encoders.param (Encoders.nonNullable Encoders.timestamptz))
         )
         Decoders.noResult
@@ -162,9 +170,9 @@ effectsOf pool arm =
   where
     statement =
       Statement.preparable
-        "select global_position, event_id, member, process, at from kenshou_shibuya_kiroku_effects where arm = $1 order by at, global_position"
+        "select global_position, event_id, member, process, attempt, at from kenshou_shibuya_kiroku_effects where arm = $1 order by at, global_position"
         (Encoders.param (Encoders.nonNullable Encoders.text))
-        (Decoders.rowList (EffectRow <$> Decoders.column (Decoders.nonNullable Decoders.int8) <*> Decoders.column (Decoders.nonNullable Decoders.text) <*> Decoders.column (Decoders.nonNullable Decoders.int4) <*> Decoders.column (Decoders.nonNullable Decoders.int4) <*> Decoders.column (Decoders.nonNullable Decoders.timestamptz)))
+        (Decoders.rowList (EffectRow <$> Decoders.column (Decoders.nonNullable Decoders.int8) <*> Decoders.column (Decoders.nonNullable Decoders.text) <*> Decoders.column (Decoders.nonNullable Decoders.int4) <*> Decoders.column (Decoders.nonNullable Decoders.int4) <*> Decoders.column (Decoders.nonNullable Decoders.int8) <*> Decoders.column (Decoders.nonNullable Decoders.timestamptz)))
 
 query :: Pool -> Session.Session a -> IO a
 query pool session = do

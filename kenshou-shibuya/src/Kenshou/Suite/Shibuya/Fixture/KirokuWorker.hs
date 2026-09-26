@@ -1,6 +1,7 @@
 module Kenshou.Suite.Shibuya.Fixture.KirokuWorker (role) where
 
-import Data.Aeson (Value, object, withObject, (.:), (.=))
+import Control.Concurrent.MVar (newEmptyMVar, takeMVar)
+import Data.Aeson (Value, object, withObject, (.!=), (.:), (.:?), (.=))
 import Data.Aeson.Types (Parser, parseEither)
 import Data.Int (Int32)
 import Data.Text (Text)
@@ -12,10 +13,10 @@ import Kenshou.Suite.Shibuya.Fixture.Kiroku (EffectRow (..), insertEffect, withK
 import Kiroku.Store (CategoryName (..), GlobalPosition (..), RecordedEvent (..), defaultConnectionSettings, withStore)
 import Shibuya.Adapter.Kiroku (ConsumerGroup (..), KirokuAdapterConfig (..), SubscriptionName (..), SubscriptionTarget (..), defaultKirokuAdapterConfig, kirokuAdapter)
 import Shibuya.App (defaultAppConfig, defaultShutdownConfig, mkProcessor, runApp, stopAppGracefully, waitApp)
-import Shibuya.Core.Ack (AckDecision (..))
+import Shibuya.Core.Ack (AckDecision (..), RetryDelay (..))
 import Shibuya.Core.Ingested (Message (..))
 import Shibuya.Core.Metrics (ProcessorId (..))
-import Shibuya.Core.Types (Envelope (..), MessageId (..))
+import Shibuya.Core.Types (Attempt (..), Envelope (..), MessageId (..))
 import Shibuya.Telemetry.Effect (runTracingNoop)
 
 role :: WorkerRole
@@ -30,7 +31,9 @@ data Args = Args
     arm :: !Text,
     member :: !Int32,
     groupSize :: !Int32,
-    processIndex :: !Int32
+    processIndex :: !Int32,
+    retryAlways :: !Bool,
+    gateAfterAttemptTwo :: !Bool
   }
 
 parseArgs :: Value -> Parser Args
@@ -41,7 +44,9 @@ parseArgs = withObject "Kiroku consumer arguments" $ \value -> do
   member <- value .: "member"
   groupSize <- value .: "groupSize"
   processIndex <- value .: "processIndex"
-  pure Args {subscription, category, arm, member, groupSize, processIndex}
+  retryAlways <- value .:? "retryAlways" .!= False
+  gateAfterAttemptTwo <- value .:? "gateAfterAttemptTwo" .!= False
+  pure Args {subscription, category, arm, member, groupSize, processIndex, retryAlways, gateAfterAttemptTwo}
 
 worker :: RoleContext -> IO ()
 worker context = do
@@ -49,6 +54,7 @@ worker context = do
   args <- either fail pure (parseEither parseArgs context.init.args)
   context.send WrkReady
   awaitStart
+  retryGate <- newEmptyMVar
   let connection = postgres.connectionString
       applicationName = "kenshou-shibuya-kiroku-" <> Text.pack (show args.processIndex)
       settings = defaultConnectionSettings (connection <> " application_name=" <> applicationName)
@@ -61,9 +67,13 @@ worker context = do
           handler message = do
             let GlobalPosition position = message.envelope.payload.globalPosition
                 MessageId eventId = message.envelope.messageId
+                attempt = maybe (-1) (\(Attempt index) -> fromIntegral index) message.envelope.attempt
             at <- liftIO getCurrentTime
-            liftIO $ insertEffect pool args.arm (EffectRow position eventId args.member args.processIndex at)
-            pure AckOk
+            liftIO $ insertEffect pool args.arm (EffectRow position eventId args.member args.processIndex attempt at)
+            if args.gateAfterAttemptTwo && attempt == 2
+              then liftIO $ context.send (WrkCustom "retry-gate" (object ["position" .= position, "attempt" .= attempt])) >> takeMVar retryGate
+              else pure ()
+            pure $ if args.retryAlways then AckRetry (RetryDelay 0) else AckOk
       runEff $ runTracingNoop $ do
         adapter <- kirokuAdapter store config
         started <- runApp defaultAppConfig [(ProcessorId ("kiroku-" <> args.arm <> "-" <> Text.pack (show args.processIndex)), mkProcessor adapter handler)]
