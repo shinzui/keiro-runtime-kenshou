@@ -20,6 +20,7 @@ import Kenshou.Suite.Shibuya (bundle)
 import Kenshou.Suite.Shibuya.Cohort (CoreLine (..), coreLine, knownOnReleasedCore, rev)
 import Kenshou.Suite.Shibuya.Concurrency.KeyedModel (Action (..), Item (..), ModelCase (..), modelProperty, runCase)
 import Kenshou.Suite.Shibuya.Concurrency.PgmqPoolStarvation qualified as PgmqPoolStarvation
+import Kenshou.Suite.Shibuya.Concurrency.PgmqPrefetchShutdown qualified as PgmqPrefetchShutdown
 import Kenshou.Suite.Shibuya.Knobs (DecisionPattern (..), PartitionMode (..), parseConcurrency, parseDecisions, parseOrdering, parsePartitions, parseStrategy, renderDecisions, renderPartitions)
 import Kenshou.Suite.Shibuya.Matrix (allCells, cellsOf, uncovered)
 import Kenshou.Suite.Shibuya.Roles (runGcMode)
@@ -37,12 +38,16 @@ main :: IO ()
 main =
   getArgs >>= \case
     ["--gc-probe", mode] -> runGcMode (Text.pack mode)
-    ["--pgmq-live-probe", version] -> runPgmqLiveProbe version
+    ["--pgmq-live-probe", version] -> runPgmqLiveProbe version "pool"
+    ["--pgmq-live-probe", version, name] -> runPgmqLiveProbe version name
     _ -> hspec spec
 
-runPgmqLiveProbe :: String -> IO ()
-runPgmqLiveProbe version = do
-  let scenario = PgmqPoolStarvation.scenario
+runPgmqLiveProbe :: String -> String -> IO ()
+runPgmqLiveProbe version name = do
+  let scenario = case name of
+        "pool" -> PgmqPoolStarvation.scenario
+        "prefetch" -> PgmqPrefetchShutdown.scenario
+        _ -> error "unknown PGMQ live probe"
       input = RunSpec Nothing scenario.id Nothing [] [("pg.version", Text.pack version)] Nothing Nothing Nothing (EnvironmentSpec RunLocal Nothing Nothing mempty Nothing Nothing) Nothing Nothing mempty
   registry <- either (fail . show) pure (mkRegistry [bundle])
   (_, resolved) <- resolveRunSpec registry input >>= either (fail . show) pure
