@@ -7,7 +7,7 @@ import Control.Exception (SomeException, displayException, onException, try)
 import Control.Monad (unless, void)
 import Data.Aeson (Value, object, (.=))
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
-import Data.Int (Int64)
+import Data.Int (Int32, Int64)
 import Data.List (sort)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
@@ -44,8 +44,8 @@ scenario :: Scenario
 scenario =
   Scenario
     { id = either (error . Text.unpack) id (parseScenarioId "shibuya/kiroku-adapter/concurrency/postgres-outage-and-reconnect"),
-      revision = 1,
-      summary = "Terminates subscription backends and restarts the postmaster while a Kiroku consumer and appender continue.",
+      revision = 2,
+      summary = "Terminates subscription and LISTEN backends, then restarts the postmaster while a Kiroku consumer and appender continue.",
       tier = TierStandard,
       placement = PlaceEither,
       knobs = [KnobSpec observeKnob "Seconds to observe automatic checkpoint recovery before replacement" KnobInt (VInt 60) (IntRange 30 120) []],
@@ -65,6 +65,7 @@ data ArmEvidence = ArmEvidence
     finalCheckpoint :: !(Maybe Int64),
     checkpointBeforeManualRestart :: !(Maybe Int64),
     faultVictims :: !Int,
+    listenerPids :: !(Maybe (Int32, Int32)),
     producerAttempts :: !Int,
     appExits :: ![Text],
     recovered :: !Bool,
@@ -72,32 +73,36 @@ data ArmEvidence = ArmEvidence
     consumerStopped :: !Bool
   }
 
+data FaultKind = BackendFault | ListenerFault | PostmasterFault
+
 runOutage :: RunContext -> IO ScenarioReport
 runOutage context = do
   let observeSeconds = fromIntegral (knobInt context.knobs (either (error . Text.unpack) id (mkKnobName "kiroku-adapter.observe-seconds")))
-  outcome <- try @SomeException $ timeout 240000000 $ withKirokuFixture context $ \fixture -> do
-    backend <- runArm context fixture "backend" False observeSeconds
-    postmaster <- runArm context fixture "postmaster" True observeSeconds
-    pure (backend, postmaster)
+  outcome <- try @SomeException $ timeout 300000000 $ withKirokuFixture context $ \fixture -> do
+    backend <- runArm context fixture "backend" BackendFault observeSeconds
+    listener <- runArm context fixture "listener" ListenerFault observeSeconds
+    postmaster <- runArm context fixture "postmaster" PostmasterFault observeSeconds
+    pure (backend, listener, postmaster)
   case outcome of
     Left err -> pure (failedWith ["kiroku-outage-exception"] (Text.pack (displayException err)))
-    Right Nothing -> pure (failedWith ["kiroku-outage-timeout"] "Kiroku outage exceeded four minutes")
-    Right (Just (backend, postmaster)) -> do
-      let failures = checkArm "backend" backend <> checkArm "postmaster" postmaster
+    Right Nothing -> pure (failedWith ["kiroku-outage-timeout"] "Kiroku outage exceeded five minutes")
+    Right (Just (backend, listener, postmaster)) -> do
+      let failures = checkArm "backend" backend <> checkArm "listener" listener <> checkArm "postmaster" postmaster
       putSummary context Verdicts "kiroku-outage-reconnect" $
         object
           [ "backendTermination" .= armValue backend,
+            "listenerTermination" .= armValue listener,
             "postmasterRestart" .= armValue postmaster,
             "observeSeconds" .= observeSeconds,
             "implementationFindings" .= (["backend-checkpoint-stalled-until-restart" | not backend.recovered] :: [Text])
           ]
       pure $ if null failures then passed else failedWith failures (Text.intercalate "; " failures)
 
-runArm :: RunContext -> KirokuFixture -> Text -> Bool -> Int -> IO ArmEvidence
-runArm context fixture arm postmaster observeSeconds = do
+runArm :: RunContext -> KirokuFixture -> Text -> FaultKind -> Int -> IO ArmEvidence
+runArm context fixture arm faultKind observeSeconds = do
   let postgres = requirePostgres context
       CategoryName baseCategory = fixture.category
-      category = CategoryName (baseCategory <> if postmaster then "p" else "b")
+      category = CategoryName (baseCategory <> case faultKind of BackendFault -> "b"; ListenerFault -> "l"; PostmasterFault -> "p")
       CategoryName categoryName = category
       stream = StreamName (categoryName <> "-1")
       source = fixture {category, stream}
@@ -112,6 +117,7 @@ runArm context fixture arm postmaster observeSeconds = do
   exits <- newIORef []
   producerAttempts <- newIORef 0
   samples <- newIORef []
+  listenerBaseline <- Set.fromList . map (.pid) . filter isListener <$> listBackends postgres
   consumer <- async (consumerLoop connection applicationName category subscription arm 0 stopRequested exits)
   do
     requireWithin "initial effects" 20000000 (waitForEffects connection arm (Set.fromList initial))
@@ -119,13 +125,18 @@ runArm context fixture arm postmaster observeSeconds = do
     traceStage arm "initial delivered"
     sampler <- async (sampleCheckpoints connection source subscription samples)
     do
-      (victims, extra) <-
-        if postmaster
-          then doPostmasterFault postgres applicationName (appendWithRetry connection source 41 40 producerAttempts)
-          else do
-            victims <- doBackendFault postgres applicationName
-            extra <- appendWithRetry connection source 41 40 producerAttempts
-            pure (victims, extra)
+      (victims, extra, listenerPids) <- case faultKind of
+        PostmasterFault -> do
+          (victims, extra) <- doPostmasterFault postgres applicationName (appendWithRetry connection source 41 40 producerAttempts)
+          pure (victims, extra, Nothing)
+        BackendFault -> do
+          victims <- doBackendFault postgres applicationName
+          extra <- appendWithRetry connection source 41 40 producerAttempts
+          pure (victims, extra, Nothing)
+        ListenerFault -> do
+          pids <- doListenerFault postgres listenerBaseline
+          extra <- appendWithRetry connection source 41 40 producerAttempts
+          pure (1, extra, Just pids)
       traceStage arm "fault and append complete"
       let expected = initial <> extra
       recovered <- maybe False (const True) <$> timeout (observeSeconds * 1000000) (waitForEffects connection arm (Set.fromList expected) >> waitForCheckpoint connection source subscription (maximum extra))
@@ -156,7 +167,7 @@ runArm context fixture arm postmaster observeSeconds = do
         checkpoints <- reverse <$> readIORef samples
         appExits <- reverse <$> readIORef exits
         attempts <- readIORef producerAttempts
-        pure (ArmEvidence expected effects checkpoints finalCheckpoint checkpointBeforeManualRestart victims attempts appExits recovered manualRestartRecovered stopped)
+        pure (ArmEvidence expected effects checkpoints finalCheckpoint checkpointBeforeManualRestart victims listenerPids attempts appExits recovered manualRestartRecovered stopped)
 
 requireWithin :: String -> Int -> IO a -> IO a
 requireWithin label micros action = do
@@ -172,6 +183,29 @@ doBackendFault postgres applicationName = do
   let victims = [backend | backend <- backends, backend.applicationName == applicationName]
   _ <- (terminateBackends postgres (ByApplicationName applicationName)).inject
   pure (length victims)
+
+isListener :: Backend -> Bool
+isListener backend = backend.applicationName == "kiroku-listener"
+
+doListenerFault :: PostgresEnv -> Set.Set Int32 -> IO (Int32, Int32)
+doListenerFault postgres baseline = do
+  backends <- listBackends postgres
+  case [backend | backend <- backends, isListener backend, backend.pid `Set.notMember` baseline] of
+    [listener]
+      | "LISTEN" `Text.isInfixOf` Text.toUpper listener.query -> do
+          _ <- (terminateBackends postgres (ByPid listener.pid)).inject
+          replacement <- requireWithin "dedicated listener reconnect" 20000000 (waitForReplacement listener.pid)
+          pure (listener.pid, replacement)
+      | otherwise -> fail ("Kiroku consumer listener backend did not expose LISTEN: " <> Text.unpack listener.query)
+    candidates -> fail ("Expected one new Kiroku consumer listener backend, found " <> show (length candidates))
+  where
+    waitForReplacement oldPid = do
+      backends <- listBackends postgres
+      let oldGone = all ((/= oldPid) . (.pid)) backends
+          replacements = [backend.pid | backend <- backends, isListener backend, backend.pid `Set.notMember` baseline, backend.pid /= oldPid, "LISTEN" `Text.isInfixOf` Text.toUpper backend.query]
+      case replacements of
+        [newPid] | oldGone -> pure newPid
+        _ -> threadDelay 100000 >> waitForReplacement oldPid
 
 doPostmasterFault :: PostgresEnv -> Text -> IO [Int64] -> IO (Int, [Int64])
 doPostmasterFault postgres applicationName append =
@@ -289,6 +323,7 @@ armValue evidence =
       "checkpointBeforeManualRestart" .= evidence.checkpointBeforeManualRestart,
       "finalCheckpoint" .= evidence.finalCheckpoint,
       "faultVictims" .= evidence.faultVictims,
+      "listenerPids" .= evidence.listenerPids,
       "producerAttempts" .= evidence.producerAttempts,
       "applicationExits" .= evidence.appExits,
       "recovered" .= evidence.recovered,
