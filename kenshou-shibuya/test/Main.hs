@@ -19,6 +19,7 @@ import Kenshou.Core.Scenario (Scenario (..), ScenarioReport (..))
 import Kenshou.Suite.Shibuya (bundle)
 import Kenshou.Suite.Shibuya.Cohort (CoreLine (..), coreLine, knownOnReleasedCore, rev)
 import Kenshou.Suite.Shibuya.Concurrency.KeyedModel (Action (..), Item (..), ModelCase (..), modelProperty, runCase)
+import Kenshou.Suite.Shibuya.Concurrency.PgmqLeaseSizing qualified as PgmqLeaseSizing
 import Kenshou.Suite.Shibuya.Concurrency.PgmqPoolStarvation qualified as PgmqPoolStarvation
 import Kenshou.Suite.Shibuya.Concurrency.PgmqPrefetchShutdown qualified as PgmqPrefetchShutdown
 import Kenshou.Suite.Shibuya.Concurrency.PgmqShutdownRelease qualified as PgmqShutdownRelease
@@ -49,6 +50,7 @@ runPgmqLiveProbe version name = do
         "pool" -> PgmqPoolStarvation.scenario
         "prefetch" -> PgmqPrefetchShutdown.scenario
         "release" -> PgmqShutdownRelease.scenario
+        "lease-sizing" -> PgmqLeaseSizing.scenario
         _ -> error "unknown PGMQ live probe"
       input = RunSpec Nothing scenario.id Nothing [] [("pg.version", Text.pack version)] Nothing Nothing Nothing (EnvironmentSpec RunLocal Nothing Nothing mempty Nothing Nothing) Nothing Nothing mempty
   registry <- either (fail . show) pure (mkRegistry [bundle])

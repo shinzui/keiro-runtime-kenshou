@@ -18,6 +18,7 @@ import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), knobInt, knobText, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
+import Kenshou.Suite.Shibuya.Concurrency.PgmqLeaseSizing qualified as PgmqLeaseSizing
 import Kenshou.Suite.Shibuya.Concurrency.PgmqPoolStarvation qualified as PgmqPoolStarvation
 import Kenshou.Suite.Shibuya.Concurrency.PgmqPrefetchShutdown qualified as PgmqPrefetchShutdown
 import Kenshou.Suite.Shibuya.Concurrency.PgmqShutdownRelease qualified as PgmqShutdownRelease
@@ -31,7 +32,7 @@ import Shibuya.Core.Metrics (ProcessorId (..))
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [PgmqAckMapping.scenario, shutdownLatency, autoDeadLetterCountsDeliveries, PgmqPoolStarvation.scenario, PgmqPrefetchShutdown.scenario, PgmqShutdownRelease.scenario]
+scenarios = [PgmqAckMapping.scenario, shutdownLatency, autoDeadLetterCountsDeliveries, PgmqPoolStarvation.scenario, PgmqPrefetchShutdown.scenario, PgmqShutdownRelease.scenario, PgmqLeaseSizing.scenario]
 
 autoDeadLetterCountsDeliveries :: Scenario
 autoDeadLetterCountsDeliveries =

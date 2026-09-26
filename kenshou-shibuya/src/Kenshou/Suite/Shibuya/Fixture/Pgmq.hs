@@ -7,14 +7,19 @@ module Kenshou.Suite.Shibuya.Fixture.Pgmq
     archiveRows,
     queueReadState,
     queueLeaseRows,
+    queueLeaseRow,
     queuePayloads,
     dlqRowsWithReason,
     activeLongPolls,
+    ensureEffectsTable,
+    insertEffect,
+    effectRows,
   )
 where
 
 import Control.Exception (bracket, finally)
 import Data.Aeson (Value)
+import Data.Functor.Contravariant (contramap)
 import Data.Int (Int64)
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -113,6 +118,62 @@ queueLeaseRows fixture = do
               ((,,) <$> Decoders.column (Decoders.nonNullable Decoders.int8) <*> (fromIntegral <$> Decoders.column (Decoders.nonNullable Decoders.int4)) <*> Decoders.column (Decoders.nonNullable Decoders.timestamptz))
           )
   result <- Pool.use fixture.pool (Session.statement () statement)
+  either (ioError . userError . show) pure result
+
+queueLeaseRow :: PgmqFixture -> Int64 -> IO (Maybe (Int64, UTCTime))
+queueLeaseRow fixture identifier = do
+  let table = "pgmq.q_" <> queueNameToText fixture.queue
+      statement =
+        Statement.preparable
+          ("select read_ct, vt from " <> table <> " where msg_id = $1")
+          (Encoders.param (Encoders.nonNullable Encoders.int8))
+          (Decoders.rowMaybe ((,) <$> (fromIntegral <$> Decoders.column (Decoders.nonNullable Decoders.int4)) <*> Decoders.column (Decoders.nonNullable Decoders.timestamptz)))
+  result <- Pool.use fixture.pool (Session.statement identifier statement)
+  either (ioError . userError . show) pure result
+
+ensureEffectsTable :: Pool -> IO ()
+ensureEffectsTable pool = do
+  let statement =
+        Statement.unpreparable
+          "create table if not exists kenshou_shibuya_effects (arm text not null, message_id text not null, attempt bigint not null, started_at timestamptz not null, completed_at timestamptz not null, read_delay_seconds double precision)"
+          Encoders.noParams
+          Decoders.noResult
+  result <- Pool.use pool (Session.statement () statement)
+  either (ioError . userError . show) pure result
+
+insertEffect :: Pool -> Text -> Text -> Int64 -> UTCTime -> UTCTime -> Maybe Double -> IO ()
+insertEffect pool arm identifier attempt startedAt completedAt readDelay = do
+  let statement =
+        Statement.preparable
+          "insert into kenshou_shibuya_effects (arm, message_id, attempt, started_at, completed_at, read_delay_seconds) values ($1, $2, $3, $4, $5, $6)"
+          ( contramap (.effectArm) (Encoders.param (Encoders.nonNullable Encoders.text))
+              <> contramap (.effectId) (Encoders.param (Encoders.nonNullable Encoders.text))
+              <> contramap (.effectAttempt) (Encoders.param (Encoders.nonNullable Encoders.int8))
+              <> contramap (.effectStartedAt) (Encoders.param (Encoders.nonNullable Encoders.timestamptz))
+              <> contramap (.effectCompletedAt) (Encoders.param (Encoders.nonNullable Encoders.timestamptz))
+              <> contramap (.effectReadDelay) (Encoders.param (Encoders.nullable Encoders.float8))
+          )
+          Decoders.noResult
+  result <- Pool.use pool (Session.statement (EffectInsert arm identifier attempt startedAt completedAt readDelay) statement)
+  either (ioError . userError . show) pure result
+
+data EffectInsert = EffectInsert
+  { effectArm :: !Text,
+    effectId :: !Text,
+    effectAttempt :: !Int64,
+    effectStartedAt :: !UTCTime,
+    effectCompletedAt :: !UTCTime,
+    effectReadDelay :: !(Maybe Double)
+  }
+
+effectRows :: Pool -> Text -> IO [(Text, Int64, Maybe Double)]
+effectRows pool arm = do
+  let statement =
+        Statement.preparable
+          "select message_id, attempt, read_delay_seconds from kenshou_shibuya_effects where arm = $1"
+          (Encoders.param (Encoders.nonNullable Encoders.text))
+          (Decoders.rowList ((,,) <$> Decoders.column (Decoders.nonNullable Decoders.text) <*> Decoders.column (Decoders.nonNullable Decoders.int8) <*> Decoders.column (Decoders.nullable Decoders.float8)))
+  result <- Pool.use pool (Session.statement arm statement)
   either (ioError . userError . show) pure result
 
 queuePayloads :: PgmqFixture -> IO [Value]
