@@ -7,12 +7,17 @@ import Control.Exception (SomeException, displayException, throwIO, try)
 import Control.Monad (forM, when)
 import Data.Aeson (object, (.=))
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
-import Data.Int (Int32)
+import Data.Int (Int32, Int64)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Effectful (IOE, liftIO, runEff, (:>))
 import GHC.Conc (listThreads)
+import Hasql.Decoders qualified as Decoders
+import Hasql.Encoders qualified as Encoders
+import Hasql.Pool qualified as Pool
+import Hasql.Session qualified as Session
+import Hasql.Statement qualified as Statement
 import Kenshou.Check.Fault (Fault (..))
 import Kenshou.Check.Fault.Postgres (Backend (..), BackendSelector (..), listBackends, terminateBackends)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary, requirePostgres)
@@ -20,8 +25,10 @@ import Kenshou.Core.Dimension (PgDurability (..), PgVersion (..), noDimensions, 
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (parseScenarioId, renderRunId)
+import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), knobInt, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (CohortScope (..), KnownDefect (..), PackageCondition (..), Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
+import Kenshou.Suite.Shibuya.Fixture.Kiroku (appendEvents, withKirokuConnectionPool, withKirokuFixture)
 import Kiroku.Store (RecordedEvent, defaultConnectionSettings, withStore)
 import Shibuya.Adapter (Adapter (..))
 import Shibuya.Adapter.Kiroku (ConsumerGroup (..), KirokuAdapterConfig (..), KirokuConsumerGroupConfig, SubscriptionName (..), SubscriptionTarget (..), defaultConsumerGroupConfig, defaultKirokuAdapterConfig, kirokuAdapter, kirokuConsumerGroupProcessorsWith)
@@ -35,14 +42,14 @@ scenario :: Scenario
 scenario =
   Scenario
     { id = either (error . Text.unpack) id (parseScenarioId "shibuya/kiroku-adapter/concurrency/group-acquisition-failure-strands-nothing"),
-      revision = 1,
-      summary = "Checks partial eight-member acquisition, cleanup failures, 200 cancellation boundaries, and real subscription workers.",
+      revision = 2,
+      summary = "Checks partial eight-member acquisition, cleanup failures, 200 cancellation boundaries, and post-failure SQL reads.",
       tier = TierStandard,
       placement = PlaceEither,
-      knobs = [],
+      knobs = [KnobSpec observeKnob "Seconds to observe subscription SQL after cleanup" KnobInt (VInt 35) (IntRange 1 60) []],
       dimensions = postgresDimensions (PgDurable :| []) (Pg18 :| [Pg17]) noDimensions,
       phases = zeroPhases,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku] [] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku] [("shared_preload_libraries", "'pg_stat_statements'")] False)},
       knownDefect =
         Just
           KnownDefect
@@ -53,6 +60,8 @@ scenario =
             },
       run = runAcquisition
     }
+  where
+    observeKnob = either (error . Text.unpack) id (mkKnobName "acquisition.read-observe-seconds")
 
 data ArmEvidence = ArmEvidence
   { acquired :: ![Int32],
@@ -66,25 +75,32 @@ data RealEvidence = RealEvidence
     baselineBackends :: !Int,
     finalBackends :: !Int,
     exceptionText :: !Text,
-    backendVictims :: !Int
+    backendVictims :: !Int,
+    initialReadCalls :: !Int64,
+    readCallsBefore :: !Int64,
+    readCallsAfter :: !Int64,
+    readQueries :: ![Text]
   }
 
 runAcquisition :: RunContext -> IO ScenarioReport
 runAcquisition context = do
-  outcome <- try @SomeException $ timeout 120000000 $ do
+  let observeSeconds = fromIntegral (knobInt context.knobs (either (error . Text.unpack) id (mkKnobName "acquisition.read-observe-seconds")))
+  outcome <- try @SomeException $ timeout 220000000 $ do
+    enableStatementCalls (requirePostgres context)
+    withKirokuFixture context (\fixture -> appendEvents fixture 1)
     performMajorGC
     baseline <- length <$> listThreads
     failure <- failureArm
     cancellation <- forM [0 .. 199] cancellationArm
-    real <- realArm context False
-    backend <- realArm context True
+    real <- realArm context False observeSeconds
+    backend <- realArm context True observeSeconds
     threadDelay 1000000
     performMajorGC
     finalThreads <- length <$> listThreads
     pure (baseline, failure, cancellation, real, backend, finalThreads)
   case outcome of
     Left err -> pure (failedWith ["group-acquisition-exception"] (Text.pack (displayException err)))
-    Right Nothing -> pure (failedWith ["group-acquisition-timeout"] "Group acquisition check exceeded 120 seconds")
+    Right Nothing -> pure (failedWith ["group-acquisition-timeout"] "Group acquisition check exceeded 220 seconds")
     Right (Just (baseline, failure, cancellation, real, backend, finalThreads)) -> do
       let cancellationsWithLeaks = length [() | arm <- cancellation, arm.released /= reverse arm.acquired]
           cancellationsWithoutException = length [() | arm <- cancellation, not ("cancel" `Text.isInfixOf` Text.toCaseFold arm.exceptionText)]
@@ -93,12 +109,16 @@ runAcquisition context = do
               <> ["group-acquisition-primary-replaced" | not ("planned-factory-failure" `Text.isInfixOf` failure.exceptionText)]
               <> ["group-acquisition-cancel-leak" | cancellationsWithLeaks /= 0]
               <> ["group-acquisition-cancel-not-observed" | cancellationsWithoutException /= 0]
-              <> ["group-acquisition-thread-growth" | finalThreads > baseline + 8]
+              <> ["group-acquisition-thread-growth" | finalThreads > baseline + 12]
               <> ["group-acquisition-real-thread-growth" | real.finalThreads > real.baselineThreads + 3]
               <> ["group-acquisition-real-primary-replaced" | not ("planned-real-factory-failure" `Text.isInfixOf` real.exceptionText)]
               <> ["group-acquisition-backend-thread-growth" | backend.finalThreads > backend.baselineThreads + 3]
               <> ["group-acquisition-backend-primary-replaced" | not ("planned-real-factory-failure" `Text.isInfixOf` backend.exceptionText)]
               <> ["group-acquisition-backend-fault-missed" | backend.backendVictims == 0]
+              <> ["group-acquisition-read-not-observed" | real.readCallsBefore <= real.initialReadCalls]
+              <> ["group-acquisition-read-continues" | real.readCallsAfter > real.readCallsBefore]
+              <> ["group-acquisition-backend-read-not-observed" | backend.readCallsBefore <= backend.initialReadCalls]
+              <> ["group-acquisition-backend-read-continues" | backend.readCallsAfter > backend.readCallsBefore]
       putSummary context Verdicts "kiroku-group-acquisition" $
         object
           [ "failureAcquired" .= failure.acquired,
@@ -114,12 +134,20 @@ runAcquisition context = do
             "realBaselineBackends" .= real.baselineBackends,
             "realFinalBackends" .= real.finalBackends,
             "realException" .= real.exceptionText,
+            "realInitialReadCalls" .= real.initialReadCalls,
+            "realReadCallsBefore" .= real.readCallsBefore,
+            "realReadCallsAfter" .= real.readCallsAfter,
+            "realReadQueries" .= real.readQueries,
             "backendBaselineThreads" .= backend.baselineThreads,
             "backendFinalThreads" .= backend.finalThreads,
             "backendBaselineBackends" .= backend.baselineBackends,
             "backendFinalBackends" .= backend.finalBackends,
             "backendFaultVictims" .= backend.backendVictims,
-            "backendException" .= backend.exceptionText
+            "backendException" .= backend.exceptionText,
+            "backendInitialReadCalls" .= backend.initialReadCalls,
+            "backendReadCallsBefore" .= backend.readCallsBefore,
+            "backendReadCallsAfter" .= backend.readCallsAfter,
+            "backendReadQueries" .= backend.readQueries
           ]
       pure $ if null failures then passed else failedWith failures (Text.intercalate "; " failures)
 
@@ -189,8 +217,8 @@ remember reference member = atomicModifyIORef' reference (\members -> (member : 
 groupConfig :: KirokuConsumerGroupConfig
 groupConfig = defaultConsumerGroupConfig (SubscriptionName "kenshou-group-acquisition") AllStreams 8
 
-realArm :: RunContext -> Bool -> IO RealEvidence
-realArm context killBackends = do
+realArm :: RunContext -> Bool -> Int -> IO RealEvidence
+realArm context killBackends observeSeconds = do
   let postgres = requirePostgres context
       connection = postgres.connectionString <> " application_name=kenshou-kiroku-acquisition"
       name = SubscriptionName ("kenshou-acquisition-" <> renderRunId context.runId <> if killBackends then "-backend" else "-failure")
@@ -201,6 +229,7 @@ realArm context killBackends = do
     performMajorGC
     baselineThreads <- length <$> listThreads
     baselineBackends <- length . matching <$> listBackends postgres
+    initialReadCalls <- readSubscriptionCalls postgres
     result <-
       try @SomeException $
         runEff $
@@ -208,6 +237,7 @@ realArm context killBackends = do
             kirokuConsumerGroupProcessorsWith
               ( \member -> do
                   when (member == 4) $ liftIO $ do
+                    threadDelay 200000
                     when killBackends $ do
                       victims <- length . matching <$> listBackends postgres
                       atomicModifyIORef' backendVictimsRef (const (victims, ()))
@@ -224,4 +254,40 @@ realArm context killBackends = do
     finalThreads <- length <$> listThreads
     finalBackends <- length . matching <$> listBackends postgres
     backendVictims <- readIORef backendVictimsRef
-    pure (RealEvidence baselineThreads finalThreads baselineBackends finalBackends (either (Text.pack . displayException) (const "no exception") result) backendVictims)
+    readCallsBefore <- readSubscriptionCalls postgres
+    threadDelay (observeSeconds * 1000000)
+    readCallsAfter <- readSubscriptionCalls postgres
+    readQueries <- readStatementSamples postgres
+    pure (RealEvidence baselineThreads finalThreads baselineBackends finalBackends (either (Text.pack . displayException) (const "no exception") result) backendVictims initialReadCalls readCallsBefore readCallsAfter readQueries)
+
+enableStatementCalls :: PostgresEnv -> IO ()
+enableStatementCalls postgres =
+  withKirokuConnectionPool postgres.connectionString "kenshou-kiroku-acquisition-oracle" $ \pool -> do
+    outcome <- Pool.use pool (Session.statement () statement)
+    either (fail . show) pure outcome
+  where
+    statement = Statement.unpreparable "create extension if not exists pg_stat_statements" Encoders.noParams Decoders.noResult
+
+readSubscriptionCalls :: PostgresEnv -> IO Int64
+readSubscriptionCalls postgres =
+  withKirokuConnectionPool postgres.connectionString "kenshou-kiroku-acquisition-oracle" $ \pool -> do
+    outcome <- Pool.use pool (Session.statement () statement)
+    either (fail . show) pure outcome
+  where
+    statement =
+      Statement.unpreparable
+        "select coalesce(sum(calls), 0)::bigint from pg_stat_statements where query ilike '%hashtextextended(se.original_stream_id%' and query ilike '%stream_events se%' and query not ilike '%pg_stat_statements%'"
+        Encoders.noParams
+        (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
+
+readStatementSamples :: PostgresEnv -> IO [Text]
+readStatementSamples postgres =
+  withKirokuConnectionPool postgres.connectionString "kenshou-kiroku-acquisition-oracle" $ \pool -> do
+    outcome <- Pool.use pool (Session.statement () statement)
+    either (fail . show) pure outcome
+  where
+    statement =
+      Statement.unpreparable
+        "select left(query, 500) from pg_stat_statements where query ilike '%hashtextextended%' order by calls desc limit 10"
+        Encoders.noParams
+        (Decoders.rowList (Decoders.column (Decoders.nonNullable Decoders.text)))
