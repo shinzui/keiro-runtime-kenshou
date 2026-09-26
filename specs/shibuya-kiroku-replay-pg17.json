@@ -1,0 +1,7 @@
+{
+  "schema": "kenshou.run-spec/v1",
+  "scenario": "shibuya/kiroku-adapter/correctness/halt-and-shutdown-replay",
+  "dimensions": { "pg.durability": "durable", "pg.version": "17" },
+  "knobs": {},
+  "environment": { "placement": "local", "postgres": { "mode": "ephemeral" } }
+}

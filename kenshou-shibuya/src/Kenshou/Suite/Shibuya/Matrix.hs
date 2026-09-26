@@ -107,6 +107,7 @@ cellsOf scenario = case renderScenarioId scenario of
   "shibuya/pgmq-adapter/concurrency/backend-termination-and-the-restart-loop" -> [(PgmqPersistence, SynchronousException), (Supervision, SynchronousException)]
   "shibuya/kiroku-adapter/correctness/in-flight-depth-is-one" -> [(Dispatch, Normal)]
   "shibuya/kiroku-adapter/correctness/ack-decision-mapping" -> [(KirokuPersistence, Normal), (RetryLease, Normal)]
+  "shibuya/kiroku-adapter/correctness/halt-and-shutdown-replay" -> [(KirokuPersistence, RepeatedStop), (KirokuPersistence, Cancellation)]
   _ -> []
 
 -- Add reasons only for cells which cannot be exercised through public APIs.

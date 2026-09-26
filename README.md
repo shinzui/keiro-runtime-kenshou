@@ -125,10 +125,11 @@ by Shibuya's child-process scenarios. Calling `run` starts those workers
 automatically. Checked-in specs cover every registered PGMQ scenario on
 PostgreSQL 17 and 18.
 
-The Kiroku adapter smoke cases use `specs/shibuya-kiroku-depth-pg18.json` and
-`specs/shibuya-kiroku-ack-mapping-pg18.json`, with matching `pg17` specs. They
-check persisted checkpoints and dead-letter rows on both supported PostgreSQL
-versions.
+The Kiroku adapter smoke cases use `specs/shibuya-kiroku-depth-pg18.json`,
+`specs/shibuya-kiroku-ack-mapping-pg18.json` and
+`specs/shibuya-kiroku-replay-pg18.json`, with matching `pg17` specs. They check
+persisted checkpoints, dead-letter rows and restart replay on both supported
+PostgreSQL versions.
 
 PostgreSQL outage and backend termination comparisons use the same runner with
 `specs/shibuya-current-outage-pg18.json` and

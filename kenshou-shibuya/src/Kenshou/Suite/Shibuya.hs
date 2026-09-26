@@ -11,9 +11,10 @@ import Kenshou.Suite.Shibuya.Correctness.CoreOrdering qualified as CoreOrdering
 import Kenshou.Suite.Shibuya.Correctness.CoreRunner qualified as CoreRunner
 import Kenshou.Suite.Shibuya.Correctness.KirokuAckMapping qualified as KirokuAckMapping
 import Kenshou.Suite.Shibuya.Correctness.KirokuDepth qualified as KirokuDepth
+import Kenshou.Suite.Shibuya.Correctness.KirokuReplay qualified as KirokuReplay
 import Kenshou.Suite.Shibuya.Correctness.Metrics qualified as Metrics
 import Kenshou.Suite.Shibuya.Correctness.PgmqAdapter qualified as PgmqAdapter
 import Kenshou.Suite.Shibuya.Roles qualified as Roles
 
 bundle :: LayerBundle
-bundle = LayerBundle Shibuya (CoreRunner.scenarios <> ConcurrentCoreRunner.scenarios <> CoreOrdering.scenarios <> ConcurrentCoreOrdering.scenarios <> [KeyedModel.scenario] <> ConcurrentCoreBatch.scenarios <> CoreBatch.scenarios <> Metrics.scenarios <> PgmqAdapter.scenarios <> [KirokuAckMapping.scenario, KirokuDepth.scenario]) Roles.roles
+bundle = LayerBundle Shibuya (CoreRunner.scenarios <> ConcurrentCoreRunner.scenarios <> CoreOrdering.scenarios <> ConcurrentCoreOrdering.scenarios <> [KeyedModel.scenario] <> ConcurrentCoreBatch.scenarios <> CoreBatch.scenarios <> Metrics.scenarios <> PgmqAdapter.scenarios <> [KirokuAckMapping.scenario, KirokuDepth.scenario, KirokuReplay.scenario]) Roles.roles

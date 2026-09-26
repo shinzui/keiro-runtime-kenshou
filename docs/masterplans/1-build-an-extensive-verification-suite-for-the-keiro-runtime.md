@@ -126,6 +126,11 @@ provenance:
       at: 2026-09-26T15:05:00Z
       mode: "implement"
       note: "Started EP-10 Kiroku adapter verification with sealed PostgreSQL 17/18 smoke results on released and current adapters."
+    - model: "gpt-6"
+      harness: "codex"
+      at: 2026-09-26T15:15:00Z
+      mode: "implement"
+      note: "Verified EP-10 Kiroku halt and forced-shutdown batch replay across released/current PostgreSQL 17/18 lanes."
 ---
 
 # Build an extensive verification suite for the keiro runtime
@@ -304,7 +309,7 @@ EP-10 also verifies two distinct PGMQ shutdown boundaries. Forced stop with pref
 
 EP-10 completed the isolated current-release CLI sweep of all 13 registered PGMQ scenarios on PostgreSQL 17/18. Standard and long-poll shutdown, automatic dead lettering, acknowledgement mapping, prefetch recovery, read-chunk release, lease sizing, two-process lease renewal, four-consumer competition, 20-worker SIGKILL recovery, atomic dead-letter moves and postmaster restart pass. Long-poll pool starvation and backend termination reproduce only their scoped owner defects; every run is sealed and has a checked-in spec. The isolated executable now dispatches the same worker protocol as the full CLI so the process cases execute against Shibuya 0.10.0.0. The result matrix is in `docs/plans/10-cover-shibuya-core-and-its-pgmq-and-kiroku-adapters.md`. Kiroku adapter scenarios and the remaining core/metrics, benchmark and soak acceptance stay open.
 
-EP-10 has started real Kiroku adapter coverage. A run-scoped category and SQL checkpoint/dead-letter fixture now support two smoke scenarios. The acknowledgement scenario proves zero-based retry attempts, a delayed redelivery, fifth-delivery dead lettering, each direct reason mapping, skipped filtered delivery, and a final durable checkpoint. The depth scenario holds the first handler under `async:8`, observes exactly one active delivery, then checks 24 completions and the final checkpoint. Released adapter 0.5.1.2 and current 0.5.1.3 passed both on PostgreSQL 17 and 18; the child plan records eight sealed run IDs and four checked-in specs. The remaining Kiroku crash, group, outage, benchmark, and soak arms are open.
+EP-10 has started real Kiroku adapter coverage. A run-scoped category and SQL checkpoint/dead-letter fixture now support three smoke scenarios. The acknowledgement scenario proves zero-based retry attempts, a delayed redelivery, fifth-delivery dead lettering, each direct reason mapping, skipped filtered delivery, and a final durable checkpoint. The depth scenario holds the first handler under `async:8`, observes exactly one active delivery, then checks 24 completions and the final checkpoint. The replay scenario halts at event 3, force-stops with event 5 in flight, then verifies ordered replay of the uncheckpointed eight-event batch and a final checkpoint at 8. Released adapter 0.5.1.2 and current 0.5.1.3 passed all three on PostgreSQL 17 and 18; the child plan records twelve sealed run IDs and six checked-in specs. The remaining Kiroku crash, group, outage, benchmark, and soak arms are open.
 
 EP-10 now registers a startup-cancellation and rapid-cycle scenario for the `startup-registration/cancellation` and `startup-registration/repeatedStop` matrix cells. Its reduced package test passes on historical Shibuya 0.9.0.3, pinned remediation, and isolated Hackage 0.10.0.0, bringing the package suite to 29 examples. The full historical revision-1 run reproduced continued source activity after cancellation as a nonblocking REV-3-F3 finding in `runs/01a0dacf-d1b6-701f-ad69-647b4d6fc455/run-result.json`; the probe targets 500 cancellations but stops at the first failure, and revision 2 now records the attempted count explicitly. The pinned-head revision-2 run `runs/01a0dad7-48b2-76ed-9b53-67577c427e2e/run-result.json` passed all 500 attempts, observed 489 source starts, completed 200 rapid cycles and returned to its four-thread baseline. The thread-count comparison forces major GC at both boundaries so dead thread objects do not masquerade as live leaks.
 
