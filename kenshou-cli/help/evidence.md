@@ -9,3 +9,5 @@ A dirty harness requires `--allow-dirty` and is recorded with `purpose: investig
 For a local rehearsal, copy the verification bundle outside the repository and pass `--bundle COPY --store-root DIR`. The record still contains `gs://` URIs, while the bytes are stored under the scratch directory. The command refuses `--store-root` with a bundle inside this repository.
 
 `--json` prints one `kenshou.record-result/v1` document and sends errors to standard error. A repeat with the same record content succeeds and reports `already recorded`; different content at the same record path is a conflict.
+
+`kenshou evidence check` checks record paths, IDs, digest and revision shapes, textual fields, event-only keys, timestamps, required data links, and changes to committed records. `--base REF` limits the Git history span. The command exits 0 when clean, 1 for findings, and 4 when it cannot check. `--json` prints one `kenshou.evidence-check/v1` document.

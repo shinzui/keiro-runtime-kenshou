@@ -17,6 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
@@ -49,6 +51,9 @@ jobs:
 
       - name: Run unit tests
         run: nix develop --command just haskell-test
+
+      - name: Check verification evidence
+        run: nix develop --command just evidence-check
 
       - name: Prove runtime cohort links
         run: nix develop --command just link-proof

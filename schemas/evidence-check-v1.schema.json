@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/evidence-check-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "status", "message", "exitCode", "findings"],
+  "properties": {
+    "schema": {"const": "kenshou.evidence-check/v1"},
+    "status": {"enum": ["ok", "error"]},
+    "message": {"type": "string"},
+    "exitCode": {"enum": [0, 1, 2, 4]},
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["concept", "rule", "message"],
+        "properties": {
+          "concept": {"type": "string"},
+          "rule": {"type": "string"},
+          "message": {"type": "string"}
+        }
+      }
+    }
+  }
+}

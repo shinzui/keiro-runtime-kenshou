@@ -11,7 +11,7 @@ default:
     just --list
 
 [group('meta')]
-verify: process-compose-check fmt-check haskell-build haskell-test link-proof cohort-assert-released cohort-check graph-check adr-validate evidence-validate evidence-index-check evidence-profile-test schemas-check selftest
+verify: process-compose-check fmt-check haskell-build haskell-test link-proof cohort-assert-released cohort-check graph-check adr-validate evidence-validate evidence-index-check evidence-profile-test evidence-check schemas-check selftest
 
 [group('verification')]
 graph-check:
@@ -41,6 +41,10 @@ evidence-profile-test:
     bash scripts/test-verification-profile.sh
 
 [group('verification')]
+evidence-check:
+    cabal run -v0 kenshou -- evidence check
+
+[group('verification')]
 schemas-check:
     check-jsonschema --schemafile schemas/component-graph.v1.schema.json kenshou-core/data/components.json
     check-jsonschema --schemafile schemas/run-plan.v1.schema.json kenshou-core/test/golden/run-plan.minimal.json
@@ -56,6 +60,7 @@ schemas-check:
     check-jsonschema --schemafile schemas/diagnosis.v1.schema.json kenshou-diagnose/test/golden/leak-diagnosis.json
     check-jsonschema --schemafile schemas/leak-policy.v1.schema.json policies/leak-default.json
     check-jsonschema --schemafile schemas/scenario-list-v1.schema.json kenshou-core/test/golden/scenario-list.json
+    tmpdir=$(mktemp -d); trap 'rm -rf -- "$tmpdir"' EXIT; K=$(cabal list-bin kenshou); "$K" evidence check --json > "$tmpdir/evidence-check.json"; check-jsonschema --schemafile schemas/evidence-check-v1.schema.json "$tmpdir/evidence-check.json"
     jq -c . kenshou-core/test/golden/worker-messages.jsonl | while IFS= read -r line; do printf '%s\n' "$line" | check-jsonschema --schemafile schemas/worker-message-v1.schema.json -; done
     tmpdir=$(mktemp -d); trap 'rm -rf -- "$tmpdir"' EXIT; K=$(cabal list-bin kenshou); "$K" list --json > "$tmpdir/scenario-list.json"; "$K" run selftest/kernel/correctness/always-pass --out "$tmpdir/runs" >/dev/null; rundir=$(find "$tmpdir/runs" -mindepth 1 -maxdepth 1 -type d | head -1); check-jsonschema --schemafile schemas/scenario-list-v1.schema.json "$tmpdir/scenario-list.json"; check-jsonschema --schemafile schemas/run-spec-v1.schema.json "$rundir/run-spec.json"; check-jsonschema --schemafile schemas/run-result-v1.schema.json "$rundir/run-result.json"; check-jsonschema --schemafile schemas/artifact-manifest-v1.schema.json "$rundir/manifest.json"
     tmpdir=$(mktemp -d); trap 'rm -rf -- "$tmpdir"' EXIT; K=$(cabal list-bin kenshou); "$K" run selftest/check/correctness/ledger-detects-loss-dup-reorder --set ledger.facts=1000 --out "$tmpdir" >/dev/null; rundir=$(find "$tmpdir" -mindepth 1 -maxdepth 1 -type d | head -1); check-jsonschema --schemafile schemas/kenshou.verdict.v1.schema.json "$rundir"/verdicts/*.json; jq '{"$schema": .["$schema"], "type": "array", "items": .}' schemas/kenshou.ledger-fact.v1.schema.json > "$tmpdir/ledger-array.schema.json"; jq -s 'map(select(.schema == "kenshou.ledger-fact/v1"))' "$rundir"/verdicts/ledger/*.jsonl > "$tmpdir/ledger-facts.json"; check-jsonschema --schemafile "$tmpdir/ledger-array.schema.json" "$tmpdir/ledger-facts.json"
@@ -76,6 +81,7 @@ haskell-test:
     cabal test kenshou-check:test:kenshou-check-test
     cabal test kenshou-diagnose:test:kenshou-diagnose-test
     cabal test kenshou-cli:test:kenshou-cli-test
+    cabal test kenshou-evidence:test:kenshou-evidence-test
 
 [group('haskell')]
 link-proof:

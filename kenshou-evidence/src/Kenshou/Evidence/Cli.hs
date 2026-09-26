@@ -1,4 +1,4 @@
-module Kenshou.Evidence.Cli (recordCommand) where
+module Kenshou.Evidence.Cli (recordCommand, evidenceCommand) where
 
 import Control.Exception (IOException, try)
 import Data.Aeson (encode, object, (.=))
@@ -8,6 +8,7 @@ import Data.Text qualified as Text
 import Data.Text.IO qualified as Text.IO
 import Kenshou.Core.Cli (CliCommand (..), CliEnv, CliGroup (Evidence))
 import Kenshou.Evidence.Bundle (BundleWriteError (..))
+import Kenshou.Evidence.Check (CheckError (..), CheckOptions (..), Finding (..), checkBundle)
 import Kenshou.Evidence.Publish (PublishError (..), UploadMode (..))
 import Kenshou.Evidence.Record (RecordError (..), RecordOptions (..), RecordOutcome (..), recordRun)
 import Kenshou.Evidence.Source (SourceError (..))
@@ -39,6 +40,48 @@ data RecordCli = RecordCli
 
 recordCommand :: CliCommand
 recordCommand = CliCommand "record" "Publish a finished run as an OKF evidence record" Evidence False (recordHandler <$> recordParser)
+
+evidenceCommand :: CliCommand
+evidenceCommand =
+  CliCommand "evidence" "Check the historic OKF evidence bundle" Evidence False $
+    hsubparser (command "check" (info (checkHandler <$> checkParser) (progDesc "Check record identity, local rules and immutability")))
+
+data CheckCli = CheckCli
+  { bundle :: !FilePath,
+    baseRef :: !(Maybe Text),
+    json :: !Bool
+  }
+
+checkParser :: Parser CheckCli
+checkParser =
+  CheckCli
+    <$> parserOptionGroup "Bundle selection" (strOption (long "bundle" <> metavar "DIR" <> value "docs/verification" <> showDefault <> help "OKF evidence bundle"))
+    <*> parserOptionGroup "History scope" (optional (Text.pack <$> strOption (long "base" <> metavar "GIT-REF" <> help "Check committed changes from this base through HEAD")))
+    <*> parserOptionGroup "Output" (switch (long "json" <> help "Emit one JSON result document"))
+
+checkHandler :: CheckCli -> CliEnv -> IO ExitCode
+checkHandler options _ = do
+  checked <- checkBundle (CheckOptions options.bundle options.baseRef)
+  case checked of
+    Left (CheckError message) -> checkResponse options.json 4 message []
+    Right findings -> checkResponse options.json (if null findings then 0 else 1) (if null findings then "evidence clean" else "evidence findings") findings
+
+checkResponse :: Bool -> Int -> Text -> [Finding] -> IO ExitCode
+checkResponse machine code message findings = do
+  if machine
+    then LazyByteString.putStrLn (encode (object ["schema" .= ("kenshou.evidence-check/v1" :: Text), "status" .= (if code == 0 then "ok" else "error" :: Text), "message" .= message, "exitCode" .= code, "findings" .= map findingValue findings]))
+    else
+      if null findings
+        then Text.IO.putStrLn message
+        else mapM_ (Text.IO.hPutStrLn stderr . renderFinding) findings
+  if code == 0
+    then pure ExitSuccess
+    else do
+      if null findings then Text.IO.hPutStrLn stderr ("kenshou evidence check: " <> message) else pure ()
+      pure (ExitFailure code)
+  where
+    findingValue finding = object ["concept" .= finding.concept, "rule" .= finding.rule, "message" .= finding.message]
+    renderFinding finding = Text.pack finding.concept <> ": " <> finding.rule <> ": " <> finding.message
 
 recordParser :: Parser RecordCli
 recordParser =

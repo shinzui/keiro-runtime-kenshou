@@ -34,6 +34,7 @@ library
   hs-source-dirs: src
   exposed-modules:
     Kenshou.Evidence.Bundle
+    Kenshou.Evidence.Check
     Kenshou.Evidence.Cli
     Kenshou.Evidence.Frontmatter
     Kenshou.Evidence.Publish
@@ -75,6 +76,7 @@ test-suite kenshou-evidence-test
     kenshou-core,
     kenshou-evidence,
     okf-core,
+    process,
     temporary,
     text,
     time,

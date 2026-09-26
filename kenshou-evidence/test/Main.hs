@@ -1,6 +1,6 @@
 module Main (main) where
 
-import Data.Aeson (Value (..), encode, object, (.=))
+import Data.Aeson (Value (..), encode, object, toJSON, (.=))
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteString.Char8
 import Data.ByteString.Lazy qualified as LazyByteString
@@ -14,20 +14,58 @@ import Kenshou.Core.Id (parseRunId, parseScenarioId)
 import Kenshou.Core.Manifest (writeManifest)
 import Kenshou.Core.Outcome (Outcome (Passed))
 import Kenshou.Evidence.Bundle (BundleWriteError (..), BundleWriteResult (..), runRecordPath, writeRunRecordWith)
+import Kenshou.Evidence.Check (CheckOptions (..), Finding (..), checkBundle, checkDocument)
 import Kenshou.Evidence.Frontmatter (EvidenceRecord (..), recordFromDocument, recordToDocument)
 import Kenshou.Evidence.Publish (PublishError (..), PublishOptions (..), UploadMode (..), publishRunData)
 import Kenshou.Evidence.Record (RecordInput (..), RecordOptions (..), RecordOutcome (..), buildRunRecord, recordRunWith)
 import Kenshou.Evidence.Source (loadRunSource)
 import Kenshou.Evidence.Store (ObjectStat (..), ObjectStore (..), PutResult (..), StoreError (..), directoryStore, gcloudStoreWith, memoryStore)
 import Kenshou.Evidence.Types (DataKind (..), DataLink (..), Purpose (..), Revision (..), Sha256 (..), SubjectKind (..), mkRevision, mkSha256, sha256Bytes)
-import Okf.Document (parseDocument, serializeDocument)
+import Okf.Document (OKFDocument (..), parseDocument, serializeDocument, setField)
 import System.Directory (Permissions (..), createDirectoryIfMissing, doesFileExist, getPermissions, setPermissions)
-import System.FilePath ((</>))
+import System.FilePath (takeDirectory, (</>))
 import System.IO.Temp (withSystemTempDirectory)
+import System.Process (callProcess)
 import Test.Hspec
 
 main :: IO ()
 main = hspec do
+  describe "evidence check" do
+    it "detects event keys, coerced strings and changed committed records" do
+      withSystemTempDirectory "kenshou-evidence-check" $ \root -> do
+        let runDirectory = root </> "run"
+            repo = root </> "repo"
+            bundle = repo </> "docs/verification"
+        createDirectoryIfMissing True runDirectory
+        writeRunFixture runDirectory
+        source <- loadRunSource runDirectory >>= either (fail . show) pure
+        store <- memoryStore
+        links <- publishRunData store (PublishOptions "gs://bucket/runs" UploadMissing False False) runDirectory source >>= either (fail . show) pure
+        record <- either (fail . show) pure (buildRunRecord (RecordInput Baseline (UTCTime (fromGregorian 2026 9 26) 0) False Nothing [] Nothing) source links)
+        path <- either (fail . show) pure (runRecordPath record)
+        let document = recordToDocument record
+            eventKey = document {frontmatter = setField "status" (String "stable") document.frontmatter}
+            coerced = document {frontmatter = setField "dimensions" (toJSON [object ["name" .= ("telemetry" :: Text), "value" .= False]]) document.frontmatter}
+        map (.rule) (checkDocument path eventKey) `shouldContain` ["event-keys"]
+        map (.rule) (checkDocument path coerced) `shouldContain` ["string-typing"]
+        createDirectoryIfMissing True (takeDirectory (bundle </> path))
+        Text.IO.writeFile (bundle </> path) (serializeDocument document)
+        callProcess "git" ["init", "-q", repo]
+        callProcess "git" ["-C", repo, "-c", "user.name=Kenshou", "-c", "user.email=kenshou@example.invalid", "add", "."]
+        callProcess "git" ["-C", repo, "-c", "user.name=Kenshou", "-c", "user.email=kenshou@example.invalid", "commit", "-qm", "test: record evidence fixture"]
+        checkBundle (CheckOptions bundle Nothing) `shouldReturn` Right []
+        let changed = document {frontmatter = setField "outcome" (String "failed") document.frontmatter}
+        Text.IO.writeFile (bundle </> path) (serializeDocument changed)
+        checked <- checkBundle (CheckOptions bundle Nothing)
+        checked `shouldSatisfy` \case
+          Right findings -> any (\finding -> finding.rule == "immutability" && finding.concept == path && "outcome" `Text.isInfixOf` finding.message) findings
+          Left _ -> False
+        callProcess "git" ["-C", repo, "add", "."]
+        callProcess "git" ["-C", repo, "-c", "user.name=Kenshou", "-c", "user.email=kenshou@example.invalid", "commit", "-qm", "test: change evidence fixture"]
+        committed <- checkBundle (CheckOptions bundle Nothing)
+        committed `shouldSatisfy` \case
+          Right findings -> any (\finding -> finding.rule == "immutability" && finding.concept == path && "outcome" `Text.isInfixOf` finding.message) findings
+          Left _ -> False
   describe "recordRunWith" do
     it "records once and reports the same fact on replay" do
       withSystemTempDirectory "kenshou-record-command" $ \root -> do

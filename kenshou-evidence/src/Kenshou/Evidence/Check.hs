@@ -1,0 +1,261 @@
+module Kenshou.Evidence.Check
+  ( CheckOptions (..),
+    CheckError (..),
+    Finding (..),
+    checkBundle,
+    checkDocument,
+  )
+where
+
+import Control.Exception (IOException, try)
+import Control.Monad (forM)
+import Data.Aeson (Value (..))
+import Data.Aeson.Key qualified as Key
+import Data.Aeson.KeyMap qualified as KeyMap
+import Data.List (isPrefixOf, nub, sort)
+import Data.Maybe (mapMaybe)
+import Data.Text (Text)
+import Data.Text qualified as Text
+import Data.Text.IO qualified as Text.IO
+import Data.Time (UTCTime, defaultTimeLocale, formatTime, parseTimeM)
+import Kenshou.Core.Id (ScenarioId (..), parseRunId, parseScenarioId, renderLayer)
+import Kenshou.Evidence.Types (mkRevision, mkSha256)
+import Okf.Document (OKFDocument (..), frontmatterKeys, frontmatterLookup, parseDocument, removeField)
+import System.Directory (canonicalizePath, doesDirectoryExist, listDirectory)
+import System.Exit (ExitCode (..))
+import System.FilePath (makeRelative, splitDirectories, takeExtension, (</>))
+import System.Process (readProcessWithExitCode)
+
+data CheckOptions = CheckOptions
+  { bundleRoot :: !FilePath,
+    baseRef :: !(Maybe Text)
+  }
+  deriving stock (Eq, Show)
+
+newtype CheckError = CheckError Text deriving stock (Eq, Show)
+
+data Finding = Finding
+  { concept :: !FilePath,
+    rule :: !Text,
+    message :: !Text
+  }
+  deriving stock (Eq, Show)
+
+checkBundle :: CheckOptions -> IO (Either CheckError [Finding])
+checkBundle options = do
+  result <- try (check options) :: IO (Either IOException (Either CheckError [Finding]))
+  pure $ either (Left . CheckError . Text.pack . show) id result
+
+check :: CheckOptions -> IO (Either CheckError [Finding])
+check options = do
+  exists <- doesDirectoryExist options.bundleRoot
+  if not exists
+    then pure (Left (CheckError "evidence bundle does not exist"))
+    else do
+      paths <- sort <$> conceptFiles options.bundleRoot
+      current <- forM paths $ \path -> do
+        content <- Text.IO.readFile (options.bundleRoot </> path)
+        pure (path, content)
+      let local =
+            concatMap
+              ( \(path, content) -> case parseDocument content of
+                  Left err -> [Finding path "parse" (Text.pack (show err))]
+                  Right document -> checkDocument path document
+              )
+              current
+      historical <- checkHistory options
+      pure ((local <>) <$> historical)
+
+conceptFiles :: FilePath -> IO [FilePath]
+conceptFiles root = do
+  let descend relative = do
+        let directory = root </> relative
+        names <- listDirectory directory
+        fmap concat $ forM names $ \name -> do
+          let child = relative </> name
+          isDirectory <- doesDirectoryExist (root </> child)
+          if isDirectory then descend child else pure [child | takeExtension name == ".md", name /= "index.md", name /= "log.md"]
+  runs <- doesDirectoryExist (root </> "runs")
+  attestations <- doesDirectoryExist (root </> "attestations")
+  (if runs then descend "runs" else pure []) >>= \runFiles ->
+    (if attestations then descend "attestations" else pure []) >>= \attestationFiles ->
+      pure (runFiles <> attestationFiles)
+
+checkDocument :: FilePath -> OKFDocument -> [Finding]
+checkDocument path document =
+  let front = document.frontmatter
+      field = (`frontmatterLookup` front)
+      issue name detail = Finding path name detail
+      textField name = case field name of
+        Just (String value) -> Just value
+        _ -> Nothing
+      requireText name = [issue "string-typing" (name <> " must be a JSON string") | textField name == Nothing]
+      digest name = case textField name of
+        Nothing -> []
+        Just value -> [issue "hex-shape" (name <> " must be 64 lowercase hexadecimal characters") | either (const True) (const False) (mkSha256 value)]
+      revision name = case textField name of
+        Nothing -> []
+        Just value -> [issue "hex-shape" (name <> " must be 40 lowercase hexadecimal characters") | either (const True) (const False) (mkRevision value)]
+      entries name = case field name of
+        Just (Array values) -> toList values
+        _ -> []
+      member name value = case value of
+        Object fields -> KeyMap.lookup (Key.fromText name) fields
+        _ -> Nothing
+      entryText name value = case member name value of
+        Just (String result) -> Just result
+        _ -> Nothing
+      run = field "type" == Just (String "Verification Run")
+      attestation = field "type" == Just (String "Attestation")
+      common =
+        [issue "event-keys" (name <> " is forbidden on an event") | (run || attestation), name <- ["status", "stale_after"], field name /= Nothing]
+      runChecks =
+        requireText "runId"
+          <> requireText "scenario"
+          <> requireText "startedAt"
+          <> requireText "finishedAt"
+          <> [issue "id-shape" "runId must be a UUIDv7" | maybe True (either (const True) (const False) . parseRunId) (textField "runId")]
+          <> pathChecks textField issue
+          <> timeChecks textField issue
+          <> if field "recordKind" == Just (String "run") then runOnly else []
+      runOnly =
+        requireText "harnessRevision"
+          <> requireText "compatibilityKey"
+          <> requireText "solverPlanHash"
+          <> digest "compatibilityKey"
+          <> digest "solverPlanHash"
+          <> revision "harnessRevision"
+          <> [issue "dirty-purpose" "a dirty harness requires purpose: investigation" | field "harnessDirty" == Just (Bool True), field "purpose" /= Just (String "investigation")]
+          <> concatMap
+            ( \value ->
+                [issue "string-typing" "dimension.value must be a JSON string" | entryText "value" value == Nothing]
+                  <> [issue "string-typing" "dimension.name must be a JSON string" | entryText "name" value == Nothing]
+            )
+            (entries "dimensions")
+          <> concatMap
+            ( \value ->
+                [issue "string-typing" "data.uri must be a JSON string" | entryText "uri" value == Nothing]
+                  <> [issue "hex-shape" "data.digest must be 64 lowercase hexadecimal characters" | maybe True (either (const True) (const False) . mkSha256) (entryText "digest" value)]
+            )
+            (entries "data")
+          <> concatMap
+            ( \value ->
+                [issue "hex-shape" "component.revision must be 40 lowercase hexadecimal characters" | maybe False (either (const True) (const False) . mkRevision) (entryText "revision" value)]
+            )
+            (entries "components")
+          <> [issue "data-completeness" "run must link manifest, run-spec and run-result" | field "recordKind" == Just (String "run"), not (all (`elem` mapMaybe (entryText "kind") (entries "data")) ["manifest", "run-spec", "run-result"])]
+          <> [ issue "cell-fields" "cell placement requires environment.cell, cellRun, machineType and zone"
+             | field "placement" == Just (String "cell"),
+               not
+                 ( all
+                     ( \name -> case field "environment" of
+                         Just environment -> maybe False isString (member name environment)
+                         _ -> False
+                     )
+                     ["cell", "cellRun", "machineType", "zone"]
+                 )
+             ]
+      attestationChecks = [issue "event-keys" (name <> " belongs only on runs") | name <- ["layer", "tier"], field name /= Nothing]
+   in common <> (if run then runChecks else []) <> (if attestation then attestationChecks else [])
+  where
+    isString (String _) = True
+    isString _ = False
+    toList = foldr (:) []
+    pathChecks textField issue = case (textField "scenario", textField "runId", textField "startedAt") of
+      (Just scenario, Just runId, Just startedAt) -> case (parseScenarioId scenario, parseUtc startedAt) of
+        (Right parsed, Just time) ->
+          let expected = "runs/" <> Text.unpack (renderLayer parsed.layer) <> "/" <> formatTime defaultTimeLocale "%Y/%m" time <> "/" <> Text.unpack runId <> ".md"
+           in [issue "path-consistency" ("expected " <> Text.pack expected) | path /= expected]
+        _ -> []
+      _ -> []
+    timeChecks textField issue = case (textField "startedAt", textField "finishedAt") of
+      (Just start, Just finish) -> case (parseUtc start, parseUtc finish) of
+        (Just from, Just to) -> [issue "time-order" "finishedAt precedes startedAt" | to < from]
+        _ -> [issue "time-order" "run timestamps must be RFC 3339 UTC"]
+      _ -> []
+
+parseUtc :: Text -> Maybe UTCTime
+parseUtc = parseTimeM True defaultTimeLocale "%Y-%m-%dT%H:%M:%S%QZ" . Text.unpack
+
+checkHistory :: CheckOptions -> IO (Either CheckError [Finding])
+checkHistory options = do
+  gitRoot <- readProcessWithExitCode "git" ["-C", options.bundleRoot, "rev-parse", "--show-toplevel"] ""
+  case gitRoot of
+    (ExitFailure _, _, _) -> pure (Right [])
+    (ExitSuccess, root, _) -> do
+      repo <- canonicalizePath (stripNewline root)
+      bundle <- canonicalizePath options.bundleRoot
+      let relative = makeRelative repo bundle
+      if [".."] `isPrefixOf` splitDirectories relative
+        then pure (Right [])
+        else do
+          shallow <- readProcessWithExitCode "git" ["-C", repo, "rev-parse", "--is-shallow-repository"] ""
+          if shallow /= (ExitSuccess, "false\n", "")
+            then pure (Left (CheckError "immutability requires full Git history"))
+            else do
+              let scope = [relative </> "runs", relative </> "attestations"]
+                  range = maybe "HEAD" ((<> "..HEAD") . Text.unpack) options.baseRef
+              history <- readProcessWithExitCode "git" (["-C", repo, "log", "--format=%H", "--diff-filter=DMR", "--name-status", range, "--"] <> scope) ""
+              case history of
+                (ExitFailure _, _, err) -> pure (Left (CheckError (Text.pack err)))
+                (ExitSuccess, output, _) -> do
+                  let changed = [(commit, columns) | (commit, columns) <- historyLines output, any (\item -> takeExtension item == ".md" && not (isGenerated item)) (drop 1 columns)]
+                  committed <- fmap concat $ forM changed $ \(commit, columns) -> case columns of
+                    status : path : _ -> do
+                      let relativePath = makeRelative relative path
+                      if "D" `isPrefixOf` status || "R" `isPrefixOf` status
+                        then pure [Finding relativePath "immutability" ("committed deletion or rename in " <> Text.pack commit)]
+                        else compareVersions repo relativePath (commit <> "^:" <> path) (commit <> ":" <> path)
+                    _ -> pure []
+                  worktree <- readProcessWithExitCode "git" (["-C", repo, "diff", "--name-status", "HEAD", "--"] <> scope) ""
+                  staged <- case worktree of
+                    (ExitSuccess, changes, _) -> fmap concat $ forM (lines changes) $ \line -> case words line of
+                      status : path : _
+                        | takeExtension path == ".md",
+                          not (isGenerated path) ->
+                            let relativePath = makeRelative relative path
+                             in if "D" `isPrefixOf` status || "R" `isPrefixOf` status
+                                  then pure [Finding relativePath "immutability" "committed event was deleted or renamed in the working tree"]
+                                  else compareVersions repo relativePath ("HEAD:" <> path) path
+                      _ -> pure []
+                    _ -> pure []
+                  pure (Right (committed <> staged))
+  where
+    stripNewline = reverse . dropWhile (== '\n') . reverse
+    isGenerated path = any (`elem` ["index.md", "log.md"]) (take 1 (reverse (splitDirectories path)))
+    historyLines = go Nothing . lines
+      where
+        go _ [] = []
+        go current (line : rest)
+          | length line == 40 && all (`elem` ("0123456789abcdef" :: String)) line = go (Just line) rest
+          | otherwise = case (current, words line) of
+              (Just commit, columns@(_ : _)) -> (commit, columns) : go current rest
+              _ -> go current rest
+    compareVersions repo relativePath oldRef newRef = do
+      old <- readVersion repo oldRef
+      new <- readVersion repo newRef
+      pure case (old, new) of
+        (Just before, Just after) -> case (parseDocument before, parseDocument after) of
+          (Right a, Right b) | allowedAppend a b -> []
+          (Right a, Right b) -> [Finding relativePath "immutability" ("committed event changed: " <> Text.intercalate ", " (changedParts a b))]
+          _ -> [Finding relativePath "immutability" ("committed event changed: " <> Text.pack newRef)]
+        _ -> [Finding relativePath "immutability" ("committed event changed: " <> Text.pack newRef)]
+    readVersion repo ref
+      | ':' `elem` ref = do
+          (status, output, _) <- readProcessWithExitCode "git" ["-C", repo, "show", ref] ""
+          pure (if status == ExitSuccess then Just (Text.pack output) else Nothing)
+      | otherwise = do
+          result <- try (Text.IO.readFile (repo </> ref)) :: IO (Either IOException Text)
+          pure (either (const Nothing) Just result)
+    allowedAppend before after =
+      before.body == after.body
+        && removeVerified before == removeVerified after
+        && verified before `isPrefixOf` verified after
+    removeVerified document = removeField "verified" document.frontmatter
+    verified document = case frontmatterLookup "verified" document.frontmatter of
+      Just (Array values) -> foldr (:) [] values
+      _ -> []
+    changedParts before after =
+      [name | name <- sort (nub (frontmatterKeys before.frontmatter <> frontmatterKeys after.frontmatter)), name /= "verified", frontmatterLookup name before.frontmatter /= frontmatterLookup name after.frontmatter]
+        <> ["body" | before.body /= after.body]
+        <> ["verified" | not (verified before `isPrefixOf` verified after)]
