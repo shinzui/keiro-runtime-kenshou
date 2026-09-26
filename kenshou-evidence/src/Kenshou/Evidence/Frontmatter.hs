@@ -1,7 +1,9 @@
 module Kenshou.Evidence.Frontmatter
   ( EvidenceRecord (..),
+    ComparisonEvidence (..),
     FieldError (..),
     recordToDocument,
+    comparisonToDocument,
     recordFromDocument,
   )
 where
@@ -51,6 +53,63 @@ data EvidenceRecord = EvidenceRecord
     body :: !Text
   }
   deriving stock (Eq, Show)
+
+data ComparisonEvidence = ComparisonEvidence
+  { title :: !Text,
+    description :: !Text,
+    generatedAt :: !Text,
+    runId :: !Text,
+    purpose :: !Purpose,
+    scenario :: !ScenarioId,
+    tier :: !Text,
+    placement :: !Text,
+    outcome :: !Outcome,
+    startedAt :: !Text,
+    finishedAt :: !Text,
+    subject :: !Text,
+    subjectKind :: !SubjectKind,
+    harnessRevision :: !Revision,
+    harnessDirty :: !Bool,
+    computations :: ![Text],
+    dataLinks :: ![DataLink],
+    comparison :: !Value,
+    body :: !Text
+  }
+  deriving stock (Eq, Show)
+
+comparisonToDocument :: ComparisonEvidence -> OKFDocument
+comparisonToDocument record =
+  OKFDocument
+    { frontmatter = foldl (\front (name, value) -> setField name value front) generated fields,
+      body = record.body
+    }
+  where
+    generated =
+      setGenerated
+        Generated {generatedBy = ProducerActor "kenshou-record" "0.1.0.0", generatedAt = Just record.generatedAt}
+        (okfCommon OkfCommon {commonType = "Verification Run", commonTitle = Just record.title, commonDescription = Just record.description, commonTimestamp = Nothing})
+    scenarioId = record.scenario
+    fields =
+      [ ("runId", toJSON record.runId),
+        ("recordKind", String "comparison"),
+        ("purpose", String (purposeText record.purpose)),
+        ("scenario", String (renderScenarioId scenarioId)),
+        ("layer", String (renderLayer scenarioId.layer)),
+        ("component", String (unSegment scenarioId.component)),
+        ("kind", String (renderKind scenarioId.kind)),
+        ("tier", String record.tier),
+        ("placement", String record.placement),
+        ("outcome", String (renderOutcome record.outcome)),
+        ("startedAt", String record.startedAt),
+        ("finishedAt", String record.finishedAt),
+        ("subject", String record.subject),
+        ("subjectKind", String (subjectKindText record.subjectKind)),
+        ("harnessRevision", toJSON record.harnessRevision),
+        ("harnessDirty", Bool record.harnessDirty),
+        ("computations", toJSON record.computations),
+        ("data", toJSON record.dataLinks),
+        ("comparison", record.comparison)
+      ]
 
 recordToDocument :: EvidenceRecord -> OKFDocument
 recordToDocument record =

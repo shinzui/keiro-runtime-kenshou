@@ -12,7 +12,7 @@ import Kenshou.Evidence.Bundle (BundleWriteError (..))
 import Kenshou.Evidence.Check (CheckError (..), CheckOptions (..), Finding (..), checkBundleWithStore)
 import Kenshou.Evidence.Config (EvidenceDefaults (..), bundleRootKey, dataBaseUriKey, evidenceConfig, projectKey, resolveEvidenceDefaults)
 import Kenshou.Evidence.Publish (PublishError (..), UploadMode (..))
-import Kenshou.Evidence.Record (RecordError (..), RecordOptions (..), RecordOutcome (..), recordRun)
+import Kenshou.Evidence.Record (RecordError (..), RecordOptions (..), RecordOutcome (..), recordComparison, recordRun)
 import Kenshou.Evidence.Source (SourceError (..))
 import Kenshou.Evidence.Store (ObjectStore, StoreError (..), directoryStore, gcloudStore)
 import Kenshou.Evidence.Types (Purpose (..), SubjectKind (..))
@@ -28,7 +28,8 @@ import System.IO (stderr)
 import System.Process (readProcess)
 
 data RecordCli = RecordCli
-  { runDirectory :: !FilePath,
+  { runDirectory :: !(Maybe FilePath),
+    comparisonFile :: !(Maybe FilePath),
     config :: !ConfigInputs,
     purpose :: !Purpose,
     storeRoot :: !(Maybe FilePath),
@@ -43,7 +44,7 @@ data RecordCli = RecordCli
   }
 
 recordCommand :: CliCommand
-recordCommand = CliCommand "record" "Publish a finished run as an OKF evidence record" Evidence False (recordHandler <$> recordParser)
+recordCommand = CliCommand "record" "Publish a finished run or comparison as an OKF evidence record" Evidence False (recordHandler <$> recordParser)
 
 evidenceCommand :: CliCommand
 evidenceCommand =
@@ -113,7 +114,8 @@ checkResponse machine code message findings = do
 recordParser :: Parser RecordCli
 recordParser =
   RecordCli
-    <$> parserOptionGroup "Record source" (strArgument (metavar "RUN-DIR" <> help "Finished kenshou run directory"))
+    <$> parserOptionGroup "Record source" (optional (strArgument (metavar "RUN-DIR" <> help "Finished kenshou run directory")))
+    <*> parserOptionGroup "Record source" (optional (strOption (long "comparison" <> metavar "FILE" <> help "Finished kenshou comparison document")))
     <*> configInputsParser
       ( (\bundle project baseUri -> [bundle, project, baseUri])
           <$> namedOption "--bundle" bundleRootKey (long "bundle" <> metavar "DIR" <> help "OKF evidence bundle")
@@ -134,6 +136,7 @@ recordParser =
 recordHandler :: RecordCli -> CliEnv -> IO ExitCode
 recordHandler options _
   | options.subject == Nothing && options.subjectKind == SubjectPackage = respond options.json 2 "--subject-kind package requires --subject" Nothing
+  | (options.runDirectory == Nothing) == (options.comparisonFile == Nothing) = respond options.json 2 "provide exactly one RUN-DIR or --comparison FILE" Nothing
   | Just output <- schemaDiagnostic options.config.diagnostic (describe evidenceConfig) = Text.IO.putStr output >> pure ExitSuccess
   | otherwise = do
       processEnvironment <- fmap (fmap (\(name, value) -> (Text.pack name, Text.pack value))) getEnvironment
@@ -153,7 +156,10 @@ recordHandler options _
                   Right store -> do
                     let mode = if options.verifyOnly then VerifyOnly else UploadMissing
                         recordOptions = RecordOptions (Text.unpack defaults.bundleRoot) baseUri options.purpose mode options.deepVerify options.allowDirty options.linkLogs ((,options.subjectKind) <$> options.subject) options.produced
-                    recorded <- recordRun store recordOptions options.runDirectory
+                    recorded <- case (options.runDirectory, options.comparisonFile) of
+                      (Just directory, Nothing) -> recordRun store recordOptions directory
+                      (Nothing, Just file) -> recordComparison store recordOptions file
+                      _ -> pure (Left (RecordError "provide exactly one RUN-DIR or --comparison FILE"))
                     case recorded of
                       Left err -> respond options.json (recordExitCode err) (recordMessage err) Nothing
                       Right (Recorded path) -> respond options.json 0 "recorded" (Just path)

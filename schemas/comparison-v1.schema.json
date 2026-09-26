@@ -22,10 +22,15 @@
     }
   },
   "type": "object",
-  "required": ["schema", "comparisonId", "baselineRuns", "candidateRuns", "algorithm", "policy", "variedFactors", "pairCount", "metrics", "reasons", "verdict", "exitCode"],
+  "required": ["schema", "comparisonId", "startedAt", "finishedAt", "harnessRevision", "harnessDirty", "design", "baselineRuns", "candidateRuns", "algorithm", "policy", "variedFactors", "pairCount", "metrics", "reasons", "verdict", "exitCode"],
   "properties": {
     "schema": {"const": "kenshou.comparison/v1"},
     "comparisonId": {"type": "string"},
+    "startedAt": {"type": "string", "format": "date-time"},
+    "finishedAt": {"type": "string", "format": "date-time"},
+    "harnessRevision": {"type": ["string", "null"]},
+    "harnessDirty": {"type": ["boolean", "null"]},
+    "design": {"enum": ["abba", "baab", "sequential"]},
     "baselineRuns": {"type": "array", "minItems": 1, "items": {"type": "string"}},
     "candidateRuns": {"type": "array", "minItems": 1, "items": {"type": "string"}},
     "algorithm": {"type": "object"},

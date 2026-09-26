@@ -2,8 +2,10 @@ module Kenshou.Evidence.Bundle
   ( BundleWriteError (..),
     BundleWriteResult (..),
     runRecordPath,
+    comparisonRecordPath,
     writeRunRecord,
     writeRunRecordWith,
+    writeComparisonRecord,
   )
 where
 
@@ -16,7 +18,7 @@ import Data.Text.IO qualified as Text.IO
 import Data.Time (UTCTime, defaultTimeLocale, formatTime, parseTimeM)
 import Kenshou.Core.Id (ScenarioId (..), parseRunId, renderLayer, renderScenarioId)
 import Kenshou.Core.Outcome (renderOutcome)
-import Kenshou.Evidence.Frontmatter (EvidenceRecord (..), recordToDocument)
+import Kenshou.Evidence.Frontmatter (ComparisonEvidence (..), EvidenceRecord (..), comparisonToDocument, recordToDocument)
 import Okf.Bundle (walkBundle, walkBundleInventory, walkLogs)
 import Okf.Document (OKFDocument (..), parseDocument, removeField, serializeDocument)
 import Okf.Index (readBundleVersion, writeBundleIndexes)
@@ -41,12 +43,18 @@ data BundleWriteResult = RecordCreated !FilePath | RecordPresent !FilePath
   deriving stock (Eq, Show)
 
 runRecordPath :: EvidenceRecord -> Either BundleWriteError FilePath
-runRecordPath record = do
-  case parseRunId record.runId of
+runRecordPath record = eventRecordPath record.runId record.scenario record.startedAt
+
+comparisonRecordPath :: ComparisonEvidence -> Either BundleWriteError FilePath
+comparisonRecordPath record = eventRecordPath record.runId record.scenario record.startedAt
+
+eventRecordPath :: Text -> ScenarioId -> Text -> Either BundleWriteError FilePath
+eventRecordPath eventId scenario startedAt = do
+  case parseRunId eventId of
     Left reason -> Left (InvalidRecordIdentity reason)
     Right _ -> Right ()
-  started <- maybe (Left (InvalidRecordIdentity "startedAt must be an RFC 3339 UTC timestamp")) Right (parseUtc record.startedAt)
-  pure $ "runs" </> Text.unpack (renderLayer record.scenario.layer) </> formatTime defaultTimeLocale "%Y" started </> formatTime defaultTimeLocale "%m" started </> Text.unpack record.runId <> ".md"
+  started <- maybe (Left (InvalidRecordIdentity "startedAt must be an RFC 3339 UTC timestamp")) Right (parseUtc startedAt)
+  pure $ "runs" </> Text.unpack (renderLayer scenario.layer) </> formatTime defaultTimeLocale "%Y" started </> formatTime defaultTimeLocale "%m" started </> Text.unpack eventId <> ".md"
 
 writeRunRecord :: FilePath -> EvidenceRecord -> IO (Either BundleWriteError BundleWriteResult)
 writeRunRecord = writeRunRecordWith validateEvidenceBundle
@@ -54,12 +62,28 @@ writeRunRecord = writeRunRecordWith validateEvidenceBundle
 writeRunRecordWith :: (FilePath -> IO (Either BundleWriteError ())) -> FilePath -> EvidenceRecord -> IO (Either BundleWriteError BundleWriteResult)
 writeRunRecordWith validate root record = case runRecordPath record of
   Left err -> pure (Left err)
-  Right relative -> do
-    completed <- try (write validate root relative record) :: IO (Either IOException (Either BundleWriteError BundleWriteResult))
-    pure $ either (Left . BundleIo . Text.pack . show) id completed
+  Right relative -> writeDocument validate root relative (recordToDocument record) (EventIdentity "run" record.runId record.scenario (renderOutcome record.outcome) record.generatedAt)
 
-write :: (FilePath -> IO (Either BundleWriteError ())) -> FilePath -> FilePath -> EvidenceRecord -> IO (Either BundleWriteError BundleWriteResult)
-write validate root relative record = do
+writeComparisonRecord :: FilePath -> ComparisonEvidence -> IO (Either BundleWriteError BundleWriteResult)
+writeComparisonRecord root record = case comparisonRecordPath record of
+  Left err -> pure (Left err)
+  Right relative -> writeDocument validateEvidenceBundle root relative (comparisonToDocument record) (EventIdentity "comparison" record.runId record.scenario (renderOutcome record.outcome) record.generatedAt)
+
+data EventIdentity = EventIdentity
+  { kind :: !Text,
+    eventId :: !Text,
+    scenario :: !ScenarioId,
+    outcome :: !Text,
+    generatedAt :: !Text
+  }
+
+writeDocument :: (FilePath -> IO (Either BundleWriteError ())) -> FilePath -> FilePath -> OKFDocument -> EventIdentity -> IO (Either BundleWriteError BundleWriteResult)
+writeDocument validate root relative document event = do
+  completed <- try (write validate root relative document event) :: IO (Either IOException (Either BundleWriteError BundleWriteResult))
+  pure $ either (Left . BundleIo . Text.pack . show) id completed
+
+write :: (FilePath -> IO (Either BundleWriteError ())) -> FilePath -> FilePath -> OKFDocument -> EventIdentity -> IO (Either BundleWriteError BundleWriteResult)
+write validate root relative document event = do
   let target = root </> relative
       parent = takeDirectory target
       logPath = parent </> "log.md"
@@ -67,8 +91,7 @@ write validate root relative record = do
   oldLog <- do
     exists <- doesFileExist logPath
     if exists then Just <$> Text.IO.readFile logPath else pure Nothing
-  let document = recordToDocument record
-      rendered = serializeDocument document
+  let rendered = serializeDocument document
   published <- withTempFile parent ".kenshou-record-" $ \temporary handle -> do
     ByteString.hPut handle (Text.encodeUtf8 rendered)
     hFlush handle
@@ -86,7 +109,7 @@ write validate root relative record = do
         Right old | sameFact old document -> Right (RecordPresent relative)
         _ -> Left (RecordConflict relative)
     Right True -> do
-      result <- try (finish validate root relative logPath oldLog record) :: IO (Either IOException (Either BundleWriteError ()))
+      result <- try (finish validate root relative logPath oldLog event) :: IO (Either IOException (Either BundleWriteError ()))
       let rollback err = do
             removeFile target
             restoreLog logPath oldLog
@@ -97,13 +120,13 @@ write validate root relative record = do
         Left err -> rollback (BundleIo (Text.pack (show err)))
         Right (Left err) -> rollback err
 
-finish :: (FilePath -> IO (Either BundleWriteError ())) -> FilePath -> FilePath -> FilePath -> Maybe Text -> EvidenceRecord -> IO (Either BundleWriteError ())
-finish validate root relative logPath oldLog record = case parseUtc record.generatedAt of
+finish :: (FilePath -> IO (Either BundleWriteError ())) -> FilePath -> FilePath -> FilePath -> Maybe Text -> EventIdentity -> IO (Either BundleWriteError ())
+finish validate root relative logPath oldLog event = case parseUtc event.generatedAt of
   Nothing -> pure (Left (InvalidRecordIdentity "generatedAt must be an RFC 3339 UTC timestamp"))
   Just generated -> do
     let logTitle = Text.pack (takeDirectory relative) <> " Update Log"
         current = maybe (Log logTitle []) parseLog oldLog
-        message = "Recorded run " <> record.runId <> " (" <> renderScenarioId record.scenario <> ", " <> renderOutcome record.outcome <> ")."
+        message = "Recorded " <> event.kind <> " " <> event.eventId <> " (" <> renderScenarioId event.scenario <> ", " <> event.outcome <> ")."
         updated = appendLogEntry (Text.pack (formatTime defaultTimeLocale "%Y-%m-%d" generated)) (LogEntry (Just "Addition") message) current
     Text.IO.writeFile logPath (serializeLog updated)
     indexed <- writeBundleIndexes root

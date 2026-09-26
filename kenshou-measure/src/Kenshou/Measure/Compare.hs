@@ -21,8 +21,9 @@ import Data.Map.Strict qualified as Map
 import Data.Maybe (catMaybes, fromMaybe, mapMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Data.Time (UTCTime)
+import Data.Time (UTCTime, getCurrentTime)
 import Data.Time.Format (defaultTimeLocale, parseTimeM)
+import Kenshou.Core.Fingerprint (HostFingerprint (..), collectHostFingerprint)
 import Kenshou.Core.Id (newRunId, renderRunId)
 import Kenshou.Measure.Compare.Compatibility
 import Kenshou.Measure.Compare.Ordering
@@ -52,6 +53,11 @@ data MetricComparison = MetricComparison
 
 data Comparison = Comparison
   { comparisonId :: Text,
+    startedAt :: UTCTime,
+    finishedAt :: UTCTime,
+    harnessRevision :: Maybe Text,
+    harnessDirty :: Maybe Bool,
+    design :: Text,
     baselineRuns :: [Text],
     candidateRuns :: [Text],
     policy :: Policy,
@@ -89,6 +95,11 @@ instance ToJSON Comparison where
     object
       [ "schema" .= ("kenshou.comparison/v1" :: Text),
         "comparisonId" .= value.comparisonId,
+        "startedAt" .= value.startedAt,
+        "finishedAt" .= value.finishedAt,
+        "harnessRevision" .= value.harnessRevision,
+        "harnessDirty" .= value.harnessDirty,
+        "design" .= value.design,
         "baselineRuns" .= value.baselineRuns,
         "candidateRuns" .= value.candidateRuns,
         "algorithm" .= object ["name" .= ("paired-bootstrap-t-envelope" :: Text), "version" .= (1 :: Int), "generator" .= ("splitmix" :: Text), "iterations" .= value.policy.bootstrapIterations, "seed" .= value.policy.resamplingSeed, "confidenceLevel" .= value.policy.confidenceLevel],
@@ -127,7 +138,9 @@ compareRuns policy axes baselineDirs candidateDirs
       Nothing -> case varyingProblem axes baselines candidates of
         Just message -> pure (Left (CompareError message))
         Nothing -> do
+          startedAt <- getCurrentTime
           identifier <- renderRunId <$> newRunId
+          fingerprint <- collectHostFingerprint
           let referenceFingerprint = maybe Null (.fingerprint) (headMay baselines)
               environmentChanged = any ((/= referenceFingerprint) . (.fingerprint)) (tailSafe baselines <> candidates)
               badOutcomes = any ((`elem` ["errored", "infrastructure-failure"]) . (.outcome)) (baselines <> candidates)
@@ -148,7 +161,20 @@ compareRuns policy axes baselineDirs candidateDirs
                   <> ["checkpoint overlap differs too much within a pair" | checkpointAsymmetry]
               statuses = fmap (.status) (Map.elems metricComparisons)
               verdict = decideVerdict (environmentChanged || badOutcomes || hardHealth) reasons statuses
-          pure (Right (Comparison identifier (map (.runId) baselines) (map (.runId) candidates) policy (toList axes) (length baselines) metricComparisons reasons verdict))
+          finishedAt <- getCurrentTime
+          pure (Right (Comparison identifier startedAt finishedAt fingerprint.revision fingerprint.dirty (comparisonDesign baselines candidates) (map (.runId) baselines) (map (.runId) candidates) policy (toList axes) (length baselines) metricComparisons reasons verdict))
+
+comparisonDesign :: [RunData] -> [RunData] -> Text
+comparisonDesign baselines candidates = case traverse firstArm (zip baselines candidates) of
+  Just arms
+    | arms == take (length arms) (cycle [Baseline, Candidate]) -> "abba"
+    | arms == take (length arms) (cycle [Candidate, Baseline]) -> "baab"
+  _ -> "sequential"
+  where
+    firstArm (baseline, candidate) = do
+      baselineStart <- baseline.startedAt
+      candidateStart <- candidate.startedAt
+      if baselineStart < candidateStart then Just Baseline else if candidateStart < baselineStart then Just Candidate else Nothing
 
 loadRun :: FilePath -> IO (Either CompareError RunData)
 loadRun directory = do

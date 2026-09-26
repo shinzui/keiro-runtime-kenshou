@@ -15,13 +15,13 @@ import Kenshou.Core.Cli.Config (ConfigInputs (..))
 import Kenshou.Core.Id (parseRunId, parseScenarioId)
 import Kenshou.Core.Manifest (writeManifest)
 import Kenshou.Core.Outcome (Outcome (Passed))
-import Kenshou.Evidence.Bundle (BundleWriteError (..), BundleWriteResult (..), runRecordPath, writeRunRecordWith)
+import Kenshou.Evidence.Bundle (BundleWriteError (..), BundleWriteResult (..), runRecordPath, writeRunRecord, writeRunRecordWith)
 import Kenshou.Evidence.Check (CheckOptions (..), Finding (..), checkBundle, checkBundleWithStore, checkDocument)
 import Kenshou.Evidence.Config (EvidenceDefaults (..), bundleRootKey, dataBaseUriKey, projectKey, resolveEvidenceDefaults)
 import Kenshou.Evidence.Frontmatter (EvidenceRecord (..), recordFromDocument, recordToDocument)
-import Kenshou.Evidence.Publish (PublishError (..), PublishOptions (..), UploadMode (..), publishRunData)
-import Kenshou.Evidence.Record (RecordInput (..), RecordOptions (..), RecordOutcome (..), buildRunRecord, recordRunWith)
-import Kenshou.Evidence.Source (loadRunSource)
+import Kenshou.Evidence.Publish (PublishError (..), PublishOptions (..), UploadMode (..), publishComparisonData, publishRunData)
+import Kenshou.Evidence.Record (RecordInput (..), RecordOptions (..), RecordOutcome (..), buildRunRecord, recordComparison, recordRunWith)
+import Kenshou.Evidence.Source (ComparisonSource (..), ComparisonView (..), VerifiedFile (..), loadComparisonSource, loadRunSource)
 import Kenshou.Evidence.Store (ObjectStat (..), ObjectStore (..), PutResult (..), StoreError (..), directoryStore, gcloudStoreWith, memoryStore)
 import Kenshou.Evidence.Types (DataKind (..), DataLink (..), Purpose (..), Revision (..), Sha256 (..), SubjectKind (..), mkRevision, mkSha256, sha256Bytes)
 import Okf.Document (OKFDocument (..), parseDocument, serializeDocument, setField)
@@ -36,6 +36,91 @@ import Test.Hspec
 
 main :: IO ()
 main = hspec do
+  describe "loadComparisonSource" do
+    it "accepts a self-contained comparison and refuses inconsistent arms" do
+      withSystemTempDirectory "kenshou-comparison-source" $ \root -> do
+        let path = root </> "comparison.json"
+            baseline = "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e55" :: Text
+            candidate = "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e56" :: Text
+            comparison =
+              object
+                [ "schema" .= ("kenshou.comparison/v1" :: Text),
+                  "comparisonId" .= ("01997f3a-5b7c-7e21-8a44-0d6c2f9b1e57" :: Text),
+                  "baselineRuns" .= [baseline],
+                  "candidateRuns" .= [candidate],
+                  "startedAt" .= ("2026-09-26T00:00:00Z" :: Text),
+                  "finishedAt" .= ("2026-09-26T00:00:01Z" :: Text),
+                  "harnessRevision" .= Text.replicate 40 "f",
+                  "harnessDirty" .= False,
+                  "design" .= ("sequential" :: Text),
+                  "variedFactors" .= ["cohort" :: Text],
+                  "pairCount" .= (1 :: Int),
+                  "verdict" .= ("pass" :: Text)
+                ]
+        LazyByteString.writeFile path (encode comparison)
+        loaded <- loadComparisonSource path
+        loaded `shouldSatisfy` \case
+          Right source -> source.view.pairCount == 1 && source.file.digest == sha256Bytes (LazyByteString.toStrict (encode comparison))
+          Left _ -> False
+        source <- either (fail . show) pure loaded
+        store <- memoryStore
+        linked <- publishComparisonData store (PublishOptions "gs://bucket/runs" UploadMissing True False) path source
+        linked `shouldSatisfy` \case
+          Right link -> link.kind == ComparisonData && "/comparison.json" `Text.isSuffixOf` link.uri
+          Left _ -> False
+        LazyByteString.writeFile path (encode (object ["schema" .= ("kenshou.comparison/v1" :: Text), "comparisonId" .= ("01997f3a-5b7c-7e21-8a44-0d6c2f9b1e57" :: Text), "baselineRuns" .= [baseline], "candidateRuns" .= [baseline], "startedAt" .= ("2026-09-26T00:00:00Z" :: Text), "finishedAt" .= ("2026-09-26T00:00:01Z" :: Text), "harnessRevision" .= Text.replicate 40 "f", "harnessDirty" .= False, "design" .= ("sequential" :: Text), "variedFactors" .= ["cohort" :: Text], "pairCount" .= (1 :: Int), "verdict" .= ("pass" :: Text)]))
+        loadComparisonSource path >>= (`shouldSatisfy` isLeft)
+
+    it "records a comparison only after both arm concepts exist" do
+      withSystemTempDirectory "kenshou-comparison-record" $ \root -> do
+        let runDirectory = root </> "run"
+            bundle = root </> "bundle"
+            comparisonPath = root </> "comparison.json"
+            baselineId = "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e55" :: Text
+            candidateId = "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e56" :: Text
+            comparisonId = "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e57" :: Text
+            options = RecordOptions bundle "gs://bucket/runs" Release UploadMissing False False False Nothing []
+            comparison =
+              object
+                [ "schema" .= ("kenshou.comparison/v1" :: Text),
+                  "comparisonId" .= comparisonId,
+                  "baselineRuns" .= [baselineId],
+                  "candidateRuns" .= [candidateId],
+                  "startedAt" .= ("2026-09-26T00:00:00Z" :: Text),
+                  "finishedAt" .= ("2026-09-26T00:00:01Z" :: Text),
+                  "harnessRevision" .= Text.replicate 40 "f",
+                  "harnessDirty" .= False,
+                  "design" .= ("sequential" :: Text),
+                  "variedFactors" .= ["cohort" :: Text],
+                  "pairCount" .= (1 :: Int),
+                  "verdict" .= ("pass" :: Text)
+                ]
+        createDirectoryIfMissing True runDirectory
+        createDirectoryIfMissing True bundle
+        callProcess "cp" ["-R", "../docs/verification/.", bundle]
+        writeRunFixture runDirectory
+        source <- loadRunSource runDirectory >>= either (fail . show) pure
+        store <- memoryStore
+        links <- publishRunData store (PublishOptions "gs://bucket/runs" UploadMissing False False) runDirectory source >>= either (fail . show) pure
+        baseline <- either (fail . show) pure (buildRunRecord (RecordInput Baseline (UTCTime (fromGregorian 2026 9 26) 0) False Nothing [] Nothing) source links)
+        writeRunRecord bundle baseline >>= (`shouldSatisfy` isRight)
+        LazyByteString.writeFile comparisonPath (encode comparison)
+        recordComparison store options comparisonPath >>= (`shouldSatisfy` isLeft)
+        let candidate =
+              baseline
+                { runId = candidateId,
+                  cohort = "candidate",
+                  dataLinks = [link {uri = Text.replace baselineId candidateId link.uri} | link <- baseline.dataLinks]
+                }
+        writeRunRecord bundle candidate >>= (`shouldSatisfy` isRight)
+        recordComparison store options comparisonPath `shouldReturn` Right (Recorded "runs/selftest/2026/09/01997f3a-5b7c-7e21-8a44-0d6c2f9b1e57.md")
+        recordComparison store options comparisonPath `shouldReturn` Right (AlreadyRecorded "runs/selftest/2026/09/01997f3a-5b7c-7e21-8a44-0d6c2f9b1e57.md")
+        checkBundle (CheckOptions bundle Nothing False False) `shouldReturn` Right []
+        let recordedPath = "runs/selftest/2026/09/01997f3a-5b7c-7e21-8a44-0d6c2f9b1e57.md"
+        recorded <- Text.IO.readFile (bundle </> recordedPath) >>= either (fail . show) pure . parseDocument
+        let wrongOutcome = recorded {frontmatter = setField "outcome" (String "failed") recorded.frontmatter}
+        map (.rule) (checkDocument recordedPath wrongOutcome) `shouldContain` ["comparison-outcome"]
+
   describe "evidence configuration" do
     it "uses built-ins, ordered YAML, environment, then named flags" do
       withSystemTempDirectory "kenshou-evidence-config" $ \root -> do

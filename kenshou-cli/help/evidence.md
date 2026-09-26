@@ -2,6 +2,8 @@
 
 `kenshou record RUN-DIR --data-base-uri gs://BUCKET/PREFIX --purpose release --project PROJECT` publishes a finished run's files and adds one record to the OKF verification bundle. The record names the run, cohort, outcome, and SHA-256-pinned object links. It contains no measurements; those remain in the linked run files.
 
+`kenshou record --comparison FILE --data-base-uri gs://BUCKET/PREFIX --purpose release --project PROJECT` records a `kenshou.comparison/v1` document. Every baseline and candidate run named by the comparison must already have a run record in the bundle. The comparison record links the source document by digest and references those run concepts. Supply either `RUN-DIR` or `--comparison FILE`.
+
 The default bundle is `docs/verification`. `--bundle DIR` selects another bundle. A real GCS upload requires `--project PROJECT`, and the command checks that the active gcloud project matches it. `--verify-only` checks that all objects already exist; `--deep-verify` downloads them and checks their bytes. Failed or inconclusive runs link logs automatically; `--link-logs` also links logs for a passing run.
 
 `--config PATH` reads ordered YAML configuration. The supported keys are `evidence.bundle-root`, `gcp.project`, and `evidence.data-base-uri`; the corresponding environment variables are `KENSHOU_EVIDENCE_BUNDLE`, `KENSHOU_GCP_PROJECT`, and `KENSHOU_EVIDENCE_DATA_BASE_URI`. Named flags take precedence over the environment and files. `kenshou evidence check` uses the same bundle default and configuration sources. Unknown keys are rejected.
@@ -12,4 +14,4 @@ For a local rehearsal, copy the verification bundle outside the repository and p
 
 `--json` prints one `kenshou.record-result/v1` document and sends errors to standard error. A repeat with the same record content succeeds and reports `already recorded`; different content at the same record path is a conflict.
 
-`kenshou evidence check` checks record paths, IDs, digest and revision shapes, textual fields, event-only keys, timestamps, required data links, and changes to committed records. `--base REF` limits the Git history span. `--network --project PROJECT` checks object size and SHA-256 metadata, and `--deep` downloads bytes to verify each digest. The command exits 0 when clean, 1 for findings, and 4 when it cannot check. `--json` prints one `kenshou.evidence-check/v1` document.
+`kenshou evidence check` checks record paths, IDs, digest and revision shapes, textual fields, event-only keys, timestamps, required data links, comparison arm references and verdicts, and changes to committed records. `--base REF` limits the Git history span. `--network --project PROJECT` checks object size and SHA-256 metadata, and `--deep` downloads bytes to verify each digest. The command exits 0 when clean, 1 for findings, and 4 when it cannot check. `--json` prints one `kenshou.evidence-check/v1` document.

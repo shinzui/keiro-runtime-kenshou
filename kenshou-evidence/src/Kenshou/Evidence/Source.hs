@@ -3,7 +3,10 @@ module Kenshou.Evidence.Source
     VerifiedFile (..),
     RunResultView (..),
     RunSource (..),
+    ComparisonView (..),
+    ComparisonSource (..),
     loadRunSource,
+    loadComparisonSource,
   )
 where
 
@@ -86,6 +89,64 @@ data RunSource = RunSource
     files :: ![VerifiedFile]
   }
   deriving stock (Eq, Show)
+
+data ComparisonView = ComparisonView
+  { comparisonId :: !RunId,
+    baselineRuns :: ![RunId],
+    candidateRuns :: ![RunId],
+    startedAt :: !UTCTime,
+    finishedAt :: !UTCTime,
+    harnessRevision :: !(Maybe Text),
+    harnessDirty :: !(Maybe Bool),
+    design :: !Text,
+    variedFactors :: ![Text],
+    pairCount :: !Int,
+    verdict :: !Text
+  }
+  deriving stock (Eq, Show)
+
+data ComparisonSource = ComparisonSource
+  { view :: !ComparisonView,
+    file :: !VerifiedFile
+  }
+  deriving stock (Eq, Show)
+
+instance FromJSON ComparisonView where
+  parseJSON = withObject "Comparison" \value -> do
+    schema <- value .: "schema"
+    unless (schema == ("kenshou.comparison/v1" :: Text)) (fail "unsupported comparison schema")
+    ComparisonView
+      <$> value .: "comparisonId"
+      <*> value .: "baselineRuns"
+      <*> value .: "candidateRuns"
+      <*> value .: "startedAt"
+      <*> value .: "finishedAt"
+      <*> value .:? "harnessRevision"
+      <*> value .:? "harnessDirty"
+      <*> value .: "design"
+      <*> value .: "variedFactors"
+      <*> value .: "pairCount"
+      <*> value .: "verdict"
+
+loadComparisonSource :: FilePath -> IO (Either SourceError ComparisonSource)
+loadComparisonSource path = do
+  loaded <- try (runExceptT (loadComparison path)) :: IO (Either IOException (Either SourceError ComparisonSource))
+  pure $ either (Left . SourceError . Text.pack . show) id loaded
+
+loadComparison :: FilePath -> ExceptT SourceError IO ComparisonSource
+loadComparison path = do
+  symlink <- lift (pathIsSymbolicLink path)
+  when symlink (reject "comparison document is a symbolic link")
+  contents <- lift (ByteString.readFile path)
+  view <- either (reject . Text.pack) pure (eitherDecodeStrict' contents)
+  when (view.pairCount <= 0 || view.pairCount /= length view.baselineRuns || view.pairCount /= length view.candidateRuns) (reject "comparison pair count and arm IDs disagree")
+  when (view.startedAt > view.finishedAt) (reject "comparison ends before it starts")
+  when (null view.variedFactors) (reject "comparison has no varied factor")
+  when (view.design `notElem` ["abba", "baab", "sequential"]) (reject "comparison has an unknown design")
+  when (view.verdict `notElem` ["pass", "regression", "inconclusive", "infrastructure-failure"]) (reject "comparison has an unknown verdict")
+  when (Set.size (Set.fromList (view.baselineRuns <> view.candidateRuns)) /= view.pairCount * 2) (reject "comparison repeats a run ID")
+  let file = VerifiedFile "comparison.json" (sha256Bytes contents) (fromIntegral (ByteString.length contents)) "application/json"
+  pure ComparisonSource {view, file}
 
 loadRunSource :: FilePath -> IO (Either SourceError RunSource)
 loadRunSource root = do

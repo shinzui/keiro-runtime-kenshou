@@ -100,20 +100,20 @@ checkReferences current = concatMap inspect parsed
     paths = \case
       Just (Array values) -> [value | String value <- foldr (:) [] values]
       _ -> []
-    target path ref =
+    target path scenario ref =
       let relative = Text.unpack (Text.dropWhile (== '/') ref)
        in case Map.lookup relative byPath of
             Nothing -> [Finding path "reference-targets" ("missing run target: " <> ref)]
             Just document | field document "type" /= Just (String "Verification Run") || field document "recordKind" /= Just (String "run") -> [Finding path "reference-targets" ("target is not a recorded run: " <> ref)]
-            Just _ -> []
+            Just document -> [Finding path "reference-targets" ("target has a different scenario: " <> ref) | scenario /= Nothing, field document "scenario" /= scenario]
     inspect (path, document)
       | field document "type" == Just (String "Verification Run") =
-          let previous = maybe [] (\ref -> target path ref <> checkPrevious path document ref) (asText (field document "previousRun"))
+          let previous = maybe [] (\ref -> target path (field document "scenario") ref <> checkPrevious path document ref) (asText (field document "previousRun"))
               comparison = field document "comparison"
               arms = paths (nested "baselineRuns" comparison) <> paths (nested "candidateRuns" comparison)
-           in previous <> concatMap (target path) arms
+           in previous <> concatMap (target path (field document "scenario")) arms
       | field document "type" == Just (String "Attestation") =
-          maybe [] (target path) (asText (field document "run"))
+          maybe [] (target path Nothing) (asText (field document "run"))
       | otherwise = []
     checkPrevious path document ref =
       let relative = Text.unpack (Text.dropWhile (== '/') ref)
@@ -226,27 +226,28 @@ checkDocument path document =
           <> [issue "id-shape" "runId must be a UUIDv7" | maybe True (either (const True) (const False) . parseRunId) (textField "runId")]
           <> pathChecks textField issue
           <> timeChecks textField issue
-          <> if field "recordKind" == Just (String "run") then runOnly else []
-      runOnly =
-        requireText "harnessRevision"
-          <> requireText "compatibilityKey"
-          <> requireText "solverPlanHash"
-          <> digest "compatibilityKey"
-          <> digest "solverPlanHash"
+          <> requireText "harnessRevision"
           <> revision "harnessRevision"
           <> [issue "dirty-purpose" "a dirty harness requires purpose: investigation" | field "harnessDirty" == Just (Bool True), field "purpose" /= Just (String "investigation")]
-          <> concatMap
-            ( \value ->
-                [issue "string-typing" "dimension.value must be a JSON string" | entryText "value" value == Nothing]
-                  <> [issue "string-typing" "dimension.name must be a JSON string" | entryText "name" value == Nothing]
-            )
-            (entries "dimensions")
           <> concatMap
             ( \value ->
                 [issue "string-typing" "data.uri must be a JSON string" | entryText "uri" value == Nothing]
                   <> [issue "hex-shape" "data.digest must be 64 lowercase hexadecimal characters" | maybe True (either (const True) (const False) . mkSha256) (entryText "digest" value)]
             )
             (entries "data")
+          <> (if field "recordKind" == Just (String "run") then runOnly else [])
+          <> (if field "recordKind" == Just (String "comparison") then comparisonOnly else [])
+      runOnly =
+        requireText "compatibilityKey"
+          <> requireText "solverPlanHash"
+          <> digest "compatibilityKey"
+          <> digest "solverPlanHash"
+          <> concatMap
+            ( \value ->
+                [issue "string-typing" "dimension.value must be a JSON string" | entryText "value" value == Nothing]
+                  <> [issue "string-typing" "dimension.name must be a JSON string" | entryText "name" value == Nothing]
+            )
+            (entries "dimensions")
           <> concatMap
             ( \value ->
                 [issue "hex-shape" "component.revision must be 40 lowercase hexadecimal characters" | maybe False (either (const True) (const False) . mkRevision) (entryText "revision" value)]
@@ -264,6 +265,17 @@ checkDocument path document =
                      ["cell", "cellRun", "machineType", "zone"]
                  )
              ]
+      comparisonOnly =
+        let comparison = field "comparison"
+            verdict = comparison >>= member "verdict"
+            expected = case verdict of
+              Just (String "pass") -> Just (String "passed")
+              Just (String "regression") -> Just (String "failed")
+              Just (String "inconclusive") -> Just (String "inconclusive")
+              Just (String "infrastructure-failure") -> Just (String "infrastructure-failure")
+              _ -> Nothing
+         in [issue "comparison-outcome" "comparison verdict and outcome disagree" | expected /= field "outcome"]
+              <> [issue "data-completeness" "comparison must link exactly one comparison document" | mapMaybe (entryText "kind") (entries "data") /= ["comparison"]]
       attestationChecks = [issue "event-keys" (name <> " belongs only on runs") | name <- ["layer", "tier"], field name /= Nothing]
    in common <> (if run then runChecks else []) <> (if attestation then attestationChecks else [])
   where

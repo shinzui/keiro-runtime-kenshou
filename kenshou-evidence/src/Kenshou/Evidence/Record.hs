@@ -6,30 +6,38 @@ module Kenshou.Evidence.Record
     buildRunRecord,
     recordRun,
     recordRunWith,
+    recordComparison,
   )
 where
 
+import Control.Exception (IOException, try)
 import Control.Monad (forM, unless, when)
 import Data.Aeson (FromJSON (..), Result (..), ToJSON (..), Value (..), fromJSON, object, withObject, (.:), (.:?), (.=))
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Aeson.Types (Parser)
-import Data.List (sortOn)
+import Data.List (nub, sortOn)
+import Data.Map.Strict qualified as Map
+import Data.Maybe (mapMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Data.Text.IO qualified as Text.IO
 import Data.Time (UTCTime, defaultTimeLocale, formatTime, getCurrentTime)
 import Kenshou.Core.Cohort (CohortIdentity (..), CohortName (..), PackageSource (..), PlanHash (..), ResolvedComponent (..), ResolvedPackage (..))
-import Kenshou.Core.Id (Kind (..), Layer (..), ScenarioId (..), renderRunId, renderScenarioId)
-import Kenshou.Core.Outcome (renderOutcome)
+import Kenshou.Core.Id (Kind (..), Layer (..), RunId, ScenarioId (..), parseRunId, renderRunId, renderScenarioId)
+import Kenshou.Core.Outcome (Outcome (..), renderOutcome)
 import Kenshou.Core.RunSpec (EnvironmentSpec (..), RunSpec (..), SpecPlacement (..))
-import Kenshou.Evidence.Bundle (BundleWriteError, BundleWriteResult (..), writeRunRecord)
-import Kenshou.Evidence.Frontmatter (EvidenceRecord (..))
-import Kenshou.Evidence.Publish (PublishError, PublishOptions (..), UploadMode, publishRunData)
-import Kenshou.Evidence.Source (RunResultView (..), RunSource (..), SourceError, loadRunSource)
+import Kenshou.Evidence.Bundle (BundleWriteError, BundleWriteResult (..), writeComparisonRecord, writeRunRecord)
+import Kenshou.Evidence.Frontmatter (ComparisonEvidence (..), EvidenceRecord (..), recordFromDocument)
+import Kenshou.Evidence.Publish (PublishError, PublishOptions (..), UploadMode, publishComparisonData, publishRunData)
+import Kenshou.Evidence.Source (ComparisonSource (..), ComparisonView (..), RunResultView (..), RunSource (..), SourceError, loadComparisonSource, loadRunSource)
 import Kenshou.Evidence.Store (ObjectStore)
 import Kenshou.Evidence.Types (ComponentRef (..), DataKind (..), DataLink (..), Purpose (..), Sha256, SubjectKind (..), mkRevision, mkSha256)
 import Kenshou.Evidence.Types qualified as EvidenceTypes
 import Okf.ConceptId (parseConceptId, renderConceptLink)
+import Okf.Document (parseDocument)
+import System.Directory (doesDirectoryExist, listDirectory)
+import System.FilePath (makeRelative, takeBaseName, takeExtension, (</>))
 
 data RecordInput = RecordInput
   { purpose :: !Purpose,
@@ -98,6 +106,152 @@ recordRunWith writer now store options directory = do
       _ <- either (Left . RecordError) Right (mkRevision revision)
       dirty <- jsonField "dirty" kenshou
       when (dirty && not options.allowDirty) (Left (RecordError "dirty harness requires --allow-dirty"))
+
+recordComparison :: ObjectStore -> RecordOptions -> FilePath -> IO (Either RecordError RecordOutcome)
+recordComparison store options path = do
+  loaded <- loadComparisonSource path
+  case loaded of
+    Left err -> pure (Left (SourceFailure err))
+    Right source -> do
+      arms <- loadRecordedArms options.bundleRoot (source.view.baselineRuns <> source.view.candidateRuns)
+      case arms of
+        Left err -> pure (Left err)
+        Right records -> case comparisonFields options source records of
+          Left err -> pure (Left err)
+          Right build -> do
+            let publishing = PublishOptions options.dataBaseUri options.uploadMode options.deepVerify options.linkLogs
+            published <- publishComparisonData store publishing path source
+            case published of
+              Left err -> pure (Left (PublishFailure err))
+              Right link -> do
+                now <- getCurrentTime
+                let record = build now link
+                written <- writeComparisonRecord options.bundleRoot record
+                pure case written of
+                  Left err -> Left (BundleFailure err)
+                  Right (RecordCreated relative) -> Right (Recorded relative)
+                  Right (RecordPresent relative) -> Right (AlreadyRecorded relative)
+
+loadRecordedArms :: FilePath -> [RunId] -> IO (Either RecordError [(FilePath, EvidenceRecord)])
+loadRecordedArms root identifiers = do
+  found <- try (scan (root </> "runs")) :: IO (Either IOException [(FilePath, EvidenceRecord)])
+  pure do
+    records <- either (Left . RecordError . Text.pack . show) Right found
+    let byId = Map.fromListWith (<>) [(record.runId, [(path, record)]) | (path, record) <- records]
+    forM identifiers $ \identifier -> case Map.lookup (renderRunId identifier) byId of
+      Just [entry] -> Right entry
+      Just _ -> Left (RecordError ("recorded arm has duplicate concepts: " <> renderRunId identifier))
+      Nothing -> Left (RecordError ("comparison arm is not recorded: " <> renderRunId identifier))
+  where
+    scan directory = do
+      exists <- doesDirectoryExist directory
+      if not exists
+        then pure []
+        else do
+          names <- listDirectory directory
+          concat <$> forM names (visit directory)
+    visit directory name = do
+      let path = directory </> name
+      isDirectory <- doesDirectoryExist path
+      if isDirectory
+        then scan path
+        else
+          if takeExtension path == ".md" && either (const False) (const True) (parseRunId (Text.pack (takeBaseName path)))
+            then do
+              content <- Text.IO.readFile path
+              pure case parseDocument content of
+                Right document -> case recordFromDocument document of
+                  Right record -> [(makeRelative root path, record)]
+                  Left _ -> []
+                Left _ -> []
+            else pure []
+
+comparisonFields :: RecordOptions -> ComparisonSource -> [(FilePath, EvidenceRecord)] -> Either RecordError (UTCTime -> DataLink -> ComparisonEvidence)
+comparisonFields options source arms = do
+  unless (null options.produced) (Left (RecordError "--produced applies only to run records"))
+  let view = source.view
+      pairCount = view.pairCount
+      (baselines, candidates) = splitAt pairCount arms
+      allRecords = map snd arms
+  unless (length baselines == pairCount && length candidates == pairCount) (Left (RecordError "comparison arm count differs from source"))
+  scenario <- case nub (map (.scenario) allRecords) of
+    [single] -> Right single
+    _ -> Left (RecordError "comparison arms must have one scenario")
+  axis <- case view.variedFactors of
+    [single] -> Right single
+    _ -> Left (RecordError "comparison evidence requires one varied factor")
+  (factor, factorName) <- factorForAxis axis
+  baselineValue <- armValue axis baselines
+  candidateValue <- armValue axis candidates
+  when (baselineValue == candidateValue) (Left (RecordError "comparison factor values must differ"))
+  revisionText <- maybe (Left (RecordError "comparison harness revision is unavailable")) Right view.harnessRevision
+  harnessRevision <- either (Left . RecordError) Right (mkRevision revisionText)
+  harnessDirty <- maybe (Left (RecordError "comparison harness dirty state is unavailable")) Right view.harnessDirty
+  when (harnessDirty && not options.allowDirty) (Left (RecordError "dirty harness requires --allow-dirty"))
+  first <- case candidates of
+    (_, candidate) : _ -> Right candidate
+    [] -> Left (RecordError "comparison has no candidate arm")
+  let subject = maybe first.subject fst options.subjectOverride
+      subjectKind = maybe first.subjectKind snd options.subjectOverride
+  unless ("mori://" `Text.isPrefixOf` subject) (Left (RecordError "subject must be a canonical Mori URI"))
+  let outcome = case view.verdict of
+        "pass" -> Passed
+        "regression" -> Failed
+        "inconclusive" -> Inconclusive
+        _ -> InfrastructureFailure
+      comparison =
+        object
+          ( [ "verdict" .= view.verdict,
+              "factor" .= factor,
+              "baselineValue" .= baselineValue,
+              "candidateValue" .= candidateValue,
+              "design" .= view.design,
+              "baselineRuns" .= map (('/' :) . fst) baselines,
+              "candidateRuns" .= map (('/' :) . fst) candidates
+            ]
+              <> maybe [] (\name -> ["factorName" .= name]) factorName
+          )
+      build now link =
+        ComparisonEvidence
+          { title = renderScenarioId scenario <> " comparison " <> view.verdict,
+            description = "Recorded comparison of " <> Text.pack (show pairCount) <> " paired runs with digest-pinned data.",
+            generatedAt = utcText now,
+            runId = renderRunId view.comparisonId,
+            purpose = if harnessDirty then Investigation else options.purpose,
+            scenario,
+            tier = first.tier,
+            placement = first.placement,
+            outcome,
+            startedAt = utcText view.startedAt,
+            finishedAt = utcText view.finishedAt,
+            subject,
+            subjectKind,
+            harnessRevision,
+            harnessDirty,
+            computations = ["VC-3"],
+            dataLinks = [link],
+            comparison,
+            body = "The paired comparison produced the recorded verdict under [VC-3](/computations/paired-comparison.md). Its raw document is linked by digest in the frontmatter.\n"
+          }
+  pure build
+
+factorForAxis :: Text -> Either RecordError (Text, Maybe Text)
+factorForAxis axis
+  | axis == "cohort" = Right ("cohort", Nothing)
+  | Just name <- Text.stripPrefix "dim:" axis, not (Text.null name) = Right ("dimension", Just name)
+  | Just name <- Text.stripPrefix "knob:" axis, not (Text.null name) = Right ("knob", Just name)
+  | otherwise = Left (RecordError ("unsupported comparison factor: " <> axis))
+
+armValue :: Text -> [(FilePath, EvidenceRecord)] -> Either RecordError Value
+armValue axis records = case nub (mapMaybe value (map snd records)) of
+  [single] | length records == length (mapMaybe value (map snd records)) -> Right single
+  _ -> Left (RecordError ("comparison arm has missing or inconsistent " <> axis <> " values"))
+  where
+    value record
+      | axis == "cohort" = Just (String record.cohort)
+      | Just name <- Text.stripPrefix "dim:" axis = String <$> lookup name record.dimensions
+      | Just name <- Text.stripPrefix "knob:" axis = lookup name record.knobs
+      | otherwise = Nothing
 
 data FingerprintFields = FingerprintFields
   { os :: !Text,

@@ -36,6 +36,8 @@ spec = do
           Right result -> do
             result.baselineRuns `shouldBe` baselineIds
             result.candidateRuns `shouldBe` candidateIds
+            result.startedAt `shouldSatisfy` (<= result.finishedAt)
+            result.design `shouldBe` "sequential"
 
   describe "pairedSchedule" do
     it "assigns one shared seed to each pair in ABBA order" do

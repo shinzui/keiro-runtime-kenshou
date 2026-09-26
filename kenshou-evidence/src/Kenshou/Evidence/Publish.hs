@@ -3,6 +3,7 @@ module Kenshou.Evidence.Publish
     PublishOptions (..),
     PublishError (..),
     publishRunData,
+    publishComparisonData,
   )
 where
 
@@ -17,7 +18,7 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Kenshou.Core.Id (renderRunId)
 import Kenshou.Core.Outcome (Outcome (..))
-import Kenshou.Evidence.Source (RunResultView (..), RunSource (..), VerifiedFile (..))
+import Kenshou.Evidence.Source (ComparisonSource (..), ComparisonView (..), RunResultView (..), RunSource (..), VerifiedFile (..))
 import Kenshou.Evidence.Store (ObjectStat (..), ObjectStore (..), StoreError, validateObjectUri)
 import Kenshou.Evidence.Types (DataKind (..), DataLink (..), Sha256, sha256Bytes)
 import Numeric.Natural (Natural)
@@ -71,6 +72,17 @@ publishRunData store options root source = case cleanBase options.baseUri of
         ) ::
         IO (Either IOException (Either PublishError [DataLink]))
     pure $ either (Left . PublishIo . Text.pack . show) id completed
+
+publishComparisonData :: ObjectStore -> PublishOptions -> FilePath -> ComparisonSource -> IO (Either PublishError DataLink)
+publishComparisonData store options path source = case cleanBase options.baseUri of
+  Left err -> pure (Left err)
+  Right base -> do
+    let entry = source.file
+        uri = base <> "/" <> renderRunId source.view.comparisonId <> "/comparison.json"
+    completed <- try (runExceptT (publishOne store options path uri entry.mediaType entry.digest entry.bytes)) :: IO (Either IOException (Either PublishError ()))
+    pure $ do
+      either (Left . PublishIo . Text.pack . show) id completed
+      pure DataLink {kind = ComparisonData, uri, digest = entry.digest, mediaType = entry.mediaType, bytes = entry.bytes}
 
 cleanBase :: Text -> Either PublishError Text
 cleanBase raw = do
