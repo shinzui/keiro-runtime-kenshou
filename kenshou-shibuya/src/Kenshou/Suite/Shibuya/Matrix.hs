@@ -79,6 +79,7 @@ cellsOf scenario = case renderScenarioId scenario of
   "shibuya/core-runner/concurrency/leased-but-unfinalized-upper-bound" -> [(IngestionBackpressure, Normal)]
   "shibuya/core-ordering/correctness/policy-matrix" -> [(Dispatch, Normal), (KeyedOrdering, Normal)]
   "shibuya/core-ordering/concurrency/hot-key-head-of-line" -> [(KeyedOrdering, Normal)]
+  "shibuya/core-ordering/concurrency/keyed-scheduler-model" -> [(KeyedOrdering, SynchronousException), (KeyedOrdering, Cancellation), (KeyedOrdering, RepeatedStop)]
   "shibuya/core-ordering/concurrency/keyed-worker-failure-stops-intake" -> [(KeyedOrdering, SynchronousException)]
   "shibuya/core-batch/concurrency/shutdown-with-partial-batches" -> [(Batching, Cancellation), (Batching, RepeatedStop), (RetryLease, Cancellation)]
   "shibuya/core-batch/correctness/conservation-triggers-and-decisions" -> [(Batching, Normal), (Batching, SynchronousException)]

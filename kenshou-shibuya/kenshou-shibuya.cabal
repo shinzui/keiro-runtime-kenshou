@@ -28,6 +28,7 @@ library
     Kenshou.Suite.Shibuya.Concurrency.CoreBatch
     Kenshou.Suite.Shibuya.Concurrency.CoreOrdering
     Kenshou.Suite.Shibuya.Concurrency.CoreRunner
+    Kenshou.Suite.Shibuya.Concurrency.KeyedModel
     Kenshou.Suite.Shibuya.Correctness.CoreBatch
     Kenshou.Suite.Shibuya.Correctness.CoreOrdering
     Kenshou.Suite.Shibuya.Correctness.CoreRunner
@@ -46,6 +47,7 @@ library
     bytestring >=0.12 && <0.13,
     containers >=0.7 && <0.8,
     effectful-core >=2.6 && <2.7,
+    hedgehog >=1.4 && <1.8,
     http-client,
     http-types,
     kenshou-check,

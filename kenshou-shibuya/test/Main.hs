@@ -10,6 +10,7 @@ import Kenshou.Core.Bundle (LayerBundle (..))
 import Kenshou.Core.Scenario (Scenario (..))
 import Kenshou.Suite.Shibuya (bundle)
 import Kenshou.Suite.Shibuya.Cohort (CoreLine (..), coreLine, knownOnReleasedCore, rev)
+import Kenshou.Suite.Shibuya.Concurrency.KeyedModel (Action (..), Item (..), ModelCase (..), modelProperty, runCase)
 import Kenshou.Suite.Shibuya.Knobs (DecisionPattern (..), PartitionMode (..), parseConcurrency, parseDecisions, parseOrdering, parsePartitions, parseStrategy, renderDecisions, renderPartitions)
 import Kenshou.Suite.Shibuya.Matrix (allCells, cellsOf, uncovered)
 import Kenshou.Suite.Shibuya.Roles (runGcMode)
@@ -31,6 +32,12 @@ main =
 
 spec :: Spec
 spec = do
+  describe "keyed scheduler model" $ do
+    it "checks generated delivery histories on the linked Shibuya release" $ hedgehog modelProperty
+    it "conserves retried, thrown and dead-lettered deliveries across partition keys" $ do
+      runCase (ModelCase [Item 0 1000 RetryOnce, Item 1 1500 ThrowOnce, Item 0 500 DeadLetter, Item 1 1000 Succeed] Nothing) `shouldReturn` []
+    it "drains and repeats a stop during keyed work" $ do
+      runCase (ModelCase (replicate 8 (Item 0 2000 Succeed) <> replicate 8 (Item 1 2000 Succeed)) (Just 1500)) `shouldReturn` []
   describe "process-isolated GC liveness" $
     it "keeps the Shibuya caller alive with and without a retained application handle" $ do
       executable <- getExecutablePath
