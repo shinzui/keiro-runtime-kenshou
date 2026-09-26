@@ -107,6 +107,19 @@ with `cabal build all`, and inspect the resolved dependency identity with
 head cohort safely, and return to released before committing. Run the complete
 local gate with `just verify`.
 
+The current Hackage Shibuya releases have an isolated Cabal project because the
+full Keiro cohort still bounds Shibuya below 0.10. To run a live Shibuya scenario
+with that project from the repository root, use a versioned run spec:
+
+```bash
+nix develop -c cabal --project-file=cohort/shibuya-current.project run kenshou-shibuya-run -- run specs/shibuya-current-atomic-pg18.json runs
+```
+
+The same spec for PostgreSQL 17 is
+`specs/shibuya-current-atomic-pg17.json`. The runner records the resolved
+`cohort/shibuya-current.json` identity and writes the usual run result and
+manifest under `runs/`.
+
 ## Related
 
 - `mori://shinzui/keiro` — the runtime family under verification

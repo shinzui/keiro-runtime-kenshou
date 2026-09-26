@@ -1,5 +1,8 @@
 # Bundle Update Log
 
+## 2026-09-26
+* **Changed**: Allow index-pinned, scope-labeled isolated layer cohorts when assembled-runtime bounds exclude a current release.
+
 ## 2026-09-24
 * **Changed**: Classify Kiroku's audited improvement probes and local network recovery target as implementation findings after checking the owner capabilities, guide, and sealed PostgreSQL 17/18 runs.
 * **Decision**: Accepted a run-owned Redpanda broker locally and provisioned, prefixed resources on cells.

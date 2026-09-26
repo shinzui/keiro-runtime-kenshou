@@ -9,16 +9,25 @@ packages:
   kenshou-shibuya/kenshou-shibuya.cabal
 
 with-compiler: ghc-9.12.4
+index-state: 2026-09-26T01:12:06Z
 tests: True
 test-show-details: direct
 
 extra-packages:
   shibuya-metrics,
   shibuya-pgmq-adapter,
-  shibuya-kiroku-adapter
+  shibuya-kiroku-adapter,
+  pgmq-core,
+  pgmq-hasql,
+  pgmq-effectful,
+  pgmq-migration
 
 constraints:
   shibuya-core ==0.10.0.0,
   shibuya-metrics ==0.10.0.0,
   shibuya-pgmq-adapter ==0.16.1.0,
-  shibuya-kiroku-adapter ==0.5.1.3
+  shibuya-kiroku-adapter ==0.5.1.3,
+  pgmq-core ==0.6.1.1,
+  pgmq-hasql ==0.6.1.1,
+  pgmq-effectful ==0.6.1.1,
+  pgmq-migration ==0.6.1.1

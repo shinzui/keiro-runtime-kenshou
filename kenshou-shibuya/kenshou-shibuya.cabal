@@ -106,3 +106,16 @@ test-suite kenshou-shibuya-test
     stm >=2.5 && <2.6,
     text >=2.1 && <2.2,
     time >=1.12 && <1.15,
+
+executable kenshou-shibuya-run
+  import: defaults
+  hs-source-dirs: app
+  main-is: Run.hs
+  ghc-options: -threaded
+  build-depends:
+    aeson >=2.2 && <2.3,
+    base >=4.21 && <4.22,
+    bytestring >=0.12 && <0.13,
+    kenshou-core,
+    kenshou-shibuya,
+    text >=2.1 && <2.2,

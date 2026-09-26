@@ -2,7 +2,7 @@
 type: Architecture Decision Record
 title: Every result carries a resolved cohort identity
 description: Verification results identify the complete runtime cohort actually selected by Cabal, including immutable sources and a deterministic plan hash, rather than recording only intended pins.
-timestamp: 2026-09-20T00:05:00Z
+timestamp: 2026-09-26T13:08:25Z
 generated:
   by: human:nadeem
   at: "2026-09-20T00:05:00Z"
@@ -65,6 +65,17 @@ consumer, identifies a test that exercises the used surface (including live
 migrations when applicable), and states the removal condition. Blanket
 `allow-newer` entries are forbidden.
 
+An isolated layer release lane may have its own named project and descriptor
+when a full-runtime package bound excludes the newer layer. The project fixes
+an index state and exactly pins every component named by its descriptor. The
+descriptor names the isolated scope and records those components; the identity
+still hashes the entire resolved Cabal plan. A layer-only runner must derive
+the identity from that plan before a live run and must reject a descriptor
+version or source mismatch. An isolated result verifies the named layer and
+its linked dependencies, but it is not a full-runtime cohort result or a
+substitute for updating the assembled Keiro cohort. The current Shibuya lane
+uses this path while `keiro-pgmq` excludes `shibuya-core` 0.10.
+
 The operator CLI also adopts the Git-aware release identity from
 `mori://shinzui/haskell-jitsurei/docs/cli-version-git-sha`. `kenshou --version`
 prints the Cabal package version and a seven-character source revision; local
@@ -90,3 +101,5 @@ identity.
 - Plan hashes may differ across platforms when platform-conditional dependencies
   differ. Consumers compare resolved components as the semantic cohort and treat
   the plan hash as supporting evidence.
+- Isolated layer results retain a scope-specific cohort name and cannot be
+  presented as evidence for the assembled runtime.
