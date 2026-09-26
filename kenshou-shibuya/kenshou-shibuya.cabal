@@ -41,10 +41,13 @@ library
     Kenshou.Suite.Shibuya.Correctness.CoreBatch
     Kenshou.Suite.Shibuya.Correctness.CoreOrdering
     Kenshou.Suite.Shibuya.Correctness.CoreRunner
+    Kenshou.Suite.Shibuya.Correctness.KirokuAckMapping
+    Kenshou.Suite.Shibuya.Correctness.KirokuDepth
     Kenshou.Suite.Shibuya.Correctness.Metrics
     Kenshou.Suite.Shibuya.Correctness.PgmqAckMapping
     Kenshou.Suite.Shibuya.Correctness.PgmqAdapter
     Kenshou.Suite.Shibuya.Fixture.Handlers
+    Kenshou.Suite.Shibuya.Fixture.Kiroku
     Kenshou.Suite.Shibuya.Fixture.Pgmq
     Kenshou.Suite.Shibuya.Fixture.PgmqProducer
     Kenshou.Suite.Shibuya.Fixture.PgmqWorker
@@ -70,8 +73,10 @@ library
     kenshou-core,
     kenshou-measure,
     kenshou-telemetry,
+    kiroku-store,
     pgmq-effectful,
     shibuya-core,
+    shibuya-kiroku-adapter,
     shibuya-metrics,
     shibuya-pgmq-adapter,
     stm >=2.5 && <2.6,

@@ -67,6 +67,11 @@ provenance:
       at: 2026-09-26T14:40:20Z
       mode: "implement"
       note: "Completed isolated current-release PGMQ CLI matrix with worker-process support."
+    - model: "gpt-6"
+      harness: "codex"
+      at: 2026-09-26T15:05:00Z
+      mode: "implement"
+      note: "Started Kiroku adapter fixture and sealed acknowledgement and depth scenarios on PostgreSQL 17/18."
 ---
 
 # Cover shibuya core and its PGMQ and kiroku adapters
@@ -102,6 +107,7 @@ After this plan a maintainer can, from this repository, run `kenshou list --laye
 - [x] (2026-09-26) Registered `dead-letter-move-is-atomic` with two 10,000-message direct-DLQ arms, one-statement MVCC conservation samples, actual backend termination and lost-`COMMIT`-response triggers, and final per-ID multiplicity checks. Historical PostgreSQL 17/18 passed full runs. Pinned remediation PostgreSQL 18 reproduced nine duplicate DLQ copies at the full workload as a version-scoped REV-11-F1 known defect; source loss and failed fault injection remain blocking. A Shibuya-only executable now runs the same scenario from checked-in run specs against isolated Hackage 0.16.1.0; sealed PostgreSQL 17/18 results passed with no duplicates.
 - [x] (2026-09-26) Registered separate postmaster-restart and backend-termination scenarios with polling and gated-acknowledgement arms, a concurrent retrying producer, durable effects and fresh connection pools after restart. Historical and current-release PostgreSQL 17/18 runs all conserved the default 100 producer IDs per arm and drained both queues. Current 0.16.1.0 passed both postmaster runs; historical 0.16.0.0 reproduced only its missing acknowledgement callback. Both PGMQ 0.6.1.0 and 0.6.1.1 reproduced scoped BUG-1 processor exits under backend termination, while the restart loop recovered every ID.
 - [x] (2026-09-26) Executed all 13 registered PGMQ adapter scenarios through the isolated current-release runner on PostgreSQL 17 and 18, including both shutdown polling modes and the three process-role scenarios. The only reproduced failures are the scoped long-poll pool starvation and backend-disconnect findings. Checked-in specs reproduce every run below.
+- [x] (2026-09-26) Started the Kiroku adapter milestone with a run-scoped category, real Kiroku store, SQL checkpoint and dead-letter oracles, and two registered smoke scenarios. Historical adapter 0.5.1.2 and current 0.5.1.3 each passed acknowledgement mapping and depth-one delivery on PostgreSQL 17 and 18; checked-in specs and sealed run IDs are below.
 - [ ] Implement and verify the Kiroku adapter scenarios, including durable crash and recovery arms on PostgreSQL 17 and 18.
 - [ ] Deliver benchmarks, soaks, telemetry comparisons, layer guide, upstream finding audit, and ADR/outcome distillation.
 
@@ -125,6 +131,15 @@ Every ID in this table names a sealed `runs/<id>/run-result.json` file from the 
 | Atomic dead-letter move | `01a0ddd5-f6cd-74fa-8a0c-e9412f4b6ba3` | `01a0ddd6-4b62-779d-b81c-cf3f50bfcef5` | Passed |
 | Postmaster restart | `01a0de0e-274c-76f0-b197-fb148c673ef4` | `01a0de0e-c680-76ca-a57b-8acd846289bf` | Passed |
 | Backend termination | `01a0de02-166d-726d-ab21-a3777c450ea1` | `01a0de02-94cd-75e9-b9fa-f2f4eca1f0a7` | Scoped BUG-1 reproduced |
+
+### Kiroku adapter smoke results
+
+Each run is sealed in `runs/<id>/run-result.json`. The current lane uses Kiroku adapter 0.5.1.3, while the released lane uses 0.5.1.2. The four `specs/shibuya-kiroku-*.json` files reproduce the current lane with `kenshou-shibuya-run` and either lane's PostgreSQL version.
+
+| Scenario | Released PG18 / PG17 | Current PG18 / PG17 | Oracle |
+| --- | --- | --- | --- |
+| In-flight depth one | `01a0de36-7405-72b9-81bc-6d1eb557338d` / `01a0de36-f30f-770f-ae9a-8239afd8aeb7` | `01a0de3c-0a19-73c9-9df1-042e4d6d6a7a` / `01a0de3c-397e-7586-adf6-2b1d50572d77` | One active handler at the gate and at high water, 24 deliveries, final checkpoint, clean drain. |
+| Ack decision mapping | `01a0de3a-0ffc-73be-939c-13ebfedd9404` / `01a0de3a-54b7-738e-b412-24d1c4624e16` | `01a0de3b-cf74-71c3-bb5a-c271a02e85c1` / `01a0de3c-8251-75c5-81cf-56ea6ff84663` | Retry delay and attempts, five-delivery exhaustion, four direct reasons, filtered final event, exact dead-letter rows and final checkpoint. |
 
 ## Surprises & Discoveries
 
