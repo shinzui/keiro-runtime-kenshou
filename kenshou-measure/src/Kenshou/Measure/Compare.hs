@@ -52,6 +52,8 @@ data MetricComparison = MetricComparison
 
 data Comparison = Comparison
   { comparisonId :: Text,
+    baselineRuns :: [Text],
+    candidateRuns :: [Text],
     policy :: Policy,
     variedFactors :: [VaryingAxis],
     pairCount :: Int,
@@ -87,6 +89,8 @@ instance ToJSON Comparison where
     object
       [ "schema" .= ("kenshou.comparison/v1" :: Text),
         "comparisonId" .= value.comparisonId,
+        "baselineRuns" .= value.baselineRuns,
+        "candidateRuns" .= value.candidateRuns,
         "algorithm" .= object ["name" .= ("paired-bootstrap-t-envelope" :: Text), "version" .= (1 :: Int), "generator" .= ("splitmix" :: Text), "iterations" .= value.policy.bootstrapIterations, "seed" .= value.policy.resamplingSeed, "confidenceLevel" .= value.policy.confidenceLevel],
         "policy" .= value.policy,
         "variedFactors" .= value.variedFactors,
@@ -98,7 +102,8 @@ instance ToJSON Comparison where
       ]
 
 data RunData = RunData
-  { result :: Value,
+  { runId :: Text,
+    result :: Value,
     inputs :: Value,
     fingerprint :: Value,
     summary :: MeasurementSummary,
@@ -143,7 +148,7 @@ compareRuns policy axes baselineDirs candidateDirs
                   <> ["checkpoint overlap differs too much within a pair" | checkpointAsymmetry]
               statuses = fmap (.status) (Map.elems metricComparisons)
               verdict = decideVerdict (environmentChanged || badOutcomes || hardHealth) reasons statuses
-          pure (Right (Comparison identifier policy (toList axes) (length baselines) metricComparisons reasons verdict))
+          pure (Right (Comparison identifier (map (.runId) baselines) (map (.runId) candidates) policy (toList axes) (length baselines) metricComparisons reasons verdict))
 
 loadRun :: FilePath -> IO (Either CompareError RunData)
 loadRun directory = do
@@ -158,9 +163,10 @@ loadRun directory = do
         summary <- either (Left . CompareError . (\(SummaryError message) -> message)) Right summarized
         inputs <- maybe (Left (CompareError "run result has no compatibility inputs")) Right (compatibilityInputs result)
         fingerprint <- maybe (Left (CompareError "run result has no environment fingerprint")) Right (environmentFingerprint result)
+        runId <- maybe (Left (CompareError "run result has no run ID")) Right (textAt ["runId"] result)
         let outcome = fromMaybe "unknown" (textAt ["outcome"] result)
             started = textAt ["timings", "startedAt"] result >>= parseUtc
-        Right RunData {result, inputs, fingerprint, summary, outcome, startedAt = started}
+        Right RunData {runId, result, inputs, fingerprint, summary, outcome, startedAt = started}
 
 compatibilityProblem :: NonEmpty VaryingAxis -> [RunData] -> Maybe Text
 compatibilityProblem _ [] = Just "no runs"

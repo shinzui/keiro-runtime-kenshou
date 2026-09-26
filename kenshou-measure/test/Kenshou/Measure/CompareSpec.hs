@@ -1,7 +1,11 @@
 module Kenshou.Measure.CompareSpec (spec) where
 
-import Data.Aeson (Value (Null))
+import Data.Aeson (Value (Null), encode, object, (.=))
 import Data.ByteString.Char8 qualified as ByteString
+import Data.ByteString.Lazy qualified as LazyByteString
+import Data.List.NonEmpty (NonEmpty (..))
+import Data.Map.Strict qualified as Map
+import Data.Text (Text)
 import Kenshou.Core.Outcome (Outcome (..))
 import Kenshou.Measure.Compare
 import Kenshou.Measure.Compare.Compatibility
@@ -9,10 +13,30 @@ import Kenshou.Measure.Compare.Ordering
 import Kenshou.Measure.Compare.Policy
 import Kenshou.Measure.Health
 import Kenshou.Measure.Stats
+import Kenshou.Measure.Summary (MeasurementSummary (..), SummaryWindow (..))
+import System.Directory (createDirectoryIfMissing)
+import System.FilePath ((</>))
+import System.IO.Temp (withSystemTempDirectory)
 import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "comparison source references" do
+    it "retains the baseline and candidate run IDs in pair order" do
+      withSystemTempDirectory "kenshou-comparison-arms" $ \root -> do
+        let baselineIds = ["baseline-1", "baseline-2", "baseline-3"] :: [Text]
+            candidateIds = ["candidate-1", "candidate-2", "candidate-3"] :: [Text]
+            baselineDirs = [root </> show index </> "baseline" | index <- [1 :: Int .. 3]]
+            candidateDirs = [root </> show index </> "candidate" | index <- [1 :: Int .. 3]]
+        sequence_ [writeRun dir runId "released" | (dir, runId) <- zip baselineDirs baselineIds]
+        sequence_ [writeRun dir runId "head" | (dir, runId) <- zip candidateDirs candidateIds]
+        compared <- compareRuns testPolicy (VaryCohort :| []) baselineDirs candidateDirs
+        case compared of
+          Left err -> expectationFailure (show err)
+          Right result -> do
+            result.baselineRuns `shouldBe` baselineIds
+            result.candidateRuns `shouldBe` candidateIds
+
   describe "pairedSchedule" do
     it "assigns one shared seed to each pair in ABBA order" do
       let schedule = pairedSchedule ABBA 3 17
@@ -92,6 +116,20 @@ policyJson pairs iterations =
           ",\"resamplingSeed\":1,\"requireInterleaving\":false,\"requireGrade\":\"benchmark\",\"maxCiRelativeWidth\":0.5,\"maxCheckpointAsymmetry\":1,\"metrics\":[]}"
         ]
     )
+
+writeRun :: FilePath -> Text -> Text -> IO ()
+writeRun directory runId cohort = do
+  createDirectoryIfMissing True directory
+  let summary = MeasurementSummary "benchmark" [] (SummaryWindow 0 1 1) Map.empty Map.empty []
+      document =
+        object
+          [ "runId" .= runId,
+            "outcome" .= ("passed" :: Text),
+            "compatibility" .= object ["inputs" .= object ["cohortPlanHash" .= cohort]],
+            "fingerprint" .= object ["host" .= object ["os" .= ("darwin" :: Text)]],
+            "summaries" .= object ["measurements" .= object ["measurements" .= summary]]
+          ]
+  LazyByteString.writeFile (directory </> "run-result.json") (encode document)
 
 isLeft :: Either left right -> Bool
 isLeft (Left _) = True

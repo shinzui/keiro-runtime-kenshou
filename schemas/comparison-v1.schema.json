@@ -22,10 +22,12 @@
     }
   },
   "type": "object",
-  "required": ["schema", "comparisonId", "algorithm", "policy", "variedFactors", "pairCount", "metrics", "reasons", "verdict", "exitCode"],
+  "required": ["schema", "comparisonId", "baselineRuns", "candidateRuns", "algorithm", "policy", "variedFactors", "pairCount", "metrics", "reasons", "verdict", "exitCode"],
   "properties": {
     "schema": {"const": "kenshou.comparison/v1"},
     "comparisonId": {"type": "string"},
+    "baselineRuns": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    "candidateRuns": {"type": "array", "minItems": 1, "items": {"type": "string"}},
     "algorithm": {"type": "object"},
     "policy": {"$ref": "#/$defs/policy"},
     "variedFactors": {"type": "array", "minItems": 1, "items": {"type": "string"}},

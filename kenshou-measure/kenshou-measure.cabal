@@ -118,6 +118,7 @@ test-suite kenshou-measure-test
     aeson,
     base >=4.21 && <4.22,
     bytestring,
+    containers,
     directory,
     filepath,
     hedgehog >=1.4 && <1.8,
