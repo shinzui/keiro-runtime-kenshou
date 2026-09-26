@@ -4,26 +4,35 @@ module Kenshou.Evidence.Store
     StoreError (..),
     PutResult (..),
     durableSchemes,
+    validateObjectUri,
     directoryStore,
     memoryStore,
+    gcloudStore,
+    gcloudStoreWith,
   )
 where
 
 import Control.Concurrent.MVar (modifyMVar, newMVar, readMVar)
 import Control.Exception (IOException, try)
+import Data.Aeson (Result (..), Value (..), eitherDecodeStrict', fromJSON)
+import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as ByteString
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Kenshou.Evidence.Types (Sha256, sha256Bytes)
+import Data.Text.Encoding qualified as Text
+import Kenshou.Evidence.Types (Sha256 (..), mkSha256, sha256Bytes)
 import Numeric.Natural (Natural)
 import System.Directory (createDirectoryIfMissing, doesFileExist)
+import System.Exit (ExitCode (..))
 import System.FilePath (takeDirectory, (</>))
 import System.IO (hFlush)
 import System.IO.Error (isAlreadyExistsError)
 import System.IO.Temp (withTempFile)
 import System.Posix.Files (createLink)
+import System.Process (proc, readCreateProcessWithExitCode)
+import Text.Read (readMaybe)
 
 data ObjectStat = ObjectStat
   { bytes :: !Natural,
@@ -47,6 +56,9 @@ data ObjectStore = ObjectStore
 
 durableSchemes :: [Text]
 durableSchemes = ["gs"]
+
+validateObjectUri :: Text -> Either StoreError ()
+validateObjectUri = fmap (const ()) . objectPath ""
 
 -- | The scratch store preserves the gs:// URI in records while keeping the
 -- bytes under root/bucket/key. Create-only publication uses an atomic hard link.
@@ -123,6 +135,123 @@ memoryStore = do
                   Just _ -> pure (current, Left (ObjectConflict uri))
       }
 
+-- | The production adapter accepts only the explicitly selected GCP project.
+-- The executable seam lets tests exercise the command protocol without cloud
+-- credentials or remote mutations.
+gcloudStore :: Text -> ObjectStore
+gcloudStore = gcloudStoreWith "gcloud"
+
+gcloudStoreWith :: FilePath -> Text -> ObjectStore
+gcloudStoreWith executable project = store
+  where
+    store =
+      ObjectStore
+        { statObject = \uri -> do
+            ready <- preflight
+            case ready of
+              Left err -> pure (Left err)
+              Right () -> stat uri,
+          fetchObject = \uri target -> do
+            ready <- preflight
+            case ready of
+              Left err -> pure (Left err)
+              Right () -> case validateObjectUri uri of
+                Left err -> pure (Left err)
+                Right () -> do
+                  prepared <- ioResult (createDirectoryIfMissing True (takeDirectory target))
+                  case prepared of
+                    Left err -> pure (Left err)
+                    Right () -> do
+                      result <- command ["storage", "cp", Text.unpack uri, target, projectFlag, "--quiet"]
+                      pure $ case result of
+                        Left err -> Left err
+                        Right _ -> Right (),
+          putObjectIfAbsent = \source uri mediaType -> do
+            ready <- preflight
+            case ready of
+              Left err -> pure (Left err)
+              Right () -> case validateObjectUri uri of
+                Left err -> pure (Left err)
+                Right () -> do
+                  local <- ioResult (ByteString.readFile source)
+                  case local of
+                    Left err -> pure (Left err)
+                    Right contents -> do
+                      let expected = objectStat contents
+                      existing <- stat uri
+                      case existing of
+                        Left err -> pure (Left err)
+                        Right (Just observed) -> pure (if observed == expected then Right ObjectPresent else Left (ObjectConflict uri))
+                        Right Nothing -> do
+                          let Sha256 digest = sha256Bytes contents
+                          uploaded <- command ["storage", "cp", source, Text.unpack uri, "--no-clobber", "--if-generation-match=0", "--custom-metadata=kenshou-sha256=" <> Text.unpack digest, "--content-type=" <> Text.unpack mediaType, projectFlag, "--quiet"]
+                          after <- stat uri
+                          pure case after of
+                            Left err -> Left err
+                            Right (Just observed)
+                              | observed == expected -> Right (if either (const False) (const True) uploaded then ObjectCreated else ObjectPresent)
+                              | otherwise -> Left (ObjectConflict uri)
+                            Right Nothing -> either Left (const (Left (StoreIo ("uploaded object is not visible: " <> uri)))) uploaded
+        }
+
+    projectFlag = "--project=" <> Text.unpack project
+
+    preflight = do
+      if Text.null project
+        then pure (Left (StoreIo "GCP project must be explicit"))
+        else do
+          active <- command ["config", "get-value", "project"]
+          pure case active of
+            Left err -> Left err
+            Right value
+              | Text.strip value == project -> Right ()
+              | otherwise -> Left (StoreIo ("active GCP project differs from requested project " <> project))
+
+    stat uri = case validateObjectUri uri of
+      Left err -> pure (Left err)
+      Right () -> do
+        result <- command ["storage", "objects", "describe", Text.unpack uri, "--format=json", projectFlag, "--quiet"]
+        pure case result of
+          Left (StoreIo message) | missingObject message -> Right Nothing
+          Left err -> Left err
+          Right output -> Just <$> parseGcloudStat output
+
+    command arguments = do
+      executed <- try (readCreateProcessWithExitCode (proc executable arguments) "") :: IO (Either IOException (ExitCode, String, String))
+      pure case executed of
+        Left err -> Left (StoreIo (Text.pack (show err)))
+        Right (ExitSuccess, output, _) -> Right (Text.pack output)
+        Right (ExitFailure code, _, stderrText) -> Left (StoreIo ("gcloud exited " <> Text.pack (show code) <> ": " <> Text.take 1200 (Text.pack stderrText)))
+
+missingObject :: Text -> Bool
+missingObject message = any (`Text.isInfixOf` Text.toCaseFold message) ["not_found", "not found", "404", "no urls matched"]
+
+parseGcloudStat :: Text -> Either StoreError ObjectStat
+parseGcloudStat output = do
+  value <- either (Left . StoreIo . Text.pack) Right (eitherDecodeStrict' (Text.encodeUtf8 output))
+  case value of
+    Object fields -> do
+      sizeValue <- maybe (Left (StoreIo "gcloud object description has no size")) Right (KeyMap.lookup "size" fields)
+      size <- case sizeValue of
+        String raw -> parseSize raw
+        Number _ -> case (fromJSON sizeValue :: Result Integer) of
+          Success number | number >= 0 -> Right (fromInteger number)
+          _ -> Left (StoreIo "gcloud object size is invalid")
+        _ -> Left (StoreIo "gcloud object size is not numeric")
+      digest <- case KeyMap.lookup "metadata" fields of
+        Nothing -> Right Nothing
+        Just (Object metadata) -> case KeyMap.lookup "kenshou-sha256" metadata of
+          Nothing -> Right Nothing
+          Just (String raw) -> Just <$> either (Left . StoreIo) Right (mkSha256 raw)
+          _ -> Left (StoreIo "gcloud object digest metadata is not text")
+        _ -> Left (StoreIo "gcloud object metadata is not an object")
+      Right ObjectStat {bytes = size, recordedSha256 = digest}
+    _ -> Left (StoreIo "gcloud object description is not an object")
+  where
+    parseSize raw = case readMaybe (Text.unpack raw) :: Maybe Integer of
+      Just value | value >= 0 -> Right (fromInteger value)
+      _ -> Left (StoreIo "gcloud object size is invalid")
+
 objectStat :: ByteString -> ObjectStat
 objectStat contents =
   ObjectStat
@@ -138,7 +267,11 @@ objectPath root uri = do
     then Left (InvalidObjectUri uri)
     else Right (foldl (</>) root (Text.unpack <$> segments))
   where
-    invalidSegment part = Text.null part || part == "." || part == ".." || Text.any (== '\\') part
+    invalidSegment part =
+      Text.null part
+        || part == "."
+        || part == ".."
+        || Text.any (`elem` ['\\', '?', '#']) part
 
 ioResult :: IO value -> IO (Either StoreError value)
 ioResult action = do

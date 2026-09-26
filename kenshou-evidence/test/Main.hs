@@ -6,18 +6,66 @@ import Data.ByteString.Char8 qualified as ByteString.Char8
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
+import Data.Text qualified as Text
 import Kenshou.Core.Canonical (sha256Hex)
 import Kenshou.Core.Id (parseRunId)
 import Kenshou.Core.Manifest (writeManifest)
+import Kenshou.Evidence.Publish (PublishError (..), PublishOptions (..), UploadMode (..), publishRunData)
 import Kenshou.Evidence.Source (loadRunSource)
-import Kenshou.Evidence.Store (ObjectStat (..), ObjectStore (..), PutResult (..), StoreError (..), directoryStore, memoryStore)
-import Kenshou.Evidence.Types (Sha256 (..), mkRevision, mkSha256, sha256Bytes)
+import Kenshou.Evidence.Store (ObjectStat (..), ObjectStore (..), PutResult (..), StoreError (..), directoryStore, gcloudStoreWith, memoryStore)
+import Kenshou.Evidence.Types (DataKind (..), DataLink (..), Sha256 (..), mkRevision, mkSha256, sha256Bytes)
+import System.Directory (Permissions (..), getPermissions, setPermissions)
 import System.FilePath ((</>))
 import System.IO.Temp (withSystemTempDirectory)
 import Test.Hspec
 
 main :: IO ()
 main = hspec do
+  describe "gcloudStore" do
+    it "requires the active project and reads size and SHA-256 metadata" do
+      withSystemTempDirectory "kenshou-gcloud-store" $ \root -> do
+        let executable = root </> "fake-gcloud"
+            Sha256 digest = sha256Bytes "sealed"
+            script = "#!/bin/sh\nif [ \"$1\" = config ]; then printf 'tan-nb-exp\\n'; exit 0; fi\nprintf '{\"size\":\"6\",\"metadata\":{\"kenshou-sha256\":\"" <> Text.unpack digest <> "\"}}\\n'\n"
+        writeFile executable script
+        permissions <- getPermissions executable
+        setPermissions executable permissions {executable = True}
+        let matching = gcloudStoreWith executable "tan-nb-exp"
+            mismatched = gcloudStoreWith executable "other-project"
+        matching.statObject "gs://bucket/object" `shouldReturn` Right (Just (ObjectStat 6 (Just (Sha256 digest))))
+        mismatch <- mismatched.statObject "gs://bucket/object"
+        mismatch `shouldSatisfy` isLeft
+
+  describe "publishRunData" do
+    it "publishes all verified run files and links the required ones" do
+      withSystemTempDirectory "kenshou-publish" $ \root -> do
+        writeRunFixture root
+        source <- loadRunSource root >>= either (fail . show) pure
+        store <- memoryStore
+        let options = PublishOptions "gs://bucket/runs" UploadMissing True False
+        published <- publishRunData store options root source
+        case published of
+          Left err -> expectationFailure (show err)
+          Right links -> map (.kind) links `shouldBe` [RunSpecData, RunResultData, ManifestData]
+        publishRunData store options root source `shouldReturn` published
+        let verifyOnly = options {uploadMode = VerifyOnly}
+        publishRunData store verifyOnly root source `shouldReturn` published
+        original <- ByteString.readFile (root </> "run-result.json")
+        ByteString.Char8.appendFile (root </> "run-result.json") "changed"
+        conflicted <- publishRunData store options root source
+        conflicted `shouldSatisfy` isLeft
+        store.fetchObject ("gs://bucket/runs/01997f3a-5b7c-7e21-8a44-0d6c2f9b1e55/run-result.json") (root </> "retained-result.json") `shouldReturn` Right ()
+        retained <- ByteString.readFile (root </> "retained-result.json")
+        retained `shouldBe` original
+
+    it "refuses a non-durable destination before publishing" do
+      withSystemTempDirectory "kenshou-publish" $ \root -> do
+        writeRunFixture root
+        source <- loadRunSource root >>= either (fail . show) pure
+        store <- memoryStore
+        publishRunData store (PublishOptions "file:///tmp" UploadMissing False False) root source
+          `shouldReturn` Left (InvalidBaseUri "file:///tmp")
+
   describe "loadRunSource" do
     it "accepts a complete kernel run and rejects extra or changed files" do
       withSystemTempDirectory "kenshou-run-source" $ \root -> do
