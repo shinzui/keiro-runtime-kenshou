@@ -14,12 +14,13 @@ import Control.Monad (forM)
 import Data.Aeson (Value (..), eitherDecodeStrict', object, (.=))
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString qualified as ByteString
-import Data.List (nub, sort)
+import Data.List (find, nub, sort)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.IO qualified as Text.IO
 import Data.Time (UTCTime, defaultTimeLocale, formatTime, getCurrentTime)
-import Kenshou.Core.Cohort (CohortIdentity (..), PlanHash (..))
+import Kenshou.Core.Cohort (CohortIdentity (..), PlanHash (..), ResolvedComponent (..), ResolvedPackage (..))
+import Kenshou.Core.Cohort qualified as Cohort
 import Kenshou.Core.Id (newRunId, parseRunId, renderRunId)
 import Kenshou.Core.Manifest (Manifest (..), ManifestFile (..))
 import Kenshou.Core.Outcome (Outcome)
@@ -29,14 +30,15 @@ import Kenshou.Evidence.Frontmatter (AttestationCheck (..), AttestationEvidence 
 import Kenshou.Evidence.Record (RecordInput (..), buildRunRecord)
 import Kenshou.Evidence.Source (RunResultView (..), RunSource (..), loadRunSource)
 import Kenshou.Evidence.Store (ObjectStore (..))
-import Kenshou.Evidence.Types (ComponentRef (..), DataKind (..), DataLink (..), Revision (..), Sha256 (..), mkRevision, sha256Bytes)
+import Kenshou.Evidence.Types (ComponentRef (..), ComponentSource (FromGit), DataKind (..), DataLink (..), Revision (..), Sha256 (..), mkRevision, sha256Bytes)
 import Okf.Actor (Actor (ProcessActor))
 import Okf.Document (OKFDocument (..), Verification (..), parseDocument, readVerified, serializeDocument, setVerified)
 import System.Directory (doesDirectoryExist, listDirectory)
+import System.Environment (getEnvironment)
 import System.Exit (ExitCode (..))
 import System.FilePath (isAbsolute, normalise, splitDirectories, takeExtension, (</>))
 import System.IO.Temp (withSystemTempDirectory)
-import System.Process (readProcessWithExitCode)
+import System.Process (CreateProcess (..), proc, readCreateProcessWithExitCode, readProcessWithExitCode)
 
 data Recomputation = Recomputation
   { agreesWithDocuments :: !Bool,
@@ -133,7 +135,7 @@ attestRun store recomputers options relative = do
           case revision of
             Left err -> pure (Left err)
             Right (attesterRevision, attesterDirty) -> do
-              revisions <- checkRevisions options.offline record
+              revisions <- checkRevisions options.offline scratch record source
               let cohort = checkCohort now record source
                   environment = checkEnvironment now record source
                   clean = checkClean record source attesterDirty
@@ -267,17 +269,73 @@ safeRelative path =
     && normalise path == path
     && all (`notElem` ["", ".", ".."]) (splitDirectories path)
 
-checkRevisions :: Bool -> EvidenceRecord -> IO AttestationCheck
-checkRevisions offline record
-  | offline = pure (check "revisions-resolve" "skipped" "offline mode")
-  | any (\component -> component.revision /= Nothing) record.components = pure (check "revisions-resolve" "skipped" "git component revisions need a local Mori checkout or remote fetch")
-  | otherwise = do
-      let revision = case record.harnessRevision of Revision value -> Text.unpack value
-      (exitCode, _, _) <- readProcessWithExitCode "git" ["cat-file", "-e", revision <> "^{commit}"] ""
-      pure $
-        if exitCode == ExitSuccess
-          then check "revisions-resolve" "passed" "harness revision resolves locally"
-          else check "revisions-resolve" "skipped" "harness revision is not present in this checkout"
+checkRevisions :: Bool -> FilePath -> EvidenceRecord -> Maybe RunSource -> IO AttestationCheck
+checkRevisions offline scratch record source = do
+  harness <- gitCommitExists Nothing record.harnessRevision
+  componentChecks <- forM (zip [0 :: Int ..] [component | component <- record.components, component.source == FromGit]) $ \(index, component) -> do
+    local <- moriCheckout component.project
+    foundLocally <- maybe (pure False) (\path -> maybe (pure False) (gitCommitExists (Just path)) component.revision) local
+    if foundLocally
+      then pure Nothing
+      else
+        if offline
+          then pure (Just component.package)
+          else case (component.revision, source >>= componentLocation component) of
+            (Just revision, Just location) -> do
+              fetched <- fetchRevision (scratch </> "revision-" <> show index) location revision
+              pure (if fetched then Nothing else Just component.package)
+            _ -> pure (Just component.package)
+  let unresolved = [name | Just name <- componentChecks]
+      problems = ["harness revision is absent from this checkout" | not harness] <> ["component revision unresolved: " <> name | name <- unresolved]
+  pure $
+    if null problems
+      then check "revisions-resolve" "passed" "harness and git component commits resolve"
+      else check "revisions-resolve" "skipped" (Text.intercalate "; " problems)
+
+componentLocation :: ComponentRef -> RunSource -> Maybe Text
+componentLocation component source = do
+  cohortComponent <- find (\candidate -> candidate.resolvedComponentMoriUri == component.project) source.result.resultCohort.identityComponents
+  package <- find (\candidate -> candidate.resolvedPackageName == component.package) cohortComponent.resolvedComponentPackages
+  case package.resolvedPackageSource of
+    Cohort.FromGit location _ _ -> Just location
+    _ -> Nothing
+
+moriCheckout :: Text -> IO (Maybe FilePath)
+moriCheckout project = do
+  response <- try (readProcessWithExitCode "mori" ["path", Text.unpack project] "") :: IO (Either IOException (ExitCode, String, String))
+  case response of
+    Right (ExitSuccess, output, _) -> case reverse (lines output) of
+      path : _ -> do
+        present <- doesDirectoryExist path
+        pure (if present then Just path else Nothing)
+      [] -> pure Nothing
+    _ -> pure Nothing
+
+gitCommitExists :: Maybe FilePath -> Revision -> IO Bool
+gitCommitExists location (Revision revision) = do
+  let args = maybe [] (\path -> ["-C", path]) location <> ["cat-file", "-e", Text.unpack revision <> "^{commit}"]
+  response <- try (readProcessWithExitCode "git" args "") :: IO (Either IOException (ExitCode, String, String))
+  pure $ case response of
+    Right (ExitSuccess, _, _) -> True
+    _ -> False
+
+fetchRevision :: FilePath -> Text -> Revision -> IO Bool
+fetchRevision root location revision@(Revision sha) = do
+  prepared <- noPromptGit ["init", "--bare", root]
+  if not prepared
+    then pure False
+    else do
+      fetched <- noPromptGit ["-c", "protocol.ext.allow=never", "-c", "protocol.file.allow=never", "-C", root, "fetch", "--depth=1", Text.unpack location, Text.unpack sha]
+      if fetched then gitCommitExists (Just root) revision else pure False
+
+noPromptGit :: [String] -> IO Bool
+noPromptGit args = do
+  environment <- getEnvironment
+  let process = (proc "git" args) {env = Just (("GIT_TERMINAL_PROMPT", "0") : filter ((/= "GIT_TERMINAL_PROMPT") . fst) environment)}
+  response <- try (readCreateProcessWithExitCode process "") :: IO (Either IOException (ExitCode, String, String))
+  pure $ case response of
+    Right (ExitSuccess, _, _) -> True
+    _ -> False
 
 checkCohort :: UTCTime -> EvidenceRecord -> Maybe RunSource -> AttestationCheck
 checkCohort _ _ Nothing = check "cohort-matches-plan" "skipped" "source documents are unavailable"
