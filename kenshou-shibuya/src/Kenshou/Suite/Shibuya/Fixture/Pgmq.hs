@@ -2,6 +2,7 @@ module Kenshou.Suite.Shibuya.Fixture.Pgmq
   ( PgmqFixture (..),
     withPgmqFixture,
     withPgmqConnectionPool,
+    withPgmqNamedConnectionPool,
     runPgmqStack,
     queueRows,
     archiveRows,
@@ -16,6 +17,8 @@ module Kenshou.Suite.Shibuya.Fixture.Pgmq
     effectRows,
     effectIntervals,
     effectDeliveries,
+    queueConservationSnapshot,
+    queueConservationIds,
   )
 where
 
@@ -56,12 +59,16 @@ withPgmqFixture context suffix poolSize action =
 
 withPgmqConnectionPool :: Text -> Int -> (Pool -> IO a) -> IO a
 withPgmqConnectionPool connection poolSize =
+  withPgmqNamedConnectionPool connection poolSize "kenshou-shibuya-pgmq"
+
+withPgmqNamedConnectionPool :: Text -> Int -> Text -> (Pool -> IO a) -> IO a
+withPgmqNamedConnectionPool connection poolSize applicationName =
   bracket
     ( Pool.acquire $
         PoolConfig.settings
           [ PoolConfig.size poolSize,
             PoolConfig.acquisitionTimeout 5,
-            PoolConfig.staticConnectionSettings (Connection.connectionString connection <> Connection.applicationName "kenshou-shibuya-pgmq")
+            PoolConfig.staticConnectionSettings (Connection.connectionString connection <> Connection.applicationName applicationName)
           ]
     )
     Pool.release
@@ -197,6 +204,39 @@ effectDeliveries pool arm = do
           (Decoders.rowList ((,,,) <$> Decoders.column (Decoders.nonNullable Decoders.text) <*> Decoders.column (Decoders.nonNullable Decoders.int8) <*> Decoders.column (Decoders.nonNullable Decoders.timestamptz) <*> Decoders.column (Decoders.nonNullable Decoders.timestamptz)))
   result <- Pool.use pool (Session.statement arm statement)
   either (ioError . userError . show) pure result
+
+-- One SQL statement gives both queues the same MVCC snapshot while a move commits.
+queueConservationSnapshot :: PgmqFixture -> PgmqFixture -> IO (Int64, Int64, Int64)
+queueConservationSnapshot source deadLetter = do
+  let statement =
+        Statement.preparable
+          ( "select count(*), count(distinct original_id), count(*) filter (where original_id is null) from ("
+              <> "select msg_id::text as original_id from pgmq.q_"
+              <> queueNameToText source.queue
+              <> " union all select message->>'original_message_id' as original_id from pgmq.q_"
+              <> queueNameToText deadLetter.queue
+              <> ") as items"
+          )
+          Encoders.noParams
+          (Decoders.singleRow ((,,) <$> Decoders.column (Decoders.nonNullable Decoders.int8) <*> Decoders.column (Decoders.nonNullable Decoders.int8) <*> Decoders.column (Decoders.nonNullable Decoders.int8)))
+  result <- Pool.use source.pool (Session.statement () statement)
+  either (ioError . userError . show) pure result
+
+queueConservationIds :: PgmqFixture -> PgmqFixture -> IO [Text]
+queueConservationIds source deadLetter = do
+  let statement =
+        Statement.preparable
+          ( "select original_id from (select msg_id::text as original_id from pgmq.q_"
+              <> queueNameToText source.queue
+              <> " union all select message->>'original_message_id' as original_id from pgmq.q_"
+              <> queueNameToText deadLetter.queue
+              <> ") as items"
+          )
+          Encoders.noParams
+          (Decoders.rowList (Decoders.column (Decoders.nullable Decoders.text)))
+  result <- Pool.use source.pool (Session.statement () statement)
+  ids <- either (ioError . userError . show) pure result
+  pure [identifier | Just identifier <- ids]
 
 queuePayloads :: PgmqFixture -> IO [Value]
 queuePayloads fixture = do

@@ -29,6 +29,7 @@ library
     Kenshou.Suite.Shibuya.Concurrency.CoreOrdering
     Kenshou.Suite.Shibuya.Concurrency.CoreRunner
     Kenshou.Suite.Shibuya.Concurrency.KeyedModel
+    Kenshou.Suite.Shibuya.Concurrency.PgmqDeadLetterAtomic
     Kenshou.Suite.Shibuya.Concurrency.PgmqHandlerOutlivesLease
     Kenshou.Suite.Shibuya.Concurrency.PgmqLeaseSizing
     Kenshou.Suite.Shibuya.Concurrency.PgmqMultiProcess

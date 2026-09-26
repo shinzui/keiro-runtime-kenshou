@@ -102,6 +102,7 @@ cellsOf scenario = case renderScenarioId scenario of
   "shibuya/pgmq-adapter/concurrency/handler-outlives-visibility-timeout" -> [(RetryLease, Timeout), (PgmqPersistence, Timeout)]
   "shibuya/pgmq-adapter/concurrency/multi-process-competition" -> [(PgmqPersistence, Normal), (KeyedOrdering, Normal)]
   "shibuya/pgmq-adapter/concurrency/sigkill-between-handler-success-and-ack" -> [(PgmqPersistence, Cancellation), (Finalization, Cancellation)]
+  "shibuya/pgmq-adapter/concurrency/dead-letter-move-is-atomic" -> [(PgmqPersistence, SynchronousException)]
   _ -> []
 
 -- Add reasons only for cells which cannot be exercised through public APIs.
