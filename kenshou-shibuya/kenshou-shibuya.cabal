@@ -35,6 +35,7 @@ library
     Kenshou.Suite.Shibuya.Concurrency.PgmqPoolStarvation
     Kenshou.Suite.Shibuya.Concurrency.PgmqPrefetchShutdown
     Kenshou.Suite.Shibuya.Concurrency.PgmqShutdownRelease
+    Kenshou.Suite.Shibuya.Concurrency.PgmqSigkillAck
     Kenshou.Suite.Shibuya.Correctness.CoreBatch
     Kenshou.Suite.Shibuya.Correctness.CoreOrdering
     Kenshou.Suite.Shibuya.Correctness.CoreRunner

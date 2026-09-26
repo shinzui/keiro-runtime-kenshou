@@ -1,6 +1,7 @@
 module Kenshou.Suite.Shibuya.Fixture.PgmqWorker (role) where
 
 import Control.Concurrent (threadDelay)
+import Control.Concurrent.MVar (newEmptyMVar, takeMVar, tryPutMVar)
 import Control.Monad (replicateM_)
 import Data.Aeson (Value, object, withObject, (.!=), (.:), (.:?), (.=))
 import Data.Aeson.Types (Parser, parseEither, parseMaybe)
@@ -10,7 +11,7 @@ import Data.Time.Clock (getCurrentTime)
 import Effectful (liftIO)
 import Kenshou.Core.Role (ControlMessage (..), PostgresConnInfo (..), RoleContext (..), RoleName, WorkerInit (..), WorkerMessage (..), WorkerRole (..), mkRoleName)
 import Kenshou.Suite.Shibuya.Fixture.Pgmq (insertEffect, runPgmqStack, withPgmqConnectionPool)
-import Shibuya.Adapter.Pgmq (FifoConfig (..), FifoReadStrategy (..), PgmqAdapterConfig (..), PollingConfig (..), defaultConfig, mkPgmqAdapterEnv, parseQueueName, pgmqAdapter)
+import Shibuya.Adapter.Pgmq (FifoConfig (..), FifoReadStrategy (..), PgmqAdapterConfig (..), PollingConfig (..), defaultConfig, directDeadLetter, mkPgmqAdapterEnv, parseQueueName, pgmqAdapter)
 import Shibuya.App (AppConfig (..), QueueProcessor (..), ShutdownConfig (..), defaultAppConfig, defaultShutdownConfig, mkProcessor, runApp, stopAppGracefully, waitApp)
 import Shibuya.Core.Ack (AckDecision (..), RetryDelay (..))
 import Shibuya.Core.Ingested (Message (..))
@@ -37,7 +38,10 @@ data Args = Args
     concurrentHandlers :: !Int,
     fifoStrategy :: !(Maybe Text),
     retryGroup :: !(Maybe Text),
-    retrySequence :: !(Maybe Int)
+    retrySequence :: !(Maybe Int),
+    gateAfterEffect :: !Bool,
+    retryBudget :: !Int,
+    deadLetterQueue :: !(Maybe Text)
   }
 
 parseArgs :: Value -> Parser Args
@@ -54,13 +58,17 @@ parseArgs = withObject "PGMQ consumer arguments" $ \value -> do
   fifoStrategy <- value .:? "fifoStrategy"
   retryGroup <- value .:? "retryGroup"
   retrySequence <- value .:? "retrySequence"
-  pure Args {queue, arm, visibilitySeconds, extendLease, handlerMicros, slowEvery, slowHandlerMicros, readBatchSize, concurrentHandlers, fifoStrategy, retryGroup, retrySequence}
+  gateAfterEffect <- value .:? "gateAfterEffect" .!= False
+  retryBudget <- value .:? "retryBudget" .!= 10
+  deadLetterQueue <- value .:? "deadLetterQueue"
+  pure Args {queue, arm, visibilitySeconds, extendLease, handlerMicros, slowEvery, slowHandlerMicros, readBatchSize, concurrentHandlers, fifoStrategy, retryGroup, retrySequence, gateAfterEffect, retryBudget, deadLetterQueue}
 
 worker :: RoleContext -> IO ()
 worker context = do
   postgres <- maybe (fail "PGMQ consumer requires PostgreSQL") pure context.init.postgres
   args <- either fail pure (parseEither parseArgs context.init.args)
   queue <- either (fail . show) pure (parseQueueName args.queue)
+  deadLetterQueue <- traverse (either (fail . show) pure . parseQueueName) args.deadLetterQueue
   strategy <- case args.fifoStrategy of
     Nothing -> pure Nothing
     Just "head-per-group" -> pure (Just (FifoConfig HeadPerGroup))
@@ -69,15 +77,17 @@ worker context = do
     Just other -> fail ("unknown PGMQ FIFO strategy: " <> Text.unpack other)
   context.send WrkReady
   awaitStart
-  withPgmqConnectionPool postgres.connectionString 10 $ \consumerPool ->
-    withPgmqConnectionPool postgres.connectionString 2 $ \observerPool -> do
+  effectGate <- newEmptyMVar
+  withPgmqConnectionPool postgres.connectionString (if args.gateAfterEffect then 2 else 10) $ \consumerPool ->
+    withPgmqConnectionPool postgres.connectionString 1 $ \observerPool -> do
       let config =
             (defaultConfig queue)
               { batchSize = fromIntegral args.readBatchSize,
                 visibilityTimeout = fromIntegral args.visibilitySeconds,
                 polling = StandardPolling 0.05,
-                maxRetries = 10,
-                fifoConfig = strategy
+                maxRetries = fromIntegral args.retryBudget,
+                fifoConfig = strategy,
+                deadLetterConfig = fmap (`directDeadLetter` True) deadLetterQueue
               }
           handler message = do
             let MessageId identifier = message.envelope.messageId
@@ -113,6 +123,7 @@ worker context = do
                 liftIO $ do
                   insertEffect observerPool args.arm identifier attempt startedAt completedAt Nothing
                   context.send (WrkCustom "effect-done" (object ["messageId" .= identifier, "attempt" .= attempt, "at" .= completedAt]))
+                  if args.gateAfterEffect then takeMVar effectGate else pure ()
                 pure AckOk
       outcome <- runPgmqStack consumerPool $ do
         adapterResult <- pgmqAdapter (mkPgmqAdapterEnv consumerPool) config
@@ -125,7 +136,7 @@ worker context = do
               Left err -> error (show err)
               Right handle -> do
                 liftIO $ context.send (WrkCustom "running" (object []))
-                quiesce <- liftIO awaitAction
+                quiesce <- liftIO (awaitAction effectGate)
                 stopped <- stopAppGracefully defaultShutdownConfig {drainTimeout = 6} handle
                 waitApp handle
                 if quiesce
@@ -142,12 +153,15 @@ worker context = do
         Just (CtlStop _) -> fail "PGMQ consumer stopped before start"
         Nothing -> fail "PGMQ consumer parent disconnected before start"
         _ -> awaitStart
-    awaitAction =
+    awaitAction effectGate =
       context.receive >>= \case
+        Just (CtlCustom "release-effect" _) -> do
+          _ <- tryPutMVar effectGate ()
+          awaitAction effectGate
         Just (CtlCustom "quiesce" _) -> pure True
         Just (CtlStop _) -> pure False
         Nothing -> pure False
-        _ -> awaitAction
+        _ -> awaitAction effectGate
     awaitStop =
       context.receive >>= \case
         Just (CtlStop _) -> pure ()
