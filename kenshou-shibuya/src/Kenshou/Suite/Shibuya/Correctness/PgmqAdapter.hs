@@ -18,6 +18,7 @@ import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), knobInt, knobText, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
+import Kenshou.Suite.Shibuya.Correctness.PgmqAckMapping qualified as PgmqAckMapping
 import Kenshou.Suite.Shibuya.Fixture.Pgmq (PgmqFixture (..), dlqRowsWithReason, queueRows, runPgmqStack, withPgmqFixture)
 import Pgmq.Effectful (Message (..), MessageBody (..), ReadMessage (..), SendMessage (..), readMessage, sendMessage)
 import Shibuya.Adapter.Pgmq (PgmqAdapterConfig (..), PgmqAdapterEnv (..), PollingConfig (..), defaultConfig, directDeadLetter, mkPgmqAdapterEnv, pgmqAdapter)
@@ -27,7 +28,7 @@ import Shibuya.Core.Metrics (ProcessorId (..))
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [shutdownLatency, autoDeadLetterCountsDeliveries]
+scenarios = [PgmqAckMapping.scenario, shutdownLatency, autoDeadLetterCountsDeliveries]
 
 autoDeadLetterCountsDeliveries :: Scenario
 autoDeadLetterCountsDeliveries =

@@ -3,14 +3,19 @@ module Kenshou.Suite.Shibuya.Fixture.Pgmq
     withPgmqFixture,
     runPgmqStack,
     queueRows,
+    archiveRows,
+    queueReadState,
+    queuePayloads,
     dlqRowsWithReason,
   )
 where
 
 import Control.Exception (bracket, finally)
+import Data.Aeson (Value)
 import Data.Int (Int64)
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Data.Time.Clock (UTCTime)
 import Effectful (Eff, IOE, runEff)
 import Effectful.Error.Static (Error, runErrorNoCallStack)
 import Hasql.Connection.Settings qualified as Connection
@@ -69,6 +74,31 @@ queueRows :: PgmqFixture -> IO Int64
 queueRows fixture = do
   let table = "pgmq.q_" <> queueNameToText fixture.queue
       statement = Statement.preparable ("select count(*) from " <> table) Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
+  result <- Pool.use fixture.pool (Session.statement () statement)
+  either (ioError . userError . show) pure result
+
+archiveRows :: PgmqFixture -> IO Int64
+archiveRows fixture = do
+  let table = "pgmq.a_" <> queueNameToText fixture.queue
+      statement = Statement.preparable ("select count(*) from " <> table) Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
+  result <- Pool.use fixture.pool (Session.statement () statement)
+  either (ioError . userError . show) pure result
+
+queueReadState :: PgmqFixture -> IO [(Int64, UTCTime)]
+queueReadState fixture = do
+  let table = "pgmq.q_" <> queueNameToText fixture.queue
+      statement =
+        Statement.preparable
+          ("select read_ct, vt from " <> table <> " order by msg_id")
+          Encoders.noParams
+          (Decoders.rowList ((,) <$> (fromIntegral <$> Decoders.column (Decoders.nonNullable Decoders.int4)) <*> Decoders.column (Decoders.nonNullable Decoders.timestamptz)))
+  result <- Pool.use fixture.pool (Session.statement () statement)
+  either (ioError . userError . show) pure result
+
+queuePayloads :: PgmqFixture -> IO [Value]
+queuePayloads fixture = do
+  let table = "pgmq.q_" <> queueNameToText fixture.queue
+      statement = Statement.preparable ("select message from " <> table <> " order by msg_id") Encoders.noParams (Decoders.rowList (Decoders.column (Decoders.nonNullable Decoders.jsonb)))
   result <- Pool.use fixture.pool (Session.statement () statement)
   either (ioError . userError . show) pure result
 

@@ -94,6 +94,7 @@ cellsOf scenario = case renderScenarioId scenario of
   "shibuya/metrics/concurrency/websocket-slot-accounting" -> [(MetricsWebSocket, Normal), (MetricsWebSocket, SynchronousException), (MetricsWebSocket, Cancellation), (MetricsWebSocket, RepeatedStop)]
   "shibuya/pgmq-adapter/correctness/shutdown-latency-is-bounded-by-polling" -> [(PgmqPersistence, RepeatedStop)]
   "shibuya/pgmq-adapter/correctness/auto-dead-letter-counts-deliveries" -> [(PgmqPersistence, Timeout)]
+  "shibuya/pgmq-adapter/correctness/ack-decision-mapping" -> [(PgmqPersistence, Normal), (RetryLease, Normal)]
   _ -> []
 
 -- Add reasons only for cells which cannot be exercised through public APIs.
