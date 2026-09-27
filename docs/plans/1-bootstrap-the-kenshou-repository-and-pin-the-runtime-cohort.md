@@ -27,6 +27,11 @@ provenance:
       at: 2026-09-24T22:53:06Z
       mode: "update"
       note: "Consolidated Progress into delivered outcomes and remaining acceptance"
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-27T17:44:10Z
+      mode: "implement"
+      note: "Pinned the head Kafka stream classification remediation and verified cohort resolution."
 ---
 
 # Bootstrap the kenshou repository and pin the runtime cohort
@@ -50,6 +55,7 @@ This plan owns Integration Points 1 and 2 of `docs/masterplans/1-build-an-extens
 ## Progress
 
 - [x] (2026-09-21) Repository and cohort bootstrap complete: the Nix shell, released and head cohort identity, CLI build identity, combined migration check, CI, and ADR bundle are in place. Validation and implementation detail remain in Outcomes & Retrospective and Concrete Steps.
+- [x] (2026-09-27) Added `hw-kafka-streamly` commit `42163022038be4734cff64e96b83360be9c78318` to the head descriptor and Cabal project, so the head Kafka fatal-error path includes both required remediation commits. The head solver dry run and full CLI build pass, `kenshou cohort check` confirms the resolved identity, the five Kafka package tests pass, and the broker-backed fencing scenario passes with the fatal error observed. Restored the released selector afterward.
 
 ## Surprises & Discoveries
 
@@ -73,6 +79,8 @@ implementation. Provide concise evidence.
 - The installed `adopt-architecture-decisions` blueprint was 0.15.0 while the authoritative `mori://shinzui/okf-profiles` checkout and upstream tag were 0.18.0. Refreshing it before adoption installed the 0.18.0 profile descriptor; the batch agent then preserved ADR prose, assigned `ADR-1`, created the OKF v0.2 index and log, registered the bundle, and recorded its receipt in `.seihou/manifest.json`.
 
 - The blueprint retained the bootstrap-era conditional Hackage probe in `haskell-test`, which skipped the now-local `kenshou-cli-test`. The assembled `just verify` run exposed that omission; making both local unit-suite targets unconditional gives the gate 9 unit examples plus the 4 live link-proof examples.
+
+- EP-11 found the head cohort still selected Hackage `hw-kafka-streamly` 0.2.0.0, whose fatal-error classifier predates the upstream fix. Hackage and the upstream tag still identify 0.2.0.0 as the latest release; the remediation commit is available by immutable Git SHA and resolves with the existing cohort bounds.
 
 
 ## Decision Log
@@ -115,9 +123,9 @@ Record every decision made while working on the plan.
   Rationale: "Released" means what a service gets with no extra pins; `shibuya-kafka-adapter` and `kafka-effectful` do not pass their fork pin on to dependents. The fork fixes consumer fatal-error blindness and a message leak, which is exactly the kind of difference the two cohorts exist to expose. Integration Point 2 makes this a cohort property, not a scenario knob.
   Date: 2026-09-20
 
-- Decision: The head cohort replaces only shibuya (`shibuya-core`, `shibuya-metrics`) and `hw-kafka-client` for now.
-  Rationale: Those are the two components with known unreleased fixes. keiro's master still bounds `kiroku-store-migrations ^>=0.4.0.0`, so moving kiroku or keiro to git would need more `allow-newer`. The plan documents how to add a component later.
-  Date: 2026-09-20
+- Decision: The head cohort replaces shibuya (`shibuya-core`, `shibuya-metrics`), `hw-kafka-client`, and `hw-kafka-streamly` with immutable Git commits.
+  Rationale: EP-11's fatal-error comparison needs the `hw-kafka-client` binding to deliver the error and `hw-kafka-streamly` to classify it. Commit `42163022038be4734cff64e96b83360be9c78318` contains that classification fix while Hackage 0.2.0.0 does not. keiro's master still bounds `kiroku-store-migrations ^>=0.4.0.0`, so moving kiroku or keiro to git would need more `allow-newer`.
+  Date: 2026-09-27
 
 - Decision: The link-proof is a dedicated test suite `kenshou-linkproof` inside `kenshou-cli`, not part of `kenshou-core-test`.
   Rationale: `kenshou-cli` is the one package allowed to depend on everything; keeping the runtime closure out of `kenshou-core`'s test dependencies keeps the kernel's unit tests fast.
@@ -161,7 +169,7 @@ this section into docs/adr/. Keep task-local execution details here.
 
 - Milestone 1 produced the locked Nix shell and the first buildable `kenshou-core` package. The shell reports GHC 9.12.4, cabal 3.16.1.0, PostgreSQL 18.6 on `PATH`, PostgreSQL 17.11 through `KENSHOU_PG17_BIN`, and librdkafka 2.15.0; `cabal build all`, a second `nix fmt -- --fail-on-change`, and `just process-compose-check` all pass. The generated commit hook also rejected a real commit attempt whose subject contained a literal `\n` escape.
 
-- Milestone 2 now has self-contained released and head cohort definitions, schema-validated descriptors, deterministic resolved identities, explicit mismatch diagnostics, and a Git-aware CLI built by both Cabal and Nix. Switching through the recipe changes the shibuya and hw-kafka-client sources to their pinned git revisions and back; the core and CLI suites pass 9 examples, an unknown cohort command exits 2, and a dirty Nix source reports `kenshou v0.1.0.0 (dirty)` instead of a stale revision. From clean builds at commit `c524951`, both the Cabal and Nix executables report `kenshou v0.1.0.0 (c524951)`.
+- Milestone 2 now has self-contained released and head cohort definitions, schema-validated descriptors, deterministic resolved identities, explicit mismatch diagnostics, and a Git-aware CLI built by both Cabal and Nix. Switching through the recipe changes the shibuya, hw-kafka-streamly and hw-kafka-client sources to their pinned git revisions and back; the core and CLI suites pass 9 examples, an unknown cohort command exits 2, and a dirty Nix source reports `kenshou v0.1.0.0 (dirty)` instead of a stale revision. From clean builds at commit `c524951`, both the Cabal and Nix executables report `kenshou v0.1.0.0 (c524951)`.
 
 - Milestone 3 links every descriptor package into one test component and proves four live boundaries on both cohorts: the shared migration ledger contains exactly `kiroku`, `keiro`, and `pgmq`; a Kiroku event round-trips; a PGMQ message round-trips; and a librdkafka producer handle is created, flushed, and closed. Both released and head runs pass 4 examples, so the unreleased shibuya revision `6461c74cda52…` and hw-kafka-client fork revision `6caed636898a…` require no compatibility exclusions. The tracked selector and regenerated plan are restored to released.
 

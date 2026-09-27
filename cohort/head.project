@@ -1,5 +1,5 @@
 -- HISTORICAL HEAD COHORT: 2026-09-20 packages with selected remediation commits.
--- Descriptor: cohort/head.json. Verified by dry-run on 2026-09-20.
+-- Descriptor: cohort/head.json. Verified by build and cohort check on 2026-09-27.
 index-state: 2026-09-20T13:44:47Z
 
 -- Source-repository packages below are already project packages. Keep every
@@ -21,7 +21,6 @@ extra-packages:
   shibuya-pgmq-adapter,
   shibuya-kafka-adapter,
   kafka-effectful,
-  hw-kafka-streamly,
   pgmq-core,
   pgmq-hasql,
   pgmq-effectful,
@@ -98,6 +97,14 @@ source-repository-package
   subdir:
     shibuya-core
     shibuya-metrics
+
+-- hw-kafka-streamly head: classifies librdkafka's generic fatal error as fatal
+-- so the adapter can surface it once the client fork delivers it in-band.
+source-repository-package
+  type: git
+  location: https://github.com/shinzui/hw-kafka-streamly.git
+  tag: 42163022038be4734cff64e96b83360be9c78318
+  subdir: hw-kafka-streamly
 
 -- hw-kafka-client fork: surfaces consumer fatal errors in async poll mode and
 -- stops leaking polled messages.
