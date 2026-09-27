@@ -211,10 +211,10 @@ main = hspec do
             target = "/runs/selftest/2026/09/01997f3a-5b7c-7e21-8a44-0d6c2f9b1e55.md"
             attestation verdict at = Text.unlines ["---", "type: Attestation", "run: " <> target, "verdict: " <> verdict, "attestedAt: " <> at, "---"]
         createDirectoryIfMissing True attestations
-        Text.IO.writeFile (attestations </> "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e58.md") (attestation "confirmed" "2026-09-27T00:00:03Z")
+        Text.IO.writeFile (attestations </> "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e58.md") (attestation "confirmed" "2099-09-27T00:00:03Z")
         confirmedHistory <- history bundle (HistoryQuery scenario Nothing [] Nothing False) >>= either (fail . show) pure
         (confirmedHistory.entries !! 0).trust `shouldBe` "machine-confirmed"
-        Text.IO.writeFile (attestations </> "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e59.md") (attestation "refuted" "2026-09-27T00:00:04Z")
+        Text.IO.writeFile (attestations </> "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e59.md") (attestation "refuted" "2099-09-27T00:00:04Z")
         refutedHistory <- history bundle (HistoryQuery scenario Nothing [] Nothing False) >>= either (fail . show) pure
         (refutedHistory.entries !! 0).trust `shouldBe` "unverified"
 
@@ -411,17 +411,40 @@ main = hspec do
       mapM_ (checkRoundTrip base) ["off", "on", "no", "yes", "null", "~", "true", "18", "1e10"]
 
   describe "gcloudStore" do
-    it "requires the active project and reads size and SHA-256 metadata" do
+    it "requires the active project and uploads with a single generation precondition" do
       withSystemTempDirectory "kenshou-gcloud-store" $ \root -> do
         let executable = root </> "fake-gcloud"
+            source = root </> "source"
             Sha256 digest = sha256Bytes "sealed"
-            script = "#!/bin/sh\nif [ \"$1\" = config ]; then printf 'tan-nb-exp\\n'; exit 0; fi\nprintf '{\"size\":\"6\",\"metadata\":{\"kenshou-sha256\":\"" <> Text.unpack digest <> "\"}}\\n'\n"
+            script =
+              "#!/bin/sh\n"
+                <> "if [ \"$1\" = config ]; then printf 'tan-nb-exp\\n'; exit 0; fi\n"
+                <> "if [ \"$1\" = storage ] && [ \"$2\" = objects ]; then\n"
+                <> "  if [ ! -f \"$(dirname \"$0\")/uploaded\" ]; then echo 'not found' >&2; exit 1; fi\n"
+                <> "  printf '{\"size\":\"6\",\"metadata\":{\"kenshou-sha256\":\""
+                <> Text.unpack digest
+                <> "\"}}\\n'; exit 0\n"
+                <> "fi\n"
+                <> "if [ \"$1\" = storage ] && [ \"$2\" = cp ]; then\n"
+                <> "  seen=0\n"
+                <> "  for arg in \"$@\"; do\n"
+                <> "    if [ \"$arg\" = --no-clobber ]; then echo 'conflicting no-clobber' >&2; exit 2; fi\n"
+                <> "    if [ \"$arg\" = --if-generation-match=0 ]; then seen=1; fi\n"
+                <> "  done\n"
+                <> "  if [ \"$seen\" != 1 ]; then echo 'missing generation precondition' >&2; exit 2; fi\n"
+                <> "  touch \"$(dirname \"$0\")/uploaded\"; exit 0\n"
+                <> "fi\n"
+                <> "exit 2\n"
         writeFile executable script
+        ByteString.Char8.writeFile source "sealed"
         permissions <- getPermissions executable
         setPermissions executable permissions {executable = True}
         let matching = gcloudStoreWith executable "tan-nb-exp"
             mismatched = gcloudStoreWith executable "other-project"
+        matching.statObject "gs://bucket/object" `shouldReturn` Right Nothing
+        matching.putObjectIfAbsent source "gs://bucket/object" "application/octet-stream" `shouldReturn` Right ObjectCreated
         matching.statObject "gs://bucket/object" `shouldReturn` Right (Just (ObjectStat 6 (Just (Sha256 digest))))
+        matching.putObjectIfAbsent source "gs://bucket/object" "application/octet-stream" `shouldReturn` Right ObjectPresent
         mismatch <- mismatched.statObject "gs://bucket/object"
         mismatch `shouldSatisfy` isLeft
 

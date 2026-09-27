@@ -184,7 +184,7 @@ gcloudStoreWith executable project = store
                         Right (Just observed) -> pure (if observed == expected then Right ObjectPresent else Left (ObjectConflict uri))
                         Right Nothing -> do
                           let Sha256 digest = sha256Bytes contents
-                          uploaded <- command ["storage", "cp", source, Text.unpack uri, "--no-clobber", "--if-generation-match=0", "--custom-metadata=kenshou-sha256=" <> Text.unpack digest, "--content-type=" <> Text.unpack mediaType, projectFlag, "--quiet"]
+                          uploaded <- command ["storage", "cp", source, Text.unpack uri, "--if-generation-match=0", "--custom-metadata=kenshou-sha256=" <> Text.unpack digest, "--content-type=" <> Text.unpack mediaType, projectFlag, "--quiet"]
                           after <- stat uri
                           pure case after of
                             Left err -> Left err
