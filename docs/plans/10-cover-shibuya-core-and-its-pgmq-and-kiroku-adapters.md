@@ -176,6 +176,7 @@ After this plan a maintainer can, from this repository, run `kenshou list --laye
 - [x] (2026-09-26) Expanded `postgres-outage-and-reconnect` revision 2 with a distinct dedicated-listener fault. The fixture takes a `pg_stat_activity` baseline before starting the consumer, finds the one new `kiroku-listener` PID whose SQL is `LISTEN`, and terminates that exact PID. Current 0.5.1.3 and historical 0.5.1.2 passed on PostgreSQL 18 and, on 2026-09-27, PostgreSQL 17: the listener reconnected with a distinct PID, all 80 events had exactly one durable effect, and the checkpoint reached the final position. The older named-backend and postmaster arms also passed in both PostgreSQL 17 runs, retaining the scoped backend checkpoint-stall implementation finding.
 - [x] (2026-09-27) Completed all nine Kiroku adapter scenarios on historical 0.5.1.2 and current 0.5.1.3 across PostgreSQL 17 and 18, including the crash-shape matrix and revision-two acquisition and listener-outage arms. Historical acquisition reproduces scoped REV-13-F1; the other contract checks pass.
 - [x] (2026-09-27) Registered real PGMQ and Kiroku trace-continuity scenarios and passed clean PostgreSQL 18 runs on released, pinned head, and isolated current Hackage lanes. PGMQ checked three distinct W3C parents and acknowledgement decisions through async processing, the active and upstream DLQ headers, and verbatim header forwarding with tracing off. Kiroku checked three distinct event-metadata parents, acknowledgement spans, and the final subscription checkpoint. All nine results are nonblocking; the exact run IDs are below. `nix develop -c just verify` passed before the clean runs.
+- [x] (2026-09-27) Registered `core-ordering/benchmark/concurrency-sweep` with an intended-send timestamp carried through finalization, bounded synthetic intake, serial/configured comparison arms, rate, concurrency, ordering and partition knobs, complete measurement histograms and RTS allocation samples. Three clean interleaved 1,000-message local pairs at 200/s and 1 ms handler delay passed at harness revision `e4d2fe0`; their comparison `01a0e4ca-e89c-7230-8efd-b67fac7690f2` passed throughput and was inconclusive for p99. The exact IDs are below. `nix develop -c just verify` passed before a final bounded-knob refinement; the package rebuild and formatter gate passed afterward. The local result is indicative; telemetry arms and the controlled cell comparison remain open.
 - [ ] Deliver the remaining benchmarks, soaks, telemetry overhead comparisons, upstream finding audit, and ADR/outcome distillation.
 
 ### PostgreSQL 18 trace-continuity results
@@ -187,6 +188,18 @@ Each row is a clean, sealed `runs/<id>/run-result.json` at the listed harness re
 | PGMQ SDK in-memory | `01a0e4ab-77b4-7399-80db-653dc6593c1e` | `01a0e4ae-b7a5-7249-ac71-084b7b206d5f` | `01a0e4b1-8152-7058-8377-5d44c0b6c9e1` |
 | PGMQ tracing off | `01a0e4ab-855a-7756-94a0-c7ea349a76cb` | `01a0e4ae-c529-77cb-b1d2-1a9c0dc419bc` | `01a0e4b1-8a67-7220-8c8a-12faf2d53f30` |
 | Kiroku SDK in-memory | `01a0e4ab-91eb-747a-a0a3-8462c7ac4775` | `01a0e4ae-d2e1-73cb-8b00-ac7dc553b6a3` | `01a0e4b1-9326-7120-bf23-c633c1548f13` |
+
+### Core ordering benchmark comparison
+
+All six runs used checked-in `specs/shibuya-concurrency-sweep-{serial,async}.json`, matching seeds within each pair, the released cohort, and clean harness revision `e4d2fe0`. Each finalized all 1,000 scheduled messages and recorded throughput, p50/p99/p99.9 latency and RTS allocated bytes per operation. The `serial` arm uses one handler; `async` uses four. The comparison used `policies/shibuya-concurrency-sweep.json` with `--vary knob:bench.arm`.
+
+| Seed | Serial baseline | Async candidate |
+| --- | --- | --- |
+| 101 | `01a0e4c9-6b1a-7175-8ca9-a8646834f5e9` | `01a0e4c9-83ce-73bb-8487-f9c75e978a8c` |
+| 102 | `01a0e4c9-b545-7232-9920-754fa06169c1` | `01a0e4c9-9ca7-740e-bec5-148f9826cd6b` |
+| 103 | `01a0e4c9-cdf4-741c-8ceb-24d1f7cd8b5b` | `01a0e4c9-e68c-7618-b902-b97737bb0a4a` |
+
+The interleaved order was serial/async, async/serial, serial/async. Comparison `01a0e4ca-e89c-7230-8efd-b67fac7690f2` is `inconclusive`: throughput stayed near the offered 200/s and passed its policy, while p99 latency varied from 3.6–102 ms on serial and 6.1–46.9 ms on async. This local run establishes the measurement path and conservation oracle; it does not establish a performance advantage. A controlled cell rerun and telemetry overhead arms remain necessary for Milestone 4 acceptance.
 
 ### Current-release PGMQ CLI results
 
