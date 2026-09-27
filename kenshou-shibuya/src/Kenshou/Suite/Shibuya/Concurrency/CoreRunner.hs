@@ -642,7 +642,7 @@ adapterShutdownFailure =
       dimensions = noDimensions,
       phases = zeroPhases,
       requires = noEnvironment,
-      knownDefect = knownOnReleasedCore (rev 3 "sibling-shutdown-skipped"),
+      knownDefect = knownOnReleasedCore (revAt "mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-6" "sibling-shutdown-skipped"),
       run = runAdapterShutdownFailure
     }
 

@@ -123,7 +123,8 @@ The released core is Shibuya 0.9.0.3. The pinned remediation line carries lifecy
 
 | Finding | Historical outcome | Remediation or current outcome | Owner reference |
 |---|---|---|---|
-| Blocked adapter shutdown, startup cancellation and sibling cleanup | Reproduced on core 0.9.0.3 | Focused cases pass on pinned remediation | `mori://shinzui/shibuya/okf/reviews/concepts/REV-2`, `mori://shinzui/shibuya/okf/reviews/concepts/REV-3` |
+| Blocking adapter shutdown and startup cancellation | Reproduced in focused core 0.9.0.3 runs | Focused cases pass on pinned remediation | `mori://shinzui/shibuya/okf/reviews/concepts/REV-2`, `mori://shinzui/shibuya/okf/reviews/concepts/REV-3` |
+| Throwing adapter shutdown skips sibling cleanup | Reproduced on core 0.9.0.3 | Current 0.10.0.0 case passes | `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-6` |
 | Duplicate processor IDs discard a live handle | Reproduced on core 0.9.0.3 | Rejected before source pull on 0.10.0.0 | `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-2` |
 | Idle-intake halt does not wake waitApp | Reproduced on core 0.9.0.3 | Nonserial controls pass on 0.10.0.0 | `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-4` |
 | Exhausted finalizer is supervised as graceful completion | Reproduced on core 0.9.0.3 | Current 0.10.0.0 case passes | `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-5` |
