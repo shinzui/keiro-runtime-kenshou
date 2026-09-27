@@ -24,6 +24,7 @@ library
   hs-source-dirs: src
   exposed-modules:
     Kenshou.Suite.Shibuya
+    Kenshou.Suite.Shibuya.Bench.BatchSizeTimeout
     Kenshou.Suite.Shibuya.Bench.ConcurrencySweep
     Kenshou.Suite.Shibuya.Bench.FrameworkTax
     Kenshou.Suite.Shibuya.Cohort

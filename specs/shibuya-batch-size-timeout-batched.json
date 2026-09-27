@@ -1,0 +1,14 @@
+{
+  "schema": "kenshou.run-spec/v1",
+  "scenario": "shibuya/core-batch/benchmark/batch-size-and-timeout",
+  "dimensions": {},
+  "knobs": {
+    "bench.arm": "batched",
+    "bench.rate": 200,
+    "shibuya.messages": 1000,
+    "shibuya.handler-delay-micros": 0,
+    "shibuya.batch.size": 10,
+    "shibuya.batch.timeout-ms": 100
+  },
+  "environment": { "placement": "local" }
+}
