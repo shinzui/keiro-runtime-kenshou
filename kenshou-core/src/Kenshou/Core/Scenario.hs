@@ -2,6 +2,7 @@ module Kenshou.Core.Scenario
   ( Tier (..),
     Placement (..),
     KnownDefect (..),
+    individualKnownDefects,
     CohortScope (..),
     PackageCondition (..),
     cohortScopeApplies,
@@ -34,13 +35,19 @@ data Tier = TierSmoke | TierStandard | TierExtended | TierSoak deriving stock (E
 
 data Placement = PlaceLocal | PlaceCell | PlaceEither deriving stock (Eq, Ord, Show)
 
-data KnownDefect = KnownDefect
-  { reference :: Text,
-    summary :: Text,
-    expectedFailures :: [Text],
-    appliesTo :: CohortScope
-  }
+data KnownDefect
+  = KnownDefect
+      { reference :: Text,
+        summary :: Text,
+        expectedFailures :: [Text],
+        appliesTo :: CohortScope
+      }
+  | KnownDefectGroup (NonEmpty KnownDefect)
   deriving stock (Eq, Show)
+
+individualKnownDefects :: KnownDefect -> [KnownDefect]
+individualKnownDefects (KnownDefectGroup defects) = concatMap individualKnownDefects defects
+individualKnownDefects defect = [defect]
 
 data CohortScope = AllCohorts | OnlyWhen (NonEmpty PackageCondition) deriving stock (Eq, Show)
 

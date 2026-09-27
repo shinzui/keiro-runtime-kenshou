@@ -2,6 +2,7 @@ module Kenshou.Core.Run
   ( RunnerConfig (..),
     RunOutput (..),
     executeRun,
+    defectDisposition,
   )
 where
 
@@ -11,6 +12,7 @@ import Data.Aeson (ToJSON, Value, encode, object, (.=))
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.List.NonEmpty (NonEmpty (..))
+import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -30,7 +32,7 @@ import Kenshou.Core.Outcome (Outcome (..), outcomeExitCode)
 import Kenshou.Core.RunResult
 import Kenshou.Core.RunSpec (CohortExpectation (..), EffectiveRunSpec (..), EnvironmentSpec (..), RunSpec)
 import Kenshou.Core.RunSpec.Resolve (SpecError (..), resolveRunSpec)
-import Kenshou.Core.Scenario (KnownDefect (..), Scenario (..), ScenarioReport (..), cohortScopeApplies, infrastructureFailureBecause)
+import Kenshou.Core.Scenario (KnownDefect (..), Scenario (..), ScenarioReport (..), cohortScopeApplies, individualKnownDefects, infrastructureFailureBecause)
 import System.Directory (createDirectory, createDirectoryIfMissing, doesDirectoryExist, getCurrentDirectory, renameFile)
 import System.FilePath ((</>))
 import System.Timeout (timeout)
@@ -125,18 +127,22 @@ cohortMismatch _ Nothing = False
 cohortMismatch cohort (Just expectation) = unPlanHash cohort.identityPlanHash /= expectation.planHash
 
 defectDisposition :: Bool -> CohortIdentity -> Scenario -> ScenarioReport -> (Maybe (KnownDefect, KnownDefectStatus), Bool, Int)
-defectDisposition strict cohort scenario report = case scenario.knownDefect of
-  Just defect | not (cohortScopeApplies cohort defect.appliesTo) -> ordinary
-  Nothing -> (Nothing, report.outcome /= Passed, outcomeExitCode report.outcome)
-  Just defect ->
+defectDisposition strict cohort scenario report = case NonEmpty.nonEmpty applicable of
+  Nothing -> ordinary
+  Just defects ->
     let status
-          | report.outcome == Failed && all (`elem` defect.expectedFailures) report.failures = DefectReproduced
+          | report.outcome == Failed && not (null report.failures) && all (`elem` coveredLabels) report.failures = DefectReproduced
           | report.outcome == Failed = DefectDifferentFailure
           | otherwise = DefectNotReproduced
         blocking = report.outcome /= Passed && status /= DefectReproduced
         exitCode = if status == DefectReproduced && not strict then 0 else outcomeExitCode report.outcome
-     in (Just (defect, status), blocking, exitCode)
+        identified = case NonEmpty.toList defects of
+          [single] -> single
+          _ -> KnownDefectGroup defects
+     in (Just (identified, status), blocking, exitCode)
   where
+    applicable = filter (cohortScopeApplies cohort . (.appliesTo)) (maybe [] individualKnownDefects scenario.knownDefect)
+    coveredLabels = concatMap (.expectedFailures) applicable
     ordinary = (Nothing, report.outcome /= Passed, outcomeExitCode report.outcome)
 
 atomicEncode :: (ToJSON value) => FilePath -> value -> IO ()

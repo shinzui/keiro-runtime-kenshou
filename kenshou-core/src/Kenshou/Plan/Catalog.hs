@@ -98,8 +98,12 @@ instance ToJSON ScenarioInfo where
         "placement" .= renderPlacement scenario.placement,
         "knobs" .= scenario.knobs,
         "dimensions" .= scenario.dimensions,
-        "knownDefect" .= fmap (.reference) scenario.knownDefect
+        "knownDefect" .= fmap defectReferences scenario.knownDefect
       ]
+    where
+      defectReferences defect = case individualKnownDefects defect of
+        [single] -> toJSON single.reference
+        many -> toJSON (fmap (.reference) many)
 
 parseTier :: Text -> Parser Tier
 parseTier = \case

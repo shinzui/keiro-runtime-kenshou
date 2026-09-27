@@ -2,7 +2,7 @@
 type: Architecture Decision Record
 title: Distinguish documented limitations from known defects
 description: Verification classifies unpromised behavior as implementation findings and links confirmed contract failures to reproducible owner-repository bug reports.
-timestamp: 2026-09-24T02:30:02Z
+timestamp: 2026-09-27T16:25:20Z
 generated:
   by: process:codex
   at: "2026-09-22T02:17:39Z"
@@ -78,4 +78,13 @@ faster retries after publisher pool errors.
 - Scenario documentation must state whether it verifies a contract, an
   implementation property, or a referenced known defect.
 - A confirmed runtime failure has a versioned, reproducible owner-repository
-  record and a canonical URI that remains visible in this repository.
+record and a canonical URI that remains visible in this repository.
+
+One scenario may reproduce independent owner defects in the same run. In that
+case it declares a group of separately scoped `KnownDefect` entries. The
+runner considers only entries applicable to the resolved cohort and makes a
+failed run nonblocking only when it has at least one failure label and every
+label belongs to an applicable entry. A new label still blocks. The run
+result records each applicable reference and whether its own labels occurred;
+the evidence record preserves all of those references. Existing single-defect
+results retain their original JSON shape.

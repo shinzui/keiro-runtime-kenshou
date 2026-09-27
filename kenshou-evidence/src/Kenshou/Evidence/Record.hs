@@ -290,6 +290,11 @@ buildRunRecord input source dataLinks = do
   components <- concat <$> traverse componentRefs cohortIdentity.identityComponents
   knownDefects <- case source.result.resultKnownDefect of
     Nothing -> Right []
+    Just value@(Object fields) -> case KeyMap.lookup "defects" fields of
+      Nothing -> (: []) <$> jsonField "reference" value
+      Just raw -> do
+        defects <- decoded "defects" raw :: Either RecordError [Value]
+        traverse (jsonField "reference") defects
     Just value -> (: []) <$> jsonField "reference" value
   knobs <- case toJSON source.spec of
     Object fields -> case KeyMap.lookup "knobs" fields of

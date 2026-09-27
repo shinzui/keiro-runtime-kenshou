@@ -411,8 +411,11 @@ short trial length make these deltas unsuitable as overhead claims.
 | `kafka/keiro-records/**` | `mori://shinzui/keiro` record conversion and `mori://shinzui/keiro/packages/keiro-core` integration events |
 | `kafka/pipeline/**`, `kafka/broker/**` | The assembled Kafka edge and disposable Redpanda broker |
 
-The plan's unresolved blocking findings remain in
-[the ExecPlan](../plans/11-cover-the-kafka-transport-edge-with-a-disposable-broker.md):
-the outage replacement control, rebalance offset order and duplicate window,
-and the zombie duplicate bound. The upstream rebalance worker-exit defect is
-`mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-4`.
+The remaining acceptance work is tracked in
+[the ExecPlan](../plans/11-cover-the-kafka-transport-edge-with-a-disposable-broker.md).
+The rebalance scenario separately identifies the released adapter's early
+worker exit as `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-4`
+and its within-assignment order reversal as
+`mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-6`.
+Unknown failures, including a duplicate below a sampled commit position,
+remain blocking.

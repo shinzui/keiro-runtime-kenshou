@@ -39,7 +39,7 @@ scenarios :: [Scenario]
 scenarios =
   [ Scenario
       { id = either (error . Text.unpack) id (parseScenarioId "kafka/adapter/concurrency/group-rebalance-with-inflight"),
-        revision = 1,
+        revision = 2,
         summary = "Checks delivery, ordering, and exclusive ownership while a consumer group changes membership.",
         tier = TierStandard,
         placement = PlaceEither,
@@ -55,12 +55,22 @@ scenarios =
         requires = noEnvironment,
         knownDefect =
           Just
-            KnownDefect
-              { reference = "mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-4",
-                summary = "Released adapter workers can end normally during consumer-group rebalances.",
-                expectedFailures = ["rebalance-survivor-exit", "rebalance-no-loss", "rebalance-zero-lag"],
-                appliesTo = OnlyWhen (ResolvedFromHackage "shibuya-kafka-adapter" :| [VersionBelow "shibuya-kafka-adapter" "0.9.0.2"])
-              },
+            ( KnownDefectGroup
+                ( KnownDefect
+                    { reference = "mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-4",
+                      summary = "Released adapter workers can end normally during consumer-group rebalances.",
+                      expectedFailures = ["rebalance-survivor-exit", "rebalance-no-loss", "rebalance-zero-lag"],
+                      appliesTo = OnlyWhen (ResolvedFromHackage "shibuya-kafka-adapter" :| [VersionBelow "shibuya-kafka-adapter" "0.9.0.2"])
+                    }
+                    :| [ KnownDefect
+                           { reference = "mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-6",
+                             summary = "Rebalances can replay committed offsets out of order within one assignment.",
+                             expectedFailures = ["rebalance-assignment-order", "rebalance-duplicate-within-assignment"],
+                             appliesTo = OnlyWhen (ResolvedFromHackage "shibuya-kafka-adapter" :| [VersionBelow "shibuya-kafka-adapter" "0.9.0.2"])
+                           }
+                       ]
+                )
+            ),
         run = runGroupRebalance
       }
   ]
@@ -145,8 +155,12 @@ runGroupRebalance context = do
         windows = [(addUTCTime (-16) instant, addUTCTime 16 instant) | instant <- timeline]
         withinWindow instant = any (\(start, end) -> instant >= start && instant <= end) windows
         byId = Map.fromListWith (<>) [(fact.value, [fact]) | (_, fact) <- facts]
-        duplicatesBeyondCommit = [value | (value, occurrences) <- Map.toList byId, (previous, duplicate) <- consecutive (sortOn (.at) occurrences), not (withinWindow duplicate.at || replayAllowed boundaries previous duplicate)]
         assignments = Map.fromList [(member, rebalanceFacts rows) | (member, rows) <- reports]
+        assignmentEvents = [event | events <- Map.elems assignments, event <- events, event.kind `elem` ["assign", "revoke"]]
+        duplicatePairs = [(value, previous, duplicate) | (value, occurrences) <- Map.toList byId, (previous, duplicate) <- consecutive (sortOn (.at) occurrences), not (withinWindow duplicate.at)]
+        duplicatesBelowSampledCommit = [value | (value, previous, duplicate) <- duplicatePairs, belowSampledCommit boundaries previous duplicate]
+        duplicatesWithinAssignment = [value | (value, previous, duplicate) <- duplicatePairs, not (assignmentChanged assignmentEvents previous duplicate || replayAllowed boundaries previous duplicate)]
+        duplicatesAcrossUnsampledBoundary = [value | (value, previous, duplicate) <- duplicatePairs, assignmentChanged assignmentEvents previous duplicate, not (belowSampledCommit boundaries previous duplicate || replayAllowed boundaries previous duplicate)]
         orderedViolations =
           [ (member, partition, period)
           | (member, rows) <- reports,
@@ -166,11 +180,12 @@ runGroupRebalance context = do
           ["rebalance-ack-count" | Set.size ackedIds /= messages || deliveryFailures > 0]
             <> ["rebalance-no-loss" | not (null missing)]
             <> ["rebalance-zero-lag" | not zeroLag]
-            <> ["rebalance-duplicate-beyond-commit" | not (null duplicatesBeyondCommit)]
+            <> ["rebalance-duplicate-beyond-commit" | not (null duplicatesBelowSampledCommit)]
+            <> ["rebalance-duplicate-within-assignment" | not (null duplicatesWithinAssignment)]
             <> ["rebalance-assignment-order" | not (null orderedViolations)]
             <> ["rebalance-exclusive-owner" | not (null overlappingOwners)]
             <> ["rebalance-survivor-exit" | targetExitBeforeKill || not (null survivorErrors)]
-    putSummary context Verdicts "groupRebalance" (object ["acknowledged" .= Set.size ackedIds, "deliveryFailures" .= deliveryFailures, "handled" .= length facts, "missing" .= take 20 missing, "duplicateBeyondCommitBoundary" .= take 20 duplicatesBeyondCommit, "assignmentOrderViolations" .= take 20 orderedViolations, "overlappingOwners" .= take 20 overlappingOwners, "survivorErrors" .= survivorErrors, "targetExitBeforeKill" .= targetExitBeforeKill, "membershipEvents" .= timeline, "commitBoundaries" .= [object ["at" .= at, "offsets" .= [object ["partition" .= offset.partition.unPartitionId, "committed" .= offset.committed] | offset <- boundarySnapshot.offsets]] | (at, boundarySnapshot) <- boundaries], "zeroLag" .= zeroLag])
+    putSummary context Verdicts "groupRebalance" (object ["acknowledged" .= Set.size ackedIds, "deliveryFailures" .= deliveryFailures, "handled" .= length facts, "missing" .= take 20 missing, "duplicateBeyondCommitBoundary" .= take 20 duplicatesBelowSampledCommit, "duplicateWithinAssignment" .= take 20 duplicatesWithinAssignment, "duplicateAcrossUnsampledBoundary" .= take 20 duplicatesAcrossUnsampledBoundary, "assignmentOrderViolations" .= take 20 orderedViolations, "overlappingOwners" .= take 20 overlappingOwners, "survivorErrors" .= survivorErrors, "targetExitBeforeKill" .= targetExitBeforeKill, "membershipEvents" .= timeline, "commitBoundaries" .= [object ["at" .= at, "offsets" .= [object ["partition" .= offset.partition.unPartitionId, "committed" .= offset.committed] | offset <- boundarySnapshot.offsets]] | (at, boundarySnapshot) <- boundaries], "zeroLag" .= zeroLag])
     pure $ if null failures then passed else failedWith failures ("missing=" <> Text.pack (show (take 20 missing)) <> " order=" <> Text.pack (show (take 20 orderedViolations)) <> " overlap=" <> Text.pack (show (take 20 overlappingOwners)) <> " group=" <> Text.pack (show snapshot))
 
 produceOpenLoop :: KafkaEnv -> TopicName -> Int -> IORef [P.DeliveryReport] -> IO ()
@@ -204,6 +219,16 @@ replayAllowed boundaries previous current = case reverse [(at, snapshot) | (at, 
     offset : _ -> maybe True (fromIntegral current.offset >=) offset.committed
     [] -> False
   [] -> False
+
+assignmentChanged :: [RebalanceFact] -> OkFact -> OkFact -> Bool
+assignmentChanged events previous current =
+  any (\event -> event.at > previous.at && event.at <= current.at && current.partition `elem` event.partitions) events
+
+belowSampledCommit :: [(UTCTime, GroupSnapshot)] -> OkFact -> OkFact -> Bool
+belowSampledCommit boundaries previous current =
+  any
+    (\(at, snapshot) -> at > previous.at && at <= current.at && any (\offset -> offset.partition.unPartitionId == current.partition && maybe False (fromIntegral current.offset <) offset.committed) snapshot.offsets)
+    boundaries
 
 readInt :: ByteString.ByteString -> Maybe Int
 readInt bytes = case reads (ByteString.unpack bytes) of [(value, "")] -> Just value; _ -> Nothing

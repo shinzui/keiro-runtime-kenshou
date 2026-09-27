@@ -166,6 +166,11 @@ provenance:
       at: 2026-09-27T16:01:36Z
       mode: "implement"
       note: "Marked EP-19 complete after published profile adoption and validation."
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-27T16:28:26Z
+      mode: "implement"
+      note: "Recorded grouped owner-defect integration for the Kafka rebalance scenario."
 ---
 
 # Build an extensive verification suite for the keiro runtime
@@ -294,6 +299,13 @@ Integration Point 2 — the runtime cohort and its identity. Owner: EP-1. A coho
 
 Integration Point 3 — scenario identity, tags and registration. Owner: EP-2. A scenario identifier is the four-segment path `<layer>/<component>/<kind>/<name>`, for example `kiroku/append/concurrency/expected-version-race`. The layer is one of `selftest`, `pgmq`, `kiroku`, `shibuya`, `kafka`, `keiro`, `runtime`. The kind is one of `correctness`, `concurrency`, `soak`, `benchmark`. Each scenario also declares a cost tier — `smoke` (under one minute), `standard` (under ten minutes), `extended` (under one hour), `soak` (hours) — a placement (`local`, `cell`, or `either`), the knobs it accepts with their defaults and allowed values, the dimension values it supports, and optionally a known defect. A known defect names a reference (a `mori://` URI or upstream issue), the failure labels it explains, and a cohort scope (`appliesTo`, for example "only when `shibuya-core` was resolved from Hackage"), because many defects exist in the released cohort and are fixed at head. When the scope holds and every reported failure label is explained, the run keeps the true outcome `failed` but is marked `blocking: false` and `kenshou run` exits 0 (`--strict-known-defects` restores exit 1); when the scope does not hold, or a failure is not explained, the failure blocks as usual. "Known defect on released, must pass on head" therefore needs no second scenario. A scenario has exactly one tier, so every soak is registered twice from one implementation: `<name>` with tier `soak` and placement `cell`, and `<name>-reduced` with tier `extended` and placement `either`. Each layer package exports exactly one value, `bundle :: LayerBundle`, carrying its scenarios and its worker roles; several bundles may share the layer `selftest` (one per toolkit), and only scenario identifiers and role names must be unique across the registry. `kenshou-cli/src/Kenshou/Cli/Registry.hs` is the single list of bundles; a coverage plan registers itself by adding one import, one list element, and one `build-depends` entry in `kenshou-cli/kenshou-cli.cabal`. Beyond that three-line edit, a coverage plan may touch only these shared places, each additively: its own files under `schemas/` and `policies/`, its layer guide `docs/layers/<layer>.md`, new records in `docs/adr/`, system packages in `flake.module.nix` that its environment needs (EP-11's broker, for example), and the selectors of its own components in EP-3's component graph (`kenshou-core/data/`), after which `kenshou plan --graph-check` must report no orphan scenarios and no dead selectors. The vocabulary of component segments inside a layer is owned by that layer's plan.
 
+One scenario can declare a `KnownDefectGroup` when independent owner reports
+explain different failure labels in the same run. EP-2 filters each entry by
+cohort, requires every failure label to be covered, and retains each
+applicable owner reference in run and evidence records. EP-11 uses this for
+the separate Kafka rebalance exit and ordering reports; an unrelated
+rebalance failure still blocks.
+
 Integration Point 4 — dimensions and knobs. Owner: EP-2 for the vocabulary, EP-7 for the telemetry behaviour. Dimensions are cross-cutting switches with closed value sets that every layer must honour. `telemetry.tracing` takes `off` (the library is handed no tracer, which for this runtime means `Nothing` or the no-op interpreter), `noop` (a tracer from a provider with no span processors), `sdk-inmemory` (the OpenTelemetry SDK with an in-memory exporter) and `sdk-otlp` (the SDK exporting over OTLP to a collector). `telemetry.metrics` takes `off`, `collect` (instruments and collectors are live in the process but nothing is served), `serve` (the HTTP endpoints are up: kiroku-metrics on its port, shibuya-metrics on its port, and whatever the layer exposes) and `serve-scraped` (the endpoints are also scraped by the harness at the run specification's scrape interval). `pg.durability` takes `fsync-off` (the ephemeral-pg default, fast, unrealistic) and `durable` (`fsync` and `synchronous_commit` on; mandatory for benchmarks and crash scenarios). `pg.version` takes `17` and `18`; keiro requires 18, kiroku supports both. Knobs, by contrast, are per-scenario typed parameters (`KnobSpec` with a name, a type, a default and allowed values) such as `kiroku.pool-size`, `outbox.ordering-policy` or `pgmq.visibility-timeout-seconds`; each coverage plan names its component's knobs after the configuration record fields they set. Scenarios declare which values they support, and not every value means something in every layer: pgmq-hs has no metrics endpoint, so its layer supports only `off` and `collect`; shibuya's in-process counters cannot be disabled, so `off` and `collect` behave identically there; keiro has no HTTP endpoint of its own, so `serve` for keiro means kiroku-metrics served over the workers' store; keiro's timer and shard workers accept no tracer, so their scenarios support `telemetry.tracing=off` only. On GCP the PostgreSQL major version is a property of the cell, so `pg.version` is satisfied by choosing which cell to lease. The registry refuses a `benchmark` scenario that needs PostgreSQL and claims to support `fsync-off`. A layer asks EP-7's `Kenshou.Telemetry.withTelemetry` for handles (`Maybe Tracer`, `Maybe Meter`, and a scrape registrar) and adapts them to its component — keiro's `Maybe KeiroMetrics`, kiroku's composed `eventHandler`, shibuya's `runTracing` versus `runTracingNoop`, pgmq-hs's `runPgmq` versus `runPgmqTraced`. Measurement never flows through the feature being toggled: latency and throughput are recorded in-process by EP-4 and written to files, so a run with every telemetry dimension `off` is still fully measured. EP-7 records this rule as an ADR.
 
 Integration Point 5 — versioned documents and the run directory. Owner: EP-2 for the run specification, run result and artifact manifest; other plans own the documents they add. Every document is JSON with a `schema` field of the form `kenshou.<name>/v<N>` and a JSON Schema in `schemas/`. A run is identified by a UUIDv7 rendered as lowercase text. A run directory has this shape, and a later run never writes into an earlier run's directory.
@@ -345,6 +357,14 @@ The following cross-plan decisions should become ADRs in `docs/adr/` when the ow
 
 
 ## Progress
+
+EP-11 now preserves both owner references for the Kafka rebalance scenario:
+BUG-4 covers premature adapter exits and BUG-6 covers within-assignment
+ordering or duplicate replay. The revised oracle separates repeats below a
+sampled commit from repeats across an unsampled assignment callback. A fresh
+4,000-record reduced run conserved all acknowledgements, reached zero lag,
+and sealed only BUG-4 as a nonblocking known defect. EP-11 remains In Progress
+for its broader cohort, soak, benchmark and integration acceptance.
 
 EP-19 published `assurance.verificationEvidence` in `mori://shinzui/okf-profiles` v0.19.0 after 129 rejection fixtures and strict validation of the unchanged 17-concept consumer corpus. This repository now pins that release and narrows its runtime-specific layer and tier vocabularies locally. Its offline evidence checker enforces the GCS data-link policy, and the full `just verify` gate passes. Mori resolves the published profile URI and marks the consumer pin current; ADR-18 records the contract boundary.
 
@@ -504,6 +524,10 @@ re-verification separately from filing counts.
 
 ## Decision Log
 
+- Decision: A scenario with independent confirmed owner defects may declare a group of scoped known defects, while a failure label outside every applicable entry remains blocking.
+  Rationale: Kafka rebalance runs can reproduce both BUG-4's worker exit and BUG-6's ordering regression. The single-reference contract could not preserve both owners without misattribution; the grouped result and evidence record now do so. ADR-14 records the durable classification rule.
+  Date: 2026-09-27
+
 - Decision: Count distinct owner OKF bug-report and improvement-request URIs separately from numbered local findings. A filed or reused owner record is a reporting disposition, not a fix or a Kenshou verification of a fix.
   Rationale: Several scenarios can cite one owner issue, while one finding can cite a bug report and a complementary improvement request. Keeping both counts and the unmatched findings visible prevents duplicate filings and makes the baseline handoff measurable.
   Date: 2026-09-27
@@ -627,3 +651,5 @@ Revision note (2026-09-24): Marked EP-14 in progress after its workflow, timer a
 Revision note (2026-09-27): Made the baseline, owner-repository repair, and comparable rerun loop explicit across the initiative. Clarified that bug repairs belong in owning repositories and are verified here, resolving the earlier scope contradiction.
 
 Revision note (2026-09-27): Corrected that wording after owner clarification. This MasterPlan fills the baseline and tracks owner-profile bug reports and improvement requests; each owning project separately plans and implements fixes. Post-fix verification here waits for a later request. Added deduplicated owner-issue counts and numbered-finding coverage to the register.
+
+Revision note (2026-09-27): Extended the shared known-defect seam to preserve independent owner reports from one scenario, and applied it to Kafka rebalance classification without weakening new-failure blocking.

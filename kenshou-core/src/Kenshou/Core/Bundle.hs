@@ -15,7 +15,7 @@ module Kenshou.Core.Bundle
   )
 where
 
-import Data.Aeson (Value, object, (.=))
+import Data.Aeson (Value, object, toJSON, (.=))
 import Data.List (group, sort, sortOn)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
@@ -27,7 +27,7 @@ import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaC
 import Kenshou.Core.Id (Kind (..), Layer, ScenarioId (..), renderKind, renderLayer, renderScenarioId, unSegment)
 import Kenshou.Core.Knob (KnobSpec (..), renderKnobName)
 import Kenshou.Core.Role (RoleName, WorkerRole (..), renderRoleName)
-import Kenshou.Core.Scenario (KnownDefect (..), Placement, Scenario (..), Tier, renderPlacement, renderTier)
+import Kenshou.Core.Scenario (KnownDefect (..), Placement, Scenario (..), Tier, individualKnownDefects, renderPlacement, renderTier)
 import Kenshou.Core.Selector (ScenarioSelector, matchesSelector)
 import Kenshou.Core.Version (suiteVersion)
 
@@ -91,9 +91,11 @@ validateScenario scenario =
     benchmarkErrors = case (scenario.id.kind, scenario.requires.postgres, scenario.dimensions.pgDurability) of
       (Benchmark, Just _, Supported support) | PgFsyncOff `elem` support.values -> [RegistryError (renderScenarioId scenario.id <> ": benchmark supports fsync-off")]
       _ -> []
-    knownDefectErrors = case scenario.knownDefect of
-      Just defect | not ("mori://" `Text.isPrefixOf` defect.reference || "https://" `Text.isPrefixOf` defect.reference) -> [RegistryError (renderScenarioId scenario.id <> ": invalid known-defect reference")]
-      _ -> []
+    knownDefectErrors =
+      [ RegistryError (renderScenarioId scenario.id <> ": invalid known-defect reference")
+      | defect <- maybe [] individualKnownDefects scenario.knownDefect,
+        not ("mori://" `Text.isPrefixOf` defect.reference || "https://" `Text.isPrefixOf` defect.reference)
+      ]
     supportsOnly18 NotApplicable = False
     supportsOnly18 (Supported support) = all ((== "Pg18") . show) support.values
 
@@ -142,6 +144,9 @@ scenarioListDocumentFor scenarios roles =
           "summary" .= scenario.summary,
           "tier" .= renderTier scenario.tier,
           "placement" .= renderPlacement scenario.placement,
-          "knownDefect" .= fmap (.reference) scenario.knownDefect
+          "knownDefect" .= fmap defectReferences scenario.knownDefect
         ]
     roleValue role = object ["name" .= renderRoleName role.name, "summary" .= role.summary]
+    defectReferences defect = case individualKnownDefects defect of
+      [single] -> toJSON single.reference
+      many -> toJSON (fmap (.reference) many)

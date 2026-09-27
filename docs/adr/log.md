@@ -1,6 +1,7 @@
 # Bundle Update Log
 
 ## 2026-09-27
+* **Update**: ADR-14: record grouped owner defects with cohort-scoped label coverage and preserve every reference.
 * **Update**: ADR-18: name the published verification evidence contract in okf-profiles v0.19.0 and the pinned local vocabulary overlay.
 
 ## 2026-09-26

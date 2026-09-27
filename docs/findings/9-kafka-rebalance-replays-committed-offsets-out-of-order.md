@@ -30,6 +30,10 @@ cabal run kenshou -- run kafka/adapter/concurrency/group-rebalance-with-inflight
 
 The sealed results and worker control logs are under
 `mori://shinzui/keiro-runtime-kenshou` at the named run directories; an
-artifact-level Mori URI for run directories is pending. The scenario still
-returns a blocking `rebalance-assignment-order` failure because its current
-`KnownDefect` field can identify only BUG-4's separate early-exit behavior.
+artifact-level Mori URI for run directories is pending. Revision two of the
+scenario declares BUG-4 and BUG-6 independently through `KnownDefectGroup`.
+The classifier preserves both owner references, makes only their specific
+failure labels nonblocking on the affected cohort, and still blocks an
+unexplained failure. Run `01a0e3b6-2dc7-7123-a713-3dd2b7d1eedf` sealed
+the BUG-4 exit as nonblocking without reproducing the order reversal; the
+earlier order-reversal runs remain unchanged evidence for BUG-6.

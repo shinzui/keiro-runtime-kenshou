@@ -17,7 +17,7 @@ import Kenshou.Core.Id (RunId, ScenarioId (..), renderKind, renderLayer, renderS
 import Kenshou.Core.Log (Severity (..))
 import Kenshou.Core.Outcome (Outcome)
 import Kenshou.Core.RunSpec (ComparisonMembership)
-import Kenshou.Core.Scenario (KnownDefect (..), Tier, renderTier)
+import Kenshou.Core.Scenario (KnownDefect (..), Tier, individualKnownDefects, renderTier)
 
 data KnownDefectStatus = DefectReproduced | DefectDifferentFailure | DefectNotReproduced deriving stock (Eq, Show)
 
@@ -64,7 +64,7 @@ instance ToJSON RunResult where
         "exitCode" .= result.exitCode,
         "reason" .= result.reason,
         "failures" .= result.failures,
-        "knownDefect" .= fmap knownDefectValue result.knownDefect,
+        "knownDefect" .= fmap (knownDefectValue result.failures) result.knownDefect,
         "seed" .= result.seed,
         "spec" .= object ["path" .= ("run-spec.json" :: Text), "sha256" .= result.specSha256],
         "comparison" .= result.comparison,
@@ -77,8 +77,16 @@ instance ToJSON RunResult where
         "invocation" .= result.invocation
       ]
 
-knownDefectValue :: (KnownDefect, KnownDefectStatus) -> Value
-knownDefectValue (defect, status) = object ["reference" .= defect.reference, "summary" .= defect.summary, "expectedFailures" .= defect.expectedFailures, "status" .= statusText status]
+knownDefectValue :: [Text] -> (KnownDefect, KnownDefectStatus) -> Value
+knownDefectValue failures (defect, status) = case individualKnownDefects defect of
+  [single] -> singleValue single status
+  many ->
+    object
+      [ "status" .= statusText status,
+        "defects" .= fmap (\item -> singleValue item (if any (`elem` item.expectedFailures) failures then DefectReproduced else DefectNotReproduced)) many
+      ]
+  where
+    singleValue item itemStatus = object ["reference" .= item.reference, "summary" .= item.summary, "expectedFailures" .= item.expectedFailures, "status" .= statusText itemStatus]
 
 statusText :: KnownDefectStatus -> Text
 statusText DefectReproduced = "reproduced"

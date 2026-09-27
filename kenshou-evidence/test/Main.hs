@@ -365,6 +365,27 @@ main = hspec do
         recordRunWith (writeRunRecordWith accept) timestamp store options runDirectory `shouldReturn` Right (AlreadyRecorded path)
 
   describe "buildRunRecord" do
+    it "preserves every owner reference from a grouped known-defect result" do
+      withSystemTempDirectory "kenshou-grouped-defects" $ \root -> do
+        let first = "mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-4" :: Text
+            second = "mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-6" :: Text
+            defect = object ["status" .= ("reproduced" :: Text), "defects" .= [object ["reference" .= first], object ["reference" .= second]]]
+        writeRunFixtureWithKnownDefect root defect
+        source <- loadRunSource root >>= either (fail . show) pure
+        store <- memoryStore
+        links <- publishRunData store (PublishOptions "gs://bucket/runs" UploadMissing False False) root source >>= either (fail . show) pure
+        let input = RecordInput Baseline (UTCTime (fromGregorian 2026 9 26) 0) False Nothing [] Nothing
+        record <- either (fail . show) pure (buildRunRecord input source links)
+        record.knownDefects `shouldBe` [first, second]
+    it "rejects a malformed grouped defect instead of dropping owner references" do
+      withSystemTempDirectory "kenshou-malformed-defects" $ \root -> do
+        let malformed = object ["reference" .= ("mori://example/bugs/1" :: Text), "defects" .= ("not an array" :: Text)]
+        writeRunFixtureWithKnownDefect root malformed
+        source <- loadRunSource root >>= either (fail . show) pure
+        store <- memoryStore
+        links <- publishRunData store (PublishOptions "gs://bucket/runs" UploadMissing False False) root source >>= either (fail . show) pure
+        let input = RecordInput Baseline (UTCTime (fromGregorian 2026 9 26) 0) False Nothing [] Nothing
+        buildRunRecord input source links `shouldSatisfy` isLeft
     it "derives a round-trippable run record from verified source and links" do
       withSystemTempDirectory "kenshou-record" $ \root -> do
         writeRunFixture root
@@ -580,7 +601,13 @@ writeRunFixture :: FilePath -> IO ()
 writeRunFixture root = writeRunFixtureWithRevision root (Text.replicate 40 "f")
 
 writeRunFixtureWithRevision :: FilePath -> Text -> IO ()
-writeRunFixtureWithRevision root harnessRevision = do
+writeRunFixtureWithRevision root harnessRevision = writeRunFixtureWithRevisionAndDefect root harnessRevision Nothing
+
+writeRunFixtureWithKnownDefect :: FilePath -> Value -> IO ()
+writeRunFixtureWithKnownDefect root defect = writeRunFixtureWithRevisionAndDefect root (Text.replicate 40 "f") (Just defect)
+
+writeRunFixtureWithRevisionAndDefect :: FilePath -> Text -> Maybe Value -> IO ()
+writeRunFixtureWithRevisionAndDefect root harnessRevision knownDefect = do
   let runId = "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e55" :: Text
       spec = object ["schema" .= ("kenshou.run-spec/v1" :: Text), "runId" .= runId, "scenario" .= ("selftest/kernel/correctness/always-pass" :: Text), "seed" .= (7 :: Int)]
       specBytes = LazyByteString.toStrict (encode spec)
@@ -592,6 +619,7 @@ writeRunFixtureWithRevision root harnessRevision = do
             "runId" .= runId,
             "scenario" .= ("selftest/kernel/correctness/always-pass" :: Text),
             "outcome" .= ("passed" :: Text),
+            "knownDefect" .= knownDefect,
             "tier" .= ("smoke" :: Text),
             "seed" .= (7 :: Int),
             "spec" .= object ["sha256" .= sha256Hex specBytes],

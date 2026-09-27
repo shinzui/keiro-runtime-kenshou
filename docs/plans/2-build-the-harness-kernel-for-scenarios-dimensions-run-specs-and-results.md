@@ -27,6 +27,11 @@ provenance:
       at: 2026-09-24T22:53:06Z
       mode: "update"
       note: "Consolidated Progress into delivered outcomes and remaining acceptance"
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-27T16:28:26Z
+      mode: "implement"
+      note: "Added grouped known-defect classification and evidence references."
 ---
 
 # Build the harness kernel for scenarios, dimensions, run specs and results
@@ -710,6 +715,16 @@ Create `kenshou-core/src/Kenshou/Core/RunResult.hs` and `kenshou-core/src/Kensho
 
 `knownDefect`, when the scenario declares one and its `appliesTo` scope holds for the run's cohort, is `{"reference": …, "summary": …, "expectedFailures": […], "status": …}` with status `reproduced` (outcome `failed` and every reported failure label explained), `different-failure` (failed with an unexplained label) or `not-reproduced` (any other outcome; worth a look, because the defect may be fixed in this cohort). `blocking` is true exactly when the outcome is not `passed` and the status is not `reproduced`. `exitCode` is `outcomeExitCode outcome`, except that a `reproduced` known defect exits 0 unless `--strict-known-defects` was given.
 
+When one run can reproduce independent filed defects, `KnownDefectGroup` holds
+the separately scoped entries. The runner filters them against the resolved
+cohort and accepts a nonempty failed-label set only when every label belongs
+to an applicable entry. Its `knownDefect` result is then an object with an
+aggregate `status` and a `defects` array, each element carrying the single
+entry's reference, summary, expected labels and observed status. A single
+applicable defect keeps the original object shape. The scenario-list document
+likewise keeps a string for one reference and uses an array for a group; the
+evidence recorder preserves every grouped owner reference.
+
 The manifest document:
 
 ```json
@@ -918,3 +933,5 @@ What other plans consume. EP-3 uses `Registry`, `selectScenarios`, `ScenarioSele
 Revision note (2026-09-20): Expanded the kernel's CLI ownership to implement the relevant `mori://shinzui/haskell-jitsurei` patterns: intent-grouped commands and options, embedded terminal-aware topics, parser-derived Bash/Zsh/Fish completions, explicit standard-input document sources, Git-aware version retention, and strict machine-output channel separation. The extension types and tests now make these rules binding on later command plans.
 
 Revision note (2026-09-20): Added the Settei configuration spine for typed operator defaults, strict ordered YAML/environment/named-flag precedence, provenance diagnostics and secret redaction, with an explicit ban on ambient experiment-defining inputs.
+
+Revision note (2026-09-27): Added grouped, cohort-scoped known defects to the v1 result and evidence path while keeping single-defect results unchanged.

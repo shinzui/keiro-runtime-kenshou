@@ -9,7 +9,7 @@ import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Kenshou.Core.Bundle (allScenarios, mkRegistry)
+import Kenshou.Core.Bundle (LayerBundle (..), allScenarios, mkRegistry)
 import Kenshou.Core.Canonical (canonicalEncode)
 import Kenshou.Core.Cohort
 import Kenshou.Core.Compat (comparisonKey, compatInputs, seriesKey)
@@ -20,9 +20,11 @@ import Kenshou.Core.Id
 import Kenshou.Core.Knob
 import Kenshou.Core.Log (nullLogger)
 import Kenshou.Core.Manifest (verifyManifest, writeManifest)
+import Kenshou.Core.Run (defectDisposition)
+import Kenshou.Core.RunResult (KnownDefectStatus (..))
 import Kenshou.Core.RunSpec
 import Kenshou.Core.RunSpec.Resolve (resolveRunSpec)
-import Kenshou.Core.Scenario (Scenario (..))
+import Kenshou.Core.Scenario (CohortScope (..), KnownDefect (..), PackageCondition (..), Scenario (..), failedWith)
 import Kenshou.Core.Selector (matchesSelector, parseSelector)
 import Kenshou.Core.Selftest qualified as Selftest
 import Kenshou.PlanSpec qualified
@@ -52,6 +54,7 @@ main = hspec do
   identifierSpec
   selectorSpec
   registrySpec
+  knownDefectGroupSpec
   knobSpec
   dimensionSpec
   runSpecSpec
@@ -150,6 +153,42 @@ registrySpec = describe "scenario registry" do
                        "selftest/kernel/correctness/outcome",
                        "selftest/kernel/correctness/postgres-roundtrip"
                      ]
+
+knownDefectGroupSpec :: Spec
+knownDefectGroupSpec = describe "grouped known defects" do
+  let base = case filter (\item -> renderScenarioId item.id == "selftest/kernel/correctness/known-defect") Selftest.bundle.scenarios of
+        [item] -> item
+        _ -> error "missing known-defect self-test"
+      first = KnownDefect "mori://example/bugs/1" "first" ["first-failure"] AllCohorts
+      second = KnownDefect "mori://example/bugs/2" "second" ["second-failure"] AllCohorts
+      scenario = base {knownDefect = Just (KnownDefectGroup (first :| [second]))}
+      cohort = identityWith []
+      disposition strict labels = defectDisposition strict cohort scenario (failedWith labels "grouped defect probe")
+  it "accepts either or both independently reproduced defects" do
+    let check labels = case disposition False labels of
+          (Just (KnownDefectGroup _, DefectReproduced), False, 0) -> pure ()
+          other -> expectationFailure (show other)
+    check ["first-failure"]
+    check ["second-failure"]
+    check ["first-failure", "second-failure"]
+  it "blocks unrelated failures and strict known-defect runs" do
+    case disposition False ["second-failure", "new-failure"] of
+      (Just (_, DefectDifferentFailure), True, 1) -> pure ()
+      other -> expectationFailure (show other)
+    case disposition True ["second-failure"] of
+      (Just (_, DefectReproduced), False, 1) -> pure ()
+      other -> expectationFailure (show other)
+  it "does not excuse a failed result without a failure label" do
+    case disposition False [] of
+      (Just (_, DefectDifferentFailure), True, 1) -> pure ()
+      other -> expectationFailure (show other)
+  it "ignores labels owned only by a defect outside the resolved cohort" do
+    let scoped = KnownDefect "mori://example/bugs/2" "second" ["second-failure"] (OnlyWhen (ResolvedFromGit "foo" :| []))
+        scopedScenario = base {knownDefect = Just (KnownDefectGroup (first :| [scoped]))}
+        result = defectDisposition False (identityWith [ResolvedPackage "foo" "1.0.0" (FromHackage Nothing)]) scopedScenario (failedWith ["second-failure"] "scoped defect probe")
+    case result of
+      (Just (_, DefectDifferentFailure), True, 1) -> pure ()
+      other -> expectationFailure (show other)
 
 knobSpec :: Spec
 knobSpec = describe "knob resolution" do
