@@ -370,6 +370,8 @@ released-cohort run `01a0e3bd-ef03-71b4-9486-01ed1bd56a02` is now a
 in the OKF bundle. Its first attestation verified the stored bytes and cohort
 but returned incomplete because the Kafka VC-1 oracle is not independently
 recomputable yet and the evidence files were uncommitted during that check.
+A second attestation from a clean tree passed the worktree check and retained
+only the VC-1 recomputation gap.
 
 EP-19 published `assurance.verificationEvidence` in `mori://shinzui/okf-profiles` v0.19.0 after 129 rejection fixtures and strict validation of the unchanged 17-concept consumer corpus. This repository now pins that release and narrows its runtime-specific layer and tier vocabularies locally. Its offline evidence checker enforces the GCS data-link policy, and the full `just verify` gate passes. Mori resolves the published profile URI and marks the consumer pin current; ADR-18 records the contract boundary.
 
