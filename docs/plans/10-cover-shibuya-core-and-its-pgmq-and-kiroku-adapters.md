@@ -147,7 +147,8 @@ After this plan a maintainer can, from this repository, run `kenshou list --laye
 - [x] (2026-09-25) Registered `gc-liveness-with-dropped-handle` with five process-isolated ownership states. The full CLI scenario passed on historical 0.9.0.3 and pinned remediation; the isolated Hackage 0.10.0.0 package test passed the same five subprocess probes.
 - [x] (2026-09-25) Registered the seeded keyed-scheduler queue model with a replayable 200-case verdict, per-key ordering and non-overlap, decision/finalization conservation, concurrency bounds, and repeated graceful-stop checks. Historical 0.9.0.3 and pinned remediation each passed 200 generated cases; the isolated Hackage 0.10.0.0 package suite passed 100 generated cases plus focused retry, exception, dead-letter, and stop arms.
 - [x] (2026-09-27) Accounted for all 65 Shibuya lifecycle cells: 64 have executable scenario tags and the one public-startup timeout cell has an explicit inapplicability reason. The 34-example package suite enforces that partition. Strengthening the forced-stop scenario exposed late handler finalization on historical 0.9.0.3 and current 0.10.0.0; owner `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-1` records the defect, and [the local finding](../findings/17-shibuya-forced-stop-can-finalize-late.md) retains clean cohort run IDs `01a0e449-8bb4-746f-86ca-3be1b8aadd6a` and `01a0e44b-aea0-7459-966a-150ea1340c27`.
-- [ ] Run the remaining cohort-sensitive core and metrics cases on released, head, and isolated current-release lanes.
+- [x] (2026-09-27) Ran the isolated current-release CLI through all 30 registered non-benchmark core and metrics scenarios from a clean tree. Twenty-eight passed; forced stop reproduced owner BUG-1 and transient-exception readiness reproduced owner IR-7, both nonblocking. The 34-example current package suite passed. The script and per-scenario sealed run IDs are below.
+- [ ] Run the remaining cohort-sensitive core and metrics cases on released and head lanes, plus the non-default current-release halt and concurrency shapes.
 - [x] (2026-09-25) Started the real PostgreSQL PGMQ fixture and registered `shutdown-latency-is-bounded-by-polling`. On historical 0.16.0.0 the standard and long-poll arms each handled one message, drained the queue and passed their two- and six-second stop bounds on PostgreSQL 17 and 18. The pinned remediation cohort passed the long-poll arm on PostgreSQL 18; the isolated Hackage 0.16.1.0 project compiled the fixture and passed its lifecycle-matrix tests.
 - [x] (2026-09-25) Registered `auto-dead-letter-counts-deliveries` with direct-DLQ reason-code SQL and callback oracles. Historical 0.16.0.0 passed on PostgreSQL 17 and 18 at the default retry budget and on PostgreSQL 18 with a zero budget; pinned remediation passed on PostgreSQL 18. The isolated current-release package suite compiled the case and passed 33 examples.
 - [x] (2026-09-25) Registered `ack-decision-mapping` with live queue, archive, visibility-time, attempt and DLQ-payload oracles for every acknowledgement decision, plus typed invalid-configuration rejection. The complete sequence passed on historical PostgreSQL 17 and 18 and pinned remediation PostgreSQL 18; the isolated Hackage current-release project compiled the case and passed 33 package examples.
@@ -194,6 +195,43 @@ Every ID in this table names a sealed `runs/<id>/run-result.json` file from the 
 | Atomic dead-letter move | `01a0ddd5-f6cd-74fa-8a0c-e9412f4b6ba3` | `01a0ddd6-4b62-779d-b81c-cf3f50bfcef5` | Passed |
 | Postmaster restart | `01a0de0e-274c-76f0-b197-fb148c673ef4` | `01a0de0e-c680-76ca-a57b-8acd846289bf` | Passed |
 | Backend termination | `01a0de02-166d-726d-ab21-a3777c450ea1` | `01a0de02-94cd-75e9-b9fa-f2f4eca1f0a7` | Scoped BUG-1 reproduced |
+
+### Current-release core and metrics CLI smoke results
+
+`nix develop -c bash scripts/run-shibuya-core-current-smoke.sh` executed all 30 non-benchmark core and metrics scenarios against the isolated Hackage 0.10.0.0 lane at clean harness revision `8481bbc8529f69745a4afa3d9f13b0fc5ade6071`. Every result has `blocking=false`; 28 passed and two reproduced their scoped owner findings. Each ID names `runs/<id>/run-result.json`, which retains the generated effective spec and exact cohort.
+
+| Scenario after `shibuya/` | Run ID | Verdict |
+| --- | --- | --- |
+| `core-batch/concurrency/shutdown-with-partial-batches` | `01a0e44f-28f5-7499-b0e9-c341e2e5700f` | Passed |
+| `core-batch/correctness/conservation-triggers-and-decisions` | `01a0e44f-2ed7-779c-8a7d-5b1873dbf07d` | Passed |
+| `core-ordering/concurrency/hot-key-head-of-line` | `01a0e44f-3333-74b9-b9fa-9a530cf354e8` | Passed |
+| `core-ordering/concurrency/keyed-scheduler-model` | `01a0e44f-3933-73a7-acd5-b6917cfa8a7f` | Passed |
+| `core-ordering/concurrency/keyed-worker-failure-stops-intake` | `01a0e44f-4b23-757a-9a65-8806d028f193` | Passed |
+| `core-ordering/correctness/policy-matrix` | `01a0e44f-5548-702d-a6ee-9729e7ba3c55` | Passed |
+| `core-runner/concurrency/adapter-shutdown-failure-does-not-skip-siblings` | `01a0e44f-6085-77a9-8db6-5d165e1201e8` | Passed |
+| `core-runner/concurrency/blocking-adapter-shutdown-is-bounded` | `01a0e44f-6911-7323-a8ca-31c0b4401207` | Passed |
+| `core-runner/concurrency/finalization-failure-is-a-failure-not-a-halt` | `01a0e450-5679-7122-bdaf-519bbd47bfd2` | Passed |
+| `core-runner/concurrency/forced-shutdown-abandons-but-never-loses` | `01a0e450-5c90-776d-b09e-b364babf0059` | BUG-1 reproduced |
+| `core-runner/concurrency/gc-liveness-with-dropped-handle` | `01a0e450-6b2b-729d-8790-ae5dacd2afc7` | Passed |
+| `core-runner/concurrency/halt-strands-leased-messages` | `01a0e450-7d6c-7211-a3fc-5b6d2eb18ee4` | Passed |
+| `core-runner/concurrency/halt-wakes-idle-intake` | `01a0e450-93c0-7033-93db-122d9202414c` | Passed |
+| `core-runner/concurrency/leased-but-unfinalized-upper-bound` | `01a0e450-969b-724c-b935-9224bfe67904` | Passed |
+| `core-runner/concurrency/startup-cancellation-leaks-nothing` | `01a0e450-9ba5-7790-ad62-4155bea770f4` | Passed |
+| `core-runner/concurrency/stop-all-on-failure-delivers-once` | `01a0e458-4d8f-7627-b6e2-4a8536d6d7f7` | Passed |
+| `core-runner/correctness/a-failed-processor-is-never-restarted` | `01a0e458-5191-7699-9a52-276c6c677e4a` | Passed |
+| `core-runner/correctness/duplicate-processor-ids-are-rejected` | `01a0e458-680b-732d-8c5d-fdbb283c0502` | Passed |
+| `core-runner/correctness/every-delivery-is-finalized-exactly-once` | `01a0e458-6ae4-7748-bb3b-3a3e1b127473` | Passed |
+| `core-runner/correctness/invalid-config-rejected-before-effects` | `01a0e458-6eba-76a3-9cca-abd4d1cf390f` | Passed |
+| `core-runner/correctness/nonpositive-concurrency-is-rejected` | `01a0e458-7197-7433-87fa-13c492f1d17c` | Passed |
+| `metrics/concurrency/websocket-slot-accounting` | `01a0e458-7469-7761-b745-4afcbd407e76` | Passed |
+| `metrics/correctness/counters-distinguish-retries-from-success` | `01a0e458-822d-73ab-824d-8a09f0ad797b` | Passed |
+| `metrics/correctness/endpoint-contract` | `01a0e458-8579-77da-be71-09e6bc03ca0b` | Passed |
+| `metrics/correctness/live-reflects-a-stopped-master` | `01a0e458-8a23-7078-b5b3-bc97aaa8e42c` | Passed |
+| `metrics/correctness/ready-not-stuck-under-sustained-load` | `01a0e458-8d0f-7366-a182-882199a4e398` | Passed |
+| `metrics/correctness/ready-recovers-after-transient-handler-exception` | `01a0e458-da9f-76ef-b6a1-0c4441921caa` | IR-7 reproduced |
+| `metrics/correctness/ready-reflects-a-failed-processor` | `01a0e459-1935-7206-baa0-82f79790af66` | Passed |
+| `metrics/correctness/websocket-flag-gates-upgrades` | `01a0e459-1c2e-710e-b961-54f8b32d1701` | Passed |
+| `metrics/correctness/websocket-unsubscribe-all-suppresses-updates` | `01a0e459-1f1a-71bb-a8bc-e2126fe483b3` | Passed |
 
 ### Kiroku adapter smoke results
 
