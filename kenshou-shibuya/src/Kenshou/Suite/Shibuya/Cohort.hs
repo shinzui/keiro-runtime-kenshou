@@ -3,6 +3,7 @@ module Kenshou.Suite.Shibuya.Cohort
     coreLine,
     knownOnReleasedCore,
     rev,
+    revAt,
   )
 where
 
@@ -28,9 +29,12 @@ knownOnReleasedCore defect = case coreLine of
   CoreLifecycleRemediated -> Nothing
 
 rev :: Int -> Text -> KnownDefect
-rev review finding =
+rev review = revAt ("mori://shinzui/shibuya/okf/reviews/concepts/REV-" <> Text.pack (show review))
+
+revAt :: Text -> Text -> KnownDefect
+revAt source finding =
   KnownDefect
-    { reference = "mori://shinzui/shibuya/okf/reviews/concepts/REV-" <> Text.pack (show review),
+    { reference = source,
       summary = finding,
       expectedFailures = [finding],
       appliesTo = OnlyWhen (ResolvedFromHackage "shibuya-core" :| [])

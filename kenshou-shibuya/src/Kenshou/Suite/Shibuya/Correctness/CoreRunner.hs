@@ -12,7 +12,7 @@ import Kenshou.Core.Env (noEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (KnownDefect (..), Placement (..), Scenario (..), Tier (..), failedWith, passed)
-import Kenshou.Suite.Shibuya.Cohort (knownOnReleasedCore, rev)
+import Kenshou.Suite.Shibuya.Cohort (knownOnReleasedCore, rev, revAt)
 import Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter (BrokerStats (..), SyntheticConfig (..), brokerStats, closeInput, defaultSyntheticConfig, newSyntheticBroker, publish, reopenSource, syntheticAdapter)
 import Shibuya.Adapter (Adapter (..))
 import Shibuya.App (AppConfig (..), QueueProcessor (..), defaultAppConfig, mkBatchProcessor, mkProcessor, runApp, stopApp, waitApp)
@@ -43,7 +43,7 @@ scenarios =
     coreScenario
       "shibuya/core-runner/correctness/duplicate-processor-ids-are-rejected"
       "Rejects duplicate processor identities before either source is pulled."
-      (knownOnReleasedCore (rev 3 "REV-3-F2"))
+      (knownOnReleasedCore (revAt "mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-2" "REV-3-F2"))
       duplicateProcessorIds,
     coreScenario
       "shibuya/core-runner/correctness/nonpositive-concurrency-is-rejected"

@@ -10,7 +10,7 @@ import Kenshou.Core.Bundle (LayerBundle (..), mkRegistry)
 import Kenshou.Core.Context (Environment (..), RunContext (..), newRunState, readRunState)
 import Kenshou.Core.Env (EnvRequirements (..))
 import Kenshou.Core.Env.Postgres (withPostgresEnv)
-import Kenshou.Core.Id (renderRunId)
+import Kenshou.Core.Id (renderRunId, renderScenarioId)
 import Kenshou.Core.Log (nullLogger)
 import Kenshou.Core.Outcome (Outcome (..))
 import Kenshou.Core.RunSpec (EffectiveRunSpec (..), EnvironmentSpec (..), RunSpec (..), SpecPlacement (..))
@@ -141,7 +141,7 @@ spec = do
     isRight = not . isLeft
     checkScenario scenario = do
       let tags = cellsOf scenario.id
-      tags `shouldNotBe` []
+      if null tags then expectationFailure (Text.unpack (renderScenarioId scenario.id) <> " has no lifecycle cells") else pure ()
       length (nub tags) `shouldBe` length tags
       all (`elem` allCells) tags `shouldBe` True
     exercised = concatMap (cellsOf . (.id)) bundle.scenarios
