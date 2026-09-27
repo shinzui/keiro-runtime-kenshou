@@ -11,10 +11,11 @@ where
 
 import Control.Exception (IOException, try)
 import Control.Monad (forM)
-import Data.Aeson (Result (..), Value (..), eitherDecodeStrict', fromJSON, object, (.=))
+import Data.Aeson (FromJSON (..), Result (..), Value (..), eitherDecodeStrict', fromJSON, object, withObject, (.:), (.:?), (.=))
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString qualified as ByteString
 import Data.List (find, nub, sort)
+import Data.Maybe (mapMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.IO qualified as Text.IO
@@ -23,12 +24,12 @@ import Kenshou.Core.Cohort (CohortIdentity (..), PlanHash (..), ResolvedComponen
 import Kenshou.Core.Cohort qualified as Cohort
 import Kenshou.Core.Id (newRunId, parseRunId, renderRunId, renderScenarioId)
 import Kenshou.Core.Manifest (Manifest (..), ManifestFile (..))
-import Kenshou.Core.Outcome (Outcome (Passed))
+import Kenshou.Core.Outcome (Outcome (Passed), renderOutcome)
 import Kenshou.Core.RunSpec (CohortExpectation (..), RunSpec (..))
 import Kenshou.Evidence.Bundle (BundleWriteError, BundleWriteResult (..), writeAttestationRecord)
-import Kenshou.Evidence.Frontmatter (AttestationCheck (..), AttestationEvidence (..), EvidenceRecord (..), recordFromDocument)
+import Kenshou.Evidence.Frontmatter (AttestationCheck (..), AttestationEvidence (..), ComparisonEvidence (..), EvidenceRecord (..), comparisonFromDocument, recordFromDocument)
 import Kenshou.Evidence.Record (RecordInput (..), buildRunRecord)
-import Kenshou.Evidence.Source (RunResultView (..), RunSource (..), loadRunSource)
+import Kenshou.Evidence.Source (ComparisonSource (..), ComparisonView (..), RunResultView (..), RunSource (..), loadComparisonSource, loadRunSource)
 import Kenshou.Evidence.Store (ObjectStore (..))
 import Kenshou.Evidence.Types (ComponentRef (..), ComponentSource (FromGit), DataKind (..), DataLink (..), Revision (..), Sha256 (..), mkRevision, sha256Bytes)
 import Okf.Actor (Actor (ProcessActor))
@@ -36,7 +37,7 @@ import Okf.Document (OKFDocument (..), Verification (..), frontmatterLookup, par
 import System.Directory (doesDirectoryExist, listDirectory)
 import System.Environment (getEnvironment)
 import System.Exit (ExitCode (..))
-import System.FilePath (isAbsolute, normalise, splitDirectories, takeExtension, (</>))
+import System.FilePath (isAbsolute, normalise, splitDirectories, takeBaseName, takeExtension, (</>))
 import System.IO.Temp (withSystemTempDirectory)
 import System.Process (CreateProcess (..), proc, readCreateProcessWithExitCode, readProcessWithExitCode)
 
@@ -137,60 +138,278 @@ ifMDirectory path action = do
 attestRun :: ObjectStore -> [Recomputer] -> AttestOptions -> FilePath -> IO (Either AttestError AttestResult)
 attestRun store recomputers options relative = do
   content <- Text.IO.readFile (options.bundleRoot </> relative)
-  let decoded = do
+  case parseDocument content of
+    Left err -> pure (Left (InvalidTarget (Text.pack (show err))))
+    Right document -> case frontmatterLookup "recordKind" document.frontmatter of
+      Just (String "run") -> case recordFromDocument document of
+        Left err -> pure (Left (InvalidTarget (Text.pack (show err))))
+        Right record -> attestOrdinaryRun store recomputers options relative content record
+      Just (String "comparison") -> case comparisonFromDocument document of
+        Left err -> pure (Left (InvalidTarget (Text.pack (show err))))
+        Right record -> attestComparison store recomputers options relative content record
+      _ -> pure (Left (InvalidTarget "target is neither a run nor a comparison record"))
+
+attestOrdinaryRun :: ObjectStore -> [Recomputer] -> AttestOptions -> FilePath -> Text -> EvidenceRecord -> IO (Either AttestError AttestResult)
+attestOrdinaryRun store recomputers options relative content record =
+  withSystemTempDirectory "kenshou-attest" $ \scratch -> do
+    now <- getCurrentTime
+    (digestCheck, matchedDigests, source) <- verifyData store options.linkedOnly scratch record
+    if null matchedDigests
+      then pure (Left (AttestIo "no linked object could be fetched and checked"))
+      else do
+        revision <- currentAttesterRevision
+        case revision of
+          Left err -> pure (Left err)
+          Right (attesterRevision, attesterDirty) -> do
+            revisions <- checkRevisions options.offline scratch record source
+            let cohort = checkCohort now record source
+                environment = checkEnvironment now record source
+                clean = checkClean record source attesterDirty
+            recomputed <- checkRecomputation options.bundleRoot recomputers scratch record source
+            let checks = [digestCheck, revisions, cohort, recomputed, environment, clean]
+            finishAttestation options relative content record.runId now attesterRevision matchedDigests checks
+
+data ComparisonRefs = ComparisonRefs
+  { baselinePaths :: ![Text],
+    candidatePaths :: ![Text],
+    verdict :: !Text,
+    design :: !Text,
+    factor :: !Text,
+    factorName :: !(Maybe Text),
+    baselineValue :: !Value,
+    candidateValue :: !Value
+  }
+
+instance FromJSON ComparisonRefs where
+  parseJSON = withObject "comparison references" $ \value ->
+    ComparisonRefs
+      <$> value .: "baselineRuns"
+      <*> value .: "candidateRuns"
+      <*> value .: "verdict"
+      <*> value .: "design"
+      <*> value .: "factor"
+      <*> value .:? "factorName"
+      <*> value .: "baselineValue"
+      <*> value .: "candidateValue"
+
+data FetchedArm = FetchedArm
+  { record :: !EvidenceRecord,
+    source :: !(Maybe RunSource),
+    digestCheck :: !AttestationCheck,
+    digests :: ![Sha256]
+  }
+
+attestComparison :: ObjectStore -> [Recomputer] -> AttestOptions -> FilePath -> Text -> ComparisonEvidence -> IO (Either AttestError AttestResult)
+attestComparison store recomputers options relative content record =
+  withSystemTempDirectory "kenshou-attest-comparison" $ \scratch -> do
+    now <- getCurrentTime
+    revision <- currentAttesterRevision
+    case revision of
+      Left err -> pure (Left err)
+      Right (attesterRevision, attesterDirty) -> do
+        let decodedRefs = case fromJSON record.comparison of
+              Success refs -> Right refs
+              Error message -> Left (Text.pack message)
+        case decodedRefs of
+          Left message -> pure (Left (InvalidTarget message))
+          Right refs -> do
+            fetchedComparison <- case record.dataLinks of
+              [link] | link.kind == ComparisonData -> do
+                fetched <- fetchLink store scratch record.runId link
+                case fetched of
+                  Left err -> pure (Left err)
+                  Right digest -> do
+                    decoded <- loadComparisonSource (scratch </> "comparison.json")
+                    pure case decoded of
+                      Left err -> Left (Text.pack (show err))
+                      Right source -> Right (digest, source)
+              _ -> pure (Left "comparison record must link one comparison.json")
+            armRecords <- traverse (loadArm options.bundleRoot) (refs.baselinePaths <> refs.candidatePaths)
+            let armProblem = case sequence armRecords of
+                  Left message -> Just message
+                  Right _ -> Nothing
+                records = [(index, arm) | (index, Right arm) <- zip [0 :: Int ..] armRecords]
+            fetchedArms <- forM records $ \(index, arm) -> do
+              let side = if index < length refs.baselinePaths then "baseline" else "candidate"
+                  position = if side == "baseline" then index else index - length refs.baselinePaths
+                  armRoot = scratch </> side </> show position
+              (checked, digests, source) <- verifyData store options.linkedOnly armRoot arm
+              pure FetchedArm {record = arm, source, digestCheck = checked, digests}
+            let linkedDigests = either (const []) (\(digest, _) -> [digest]) fetchedComparison
+                allDigests = linkedDigests <> concatMap (.digests) fetchedArms
+                digestFailures =
+                  maybe [] pure (either Just (const Nothing) fetchedComparison)
+                    <> [Text.pack (show index) <> ": " <> maybe "" id item.digestCheck.detail | (index, item) <- zip [0 :: Int ..] fetchedArms, item.digestCheck.result == "failed"]
+                    <> maybe [] pure armProblem
+                digestCheck =
+                  if not (null digestFailures)
+                    then check "digests-match" "failed" (Text.intercalate "; " digestFailures)
+                    else
+                      if options.linkedOnly
+                        then check "digests-match" "skipped" "only linked objects were checked"
+                        else check "digests-match" "passed" "comparison document and every arm's linked and manifest objects match"
+                source = either (const Nothing) (Just . snd) fetchedComparison
+                cohort = checkComparisonCohort now record refs source fetchedArms armProblem
+                environment = combineArmChecks "environment-captured" [checkEnvironment now arm.record arm.source | arm <- fetchedArms]
+                clean = combineArmChecks "clean-worktree" (check "clean-worktree" (if record.harnessDirty || maybe False ((== Just True) . (.harnessDirty) . (.view)) source || attesterDirty then "failed" else "passed") "comparison and attester worktrees" : [checkClean arm.record arm.source False | arm <- fetchedArms])
+            if null allDigests
+              then pure (Left (AttestIo ("no linked object could be fetched and checked: " <> Text.intercalate "; " digestFailures)))
+              else do
+                revisions <- checkComparisonRevisions options.offline scratch record fetchedArms
+                recomputed <-
+                  if digestCheck.result == "passed" && all (maybe False (const True) . (.source)) fetchedArms
+                    then checkComparisonRecomputation options.bundleRoot recomputers scratch record source
+                    else pure (check "verdict-recomputed" "skipped" "comparison or arm source data could not be verified")
+                finishAttestation options relative content record.runId now attesterRevision allDigests [digestCheck, revisions, cohort, recomputed, environment, clean]
+
+loadArm :: FilePath -> Text -> IO (Either Text EvidenceRecord)
+loadArm bundle reference = do
+  let relative = Text.unpack (Text.dropWhile (== '/') reference)
+  if not (safeRelative relative && length (splitDirectories relative) == 5 && take 1 (splitDirectories relative) == ["runs"] && takeExtension relative == ".md")
+    then pure (Left ("invalid comparison arm path: " <> reference))
+    else do
+      loaded <- try (Text.IO.readFile (bundle </> relative)) :: IO (Either IOException Text)
+      pure do
+        content <- either (Left . Text.pack . show) Right loaded
         document <- either (Left . Text.pack . show) Right (parseDocument content)
         either (Left . Text.pack . show) Right (recordFromDocument document)
-  case decoded of
-    Left err -> pure (Left (InvalidTarget err))
-    Right record -> withSystemTempDirectory "kenshou-attest" $ \scratch -> do
-      now <- getCurrentTime
-      (digestCheck, matchedDigests, source) <- verifyData store options.linkedOnly scratch record
-      if null matchedDigests
-        then pure (Left (AttestIo "no linked object could be fetched and checked"))
-        else do
-          revision <- currentAttesterRevision
-          case revision of
-            Left err -> pure (Left err)
-            Right (attesterRevision, attesterDirty) -> do
-              revisions <- checkRevisions options.offline scratch record source
-              let cohort = checkCohort now record source
-                  environment = checkEnvironment now record source
-                  clean = checkClean record source attesterDirty
-              recomputed <- checkRecomputation options.bundleRoot recomputers scratch record source
-              let checks = [digestCheck, revisions, cohort, recomputed, environment, clean]
-                  verdict = deriveVerdict checks
-                  run = "/" <> Text.pack relative
-              identifier <- renderRunId <$> newRunId
-              let attestation =
-                    AttestationEvidence
-                      { title = "Attestation of " <> record.runId <> " — " <> verdict,
-                        description = "The kenshou attester checked the linked data and recorded " <> verdict <> ".",
-                        generatedAt = utcText now,
-                        attestationId = identifier,
-                        run,
-                        attesterRevision,
-                        attestedAt = utcText now,
-                        verdict,
-                        checks,
-                        dataDigests = sort (nub matchedDigests),
-                        exception = fmap (\(authority, reason) -> object ["authority" .= authority, "reason" .= reason]) options.acceptedAnomaly,
-                        body = "The attester recorded " <> verdict <> " for [the run](" <> run <> ").\n"
-                      }
-              amended <-
-                if verdict == "confirmed"
-                  then appendVerification (options.bundleRoot </> relative) content (utcText now)
-                  else pure (Right Nothing)
-              case amended of
-                Left err -> pure (Left err)
-                Right oldContent -> do
-                  written <- writeAttestationRecord options.bundleRoot attestation
-                  case written of
-                    Left _ | Just old <- oldContent -> Text.IO.writeFile (options.bundleRoot </> relative) old
-                    _ -> pure ()
-                  pure case written of
-                    Left err -> Left (AttestBundle err)
-                    Right (RecordCreated path) -> Right (AttestResult path verdict)
-                    Right (RecordPresent path) -> Right (AttestResult path verdict)
+
+combineArmChecks :: Text -> [AttestationCheck] -> AttestationCheck
+combineArmChecks name checks
+  | any ((== "failed") . (.result)) checks = check name "failed" "one or more comparison arms failed"
+  | null checks || any ((== "skipped") . (.result)) checks = check name "skipped" "one or more comparison arms could not be checked"
+  | otherwise = check name "passed" "every comparison arm passed"
+
+checkComparisonCohort :: UTCTime -> ComparisonEvidence -> ComparisonRefs -> Maybe ComparisonSource -> [FetchedArm] -> Maybe Text -> AttestationCheck
+checkComparisonCohort _ _ _ Nothing _ _ = check "cohort-matches-plan" "skipped" "comparison document is unavailable"
+checkComparisonCohort now record refs (Just source) arms armProblem =
+  let baseline = take (length refs.baselinePaths) arms
+      candidate = drop (length refs.baselinePaths) arms
+      armIds = map (.record.runId) arms
+      expectedIds = map renderRunId (source.view.baselineRuns <> source.view.candidateRuns)
+      paths = refs.baselinePaths <> refs.candidatePaths
+      pathsMatch = and (zipWith (\path arm -> takeBaseName (Text.unpack path) == Text.unpack arm.record.runId) paths arms)
+      armChecks = [checkCohort now arm.record arm.source | arm <- arms]
+      axis = case (refs.factor, refs.factorName) of
+        ("cohort", Nothing) -> Just "cohort"
+        ("dimension", Just name) -> Just ("dim:" <> name)
+        ("knob", Just name) -> Just ("knob:" <> name)
+        _ -> Nothing
+      valueFor valueAxis arm
+        | valueAxis == "cohort" = Just (String arm.record.cohort)
+        | Just name <- Text.stripPrefix "dim:" valueAxis = String <$> lookup name arm.record.dimensions
+        | Just name <- Text.stripPrefix "knob:" valueAxis = lookup name arm.record.knobs
+        | otherwise = Nothing
+      uniformValue valueAxis members = case nub (mapMaybe (valueFor valueAxis) members) of
+        [value] | length members == length (mapMaybe (valueFor valueAxis) members) -> Just value
+        _ -> Nothing
+      factorMatches = case axis of
+        Just valueAxis ->
+          source.view.variedFactors == [valueAxis]
+            && uniformValue valueAxis baseline == Just refs.baselineValue
+            && uniformValue valueAxis candidate == Just refs.candidateValue
+            && refs.baselineValue /= refs.candidateValue
+        Nothing -> False
+      outcomeMatches = case refs.verdict of
+        "pass" -> renderOutcome record.outcome == "passed"
+        "regression" -> renderOutcome record.outcome == "failed"
+        "inconclusive" -> renderOutcome record.outcome == "inconclusive"
+        "infrastructure-failure" -> renderOutcome record.outcome == "infrastructure-failure"
+        _ -> False
+      metadataMatches =
+        record.runId == renderRunId source.view.comparisonId
+          && refs.verdict == source.view.verdict
+          && refs.design == source.view.design
+          && record.startedAt == utcText source.view.startedAt
+          && record.finishedAt == utcText source.view.finishedAt
+          && source.view.harnessRevision == Just (let Revision value = record.harnessRevision in value)
+          && source.view.harnessDirty == Just record.harnessDirty
+          && outcomeMatches
+      valid =
+        armProblem == Nothing
+          && length arms == length paths
+          && armIds == expectedIds
+          && pathsMatch
+          && all (\arm -> arm.record.scenario == record.scenario) arms
+          && all ((== "passed") . (.result)) armChecks
+          && factorMatches
+          && metadataMatches
+   in if valid
+        then check "cohort-matches-plan" "passed" "comparison identity, arm records and factor values agree with source data"
+        else check "cohort-matches-plan" "failed" (maybe "comparison record or an arm contradicts the fetched documents" id armProblem)
+
+checkComparisonRevisions :: Bool -> FilePath -> ComparisonEvidence -> [FetchedArm] -> IO AttestationCheck
+checkComparisonRevisions offline scratch record arms = do
+  harness <- gitCommitExists Nothing record.harnessRevision
+  checked <- forM arms $ \arm -> checkRevisions offline scratch arm.record arm.source
+  pure $ combineArmChecks "revisions-resolve" ((if harness then check "revisions-resolve" "passed" "comparison harness commit resolves" else check "revisions-resolve" "skipped" "comparison harness commit does not resolve") : checked)
+
+checkComparisonRecomputation :: FilePath -> [Recomputer] -> FilePath -> ComparisonEvidence -> Maybe ComparisonSource -> IO AttestationCheck
+checkComparisonRecomputation _ _ _ _ Nothing = pure (check "verdict-recomputed" "skipped" "comparison document is unavailable")
+checkComparisonRecomputation bundle recomputers root record _ = do
+  definitions <- computationDefinitions bundle
+  let configured =
+        [ (handle, lookup handle definitions >>= \(name, version) -> find (\candidate -> candidate.algorithm == name && candidate.algorithmVersion == version) recomputers)
+        | handle <- record.computations
+        ]
+      missing = [handle | (handle, Nothing) <- configured]
+  results <- forM [(handle, recomputer) | (handle, Just recomputer) <- configured] $ \(handle, recomputer) -> do
+    result <- recomputer.recompute root
+    pure (handle, result)
+  let expectedVerdict = refsVerdict record.comparison
+      contradictions = [handle | (handle, Right result) <- results, not result.agreesWithDocuments || result.comparisonVerdict /= expectedVerdict]
+      unavailable = missing <> [handle | (handle, Left _) <- results]
+  pure $
+    if not (null contradictions)
+      then check "verdict-recomputed" "failed" ("comparison recomputation disagrees with the record: " <> Text.intercalate ", " contradictions)
+      else
+        if null configured
+          then check "verdict-recomputed" "skipped" "comparison names no computation definitions"
+          else
+            if not (null unavailable)
+              then check "verdict-recomputed" "skipped" ("recomputer unavailable for " <> Text.intercalate ", " unavailable)
+              else check "verdict-recomputed" "passed" "registered comparison recomputer agrees with the source document"
+  where
+    refsVerdict (Object value) = case KeyMap.lookup "verdict" value of
+      Just (String verdict) -> Just verdict
+      _ -> Nothing
+    refsVerdict _ = Nothing
+
+finishAttestation :: AttestOptions -> FilePath -> Text -> Text -> UTCTime -> Revision -> [Sha256] -> [AttestationCheck] -> IO (Either AttestError AttestResult)
+finishAttestation options relative content targetId now attesterRevision matchedDigests checks = do
+  let verdict = deriveVerdict checks
+      run = "/" <> Text.pack relative
+  identifier <- renderRunId <$> newRunId
+  let attestation =
+        AttestationEvidence
+          { title = "Attestation of " <> targetId <> " — " <> verdict,
+            description = "The kenshou attester checked the linked data and recorded " <> verdict <> ".",
+            generatedAt = utcText now,
+            attestationId = identifier,
+            run,
+            attesterRevision,
+            attestedAt = utcText now,
+            verdict,
+            checks,
+            dataDigests = sort (nub matchedDigests),
+            exception = fmap (\(authority, reason) -> object ["authority" .= authority, "reason" .= reason]) options.acceptedAnomaly,
+            body = "The attester recorded " <> verdict <> " for [the evidence record](" <> run <> ").\n"
+          }
+  amended <-
+    if verdict == "confirmed"
+      then appendVerification (options.bundleRoot </> relative) content (utcText now)
+      else pure (Right Nothing)
+  case amended of
+    Left err -> pure (Left err)
+    Right oldContent -> do
+      written <- writeAttestationRecord options.bundleRoot attestation
+      case written of
+        Left _ | Just old <- oldContent -> Text.IO.writeFile (options.bundleRoot </> relative) old
+        _ -> pure ()
+      pure case written of
+        Left err -> Left (AttestBundle err)
+        Right (RecordCreated path) -> Right (AttestResult path verdict)
+        Right (RecordPresent path) -> Right (AttestResult path verdict)
 
 appendVerification :: FilePath -> Text -> Text -> IO (Either AttestError (Maybe Text))
 appendVerification path original at = do

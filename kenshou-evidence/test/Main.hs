@@ -121,6 +121,11 @@ main = hspec do
         recordComparison store options comparisonPath `shouldReturn` Right (Recorded "runs/selftest/2026/09/01997f3a-5b7c-7e21-8a44-0d6c2f9b1e57.md")
         recordComparison store options comparisonPath `shouldReturn` Right (AlreadyRecorded "runs/selftest/2026/09/01997f3a-5b7c-7e21-8a44-0d6c2f9b1e57.md")
         checkBundle (CheckOptions bundle Nothing False False) `shouldReturn` Right []
+        comparisonAttested <- attest store coreRecomputers (AttestOptions bundle False False Nothing) comparisonId
+        comparisonAttested `shouldSatisfy` \case
+          Right result -> result.verdict == "refuted"
+          Left _ -> False
+        checkBundle (CheckOptions bundle Nothing False False) `shouldReturn` Right []
         let recordedPath = "runs/selftest/2026/09/01997f3a-5b7c-7e21-8a44-0d6c2f9b1e57.md"
         recorded <- Text.IO.readFile (bundle </> recordedPath) >>= either (fail . show) pure . parseDocument
         let wrongOutcome = recorded {frontmatter = setField "outcome" (String "failed") recorded.frontmatter}

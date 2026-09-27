@@ -51,7 +51,7 @@ attestCommand :: CliCommand
 attestCommand = attestCommandWith coreRecomputers
 
 attestCommandWith :: [Recomputer] -> CliCommand
-attestCommandWith recomputers = CliCommand "attest" "Verify a recorded run and append an attestation" Evidence False (attestHandler recomputers <$> attestParser)
+attestCommandWith recomputers = CliCommand "attest" "Verify a recorded run or comparison and append an attestation" Evidence False (attestHandler recomputers <$> attestParser)
 
 data AttestCli = AttestCli
   { target :: !Text,
@@ -68,18 +68,18 @@ data AttestCli = AttestCli
 attestParser :: Parser AttestCli
 attestParser =
   AttestCli
-    <$> parserOptionGroup "Attestation target" (Text.pack <$> strArgument (metavar "RUN-RECORD-OR-ID" <> help "Bundle path or run ID of a recorded run concept"))
+    <$> parserOptionGroup "Evidence source" (Text.pack <$> strArgument (metavar "RECORD-OR-ID" <> help "Bundle path or ID of a run or comparison record"))
     <*> configInputsParser
       ( (\bundle project -> [bundle, project])
           <$> namedOption "--bundle" bundleRootKey (long "bundle" <> metavar "DIR" <> help "OKF evidence bundle")
           <*> namedOption "--project" projectKey (long "project" <> metavar "PROJECT" <> help "GCP project for object retrieval")
       )
-    <*> parserOptionGroup "Attestation source" (optional (strOption (long "store-root" <> metavar "DIR" <> internal <> help "Scratch object store")))
-    <*> parserOptionGroup "Verification" (switch (long "offline" <> help "Skip revision resolution requiring network"))
-    <*> parserOptionGroup "Verification" (switch (long "linked-only" <> help "Fetch linked objects without manifest expansion"))
-    <*> parserOptionGroup "Human exception" (switch (long "accept-anomaly" <> help "Record a human acceptance without changing the computed verdict"))
-    <*> parserOptionGroup "Human exception" (optional (Text.pack <$> strOption (long "authority" <> metavar "human:ID" <> help "Human accepting the anomaly")))
-    <*> parserOptionGroup "Human exception" (optional (Text.pack <$> strOption (long "reason" <> metavar "TEXT" <> help "Reason for accepting the anomaly")))
+    <*> parserOptionGroup "Evidence source" (optional (strOption (long "store-root" <> metavar "DIR" <> internal <> help "Scratch object store")))
+    <*> parserOptionGroup "Recomputation" (switch (long "offline" <> help "Skip revision resolution requiring network"))
+    <*> parserOptionGroup "Recomputation" (switch (long "linked-only" <> help "Fetch linked objects without manifest expansion"))
+    <*> parserOptionGroup "Anomaly acceptance" (switch (long "accept-anomaly" <> help "Record a human acceptance without changing the computed verdict"))
+    <*> parserOptionGroup "Anomaly acceptance" (optional (Text.pack <$> strOption (long "authority" <> metavar "human:ID" <> help "Human accepting the anomaly")))
+    <*> parserOptionGroup "Anomaly acceptance" (optional (Text.pack <$> strOption (long "reason" <> metavar "TEXT" <> help "Reason for accepting the anomaly")))
     <*> parserOptionGroup "Output" (switch (long "json" <> help "Emit one JSON attestation result"))
 
 attestHandler :: [Recomputer] -> AttestCli -> CliEnv -> IO ExitCode

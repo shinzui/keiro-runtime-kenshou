@@ -8,6 +8,7 @@ module Kenshou.Evidence.Frontmatter
     comparisonToDocument,
     attestationToDocument,
     recordFromDocument,
+    comparisonFromDocument,
   )
 where
 
@@ -263,6 +264,42 @@ recordFromDocument document = do
   produced <- maybe [] id <$> optional "produced"
   previousRun <- optional "previousRun"
   pure EvidenceRecord {title, description, generatedAt, runId, purpose, scenario, tier, placement, outcome, startedAt, finishedAt, subject, subjectKind, harnessRevision, harnessDirty, computations, dataLinks, cohort, solverPlanHash, components, environment, seed, compatibilityKey, knobs, dimensions, knownDefects, produced, previousRun, body = document.body}
+
+comparisonFromDocument :: OKFDocument -> Either [FieldError] ComparisonEvidence
+comparisonFromDocument document = do
+  let front = document.frontmatter
+      typed :: (FromJSON value) => Text -> Either [FieldError] value
+      typed name = case frontmatterLookup name front of
+        Nothing -> Left [FieldError ("missing " <> name)]
+        Just value -> case fromJSON value of
+          Error message -> Left [FieldError (name <> ": " <> Text.pack message)]
+          Success decoded -> Right decoded
+  recordType <- typed "type"
+  if (recordType :: Text) /= "Verification Run" then Left [FieldError "type must be Verification Run"] else pure ()
+  kind <- typed "recordKind"
+  if (kind :: Text) /= "comparison" then Left [FieldError "recordKind must be comparison"] else pure ()
+  generatedAt <- case readGenerated front of
+    Just Generated {generatedBy, generatedAt = Just at}
+      | generatedBy == parseActor "kenshou-record/0.1.0.0" -> Right at
+    _ -> Left [FieldError "generated must name kenshou-record/0.1.0.0 and a time"]
+  title <- typed "title"
+  description <- typed "description"
+  runId <- typed "runId"
+  purpose <- typed "purpose"
+  scenario <- typed "scenario"
+  tier <- typed "tier"
+  placement <- typed "placement"
+  outcome <- typed "outcome"
+  startedAt <- typed "startedAt"
+  finishedAt <- typed "finishedAt"
+  subject <- typed "subject"
+  subjectKind <- typed "subjectKind"
+  harnessRevision <- typed "harnessRevision"
+  harnessDirty <- typed "harnessDirty"
+  computations <- typed "computations"
+  dataLinks <- typed "data"
+  comparison <- typed "comparison"
+  pure ComparisonEvidence {title, description, generatedAt, runId, purpose, scenario, tier, placement, outcome, startedAt, finishedAt, subject, subjectKind, harnessRevision, harnessDirty, computations, dataLinks, comparison, body = document.body}
 
 purposeText :: Purpose -> Text
 purposeText Nightly = "nightly"

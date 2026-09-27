@@ -101,20 +101,20 @@ checkReferences current = concatMap inspect parsed <> concatMap attestationConsi
     paths = \case
       Just (Array values) -> [value | String value <- foldr (:) [] values]
       _ -> []
-    target path scenario ref =
+    target path scenario ordinaryRunOnly ref =
       let relative = Text.unpack (Text.dropWhile (== '/') ref)
        in case Map.lookup relative byPath of
             Nothing -> [Finding path "reference-targets" ("missing run target: " <> ref)]
-            Just document | field document "type" /= Just (String "Verification Run") || field document "recordKind" /= Just (String "run") -> [Finding path "reference-targets" ("target is not a recorded run: " <> ref)]
+            Just document | field document "type" /= Just (String "Verification Run") || (ordinaryRunOnly && field document "recordKind" /= Just (String "run")) -> [Finding path "reference-targets" ("target is not a recorded run: " <> ref)]
             Just document -> [Finding path "reference-targets" ("target has a different scenario: " <> ref) | scenario /= Nothing, field document "scenario" /= scenario]
     inspect (path, document)
       | field document "type" == Just (String "Verification Run") =
-          let previous = maybe [] (\ref -> target path (field document "scenario") ref <> checkPrevious path document ref) (asText (field document "previousRun"))
+          let previous = maybe [] (\ref -> target path (field document "scenario") True ref <> checkPrevious path document ref) (asText (field document "previousRun"))
               comparison = field document "comparison"
               arms = paths (nested "baselineRuns" comparison) <> paths (nested "candidateRuns" comparison)
-           in previous <> concatMap (target path (field document "scenario")) arms
+           in previous <> concatMap (target path (field document "scenario") True) arms
       | field document "type" == Just (String "Attestation") =
-          maybe [] (target path Nothing) (asText (field document "run"))
+          maybe [] (target path Nothing False) (asText (field document "run"))
       | otherwise = []
     attestationConsistency (path, document)
       | field document "type" == Just (String "Attestation") =
