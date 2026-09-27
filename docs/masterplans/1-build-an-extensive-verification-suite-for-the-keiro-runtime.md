@@ -414,7 +414,7 @@ EP-10 also matched the released nonpositive-concurrency `REV-6-F1` reproduction 
 
 EP-10's keyed-worker-failure probe was disposed as an internal scheduler improvement under `mori://shinzui/shibuya/okf/improvement-requests/concepts/IR-6`, with [local evidence](../findings/20-shibuya-keyed-worker-failure-awaits-input-exhaustion.md). Owner REV-5 does not establish a public `runApp` failure path; no owner bug report was filed.
 
-EP-10's idle-intake halt probe matched clean released `REV-4-F1` reproductions to the published `AckHalt` contract. Owner `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-4` records the 0.9.0.3 lost wakeup as fixed in 0.10.0.0; the local finding and affected released scenario cite it. A clean run with the narrowed reference remains to be recorded.
+EP-10's idle-intake halt probe matched clean released `REV-4-F1` reproductions to the published `AckHalt` contract. Owner `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-4` records the 0.9.0.3 lost wakeup as fixed in 0.10.0.0; the local finding and affected released scenario cite it. Clean `ahead:4` run `01a0e538-37e0-7202-b924-8c8d01b03633` confirmed the exact nonblocking reference.
 
 EP-10's Kiroku outage scenario now has a separate dedicated-listener fault: it identifies the consumer's new `kiroku-listener` PID against a pre-start backend baseline, verifies the `LISTEN` query, and terminates that PID. Historical adapter 0.5.1.2 and current 0.5.1.3 passed the expanded PostgreSQL 18 and 17 scenarios with automatic listener recovery, all 80 events handled once, and final checkpoints. The PostgreSQL 17 revision-2 run IDs are `01a0e42d-5100-7262-82ec-a7ae01529f5c` and `01a0e430-6b3e-7790-8f24-b02a2f824fa4`.
 
