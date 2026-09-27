@@ -21,6 +21,11 @@ provenance:
       at: 2026-09-27T12:54:46Z
       mode: "implement"
       note: "Recorded preflight and EP-18 completion blocker; Model discovery unavailable: Runtime supplies only GPT-6 family; no exact model ID or Codex session ID is exposed in environment"
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-27T14:07:23Z
+      mode: "update"
+      note: "Refreshed preflight after EP-18 completion; publication is unblocked."
 ---
 
 # Publish the verification evidence profile in okf-profiles
@@ -45,7 +50,7 @@ To see it working at the end: in `/Users/shinzui/Keikaku/bokuno/okf-profiles`, `
 
 - [ ] Publish the verification evidence profile with fixtures and generated documentation, amend its ADR, release it, and repoint the evidence bundle; verify the publication acceptance in Validation and Acceptance.
 
-Preflight on 2026-09-27: strict OKF validation reports `OK: 16 concepts (okf_version 0.2)`, `nix develop -c cabal run -v0 kenshou -- evidence check` reports `evidence clean`, `git status --short docs/verification` is empty, and the corpus contains all four run kinds. Implementation has not begun because the hard dependency, `docs/plans/18-record-runs-and-attestations-in-a-historic-okf-evidence-bundle.md`, still marks attestation acceptance and its overall delivery unfinished. Resume this plan after those outcomes are verified and marked complete; repeat the preflight then.
+Preflight on 2026-09-27: strict OKF validation reported `OK: 16 concepts (okf_version 0.2)`, `nix develop -c cabal run -v0 kenshou -- evidence check` reported `evidence clean`, `git status --short docs/verification` was empty, and the corpus contained all four run kinds. EP-18 subsequently completed its attestation acceptance and added a confirmed comparison attestation, bringing the corpus to 17 concepts. `just verify`, a deep GCS evidence check, and `mori validate` passed. EP-19's hard dependency is now satisfied; publication work has not begun. Repeat the preflight against the current corpus before lifting the profile.
 
 ## Surprises & Discoveries
 
