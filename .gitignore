@@ -16,5 +16,5 @@ cabal.project.local
 db/
 result
 result-*
-runs/
+/runs/
 .pre-commit-config.yaml
