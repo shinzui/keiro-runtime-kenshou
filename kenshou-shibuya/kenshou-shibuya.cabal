@@ -24,6 +24,7 @@ library
   hs-source-dirs: src
   exposed-modules:
     Kenshou.Suite.Shibuya
+    Kenshou.Suite.Shibuya.Bench.ConcurrencySweep
     Kenshou.Suite.Shibuya.Bench.FrameworkTax
     Kenshou.Suite.Shibuya.Cohort
     Kenshou.Suite.Shibuya.Concurrency.CoreBatch
@@ -130,7 +131,11 @@ executable kenshou-shibuya-run
   import: defaults
   hs-source-dirs: app
   main-is: Run.hs
-  ghc-options: -threaded
+  ghc-options:
+    -threaded
+    -rtsopts
+    -with-rtsopts=-T
+
   build-depends:
     aeson >=2.2 && <2.3,
     base >=4.21 && <4.22,
