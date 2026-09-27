@@ -1,0 +1,9 @@
+# Shibuya forced stop can finalize after returning
+
+Status: reproduced on historical Shibuya core 0.9.0.3 and current Hackage 0.10.0.0. Owner bug report: `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-1`.
+
+The revision-2 `shibuya/core-runner/concurrency/forced-shutdown-abandons-but-never-loses` probe fills a five-slot inbox while four asynchronous handlers wait on a gate. A one-second drain deadline forces `stopAppGracefully` to return `False`. It then calls stop again, samples source pulls, handler starts, active handlers and finalizations, opens the gate without starting a replacement, and samples again. The current lane has a checked-in reproduction at `specs/shibuya-current-forced-shutdown.json`.
+
+The exploratory historical run `runs/01a0e43b-f716-738d-8e84-891e23e43343/run-result.json` and current run `runs/01a0e43d-bf7e-75bd-b84a-28f8bcab1f98/run-result.json` came from a dirty development tree. Both found four active handlers after both stop calls, zero finalizations before gate release, and seven finalizations after gate release but before replacement. Source pulls and handler starts stayed flat through the repeated stop. A replacement eventually finalized all 30 published messages, so this probe shows an unsafe stop boundary rather than message loss. The revised scenario scopes the three late-handler failure labels to the owner report; conservation and any other failure remain blocking.
+
+The published `mori://shinzui/shibuya/okf/capabilities/concepts/CAP-3` says graceful shutdown drains in-flight work within a deadline, and the `stopAppGracefully` API says remaining processors are force-stopped after timeout. The revised probe catches a handler that resumes and finalizes only after stop returned. The owner's root-cause analysis and fix are still pending. A clean-tree released/current cohort contrast will replace the exploratory run references.

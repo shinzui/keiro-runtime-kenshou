@@ -1,0 +1,7 @@
+{
+  "schema": "kenshou.run-spec/v1",
+  "scenario": "shibuya/core-runner/concurrency/forced-shutdown-abandons-but-never-loses",
+  "dimensions": {},
+  "knobs": {},
+  "environment": { "placement": "local" }
+}

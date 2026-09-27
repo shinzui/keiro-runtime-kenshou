@@ -32,7 +32,7 @@ Each row gives the full CLI identifier and the behavior checked or measured. `co
 | `shibuya/core-runner/concurrency/adapter-shutdown-failure-does-not-skip-siblings` | A throwing adapter shutdown still shuts down sibling adapters and reports the exception to every stopper. |
 | `shibuya/core-runner/concurrency/blocking-adapter-shutdown-is-bounded` | A permanently blocked adapter shutdown respects the application's total shutdown deadline. |
 | `shibuya/core-runner/concurrency/finalization-failure-is-a-failure-not-a-halt` | Transient finalizer faults preserve the decision, and an exhausted retry budget triggers supervision. |
-| `shibuya/core-runner/concurrency/forced-shutdown-abandons-but-never-loses` | A forced stop leaves leases for redelivery, and a replacement application eventually finalizes every message. |
+| `shibuya/core-runner/concurrency/forced-shutdown-abandons-but-never-loses` | Checks repeated stop, handler cancellation and late finalization before a replacement conserves all messages. |
 | `shibuya/core-runner/concurrency/gc-liveness-with-dropped-handle` | A caller survives major collections with a live idle processor or after its AppHandle is dropped. |
 | `shibuya/core-runner/concurrency/halt-strands-leased-messages` | A processor halt may strand bounded leases until expiry, but a replacement consumes the whole queue. |
 | `shibuya/core-runner/concurrency/halt-wakes-idle-intake` | A halt decision wakes an idle source and lets waitApp finish within the deadline. |
@@ -93,19 +93,19 @@ Each row gives the full CLI identifier and the behavior checked or measured. `co
 
 ## Lifecycle coverage
 
-`Kenshou.Suite.Shibuya.Matrix` assigns each executable scenario to boundary/case cells. The counts below are derived from that source; one scenario can cover several cells. A zero is a coverage gap. The matrix currently marks no cell as inherently unreachable, so the zero cells remain work for the lifecycle milestone.
+`Kenshou.Suite.Shibuya.Matrix` assigns each executable scenario to boundary/case cells. The counts below are derived from that source; one scenario can cover several cells. Sixty-four cells have an executable probe. The only zero, `startup-registration/timeout`, is explicitly inapplicable because public `runApp` startup has no deadline or timeout result. The package test requires every cell to have a probe or a specific inapplicability reason.
 
 | Boundary | normal | synchronousException | cancellation | timeout | repeatedStop |
 |---|---:|---:|---:|---:|---:|
 | startup-registration | 1 | 2 | 1 | 0 | 1 |
-| ingestion-backpressure | 2 | 1 | 1 | 2 | 0 |
-| dispatch | 4 | 1 | 1 | 1 | 0 |
-| keyed-ordering | 3 | 2 | 1 | 0 | 1 |
-| batching | 1 | 1 | 1 | 0 | 1 |
-| retry-lease | 2 | 0 | 1 | 2 | 1 |
-| finalization | 1 | 1 | 2 | 1 | 0 |
+| ingestion-backpressure | 2 | 1 | 1 | 2 | 1 |
+| dispatch | 4 | 1 | 1 | 1 | 1 |
+| keyed-ordering | 3 | 2 | 1 | 1 | 1 |
+| batching | 1 | 1 | 1 | 1 | 1 |
+| retry-lease | 2 | 1 | 1 | 2 | 1 |
+| finalization | 1 | 1 | 2 | 1 | 1 |
 | drain-cancel | 1 | 1 | 1 | 1 | 1 |
-| supervision | 2 | 4 | 0 | 1 | 1 |
+| supervision | 2 | 4 | 1 | 1 | 1 |
 | metrics-health | 2 | 2 | 1 | 1 | 1 |
 | metrics-websocket | 1 | 1 | 1 | 2 | 1 |
 | pgmq-persistence | 2 | 3 | 2 | 3 | 2 |
@@ -123,6 +123,7 @@ The released core is Shibuya 0.9.0.3. The pinned remediation line carries lifecy
 | Health readiness/liveness and WebSocket contracts | Scoped failures reproduced on metrics 0.9.0.3 | Focused cases pass on pinned remediation; full current-release CLI sweep remains open | `mori://shinzui/shibuya/okf/reviews/concepts/REV-7`, `mori://shinzui/shibuya/okf/reviews/concepts/REV-8`, `mori://shinzui/shibuya/okf/reviews/concepts/REV-9` |
 | Long-poll acknowledgement stalls with a two-connection pool | Reproduced on PGMQ adapter 0.16.0.0 | Reproduced on 0.16.1.0; fixed-version acceptance remains open | `mori://shinzui/shibuya-pgmq-adapter/okf/bug-reports/concepts/BUG-1` |
 | Partial Kiroku group acquisition leaks members and replaces the primary exception | Reproduced on adapter 0.5.1.2 | Passes on 0.5.1.3 on PostgreSQL 18 | `mori://shinzui/shibuya/okf/reviews/concepts/REV-13` |
+| Forced stop returns while handlers can finalize later | Reproduced on core 0.9.0.3 | Reproduced on Hackage 0.10.0.0; owner fix pending | `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-1` |
 
 The retry and success Prometheus counters remain indistinguishable in the measured release; the [local finding](../findings/14-shibuya-retry-and-success-counters-are-indistinguishable.md) records that documented limitation. The transient-handler readiness probe reproduces a sticky failed state tracked by `mori://shinzui/shibuya/okf/improvement-requests/concepts/IR-7`. Two processes claiming one Kiroku member each process every event, so the [local guard finding](../findings/16-shibuya-kiroku-same-member-duplicate-work.md) recommends exposing the store guard. The Kiroku live all-streams crash probe permits a 1,000-event publisher replay window and reports the observed replay separately from contract loss checks.
 
@@ -142,4 +143,4 @@ Shibuya does not automatically restart a failed processor. An application restar
 
 ## Remaining acceptance
 
-The lifecycle matrix has uncovered cells and the isolated current-release CLI sweep for the core and metrics cases is incomplete. Four Shibuya benchmarks, four soak pairs, trace-continuity cases, overhead comparisons, and upstream finding audit described by the ExecPlan remain to be implemented and run. The framework-tax comparison needs a controlled cell rerun to narrow its confidence interval. PostgreSQL 18 is the first repair-and-rerun checkpoint; PostgreSQL 17 compatibility acceptance follows the MasterPlan's later pass.
+The lifecycle matrix is fully accounted for, but the isolated current-release CLI sweep for the core and metrics cases is incomplete. Four Shibuya benchmarks, four soak pairs, trace-continuity cases, overhead comparisons, and upstream finding audit described by the ExecPlan remain to be implemented and run. The framework-tax comparison needs a controlled cell rerun to narrow its confidence interval. The forced-stop late-finalization bug needs an owner repair and a rerun. PostgreSQL 18 is the first repair-and-rerun checkpoint; PostgreSQL 17 compatibility acceptance follows the MasterPlan's later pass.

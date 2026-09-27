@@ -1,7 +1,7 @@
 module Main (main) where
 
 import Data.Either (isLeft)
-import Data.List (nub)
+import Data.List (nub, sort)
 import Data.Text qualified as Text
 import Hedgehog (forAll, (===))
 import Hedgehog.Gen qualified as Gen
@@ -92,6 +92,11 @@ spec = do
       mapM_ checkScenario bundle.scenarios
     it "does not mark an exercised cell as inapplicable" $
       all (\(cell, _) -> cell `notElem` exercised) uncovered `shouldBe` True
+    it "accounts for every lifecycle cell with a scenario or a specific inapplicability reason" $ do
+      let inapplicable = map fst uncovered
+      length (nub inapplicable) `shouldBe` length inapplicable
+      all (not . Text.null . Text.strip . snd) uncovered `shouldBe` True
+      sort (nub exercised <> inapplicable) `shouldBe` sort allCells
   describe "cohort capability probe" $ do
     it "agrees with the linked shibuya-core policy" $
       case coreLine of

@@ -24,14 +24,14 @@ import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobInt, knobText, mkKnobName, renderKnobName)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Role (ControlMessage (..))
-import Kenshou.Core.Scenario (KnownDefect (..), Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
+import Kenshou.Core.Scenario (CohortScope (..), KnownDefect (..), Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
 import Kenshou.Suite.Shibuya.Cohort (knownOnReleasedCore, rev)
 import Kenshou.Suite.Shibuya.Fixture.Handlers (HandlerScript (..), HandlerStats (..), defaultHandlerScript, handlerStats, newHandlerProbe, scriptedHandler)
 import Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter (BrokerEvent (..), BrokerStats (..), FinalizerOutcome (..), ShutdownBehaviour (..), SyntheticBroker, SyntheticConfig (..), brokerEvents, brokerStats, closeInput, defaultSyntheticConfig, newSyntheticBroker, publish, reopenSource, syntheticAdapter)
 import Kenshou.Suite.Shibuya.Knobs (coreKnobs, parseConcurrency, parseOrdering)
 import Shibuya.Adapter (Adapter (..))
 import Shibuya.App (AppConfig (..), QueueProcessor (..), ShutdownConfig (..), SupervisionStrategy (..), defaultAppConfig, defaultShutdownConfig, mkProcessor, runApp, stopApp, stopAppGracefully, waitApp)
-import Shibuya.Core.Ack (AckDecision (..), HaltReason (..))
+import Shibuya.Core.Ack (AckDecision (..), HaltReason (..), RetryDelay (..))
 import Shibuya.Core.AckHandle (AckHandle (..))
 import Shibuya.Core.Ingested (mkIngested)
 import Shibuya.Core.Metrics (ProcessorId (..))
@@ -309,17 +309,20 @@ finalizationFailure =
 runFinalizationFailure :: RunContext -> IO ScenarioReport
 runFinalizationFailure context = do
   transientArms <- mapM runTransientFinalizer [1 .. 3]
+  retryFailures <- runRetryFinalizer
   (linkedFailure, siblingStopped, permanentAttempts, permanentFinalized) <- runPermanentFinalizer
   let transient = concatMap fst transientArms
       supervisionFailed = not linkedFailure || not siblingStopped
       failures =
         transient
+          <> retryFailures
           <> ["permanent-finalizer-attempts" | permanentAttempts /= 4]
           <> ["permanent-finalizer-was-effective" | permanentFinalized]
           <> ["REV-4-F2" | supervisionFailed]
   putSummary context Verdicts "finalization-failure" $
     object
       [ "transientFailures" .= transient,
+        "retryDecisionFailures" .= retryFailures,
         "transientRetryGapsSeconds" .= map snd transientArms,
         "permanentAttempts" .= permanentAttempts,
         "permanentFinalized" .= permanentFinalized,
@@ -352,6 +355,32 @@ runTransientFinalizer faultCount = do
         <> [label <> "-finalization-not-effective-once" | stats.finalizedOk /= 1 || stats.leasedUnfinalized /= 0 || length [() | Finalized _ _ AckOk <- events] /= 1],
       gaps
     )
+
+runRetryFinalizer :: IO [Text]
+runRetryFinalizer = do
+  broker <- newSyntheticBroker defaultSyntheticConfig {finalizerScript = \_ attempt -> if attempt == 1 then FinalizeThrows "retry decision finalizer fault" else FinalizeSucceeds}
+  _ <- publish broker Nothing "retry-then-success"
+  closeInput broker
+  handled <- newIORef (0 :: Int)
+  completed <- timeout 3000000 $ runEff $ runTracingNoop $ do
+    let handler _ = do
+          number <- liftIO $ atomicModifyIORef' handled (\value -> (value + 1, value))
+          pure $ if number == 0 then AckRetry (RetryDelay 0) else AckOk
+    started <- runApp defaultAppConfig [(ProcessorId "retry-finalizer", mkProcessor (syntheticAdapter broker) handler)]
+    case started of
+      Left err -> error (show err)
+      Right handle -> waitApp handle >> stopApp handle
+  stats <- brokerStats broker
+  events <- brokerEvents broker
+  let attempts = [decision | FinalizeAttempt _ _ decision _ <- events]
+      effective = [decision | Finalized _ _ decision <- events]
+      expectedAttempts = [AckRetry (RetryDelay 0), AckRetry (RetryDelay 0), AckOk, AckOk]
+      expectedEffective = [AckRetry (RetryDelay 0), AckOk]
+  pure $
+    ["retry-finalizer-timeout" | completed == Nothing]
+      <> ["retry-finalizer-attempts" | attempts /= expectedAttempts]
+      <> ["retry-finalizer-effective-decisions" | effective /= expectedEffective]
+      <> ["retry-finalizer-conservation" | stats.retried /= 1 || stats.finalizedOk /= 1 || stats.redeliveries /= 1 || stats.leasedUnfinalized /= 0]
 
 runPermanentFinalizer :: IO (Bool, Bool, Int, Bool)
 runPermanentFinalizer = do
@@ -506,15 +535,26 @@ forcedShutdownConserves :: Scenario
 forcedShutdownConserves =
   Scenario
     { id = either (error . Text.unpack) id (parseScenarioId "shibuya/core-runner/concurrency/forced-shutdown-abandons-but-never-loses"),
-      revision = 1,
-      summary = "A forced stop leaves leases for redelivery, and a replacement application eventually finalizes every message.",
+      revision = 2,
+      summary = "A forced stop cancels handlers before returning, and a replacement application eventually finalizes every message.",
       tier = TierSmoke,
       placement = PlaceEither,
       knobs = [],
       dimensions = noDimensions,
       phases = zeroPhases,
       requires = noEnvironment,
-      knownDefect = Nothing,
+      knownDefect =
+        Just
+          KnownDefect
+            { reference = "mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-1",
+              summary = "Forced shutdown can return while handlers remain active and later finalize",
+              expectedFailures =
+                [ "supervised-handlers-survived-cancellation",
+                  "finalized-after-gate-release",
+                  "handler-ended-after-gate-release"
+                ],
+              appliesTo = AllCohorts
+            },
       run = runForcedShutdown
     }
 
@@ -539,9 +579,15 @@ runForcedShutdown context = do
            in awaitHandlers
         drained <- stopAppGracefully defaultShutdownConfig {drainTimeout = 1} firstHandle
         atStop <- liftIO $ brokerStats broker
+        handlersAtStop <- liftIO $ handlerStats probe
         liftIO $ threadDelay 100000
+        repeated <- stopAppGracefully defaultShutdownConfig {drainTimeout = 1} firstHandle
         afterStop <- liftIO $ brokerStats broker
+        handlersAfterStop <- liftIO $ handlerStats probe
         liftIO $ atomically $ writeTVar gate True
+        liftIO $ threadDelay 100000
+        afterGateRelease <- liftIO $ brokerStats broker
+        handlersAfterGateRelease <- liftIO $ handlerStats probe
         liftIO $ reopenSource broker
         second <- runApp defaultAppConfig [(ProcessorId "forced-replacement", mkProcessor (syntheticAdapter broker) (\_ -> pure AckOk))]
         case second of
@@ -550,20 +596,35 @@ runForcedShutdown context = do
             waitApp secondHandle
             stopApp secondHandle
             finalStats <- liftIO $ brokerStats broker
-            pure (drained, atStop, afterStop, finalStats)
+            pure (drained, repeated, atStop, afterStop, afterGateRelease, handlersAtStop, handlersAfterStop, handlersAfterGateRelease, finalStats)
   case observed of
     Nothing -> pure $ failedWith ["forced-stop-timeout"] "forced stop or replacement exceeded twelve seconds"
-    Just (drained, atStop, afterStop, finalStats) -> do
+    Just (drained, repeated, atStop, afterStop, afterGateRelease, handlersAtStop, handlersAfterStop, handlersAfterGateRelease, finalStats) -> do
       let failures =
             ["forced-stop-reported-clean-drain" | drained]
               <> ["finalized-after-stop" | atStop.finalizedOk /= afterStop.finalizedOk]
+              <> ["source-pulled-after-repeated-stop" | atStop.sourcePulls /= afterStop.sourcePulls]
+              <> ["handler-started-after-repeated-stop" | handlersAtStop.started /= handlersAfterStop.started]
+              <> ["supervised-handlers-survived-cancellation" | handlersAtStop.active /= 0 || handlersAfterStop.active /= 0]
+              <> ["finalized-after-gate-release" | atStop.finalizedOk /= afterGateRelease.finalizedOk]
+              <> ["handler-ended-after-gate-release" | handlersAfterStop.ended /= handlersAfterGateRelease.ended]
               <> ["messages-lost-after-restart" | finalStats.finalizedOk /= 30]
               <> ["leases-remain-after-restart" | finalStats.leasedUnfinalized /= 0]
       putSummary context Verdicts "forced-shutdown-conservation" $
         object
           [ "cleanDrain" .= drained,
+            "secondStopCleanDrain" .= repeated,
+            "sourcePullsAtStop" .= atStop.sourcePulls,
+            "sourcePullsAfterSecondStop" .= afterStop.sourcePulls,
+            "handlerStartsAtStop" .= handlersAtStop.started,
+            "handlerStartsAfterSecondStop" .= handlersAfterStop.started,
+            "activeHandlersAtStop" .= handlersAtStop.active,
+            "activeHandlersAfterSecondStop" .= handlersAfterStop.active,
+            "activeHandlersAfterGateRelease" .= handlersAfterGateRelease.active,
+            "handlerEndsAfterGateRelease" .= handlersAfterGateRelease.ended,
             "finalizedAtStop" .= atStop.finalizedOk,
             "finalizedAfterStop" .= afterStop.finalizedOk,
+            "finalizedAfterGateRelease" .= afterGateRelease.finalizedOk,
             "finalizedAfterRestart" .= finalStats.finalizedOk,
             "redeliveries" .= finalStats.redeliveries
           ]
