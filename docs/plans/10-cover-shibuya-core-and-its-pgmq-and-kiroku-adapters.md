@@ -150,7 +150,7 @@ After this plan a maintainer can, from this repository, run `kenshou list --laye
 - [x] (2026-09-27) Ran the isolated current-release CLI through all 30 registered non-benchmark core and metrics scenarios from a clean tree. Twenty-eight passed; forced stop reproduced owner BUG-1 and transient-exception readiness reproduced owner IR-7, both nonblocking. The 34-example current package suite passed. The script and per-scenario sealed run IDs are below. Separate clean current runs passed idle-intake halt with `ahead:4`, `async:4`, and partitioned `async:4`.
 - [x] (2026-09-27) Ran all 30 default non-benchmark core and metrics scenarios on released and head lanes from clean revisions. Released had 16 direct passes and 14 scoped findings; head had 28 passes and only owner BUG-1 and IR-7. The paired run table is below.
 - [x] (2026-09-27) Ran idle-intake halt under `ahead:4`, `async:4`, and partitioned-in-order `async:4` on the historical and head cohorts. All three historical runs reproduced only scoped REV-4-F1; all three head runs passed. The current-release controls passed earlier. The run table is below.
-- [ ] Exercise the remaining non-default batch and concurrency shapes on both full cohorts.
+- [x] (2026-09-27) Completed clean serial one-slot and ahead:4 eight-slot lease-bound runs on released, head, and isolated Hackage 0.10.0.0. Each lane observed high-water leases 3/6 and 13/20 against its bounds, saturated its handlers, and finalized all 1,000 messages. Together with the idle-halt runs and the batch scenario's internal size, timeout, flush, fallback and keyed arms, the configurable non-default core shapes are covered.
 - [x] (2026-09-25) Started the real PostgreSQL PGMQ fixture and registered `shutdown-latency-is-bounded-by-polling`. On historical 0.16.0.0 the standard and long-poll arms each handled one message, drained the queue and passed their two- and six-second stop bounds on PostgreSQL 17 and 18. The pinned remediation cohort passed the long-poll arm on PostgreSQL 18; the isolated Hackage 0.16.1.0 project compiled the fixture and passed its lifecycle-matrix tests.
 - [x] (2026-09-25) Registered `auto-dead-letter-counts-deliveries` with direct-DLQ reason-code SQL and callback oracles. Historical 0.16.0.0 passed on PostgreSQL 17 and 18 at the default retry budget and on PostgreSQL 18 with a zero budget; pinned remediation passed on PostgreSQL 18. The isolated current-release package suite compiled the case and passed 33 examples.
 - [x] (2026-09-25) Registered `ack-decision-mapping` with live queue, archive, visibility-time, attempt and DLQ-payload oracles for every acknowledgement decision, plus typed invalid-configuration rejection. The complete sequence passed on historical PostgreSQL 17 and 18 and pinned remediation PostgreSQL 18; the isolated Hackage current-release project compiled the case and passed 33 package examples.
@@ -242,6 +242,13 @@ The three checked-in `specs/shibuya-current-halt-*.json` files cover idle-intake
 | `ahead:4` | `01a0e48a-20db-77b3-a106-ad193a4d11d2` | `01a0e48c-86bd-72af-9e06-6623a3f8f0db` | `01a0e45d-4a06-738d-a298-3b9f7e4ceba1` |
 | `async:4` | `01a0e48a-537c-7256-8dc9-5a891ccb7bdf` | `01a0e48c-b490-77a5-a1cb-1335b6b37405` | `01a0e45d-7b99-7793-b4ca-b1419235545f` |
 | partitioned-in-order `async:4` | `01a0e48a-843b-714c-bbf1-fa223d497cc2` | `01a0e48c-de2b-7399-9286-b7b433a8b7b3` | `01a0e45d-b7bb-7518-8a3b-ec91ee765c36` |
+
+The checked-in `specs/shibuya-current-lease-serial.json` and `specs/shibuya-current-lease-ahead.json` reproduce the remaining configurable lease-bound shapes. Released, head, and current-release runs all have `dirty=false`, `blocking=false`, and `outcome=passed`. The earlier default `async:4` clean runs are included in the 30-scenario sweeps above.
+
+| Lease-bound shape | Released run ID | Head run ID | Current 0.10.0.0 run ID | High-water / bound |
+| --- | --- | --- | --- | --- |
+| serial, inbox 1 | `01a0e490-061a-7245-ae8b-fa12ef409e45` | `01a0e492-4939-7379-84d1-142c8f86427a` | `01a0e494-bde7-71a0-9b54-7b13f0f49bb8` | 3 / 6 |
+| ahead:4, inbox 8, slack 0 | `01a0e490-9106-71d2-ad55-f44fff45e0ab` | `01a0e492-7b70-73a5-b5f7-d5056e1b6097` | `01a0e494-e56a-7104-934e-a4549cfefb31` | 13 / 20 |
 
 ### Released and head core and metrics CLI sweeps
 
