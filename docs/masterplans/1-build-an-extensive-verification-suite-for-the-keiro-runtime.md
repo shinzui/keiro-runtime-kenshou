@@ -373,6 +373,16 @@ recomputable yet and the evidence files were uncommitted during that check.
 A second attestation from a clean tree passed the worktree check and retained
 only the VC-1 recomputation gap.
 
+EP-11's corrected reduced stability soak now has a fresh clean-tree sealed
+pass, [01a0e3c8-28da-70e4-abcb-81223c70560b](../verification/runs/kafka/2026/09/01a0e3c8-28da-70e4-abcb-81223c70560b.md). At 100 records/s for 20
+minutes, all 120,000 broker-acknowledged IDs appeared in the worker ledgers,
+with no delivery failure, worker error, or final lag. The continuous consumer's
+122 samples yielded 41 diagnostic points and `Stable` verdicts for heap live
+bytes, native bytes, Haskell threads, OS threads, and file descriptors. The
+other four, shorter-lived consumers correctly had insufficient leak data.
+Full-rate churn, the deferred poll-cap comparison, cohort repetitions, and
+the assembled-runtime import proof remain open.
+
 EP-19 published `assurance.verificationEvidence` in `mori://shinzui/okf-profiles` v0.19.0 after 129 rejection fixtures and strict validation of the unchanged 17-concept consumer corpus. This repository now pins that release and narrows its runtime-specific layer and tier vocabularies locally. Its offline evidence checker enforces the GCS data-link policy, and the full `just verify` gate passes. Mori resolves the published profile URI and marks the consumer pin current; ADR-18 records the contract boundary.
 
 EP-10 tightened its core leased-message bound probe: it now waits for 500 ms without source pulls and accepts inbox, concurrency and slack knobs. Three sealed serial, ahead and async runs saturated their handlers, remained within `inboxSize + 3n + slack`, finalized all 1,000 messages, and left no leases. The child plan records the measured values and run IDs.
