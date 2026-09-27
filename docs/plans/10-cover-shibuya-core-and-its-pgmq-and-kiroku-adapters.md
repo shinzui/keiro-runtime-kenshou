@@ -178,6 +178,7 @@ After this plan a maintainer can, from this repository, run `kenshou list --laye
 - [x] (2026-09-27) Registered real PGMQ and Kiroku trace-continuity scenarios and passed clean PostgreSQL 18 runs on released, pinned head, and isolated current Hackage lanes. PGMQ checked three distinct W3C parents and acknowledgement decisions through async processing, the active and upstream DLQ headers, and verbatim header forwarding with tracing off. Kiroku checked three distinct event-metadata parents, acknowledgement spans, and the final subscription checkpoint. All nine results are nonblocking; the exact run IDs are below. `nix develop -c just verify` passed before the clean runs.
 - [x] (2026-09-27) Registered `core-ordering/benchmark/concurrency-sweep` with an intended-send timestamp carried through finalization, bounded synthetic intake, serial/configured comparison arms, rate, concurrency, ordering and partition knobs, complete measurement histograms and RTS allocation samples. Three clean interleaved 1,000-message local pairs at 200/s and 1 ms handler delay passed at harness revision `e4d2fe0`; their comparison `01a0e4ca-e89c-7230-8efd-b67fac7690f2` passed throughput and was inconclusive for p99. The exact IDs are below. The local result is indicative; the controlled cell comparison remains open.
 - [x] (2026-09-27) Extended revision 2 of `concurrency-sweep` across tracing off, noop, in-memory SDK and OTLP SDK with live served/scraped metrics and ten WebSocket subscribers. Four same-seed clean arms passed at `3dcf307`, including 1,000 exported spans, zero drops, five successful scrapes per HTTP endpoint and ten WebSocket streams in the OTLP arm. A separate three-pair local off-to-noop `kenshou overhead` run emitted a schema-valid report under the provisional Shibuya policy. All six child runs passed cleanly; throughput, p50, allocation, CPU and GC rules passed, while p99 and the overall verdict were inconclusive. IDs are below. `nix develop -c just verify` passed for the code revision; the full telemetry matrix and controlled cell calibration remain open.
+- [x] (2026-09-27) Registered `core-batch/benchmark/batch-size-and-timeout` with a serial unbatched control, size and timeout knobs, scheduled arrivals, per-message finalize latency, trigger counts and telemetry dimensions. The full `nix develop -c just verify` gate passed. Three clean interleaved local pairs and a timeout-triggered control passed at `4a40fde`; the provisional comparison passed throughput but was inconclusive for p99. The exact IDs and observed trigger counts are below. Adapter benchmarks and controlled cell calibration remain open.
 - [ ] Deliver the remaining benchmarks, soaks, telemetry overhead comparisons, upstream finding audit, and ADR/outcome distillation.
 
 ### PostgreSQL 18 trace-continuity results
@@ -214,6 +215,18 @@ Revision 2 added the cross-cutting tracing and metrics dimensions to the benchma
 | sdk-otlp / serve-scraped | `01a0e4d7-f304-7474-97d0-8160e5ee79a0` |
 
 The local three-pair off-to-noop report is `runs/overhead-01a0e4d8-c1ed-711f-9b03-f8dd51507b21/overhead-report.json` (report ID `01a0e4d8-c1ed-711f-9b03-f8dd51507b21`), with comparison `01a0e4d9-5748-7029-9001-9e6e10076b85`. Its paired off/noop run IDs are `01a0e4d8-daa7-7519-a4bc-55dcf8b32df7`/`01a0e4d8-c1ef-76d7-897d-d840ebef35f5`, `01a0e4d8-f34c-7622-8871-49db47193420`/`01a0e4d9-0cc7-7086-86e1-89d17abe31ba`, and `01a0e4d9-25d2-700a-b18d-4a3d43eefd8a`/`01a0e4d9-3e86-74c9-b84e-8f96a40778a7`. The report is `inconclusive` under `policies/shibuya-telemetry-overhead.json`: the p99 confidence interval is too wide. The full tracing/metrics overhead matrix, WebSocket comparison and controlled cell calibration remain open.
+
+### Core batch benchmark comparison
+
+All runs used the released cohort and clean harness revision `4a40fde`. Each used 1,000 scheduled messages at 200/s, zero handler delay, and serial execution. The three size-triggered pairs used batch size 10 and timeout 100 ms. Every batched arm emitted exactly 100 size-triggered batches of ten; every arm finalized all 1,000 messages and produced latency histograms and RTS allocation samples.
+
+| Seed | Unbatched baseline | Batched candidate |
+| --- | --- | --- |
+| 301 | `01a0e4e8-d04c-7619-938a-01b71e6740e3` | `01a0e4e9-2fb7-732e-85b9-ff63a823ad13` |
+| 302 | `01a0e4e9-b10b-77a3-8188-b31058fee9cd` | `01a0e4e9-6ea3-771d-ad42-7ccc75cb67fc` |
+| 303 | `01a0e4e9-eeb1-77dd-a214-5bedf20d3564` | `01a0e4ea-33cd-76dc-8213-b86a05d9024e` |
+
+The pair order was unbatched/batched, batched/unbatched, unbatched/batched. Comparison `01a0e4eb-5417-7407-850c-c61c570cfa7f` in `runs/shibuya-batch-size-timeout-comparison.json` passed the throughput rule at a ratio of 0.9998 and was `inconclusive` overall under `policies/shibuya-batch-size-timeout.json`: its p99 ratio estimate was 13.0, with a wide 1.81–93.38 interval. This measures a local latency cost, not a calibrated budget. A separate size-1000, timeout-10-ms control `01a0e4ea-795e-715f-ad36-0312c63d448c` passed with 315 timeout-triggered batches and one final flush, conserving all messages. The controlled cell sweep across all specified sizes, timeouts and rates remains open.
 
 ### Current-release PGMQ CLI results
 
