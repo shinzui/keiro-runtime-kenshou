@@ -118,6 +118,20 @@ in  Schema.Project::{
         , name = "verification"
         , path = "docs/verification"
         , profile = Some "docs/verification/profile.dhall"
+        , profileBinding = Some
+            ( Schema.ProfileBinding.Published
+                Schema.PinnedImport::{
+                , publisher = "shinzui/okf-profiles"
+                , publisherRef = Some Schema.MoriRef::{
+                  , namespace = "shinzui"
+                  , name = "okf-profiles"
+                  }
+                , export = Some "assurance.verificationEvidence"
+                , version = Some "v0.19.0"
+                , pin = Some "sha256:85176d78369b6d73c9f13c30277903b629d6bf048a4c7d71fc26e68b99c3eaa6"
+                , derived = True
+                }
+            )
         , okfVersion = "0.2"
         , description = Some
             "Immutable verification run and attestation records with versioned computation definitions"

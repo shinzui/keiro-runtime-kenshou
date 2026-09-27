@@ -1,5 +1,8 @@
 # Bundle Update Log
 
+## 2026-09-27
+* **Update**: ADR-18: name the published verification evidence contract in okf-profiles v0.19.0 and the pinned local vocabulary overlay.
+
 ## 2026-09-26
 * **Decision**: Accepted stable evidence type and field names with only relaxing profile changes after records are committed.
 * **Decision**: Accepted immutable digest-linked verification records with baselines derived from confirmed history.

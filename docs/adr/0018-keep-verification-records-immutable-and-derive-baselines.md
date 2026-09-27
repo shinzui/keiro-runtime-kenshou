@@ -4,8 +4,8 @@ title: Keep verification records immutable and derive baselines
 description: Verification records are immutable events that link to digest-pinned data, while baselines are selected from confirmed compatible history.
 timestamp: 2026-09-26T19:56:01Z
 generated:
-  by: process:codex
-  at: "2026-09-26T19:56:01Z"
+  by: openai-codex/gpt-6-sol
+  at: "2026-09-27T16:00:15Z"
 docId: ADR-18
 status: Accepted
 date: 2026-09-26
@@ -44,6 +44,16 @@ from its samples, then replays the paired calculation under the recorded policy.
 The comparison's performance verdict and the attestation's evidence verdict
 answer different questions: a one-pair comparison can be faithfully confirmed
 while remaining inconclusive for a release decision.
+
+The shared contract for these three types is published as
+`mori://shinzui/okf-profiles/profiles/verification-evidence` in v0.19.0. This
+bundle imports that release with a Dhall semantic hash. Its local descriptor
+narrows the shared, open `layer` and `tier` vocabularies to the keiro runtime's
+layers and kenshou's cost tiers; the shared profile keeps the record shapes and
+evidence-wide rules. The local evidence checker still requires durable `gs://`
+data links and checks the properties a profile cannot express. A future record
+shape change must first be an additive relaxation in the published contract so
+existing immutable records continue to validate.
 
 ## Consequences
 
