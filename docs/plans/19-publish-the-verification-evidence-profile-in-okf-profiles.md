@@ -26,6 +26,11 @@ provenance:
       at: 2026-09-27T14:07:23Z
       mode: "update"
       note: "Refreshed preflight after EP-18 completion; publication is unblocked."
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-27T14:17:42Z
+      mode: "implement"
+      note: "Lifted the observed evidence profile and began publication fixtures."
 ---
 
 # Publish the verification evidence profile in okf-profiles
@@ -48,13 +53,17 @@ To see it working at the end: in `/Users/shinzui/Keikaku/bokuno/okf-profiles`, `
 
 ## Progress
 
-- [ ] Publish the verification evidence profile with fixtures and generated documentation, amend its ADR, release it, and repoint the evidence bundle; verify the publication acceptance in Validation and Acceptance.
+- [x] (2026-09-27) Milestone 1: IR-7, the three-type `assurance.verificationEvidence` export, a 17-concept example bundle and 129 isolated rejection fixtures are committed in okf-profiles. The focused script and `just check` pass; the requesting 17-concept corpus passes strict validation against the working-tree export without a record edit. Each rejection case was checked for its own diagnostic and by relaxing that constraint until the case turned green.
+- [ ] Milestone 2: generated documentation, amended ADR-6, new ADR-15, and the ADR-9 testing amendment are committed and validate. The v0.19.0 release candidate is committed as `dff865b` on clean `master`; `just check`, `mori validate`, strict ADR and improvement-request validation, and the unchanged consumer corpus gate passed. The package hash is `sha256:85176d78369b6d73c9f13c30277903b629d6bf048a4c7d71fc26e68b99c3eaa6`. The tag is absent locally and on origin. Owner confirmation, tag, push, remote-hash check, and IR-7 completion remain.
+- [ ] Milestone 3: repoint this repository's descriptor and Mori binding after the published tag, verify the existing corpus and gates, update ADR-18 and the MasterPlan, and commit.
 
-Preflight on 2026-09-27: strict OKF validation reported `OK: 16 concepts (okf_version 0.2)`, `nix develop -c cabal run -v0 kenshou -- evidence check` reported `evidence clean`, `git status --short docs/verification` was empty, and the corpus contained all four run kinds. EP-18 subsequently completed its attestation acceptance and added a confirmed comparison attestation, bringing the corpus to 17 concepts. `just verify`, a deep GCS evidence check, and `mori validate` passed. EP-19's hard dependency is now satisfied; publication work has not begun. Repeat the preflight against the current corpus before lifting the profile.
+Preflight on 2026-09-27: strict OKF validation reported `OK: 16 concepts (okf_version 0.2)`, `nix develop -c cabal run -v0 kenshou -- evidence check` reported `evidence clean`, `git status --short docs/verification` was empty, and the corpus contained all four run kinds. EP-18 subsequently completed its attestation acceptance and added a confirmed comparison attestation, bringing the corpus to 17 concepts. `just verify`, a deep GCS evidence check, and `mori validate` passed. EP-19's hard dependency was satisfied before publication began.
+
+Implementation on 2026-09-27: the repeated strict gate reports `OK: 17 concepts`, `kenshou evidence check` reports `evidence clean`, and the catalog checkout was clean on `master` at v0.18.0 before edits. IR-7 was committed as `a5cd9e2`, the profile and fixtures as `fb2076a` plus `c924a04`, and documentation and decisions as `5d87a50` plus `a959c30`. The fixture suite covers four run kinds, failed and infrastructure-failure outcomes, a comparison, and optional and conditional fields. Its 129 cases each report one intended diagnostic except the two documented handle cases, which each report two. A constraint-level negative-control sweep turned each case green, and the requesting corpus remained unchanged.
 
 ## Surprises & Discoveries
 
-(None yet.)
+- Observation: with `allowUnknownFields = False`, deleting a field declaration leaves its rejection fixture red because the field becomes unknown. A load-bearing sweep must retain the declaration and relax the relevant presence, vocabulary, format, reference, cardinality, or uniqueness constraint; handle and nested-list policies need composite relaxation. A JSON round-trip of the complete profile into a temporary Dhall descriptor, with explicit restoration of format union constructors, proved all 129 targeted fixtures become valid after their constraint is relaxed. This method and its boundary are recorded in okf-profiles ADR-9.
 
 
 ## Decision Log
@@ -90,6 +99,17 @@ Preflight on 2026-09-27: strict OKF validation reported `OK: 16 concepts (okf_ve
 - Decision: The mechanisms this plan relies on were verified on 2026-09-20 with a throwaway profile and bundle outside any repository, using okf 0.9.0.0 and dhall 1.42.3. The diagnostic fragments quoted in this plan are real output from that prototype.
   Rationale: The plan would otherwise rest on a research summary; three facts it depends on (mixed handle and path addressing in one profile, Markdown files under `references/` needing a declared type, and the narrowing overlay) are easy to get wrong.
   Date: 2026-09-20
+
+- Decision: Lift the local descriptor by preserving its three types, field names, presence classes, closed evidence vocabularies, conditional gates, and path rules. Open only the runtime-specific `layer` and `tier` vocabularies, and widen `data[].uri` from `gs` to any absolute URI in the shared profile. The consumer keeps its `layer` and `tier` overlay and its local evidence checker still requires durable GCS links. Generalize the `runtime` and `implementation` descriptions without changing their rules.
+  Rationale: The catalog must admit a second runtime and storage provider without rewriting the immutable corpus. The real 17-concept corpus passes unchanged against the working-tree export.
+  Date: 2026-09-27
+
+  | Local rule group | Publication treatment |
+  | --- | --- |
+  | Three type shapes; keys; required, conditional, and optional presence; references; paths; ID policy; evidence-wide vocabularies | Lift unchanged |
+  | `layer`, `tier` | Open their shared scalar vocabulary; retain the local closed overlay |
+  | `data[].uri` | Widen `uri-with-scheme(gs)` to absolute `uri`; the consumer checker enforces its durable store |
+  | Presence classes | No demotions needed; `knownDefects`, `produced`, `previousRun`, `computation`, and `exception` were already optional |
 
 
 ## Outcomes & Retrospective
