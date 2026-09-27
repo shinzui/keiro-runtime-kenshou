@@ -93,11 +93,15 @@ schemas/            versioned JSON Schemas for specs, results, plans, and suites
 suites/             named run suites: smoke, change, nightly, weekly-soak, release
 policies/           verdict and comparison policies
 docs/adr/           durable architecture decisions
+docs/terminology/   controlled vocabulary for Kenshou's verification concepts
 docs/findings/      runtime defects found by the suite
 docs/guides/        operator guides: measuring, diagnosing, telemetry arms
 docs/layers/        per-layer coverage notes
 docs/planning.md    planning and executing verification runs
 ```
+
+Start with the [Kenshou terminology catalog](docs/terminology/index.md) for the
+meanings of scenario, cohort, run, verdict, comparison, and evidence record.
 
 ## Getting started
 

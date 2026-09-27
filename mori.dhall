@@ -136,5 +136,25 @@ in  Schema.Project::{
         , description = Some
             "Immutable verification run and attestation records with versioned computation definitions"
         }
+      , Schema.OkfBundle::{
+        , name = "terminology"
+        , path = "docs/terminology"
+        , profile = Some "mori/terminology-profile.dhall"
+        , profileBinding = Some
+            ( Schema.ProfileBinding.Published
+                Schema.PinnedImport::{
+                , publisher = "shinzui/okf-profiles"
+                , publisherRef = Some Schema.MoriRef::{
+                  , namespace = "shinzui"
+                  , name = "okf-profiles"
+                  }
+                , export = Some "documentation.terminology"
+                , version = Some "v0.19.0"
+                , pin = Some "sha256:85176d78369b6d73c9f13c30277903b629d6bf048a4c7d71fc26e68b99c3eaa6"
+                }
+            )
+        , okfVersion = "0.2"
+        , description = Some "Controlled vocabulary for Kenshou verification"
+        }
       ]
     }
