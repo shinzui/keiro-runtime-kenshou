@@ -421,7 +421,7 @@ main = hspec do
                 <> "if [ \"$1\" = config ]; then printf 'tan-nb-exp\\n'; exit 0; fi\n"
                 <> "if [ \"$1\" = storage ] && [ \"$2\" = objects ]; then\n"
                 <> "  if [ ! -f \"$(dirname \"$0\")/uploaded\" ]; then echo 'not found' >&2; exit 1; fi\n"
-                <> "  printf '{\"size\":\"6\",\"metadata\":{\"kenshou-sha256\":\""
+                <> "  printf '{\"size\":\"6\",\"custom_fields\":{\"kenshou-sha256\":\""
                 <> Text.unpack digest
                 <> "\"}}\\n'; exit 0\n"
                 <> "fi\n"

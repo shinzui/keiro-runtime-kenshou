@@ -238,13 +238,16 @@ parseGcloudStat output = do
           Success number | number >= 0 -> Right (fromInteger number)
           _ -> Left (StoreIo "gcloud object size is invalid")
         _ -> Left (StoreIo "gcloud object size is not numeric")
-      digest <- case KeyMap.lookup "metadata" fields of
+      let customMetadata = case KeyMap.lookup "custom_fields" fields of
+            Just metadataValue -> Just metadataValue
+            Nothing -> KeyMap.lookup "metadata" fields
+      digest <- case customMetadata of
         Nothing -> Right Nothing
         Just (Object metadata) -> case KeyMap.lookup "kenshou-sha256" metadata of
           Nothing -> Right Nothing
           Just (String raw) -> Just <$> either (Left . StoreIo) Right (mkSha256 raw)
           _ -> Left (StoreIo "gcloud object digest metadata is not text")
-        _ -> Left (StoreIo "gcloud object metadata is not an object")
+        _ -> Left (StoreIo "gcloud object custom metadata is not an object")
       Right ObjectStat {bytes = size, recordedSha256 = digest}
     _ -> Left (StoreIo "gcloud object description is not an object")
   where
