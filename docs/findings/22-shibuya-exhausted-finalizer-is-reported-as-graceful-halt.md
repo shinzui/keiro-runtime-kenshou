@@ -1,0 +1,7 @@
+# Historical Shibuya finalizer exhaustion is reported as graceful halt
+
+Status: reproduced on released `shibuya-core` 0.9.0.3 and fixed on Hackage 0.10.0.0. Owner report: `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-5`.
+
+`shibuya/core-runner/concurrency/finalization-failure-is-a-failure-not-a-halt` makes one adapter finalizer throw permanently under `StopAllOnFailure`, while a sibling stays active. The clean released run `runs/01a0e470-cabe-7653-8900-e5a10d838f31/run-result.json` reproduced `REV-4-F2`: no linked exception arrived, the failed processor's `waitApp` returned normally, and the sibling kept running. Pinned head passed at `runs/01a0e47d-4946-701e-b75a-0fbc8dea2e69/run-result.json`; the isolated Hackage 0.10.0.0 CLI passed at `runs/01a0e450-5679-7122-bdaf-519bbd47bfd2/run-result.json`. These run paths are local to this repository.
+
+Published `mori://shinzui/shibuya/okf/capabilities/concepts/CAP-2` assigns finalization to Shibuya, and the owner's message-flow documentation promises a loud processor failure when bounded retries are exhausted. Owner `mori://shinzui/shibuya/okf/reviews/concepts/REV-4` traced the historical failure to conversion of exhausted finalizer retries into a requested halt, which supervision catches as graceful completion. Owner `mori://shinzui/shibuya/okf/improvement-requests/concepts/IR-6` requests separating requested halt from infrastructure failure. The owner bug report is marked fixed in 0.10.0.0.

@@ -302,7 +302,7 @@ finalizationFailure =
       dimensions = noDimensions,
       phases = zeroPhases,
       requires = noEnvironment,
-      knownDefect = knownOnReleasedCore (rev 4 "REV-4-F2"),
+      knownDefect = knownOnReleasedCore (revAt "mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-5" "REV-4-F2"),
       run = runFinalizationFailure
     }
 
