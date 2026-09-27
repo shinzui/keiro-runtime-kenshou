@@ -43,3 +43,11 @@ records.
   rather than an in-place profile change.
 - Historical validation cost grows with the corpus, so the index and check gates
   must be measured as records accumulate.
+- A temporary corpus with 2,000 synthetic run records and 17 existing concepts
+  passed strict validation in 6.740 seconds; index generation took 7.732 seconds.
+  Validation stayed below the ten-second threshold for considering a year split.
+- The local checker currently supplies constraints absent from the descriptor:
+  decimal and fixed-length lowercase hexadecimal field formats, the ability to
+  forbid core `status` on event types, and concept-typed path references. Profile
+  publication may relax this division of work when OKF gains those rules, while
+  preserving the meaning of committed records.

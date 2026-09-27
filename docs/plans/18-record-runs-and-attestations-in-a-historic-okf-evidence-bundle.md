@@ -27,6 +27,11 @@ provenance:
       at: 2026-09-26T19:57:37Z
       mode: "implement"
       note: "Implemented the local OKF verification bundle, profile, definitions, and rejection gate."
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-27T13:40:30Z
+      mode: "implement"
+      note: "Completed comparison attestation, live confirmation, operator guide, and scale probe."
 ---
 
 # Record runs and attestations in a historic OKF evidence bundle
@@ -40,7 +45,7 @@ If durable project context changes, update or create ADRs in docs/adr/ in the sa
 
 Today a kenshou run leaves a directory on somebody's disk. Nothing says, six months later, which revision of kiroku that run linked, whether the number in a slide came from the blessed computation, or whether the raw samples still exist and are the same bytes. After this plan a maintainer can turn any finished run into a small, permanent record in this repository, have a deterministic verifier re-check it, and ask the repository for the whole history of a scenario.
 
-Concretely, four command surfaces appear. `kenshou record <run-dir> --data-base-uri gs://… --purpose release` makes sure the run's files are in durable object storage, and writes one Markdown file under `docs/verification/runs/` that names exactly what ran (scenario, knobs, dimensions, seed), against what (every runtime package with its `mori://` project URI, version and commit), where (an environment excerpt), what came of it (the outcome), and where the data is (one link per file with its SHA-256 digest, media type and size). The record holds no measurement at all; this was decided by the platform owner on 2026-09-20 and is binding. `kenshou attest <run>` fetches the linked data, confirms every digest, recomputes the outcome from the raw data under a named, versioned computation definition, writes an `Attestation` record with a verdict of `confirmed`, `refuted` or `incomplete`, and, only when confirmed, appends a machine entry to the run's OKF `verified` list. `kenshou evidence check` enforces the repository rules that the profile cannot express. `kenshou history --scenario kiroku/append/benchmark/single-stream-throughput --json` emits the series of records for that scenario with their data links and a derived baseline, which is the input contract for a future reporting plan. The commands participate in the parser-derived shell completions and grouped help established by `docs/plans/2-…`; `record`, `attest`, and `evidence` are in the Evidence group, while `history` is in Analysis.
+Concretely, four command surfaces appear. `kenshou record <run-dir> --data-base-uri gs://… --purpose release` makes sure the run's files are in durable object storage, and writes one Markdown file under `docs/verification/runs/` that names exactly what ran (scenario, knobs, dimensions, seed), against what (every runtime package with its `mori://` project URI, released version or Git revision), where (an environment excerpt), what came of it (the outcome), and where the data is (one link per file with its SHA-256 digest, media type and size). The record holds no measurement at all; this was decided by the platform owner on 2026-09-20 and is binding. `kenshou attest <run>` fetches the linked data, confirms every digest, recomputes the outcome from the raw data under a named, versioned computation definition, writes an `Attestation` record with a verdict of `confirmed`, `refuted` or `incomplete`, and, only when confirmed, appends a machine entry to the run's OKF `verified` list. `kenshou evidence check` enforces the repository rules that the profile cannot express. `kenshou history --scenario kiroku/append/benchmark/single-stream-throughput --json` emits the series of records for that scenario with their data links and a derived baseline, which is the input contract for a future reporting plan. The commands participate in the parser-derived shell completions and grouped help established by `docs/plans/2-…`; `record`, `attest`, and `evidence` are in the Evidence group, while `history` is in Analysis.
 
 You can see it working at the end by running `just verify`, which validates the bundle against its profile, proves the generated indexes are current, and runs `kenshou evidence check`; by opening a run record and following a `gs://` link with `gcloud storage cat`; and by flipping one byte of a fetched copy in the tamper test and watching `kenshou attest` answer `refuted` with exit code 1.
 
@@ -55,8 +60,9 @@ You can see it working at the end by running `just verify`, which validates the 
 - [x] (2026-09-26) `kenshou evidence check` and the `just evidence-check` gate catch path, ID, digest, revision, string-typing, time-order, event-key, required-link, dirty-purpose, cell-field, reference-target, comparison outcome, and Git immutability violations. A temporary Git repository proves that editing an outcome is found in both the worktree and committed history. Settei resolves bundle, GCP project, and data URI from built-in, ordered YAML, explicit environment, and named-flag sources; strict unknown-key rejection keeps purpose and anomaly authority out of configuration. A scratch recording linked `gs://flag/runs/…` when a flag overrode the YAML and environment URI, and forced investigation purpose for the dirty run. The opt-in `--network` rule checks object size and SHA-256 metadata; `--deep` fetches bytes and hashes them, with a memory-store test covering both paths. The live `--network --deep` check passed against the seeded GCS corpus with no findings.
 - [x] (2026-09-26) The comparison producer includes ordered arm IDs, timestamps, harness provenance, and execution design in `kenshou.comparison/v1`. `kenshou record --comparison FILE` reads and publishes the document, requires both recorded arms with one scenario and consistent factor values, derives a comparison outcome, and writes an immutable OKF concept with arm references through the run writer's create-only path. A scratch bundle test rejects a missing arm, records the comparison, reports replay as `already recorded`, and passes local evidence checks.
 - [x] (2026-09-27) Completed Milestone 4: `kenshou history` walks the OKF bundle and emits deterministic `kenshou.evidence-history/v1` JSON, including comparison records, attestation summaries, trust derived from confirmations, and the latest earlier compatible confirmed baseline. Scenario, cohort package, outcome, date, and confirmed-only filters are present, with a JSON Schema and a scratch-bundle test. The live history of the two confirmed correctness runs validates against the schema and gives the newer run the older run's `derivedBaseline`. `just verify`, `nix flake check`, and the live deep evidence check pass; the seeded corpus covers all four evidence kinds and a comparison whose arms resolve.
-- [ ] (2026-09-26) `kenshou attest` fetches linked objects and manifest files, checks their bytes, records six named results in a create-only attestation concept, and derives `confirmed`, `refuted`, or `incomplete` from those checks. The local checker verifies the check set, verdict, digest coverage, target path, and process confirmations. Scratch-store tests cover incomplete intact data, refuted tampered data, a refuted recomputation, and a confirmed clean self-test run whose two attestations append exactly one `verified` entry. The target accepts a run path or ID. An interactive `--accept-anomaly` requires an explicit human actor and reason and is refused in CI. Revision resolution checks the Mori checkout and, when online, fetches the exact git commit from the cohort source into a scratch repository. The attester reads each named computation definition from the bundle and runs registered algorithms; a disagreement refutes the run even if another algorithm is unavailable. The CLI registers `kenshou-summary` recomputation for VC-2, while the core has a narrow VC-1 oracle for the fixed always-pass self-test. Other domain scenarios remain incomplete until their oracles are registered. Comparison recomputation and live GCS acceptance remain for Milestone 3.
-- [ ] Deliver Milestones 2–4: `record`, `attest`, `history`, digest and revision checks, and a seeded corpus under the acceptance commands below.
+- [x] (2026-09-27) Completed Milestone 3: `kenshou attest` fetches linked objects and manifest files, checks their bytes, records six named results in a create-only attestation concept, and derives `confirmed`, `refuted`, or `incomplete` from those checks. The local checker verifies the check set, verdict, digest coverage, target path, and process confirmations. Scratch-store tests cover incomplete intact data, refuted tampered data, a refuted recomputation, and a confirmed clean self-test run whose two attestations append exactly one `verified` entry. The target accepts a run or comparison path or ID. An interactive `--accept-anomaly` requires an explicit human actor and reason and is refused in CI. Revision resolution checks the Mori checkout and, when online, fetches the exact git commit from the cohort source into a scratch repository. The attester reads each named computation definition from the bundle and runs registered algorithms; a disagreement refutes the record even if another algorithm is unavailable. The CLI registers `kenshou-summary` recomputation for VC-2 and paired comparison replay for VC-3, while the core has a narrow VC-1 oracle for the fixed always-pass self-test. Other domain scenarios remain incomplete until their oracles are registered. The live GCS comparison attestation `01a0e314-ba03-71c8-ad09-6999aabbca8a` passed all six checks and added one machine `verified` entry; strict OKF validation, `okf trust`, and `kenshou evidence check` passed afterward.
+- [x] (2026-09-27) Completed Milestones 2–4: `record`, `attest`, `history`, digest and revision checks, and a seeded corpus meet the acceptance commands below. The Bash, Zsh, and Fish completion protocols expose all four command surfaces; the embedded evidence help has a stable 80-column golden; a scratch-bundle flow checks URI refusal, JSON output separation, identical replay, CI anomaly refusal, and tamper refutation. The operator guide is `docs/guides/recording-evidence.md`.
+- [x] (2026-09-27) Repeated the scale probe against a temporary copy with 2,000 synthetic run records: strict enforced `okf validate` reported `OK: 2017 concepts` in 6.740 seconds; `okf index --write` took 7.732 seconds. The ten-second validation threshold for splitting by year was not crossed.
 
 ## Surprises & Discoveries
 
@@ -69,6 +75,7 @@ You can see it working at the end by running `just verify`, which validates the 
 - Observation: the current runner records the `ScenarioReport.outcome` supplied by each scenario. It does not fold all `verdicts/` and `diagnosis/` files into an outcome, as the drafting example for `VC-1` assumed. The definition now describes the actual runner and known-defect disposition. A generic attester can verify internal consistency and digests, but must report an incomplete verdict-recomputation check unless the scenario's domain oracle can be replayed from saved inputs. The registered recomputation seam confirms the fixed always-pass self-test; each other scenario still needs an independent oracle. See `Kenshou.Core.Run.executeRun`, `Kenshou.Core.Run.defectDisposition`, and [ADR-18](../adr/0018-keep-verification-records-immutable-and-derive-baselines.md).
 - Observation: `Kenshou.Core.Canonical.sha256Hex` and the run manifest use `sha256:`-prefixed digests, while the OKF profile requires bare lowercase hexadecimal digests. The evidence boundary verifies the kernel form before stripping the prefix for data links. Also, `Kenshou.Core.Manifest.verifyManifest` only checks the digest of listed files; it does not check their sizes, reject extra files or guard listed paths, so `Kenshou.Evidence.Source` performs these checks itself.
 - Observation: `Kenshou.Core.RunResult` has a `ToJSON` instance but no `FromJSON` instance. `Kenshou.Evidence.Source` uses a typed evidence-facing reader for the versioned run-result schema and keeps the larger diagnostic document as linked data.
+- Observation: The shared Settei parser labels the bundle and configuration choices `Configuration` in `history --help`, where the draft called that section `Bundle selection`. The other named history sections are `Scenario filters`, `Trust filters`, and `Output`; the surface test checks the actual parser output.
 
 
 ## Decision Log
@@ -136,7 +143,33 @@ You can see it working at the end by running `just verify`, which validates the 
 
 ## Outcomes & Retrospective
 
-(To be filled during and after implementation.)
+The repository now has a historic OKF evidence bundle with 17 concepts: three
+versioned computation definitions, recorded runs across correctness, concurrency,
+soak, and benchmark, a paired comparison, and their attestations. Two clean
+correctness runs and the comparison have confirmed machine verification. The
+comparison remains `inconclusive` as a performance decision because the saved
+policy requires three pairs and the corpus has one; its attestation confirms
+that the recorded calculation and linked bytes are faithful. The other domain
+scenario attestations remain `incomplete` on verdict recomputation until their
+independent VC-1 oracles are registered by the scenario plans. This is an
+explicit evidence limit, not a failure of digest or provenance checks.
+
+The live bucket in `tan-nb-exp` retains versioned objects for five years. Direct
+GCS byte hashing, the deep network check, strict OKF validation, profile
+rejection fixtures, local evidence checks, the CLI surface test, and the
+history-schema fixture establish the evidence path from stored bytes to a
+derived baseline. The 2,000-record scale probe completed validation in 6.740
+seconds and index generation in 7.732 seconds, below the year-split threshold.
+
+The upstream OKF requests are a decimal field format, a fixed-length lowercase
+hex field format for digests and revisions, a type rule that can forbid a core
+`status` field on event records, and concept-typed path references. They are
+recorded here for the profile publication work; no upstream issue is filed
+without the owner's agreement. The local checker enforces these constraints
+for this corpus in the meantime. The strongest lesson was to keep the sealed
+run result and the scenario's independent oracle distinct: shared checks can
+prove the bytes and their internal summaries, but only a domain recomputer can
+confirm an arbitrary outcome.
 
 
 ## Context and Orientation
@@ -1282,7 +1315,7 @@ Milestone 3 is accepted when `kenshou --help` lists `attest` under Evidence and 
 
 Milestone 4 is accepted when `kenshou --help` lists `history` under Analysis; `kenshou help evidence --width 80` is an 80-column-or-narrower golden snapshot and the piped default is byte-stable; Bash, Zsh, and Fish completion tests expose `history` and its parser options; the bundle contains at least one attested run for each of the four kinds (or Progress names the missing kind and why) and one comparison record whose arms resolve; `kenshou history --scenario … --json` emits no non-JSON stdout, validates against its schema, and gives the newer of two compatible confirmed runs the older one's `derivedBaseline`; `just verify` runs all four evidence recipes; and `gcloud storage cat` of any `data[].uri` piped to `shasum -a 256` prints the recorded digest.
 
-The plan as a whole is accepted when a person who has never seen the run can open one record, state which commit of every runtime package it linked, fetch its raw samples, and find the attestation that confirmed it, using nothing but this repository and read access to the bucket.
+The plan as a whole is accepted when a person who has never seen the run can open one record, state the Git revision of each Git-sourced runtime package and the released version of each Hackage-sourced package it linked, fetch its raw samples, and find the attestation that confirmed it, using nothing but this repository and read access to the bucket. The solver-plan hash identifies the resolved build cohort. The earlier wording asked for a commit for every package, which is not a meaningful identity for a Hackage release.
 
 
 ## Idempotence and Recovery
@@ -1305,6 +1338,25 @@ Tools: `okf` 0.9.0.0 or later (`okf validate`, `index`, `log add`, `id next`, `i
 At the end of Milestone 1 these files exist: `docs/verification/{index.md,log.md,profile.dhall}`, `docs/verification/computations/{run-outcome,latency-summary,paired-comparison}.md`, `docs/verification/references/executors/kenshou-run.sh`, `docs/verification/references/attesters/kenshou-attest.sh`, `scripts/test-verification-profile.sh`, fixtures under `kenshou-evidence/test/fixtures/profile-invalid/`, the `verification` entry in `mori.dhall`, and one new ADR. At the end of Milestone 2 the package `kenshou-evidence` exposes `Kenshou.Evidence.Types`, `.Frontmatter`, `.Source`, `.Subject`, `.Store`, `.Record`, `.Check`, `.Config` and `.Cli` with the signatures given above, and `kenshou-cli` gains `record` and `evidence check` in the Evidence group. At the end of Milestone 3 it also exposes `Kenshou.Evidence.Attest` (`Recomputation`, `Recomputer`, `coreRecomputers`, `attest`) and `kenshou-cli` gains `attest` in the Evidence group. At the end of Milestone 4 it exposes `Kenshou.Evidence.History` (`history`, `deriveBaseline`), `schemas/` holds the schema of `kenshou.evidence-history/v1`, `kenshou-cli/help/evidence.md` is registered as an embedded help topic, `kenshou-cli` registers `history` in Analysis, `docs/guides/recording-evidence.md` exists, and the `Justfile` has `evidence-validate`, `evidence-index-check`, `evidence-profile-test` and `evidence-check` under `verify`.
 
 Other plans consume the following. `docs/plans/19-publish-the-verification-evidence-profile-in-okf-profiles.md` lifts the value `shared` from the local descriptor as the export `assurance.verificationEvidence`, mirrors the seeded corpus as its acceptance fixture, lifts the rejection fixtures, and afterwards replaces the middle of `docs/verification/profile.dhall` (the generic vocabularies, the type rules and `shared`) with the pinned import of the published profile while keeping the runtime-specific vocabularies, the `enum` helper and the overlay, switching `mori.dhall` to a `Published` binding with `derived = True`; it must respect the frozen names. `docs/plans/17-…` hands `kenshou record` a fetched run directory and the bucket prefix that holds it, and may supply the GCS client. `docs/plans/5-…` and `docs/plans/6-…` add computation definitions and register recomputers through `kenshou-cli`. The future reporting plan reads `kenshou history --json` and dereferences `data[].uri`. `kotei` or any script may branch on the exit codes stated in Milestones 2 and 3.
+
+### Handoff to the profile publication plan
+
+The committed corpus is the acceptance fixture. Mirror its three definitions,
+run and comparison records, and attestations while preserving type names, field
+names, discriminator values, and existing validation outcomes. The local
+rejection fixtures are `unknown-field`, `non-durable-uri`,
+`duplicate-data-uri`, `dangling-computation`, `dangling-previous-run`,
+`missing-cohort`, `git-component-without-revision`, `textual-seed`,
+`textual-dirty-flag`, `unknown-outcome`, `invalid-layer`, `invalid-kind`,
+`missing-generated`, `wrong-run-path`, `missing-comparison`,
+`dangling-baseline`, `non-actor-attester`, `nonhuman-exception`,
+`duplicate-check`, and `unknown-check`, plus the separate
+missing-attester-resource control. No profile rule had to be tightened for the
+real corpus. The VC-1 definition text was corrected to describe the runner's
+actual outcome source; that changed a definition before the corpus was seeded,
+not the profile contract. The local checker covers decimal/hex formats,
+forbidden event `status`, path identity, and typed concept references until OKF
+can express them directly.
 
 Revision note, 2026-09-20: first complete draft. It incorporates three constraints relayed from the drafting of `docs/plans/19-…`: reference targets are non-Markdown files, the handle field `computationId` and the discriminator `recordKind` are stated once under "Frozen field names", and the descriptor separates runtime-specific vocabularies so the shared profile can be lifted with an overlay left behind.
 

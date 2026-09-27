@@ -1,0 +1,75 @@
+# Verification evidence
+
+`kenshou record RUN-DIR --data-base-uri gs://BUCKET/PREFIX --purpose release
+--project PROJECT` publishes a finished run's files and adds one record to the
+OKF verification bundle. The record names the run, cohort, outcome, and
+SHA-256-pinned object links. It contains no measurements; those remain in the
+linked run files.
+
+`kenshou record --comparison FILE --data-base-uri gs://BUCKET/PREFIX --purpose
+release --project PROJECT` records a `kenshou.comparison/v1` document. Every
+baseline and candidate run named by the comparison must already have a run
+record in the bundle. The comparison record links the source document by digest
+and references those run concepts. Supply either `RUN-DIR` or `--comparison
+FILE`.
+
+The default bundle is `docs/verification`. `--bundle DIR` selects another
+bundle. A real GCS upload requires `--project PROJECT`, and the command checks
+that the active gcloud project matches it. `--verify-only` checks that all
+objects already exist; `--deep-verify` downloads them and checks their bytes.
+Failed or inconclusive runs link logs automatically; `--link-logs` also links
+logs for a passing run.
+
+`--config PATH` reads ordered YAML configuration. The supported keys are
+`evidence.bundle-root`, `gcp.project`, and `evidence.data-base-uri`; the
+corresponding environment variables are `KENSHOU_EVIDENCE_BUNDLE`,
+`KENSHOU_GCP_PROJECT`, and `KENSHOU_EVIDENCE_DATA_BASE_URI`. Named flags take
+precedence over the environment and files. `kenshou evidence check` uses the
+same bundle default and configuration sources. Unknown keys are rejected.
+
+A dirty harness requires `--allow-dirty` and is recorded with `purpose:
+investigation` regardless of the requested purpose. Use `--subject MORI-URI`
+with `--subject-kind project|package` when the default layer project is too
+broad. Repeat `--produced MORI-URI` for reports caused by this run.
+
+For a local rehearsal, copy the verification bundle outside the repository and
+pass `--bundle COPY --store-root DIR`. The record still contains `gs://` URIs,
+while the bytes are stored under the scratch directory. The command refuses
+`--store-root` with a bundle inside this repository.
+
+`--json` prints one `kenshou.record-result/v1` document and sends errors to
+standard error. A repeat with the same record content succeeds and reports
+`already recorded`; different content at the same record path is a conflict.
+
+`kenshou evidence check` checks record paths, IDs, digest and revision shapes,
+textual fields, event-only keys, timestamps, required data links, comparison arm
+references and verdicts, and changes to committed records. `--base REF` limits
+the Git history span. `--network --project PROJECT` checks object size and
+SHA-256 metadata, and `--deep` downloads bytes to verify each digest. The
+command exits 0 when clean, 1 for findings, and 4 when it cannot check. `--json`
+prints one `kenshou.evidence-check/v1` document.
+
+`kenshou history --scenario LAYER/COMPONENT/KIND/NAME --json` reads matching
+records in time order and emits `kenshou.evidence-history/v1`. Use
+`--cohort-component PACKAGE[=VERSION|REVISION]`, repeatable `--outcome`,
+`--since YYYY-MM-DD`, or `--confirmed-only` to narrow the series. Each entry
+includes linked attestations, a derived trust tier, and the latest earlier
+confirmed baseline with the same scenario and compatibility key. The history
+view does not modify the bundle.
+
+`kenshou attest RECORD-OR-ID --project PROJECT` fetches the recorded run or
+comparison data and writes an immutable attestation with six named checks. For a
+comparison, it verifies both recorded arms and replays the paired algorithm from
+their samples under the stored policy. `--offline` skips revision resolution
+that needs network access; `--linked-only` checks only directly linked objects.
+It reports `refuted` when fetched data contradicts the record and `incomplete`
+when a check cannot establish the claim. A scenario oracle must be registered
+before `verdict-recomputed` can pass for an ordinary run, so generic runs
+currently remain incomplete. Exit codes are 0 for confirmed, 1 for refuted, 3
+for incomplete, 2 for invalid input, and 4 for an operational failure. `--json`
+emits one `kenshou.attest-result/v1` result document.
+
+A person may annotate an incomplete or refuted attestation with
+`--accept-anomaly --authority human:ID --reason TEXT` from an interactive
+terminal. The computed verdict does not change. The command rejects this action
+in CI or without a terminal.

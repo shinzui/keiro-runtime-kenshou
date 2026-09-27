@@ -38,6 +38,13 @@ and named computation definitions; only a confirmed result can add a machine
 compatible evidence at read time. No record stores a `baseline` flag or a derived
 trust tier.
 
+A comparison is also a `Verification Run` event. Its attestation verifies the
+comparison document and both recorded arms, recomputes each arm's saved summary
+from its samples, then replays the paired calculation under the recorded policy.
+The comparison's performance verdict and the attestation's evidence verdict
+answer different questions: a one-pair comparison can be faithfully confirmed
+while remaining inconclusive for a release decision.
+
 ## Consequences
 
 - A reader can re-evaluate an old conclusion from digest-pinned data without
@@ -46,3 +53,5 @@ trust tier.
 - The recorder and attester must refuse identity collisions and report incomplete
   recomputation honestly when an oracle cannot be replayed from saved artifacts.
 - Storage retention and the repository's history are part of the evidence chain.
+- GCS data links, the sealed manifest, and versioned computation definitions let
+  another reader repeat the check without changing the historical record.

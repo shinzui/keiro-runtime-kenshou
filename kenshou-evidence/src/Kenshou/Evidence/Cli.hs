@@ -148,6 +148,9 @@ attestResponse machine code message path = do
     else case path of
       Just item -> Text.IO.putStrLn (message <> ": " <> Text.pack item)
       Nothing -> Text.IO.hPutStrLn stderr ("kenshou attest: " <> message)
+  if machine && code /= 0 && path == Nothing
+    then Text.IO.hPutStrLn stderr ("kenshou attest: " <> message)
+    else pure ()
   pure $ if code == 0 then ExitSuccess else ExitFailure code
 
 evidenceCommand :: CliCommand
@@ -201,7 +204,9 @@ checkHandler options _
 checkResponse :: Bool -> Int -> Text -> [Finding] -> IO ExitCode
 checkResponse machine code message findings = do
   if machine
-    then LazyByteString.putStrLn (encode (object ["schema" .= ("kenshou.evidence-check/v1" :: Text), "status" .= (if code == 0 then "ok" else "error" :: Text), "message" .= message, "exitCode" .= code, "findings" .= map findingValue findings]))
+    then do
+      LazyByteString.putStrLn (encode (object ["schema" .= ("kenshou.evidence-check/v1" :: Text), "status" .= (if code == 0 then "ok" else "error" :: Text), "message" .= message, "exitCode" .= code, "findings" .= map findingValue findings]))
+      mapM_ (Text.IO.hPutStrLn stderr . renderFinding) findings
     else
       if null findings
         then Text.IO.putStrLn message
@@ -258,6 +263,9 @@ recordHandler options _
                 case selected of
                   Left message -> respond options.json 2 message Nothing
                   Right store -> do
+                    if options.allowDirty
+                      then Text.IO.hPutStrLn stderr "kenshou record: warning: --allow-dirty permits investigation-only evidence"
+                      else pure ()
                     let mode = if options.verifyOnly then VerifyOnly else UploadMissing
                         recordOptions = RecordOptions (Text.unpack defaults.bundleRoot) baseUri options.purpose mode options.deepVerify options.allowDirty options.linkLogs ((,options.subjectKind) <$> options.subject) options.produced
                     recorded <- case (options.runDirectory, options.comparisonFile) of
@@ -329,6 +337,7 @@ recordMessage :: RecordError -> Text
 recordMessage = \case
   RecordError message -> message
   SourceFailure (SourceError message) -> message
+  PublishFailure (InvalidBaseUri uri) -> "data base URI must use gs://BUCKET/PREFIX; received " <> uri
   PublishFailure err -> Text.pack (show err)
   BundleFailure err -> Text.pack (show err)
 

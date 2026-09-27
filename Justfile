@@ -43,6 +43,7 @@ evidence-profile-test:
 [group('verification')]
 evidence-check:
     cabal run -v0 kenshou -- evidence check
+    bash scripts/test-evidence-cli-surface.sh
 
 [group('verification')]
 schemas-check:
