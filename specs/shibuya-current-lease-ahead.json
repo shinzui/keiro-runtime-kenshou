@@ -1,0 +1,11 @@
+{
+  "schema": "kenshou.run-spec/v1",
+  "scenario": "shibuya/core-runner/concurrency/leased-but-unfinalized-upper-bound",
+  "dimensions": {},
+  "knobs": {
+    "shibuya.inbox-size": 8,
+    "shibuya.concurrency": "ahead:4",
+    "bound.slack": 0
+  },
+  "environment": { "placement": "local" }
+}
