@@ -149,6 +149,7 @@ After this plan a maintainer can, from this repository, run `kenshou list --laye
 - [x] (2026-09-27) Accounted for all 65 Shibuya lifecycle cells: 64 have executable scenario tags and the one public-startup timeout cell has an explicit inapplicability reason. The 34-example package suite enforces that partition. Strengthening the forced-stop scenario exposed late handler finalization on historical 0.9.0.3 and current 0.10.0.0; owner `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-1` records the defect, and [the local finding](../findings/17-shibuya-forced-stop-can-finalize-late.md) retains clean cohort run IDs `01a0e449-8bb4-746f-86ca-3be1b8aadd6a` and `01a0e44b-aea0-7459-966a-150ea1340c27`.
 - [x] (2026-09-27) Ran the isolated current-release CLI through all 30 registered non-benchmark core and metrics scenarios from a clean tree. Twenty-eight passed; forced stop reproduced owner BUG-1 and transient-exception readiness reproduced owner IR-7, both nonblocking. The 34-example current package suite passed. The script and per-scenario sealed run IDs are below. Separate clean current runs passed idle-intake halt with `ahead:4`, `async:4`, and partitioned `async:4`.
 - [x] (2026-09-27) Ran all 30 default non-benchmark core and metrics scenarios on released and head lanes from clean revisions. Released had 16 direct passes and 14 scoped findings; head had 28 passes and only owner BUG-1 and IR-7. The paired run table is below.
+- [x] (2026-09-27) Ran idle-intake halt under `ahead:4`, `async:4`, and partitioned-in-order `async:4` on the historical and head cohorts. All three historical runs reproduced only scoped REV-4-F1; all three head runs passed. The current-release controls passed earlier. The run table is below.
 - [ ] Exercise the remaining non-default batch and concurrency shapes on both full cohorts.
 - [x] (2026-09-25) Started the real PostgreSQL PGMQ fixture and registered `shutdown-latency-is-bounded-by-polling`. On historical 0.16.0.0 the standard and long-poll arms each handled one message, drained the queue and passed their two- and six-second stop bounds on PostgreSQL 17 and 18. The pinned remediation cohort passed the long-poll arm on PostgreSQL 18; the isolated Hackage 0.16.1.0 project compiled the fixture and passed its lifecycle-matrix tests.
 - [x] (2026-09-25) Registered `auto-dead-letter-counts-deliveries` with direct-DLQ reason-code SQL and callback oracles. Historical 0.16.0.0 passed on PostgreSQL 17 and 18 at the default retry budget and on PostgreSQL 18 with a zero budget; pinned remediation passed on PostgreSQL 18. The isolated current-release package suite compiled the case and passed 33 examples.
@@ -234,7 +235,13 @@ Every ID in this table names a sealed `runs/<id>/run-result.json` file from the 
 | `metrics/correctness/websocket-flag-gates-upgrades` | `01a0e459-1c2e-710e-b961-54f8b32d1701` | Passed |
 | `metrics/correctness/websocket-unsubscribe-all-suppresses-updates` | `01a0e459-1f1a-71bb-a8bc-e2126fe483b3` | Passed |
 
-The checked-in current-release idle-intake halt specs add the non-default concurrency controls: `ahead:4` passed in `01a0e45d-4a06-738d-a298-3b9f7e4ceba1`, `async:4` in `01a0e45d-7b99-7793-b4ca-b1419235545f`, and partitioned `async:4` in `01a0e45d-b7bb-7518-8a3b-ec91ee765c36`. All three clean results at revision `b9ed6a453a10655e5f58685285db0bad771fd869` reached the idle source, finalized one delivery, completed `waitApp`, and stopped cleanly.
+The three checked-in `specs/shibuya-current-halt-*.json` files cover idle-intake halt under non-default concurrency. The historical runs used clean revision `7bffd7b35ca7f4cd9e85a465e99f713fe0c5cbeb`; the head runs used clean revision `10e364450f981eff8d97fa6f9b39e5f1e1ea81f7`. All six have `blocking=false`. Historical failures contain only `REV-4-F1`; the head and current-release controls reached the idle source, finalized one delivery, completed `waitApp`, and stopped cleanly.
+
+| Concurrency and ordering | Historical run ID | Head run ID | Current 0.10.0.0 run ID |
+| --- | --- | --- | --- |
+| `ahead:4` | `01a0e48a-20db-77b3-a106-ad193a4d11d2` | `01a0e48c-86bd-72af-9e06-6623a3f8f0db` | `01a0e45d-4a06-738d-a298-3b9f7e4ceba1` |
+| `async:4` | `01a0e48a-537c-7256-8dc9-5a891ccb7bdf` | `01a0e48c-b490-77a5-a1cb-1335b6b37405` | `01a0e45d-7b99-7793-b4ca-b1419235545f` |
+| partitioned-in-order `async:4` | `01a0e48a-843b-714c-bbf1-fa223d497cc2` | `01a0e48c-de2b-7399-9286-b7b433a8b7b3` | `01a0e45d-b7bb-7518-8a3b-ec91ee765c36` |
 
 ### Released and head core and metrics CLI sweeps
 
