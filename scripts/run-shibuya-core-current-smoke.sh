@@ -9,40 +9,7 @@ runner=$(cabal --project-file="$project" list-bin kenshou-shibuya-run)
 scratch=$(mktemp -d)
 trap 'rm -rf -- "$scratch"' EXIT
 
-scenarios=(
-  shibuya/core-batch/concurrency/shutdown-with-partial-batches
-  shibuya/core-batch/correctness/conservation-triggers-and-decisions
-  shibuya/core-ordering/concurrency/hot-key-head-of-line
-  shibuya/core-ordering/concurrency/keyed-scheduler-model
-  shibuya/core-ordering/concurrency/keyed-worker-failure-stops-intake
-  shibuya/core-ordering/correctness/policy-matrix
-  shibuya/core-runner/concurrency/adapter-shutdown-failure-does-not-skip-siblings
-  shibuya/core-runner/concurrency/blocking-adapter-shutdown-is-bounded
-  shibuya/core-runner/concurrency/finalization-failure-is-a-failure-not-a-halt
-  shibuya/core-runner/concurrency/forced-shutdown-abandons-but-never-loses
-  shibuya/core-runner/concurrency/gc-liveness-with-dropped-handle
-  shibuya/core-runner/concurrency/halt-strands-leased-messages
-  shibuya/core-runner/concurrency/halt-wakes-idle-intake
-  shibuya/core-runner/concurrency/leased-but-unfinalized-upper-bound
-  shibuya/core-runner/concurrency/startup-cancellation-leaks-nothing
-  shibuya/core-runner/concurrency/stop-all-on-failure-delivers-once
-  shibuya/core-runner/correctness/a-failed-processor-is-never-restarted
-  shibuya/core-runner/correctness/duplicate-processor-ids-are-rejected
-  shibuya/core-runner/correctness/every-delivery-is-finalized-exactly-once
-  shibuya/core-runner/correctness/invalid-config-rejected-before-effects
-  shibuya/core-runner/correctness/nonpositive-concurrency-is-rejected
-  shibuya/metrics/concurrency/websocket-slot-accounting
-  shibuya/metrics/correctness/counters-distinguish-retries-from-success
-  shibuya/metrics/correctness/endpoint-contract
-  shibuya/metrics/correctness/live-reflects-a-stopped-master
-  shibuya/metrics/correctness/ready-not-stuck-under-sustained-load
-  shibuya/metrics/correctness/ready-recovers-after-transient-handler-exception
-  shibuya/metrics/correctness/ready-reflects-a-failed-processor
-  shibuya/metrics/correctness/websocket-flag-gates-upgrades
-  shibuya/metrics/correctness/websocket-unsubscribe-all-suppresses-updates
-)
-
-for scenario in "${scenarios[@]}"; do
+while IFS= read -r scenario; do
   jq -n --arg scenario "$scenario" \
     '{schema:"kenshou.run-spec/v1",scenario:$scenario,dimensions:{},knobs:{},environment:{placement:"local"}}' \
     > "$scratch/spec.json"
@@ -53,4 +20,4 @@ for scenario in "${scenarios[@]}"; do
     printf '%s\n' "$output" >&2
     exit 1
   fi
-done
+done < scripts/shibuya-core-metrics-scenarios.txt
