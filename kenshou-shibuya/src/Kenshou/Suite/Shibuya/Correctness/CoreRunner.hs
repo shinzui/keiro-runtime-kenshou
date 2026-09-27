@@ -12,7 +12,7 @@ import Kenshou.Core.Env (noEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (KnownDefect (..), Placement (..), Scenario (..), Tier (..), failedWith, passed)
-import Kenshou.Suite.Shibuya.Cohort (knownOnReleasedCore, rev, revAt)
+import Kenshou.Suite.Shibuya.Cohort (knownOnReleasedCore, revAt)
 import Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter (BrokerStats (..), SyntheticConfig (..), brokerStats, closeInput, defaultSyntheticConfig, newSyntheticBroker, publish, reopenSource, syntheticAdapter)
 import Shibuya.Adapter (Adapter (..))
 import Shibuya.App (AppConfig (..), QueueProcessor (..), defaultAppConfig, mkBatchProcessor, mkProcessor, runApp, stopApp, waitApp)
@@ -48,7 +48,7 @@ scenarios =
     coreScenario
       "shibuya/core-runner/correctness/nonpositive-concurrency-is-rejected"
       "Rejects zero and negative concurrency bounds or runs at most one handler."
-      (knownOnReleasedCore (rev 6 "REV-6-F1"))
+      (knownOnReleasedCore (revAt "mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-3" "REV-6-F1"))
       nonpositiveConcurrency,
     coreScenario
       "shibuya/core-runner/correctness/a-failed-processor-is-never-restarted"

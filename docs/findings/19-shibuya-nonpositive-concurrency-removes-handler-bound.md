@@ -1,0 +1,7 @@
+# Historical nonpositive concurrency removes Shibuya's handler bound
+
+Status: reproduced on the released `shibuya-core` 0.9.0.3 cohort and fixed on Hackage 0.10.0.0. Owner report: `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-3`.
+
+`shibuya/core-runner/correctness/nonpositive-concurrency-is-rejected` runs 40 finite messages through a delayed handler under `Async 0`, `Async (-1)` and `Ahead 0`. The released run `runs/01a0e479-0b13-7533-931e-5ca2efc25a1b/run-result.json` reproduced `REV-6-F1`: all three configurations were accepted and ran concurrent handlers. An earlier focused released run `runs/01a0cef6-3380-73e2-8d50-b7d23e92f7b0/run-result.json` reproduced the same finding. Pinned head passed at `runs/01a0e485-7fa4-73db-9fa0-d8b1f9d382e0/run-result.json`, and the isolated Hackage 0.10.0.0 CLI passed at `runs/01a0e458-7197-7433-87fa-13c492f1d17c/run-result.json`. These run paths are local to this repository.
+
+Published `mori://shinzui/shibuya/okf/capabilities/concepts/CAP-4` promises that `Async n` runs at most `n` handlers and invalid policy combinations fail at configuration time, before intake. Owner `mori://shinzui/shibuya/okf/reviews/concepts/REV-6` observed 20 concurrent handlers under both `Async 0` and `Async (-1)` in a 20-message probe, and identifies the historical bounds passed to Streamly as the cause. Owner `mori://shinzui/shibuya/okf/improvement-requests/concepts/IR-6` requested early validation. The owner report is marked fixed for 0.10.0.0; there is no claim of an observed out-of-memory incident.
