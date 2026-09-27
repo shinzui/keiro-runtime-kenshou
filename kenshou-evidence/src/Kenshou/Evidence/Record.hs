@@ -282,7 +282,7 @@ buildRunRecord input source dataLinks = do
       environment = object ["os" .= fingerprint.os, "arch" .= fingerprint.arch, "cpuModel" .= cpuModel, "cores" .= fingerprint.cores, "memoryBytes" .= memoryBytes, "ghc" .= fingerprint.ghc, "postgres" .= fingerprint.postgres]
       title = renderScenarioId scenario <> " " <> renderOutcome source.result.resultOutcome <> " on " <> cohort
       description = "Recorded " <> renderScenarioId scenario <> " run against cohort " <> cohort <> " with digest-pinned data."
-      computations = "VC-1" : ["VC-2" | scenario.kind `elem` [Benchmark, Soak]]
+      computations = "VC-1" : ["VC-2" | scenario.kind `elem` [Benchmark, Soak], hasMeasurementSummary source.result.resultSummaries]
   solverPlanHash <- kernelDigest (unPlanHash cohortIdentity.identityPlanHash)
   compatibilityKey <- do
     comparisonKey <- jsonField "comparisonKey" source.result.resultCompatibility
@@ -375,3 +375,11 @@ defaultSubject Shibuya = "mori://shinzui/shibuya"
 defaultSubject Kafka = "mori://shinzui/kafka-effectful"
 defaultSubject Keiro = "mori://shinzui/keiro"
 defaultSubject Runtime = "mori://shinzui/keiro-runtime-kenshou"
+
+hasMeasurementSummary :: Maybe Value -> Bool
+hasMeasurementSummary (Just (Object summaries)) = case KeyMap.lookup "measurements" summaries of
+  Just (Object measurements) -> case KeyMap.lookup "measurements" measurements of
+    Just (Object _) -> True
+    _ -> False
+  _ -> False
+hasMeasurementSummary _ = False

@@ -32,6 +32,11 @@ provenance:
       at: 2026-09-27T13:40:30Z
       mode: "implement"
       note: "Completed comparison attestation, live confirmation, operator guide, and scale probe."
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-27T17:24:09Z
+      mode: "implement"
+      note: "Attached VC-2 only when a recorded run contains its measurement summary."
 ---
 
 # Record runs and attestations in a historic OKF evidence bundle
@@ -63,9 +68,11 @@ You can see it working at the end by running `just verify`, which validates the 
 - [x] (2026-09-27) Completed Milestone 3: `kenshou attest` fetches linked objects and manifest files, checks their bytes, records six named results in a create-only attestation concept, and derives `confirmed`, `refuted`, or `incomplete` from those checks. The local checker verifies the check set, verdict, digest coverage, target path, and process confirmations. Scratch-store tests cover incomplete intact data, refuted tampered data, a refuted recomputation, and a confirmed clean self-test run whose two attestations append exactly one `verified` entry. The target accepts a run or comparison path or ID. An interactive `--accept-anomaly` requires an explicit human actor and reason and is refused in CI. Revision resolution checks the Mori checkout and, when online, fetches the exact git commit from the cohort source into a scratch repository. The attester reads each named computation definition from the bundle and runs registered algorithms; a disagreement refutes the record even if another algorithm is unavailable. The CLI registers `kenshou-summary` recomputation for VC-2 and paired comparison replay for VC-3, while the core has a narrow VC-1 oracle for the fixed always-pass self-test. Other domain scenarios remain incomplete until their oracles are registered. The live GCS comparison attestation `01a0e314-ba03-71c8-ad09-6999aabbca8a` passed all six checks and added one machine `verified` entry; strict OKF validation, `okf trust`, and `kenshou evidence check` passed afterward.
 - [x] (2026-09-27) Completed Milestones 2–4: `record`, `attest`, `history`, digest and revision checks, and a seeded corpus meet the acceptance commands below. The Bash, Zsh, and Fish completion protocols expose all four command surfaces; the embedded evidence help has a stable 80-column golden; a scratch-bundle flow checks URI refusal, JSON output separation, identical replay, CI anomaly refusal, and tamper refutation. The operator guide is `docs/guides/recording-evidence.md`.
 - [x] (2026-09-27) Repeated the scale probe against a temporary copy with 2,000 synthetic run records: strict enforced `okf validate` reported `OK: 2017 concepts` in 6.740 seconds; `okf index --write` took 7.732 seconds. The ten-second validation threshold for splitting by year was not crossed.
+- [x] (2026-09-27) Recorded clean Kafka rebalance and reduced stability-soak runs in the live GCS-backed bundle. Their attestations verified every linked digest, revision, cohort, environment, and clean worktree, but remained incomplete without a Kafka VC-1 recomputer. The soak attestation also found that `record` had named VC-2 solely because its scenario kind was `soak`, although that run wrote no `kenshou.measurements/v1` summary. The recorder now names VC-2 only when the nested measurement summary is present; a focused source-to-record test covers both shapes. The historical soak record and incomplete attestation remain unchanged.
 
 ## Surprises & Discoveries
 
+- Observation: the Kafka reduced stability soak emitted a diagnosis and broker metadata but no `kenshou.measurements/v1` summary. The old recorder attached VC-2 to every soak and benchmark by kind, so the attester reported both VC-1 and VC-2 unavailable for its immutable record. VC-2 describes latency and throughput summary recomputation, not leak diagnosis. Future records attach it only when the run-result's `summaries.measurements.measurements` object exists; the old event remains a truthful incomplete attestation rather than being rewritten.
 - Observation: live `gcloud storage cp` rejects the combination of `--no-clobber` and `--if-generation-match=0`. The generation precondition alone supplies the create-only guarantee, so the adapter and its fake-CLI protocol test now use only that flag. The initial command failed before it created a cloud object.
 - Observation: the installed `gcloud storage objects describe --format=json` reports custom SHA-256 metadata in `custom_fields`, not `metadata`. The first successful object upload was reported as a conflict because the adapter did not read that field. The parser now accepts `custom_fields` and retains `metadata` as a compatibility fallback.
 - Observation: sandboxed benchmark runs could execute but `sysctl` could not read the CPU model, so the evidence recorder correctly refused them. Rerunning the selected baseline and candidate with host access produced sealed passing results with `Apple M1 Max` in their fingerprints; only those runs were recorded. A one-pair comparison remains inconclusive under the minimum-three-pair policy, even though its individual metrics passed.
@@ -143,7 +150,7 @@ You can see it working at the end by running `just verify`, which validates the 
 
 ## Outcomes & Retrospective
 
-The repository now has a historic OKF evidence bundle with 17 concepts: three
+The repository now has a historic OKF evidence bundle with three
 versioned computation definitions, recorded runs across correctness, concurrency,
 soak, and benchmark, a paired comparison, and their attestations. Two clean
 correctness runs and the comparison have confirmed machine verification. The
@@ -153,6 +160,9 @@ that the recorded calculation and linked bytes are faithful. The other domain
 scenario attestations remain `incomplete` on verdict recomputation until their
 independent VC-1 oracles are registered by the scenario plans. This is an
 explicit evidence limit, not a failure of digest or provenance checks.
+The recorded Kafka stability soak adds a second, narrower limit: its historical
+record names VC-2 without a measurement summary, so that recomputation is
+unavailable as well. New records attach VC-2 only when the summary exists.
 
 The live bucket in `tan-nb-exp` retains versioned objects for five years. Direct
 GCS byte hashing, the deep network check, strict OKF validation, profile
@@ -1363,3 +1373,5 @@ Revision note, 2026-09-20: first complete draft. It incorporates three constrain
 Revision note, 2026-09-20: aligned the evidence command surfaces with the adopted Haskell Jitsurei CLI patterns: stable top-level groups, named option sections, parser-derived Bash/Zsh/Fish completions, embedded width-aware help, and strict machine-output channel separation.
 
 Revision note, 2026-09-20: routed evidence location/project defaults through EP-2's Settei seam while keeping purpose, authority and evidence-bearing inputs explicit.
+
+Revision note, 2026-09-27: limited VC-2 references to records with a stored measurement summary after the Kafka stability soak exposed a diagnosis-only record that could not replay VC-2.

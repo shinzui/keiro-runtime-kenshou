@@ -58,6 +58,7 @@ data RunResultView = RunResultView
     resultCohort :: !CohortIdentity,
     resultFingerprint :: !Value,
     resultCompatibility :: !Value,
+    resultSummaries :: !(Maybe Value),
     resultKnownDefect :: !(Maybe Value)
   }
   deriving stock (Eq, Show)
@@ -80,6 +81,7 @@ instance FromJSON RunResultView where
       <*> value .: "cohort"
       <*> value .: "fingerprint"
       <*> value .: "compatibility"
+      <*> value .:? "summaries"
       <*> value .:? "knownDefect"
 
 data RunSource = RunSource

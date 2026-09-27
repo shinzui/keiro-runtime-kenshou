@@ -45,7 +45,9 @@ event. `harnessRevision` identifies the Kenshou commit. Each entry in
 and a commit when the source is Git. `cohort` and `solverPlanHash` identify the
 resolved dependency set. `environment`, `knobs`, `dimensions`, and `seed`
 describe how the run was executed. `computations` names the versioned definitions
-under `docs/verification/computations/`.
+under `docs/verification/computations/`. New benchmark and soak records name
+VC-2 only when the run saved a `kenshou.measurements/v1` summary; a soak that
+produced diagnosis alone has no latency-summary computation to replay.
 
 Each `data` entry has a durable URI, SHA-256 digest, media type, and byte count.
 For example, fetch an object's bytes and compare their digest with the entry:

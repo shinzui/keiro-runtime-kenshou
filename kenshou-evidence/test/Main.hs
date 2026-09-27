@@ -25,7 +25,7 @@ import Kenshou.Evidence.Frontmatter (AttestationCheck (..), AttestationEvidence 
 import Kenshou.Evidence.History (HistoryDocument (..), HistoryEntry (..), HistoryQuery (..), deriveBaseline, history)
 import Kenshou.Evidence.Publish (PublishError (..), PublishOptions (..), UploadMode (..), publishComparisonData, publishRunData)
 import Kenshou.Evidence.Record (RecordInput (..), RecordOptions (..), RecordOutcome (..), buildRunRecord, recordComparison, recordRunWith)
-import Kenshou.Evidence.Source (ComparisonSource (..), ComparisonView (..), VerifiedFile (..), loadComparisonSource, loadRunSource)
+import Kenshou.Evidence.Source (ComparisonSource (..), ComparisonView (..), RunResultView (..), RunSource (..), VerifiedFile (..), loadComparisonSource, loadRunSource)
 import Kenshou.Evidence.Store (ObjectStat (..), ObjectStore (..), PutResult (..), StoreError (..), directoryStore, gcloudStoreWith, memoryStore)
 import Kenshou.Evidence.Types (DataKind (..), DataLink (..), Purpose (..), Revision (..), Sha256 (..), SubjectKind (..), mkRevision, mkSha256, sha256Bytes)
 import Okf.Actor (Actor (ProcessActor))
@@ -365,6 +365,20 @@ main = hspec do
         recordRunWith (writeRunRecordWith accept) timestamp store options runDirectory `shouldReturn` Right (AlreadyRecorded path)
 
   describe "buildRunRecord" do
+    it "names VC-2 only when a soak has its measurement summary" do
+      withSystemTempDirectory "kenshou-soak-computations" $ \root -> do
+        writeRunFixture root
+        source <- loadRunSource root >>= either (fail . show) pure
+        store <- memoryStore
+        links <- publishRunData store (PublishOptions "gs://bucket/runs" UploadMissing False False) root source >>= either (fail . show) pure
+        soakId <- either (fail . show) pure (parseScenarioId "kafka/pipeline/soak/consumer-memory-and-fd-stability-reduced")
+        let input = RecordInput Baseline (UTCTime (fromGregorian 2026 9 26) 0) False Nothing [] Nothing
+            withoutSummary = RunSource source.manifest source.spec (source.result {resultScenario = soakId, resultSummaries = Just (object ["measurements" .= object ["kafka" .= object []]])}) source.files
+            withSummary = RunSource source.manifest source.spec (source.result {resultScenario = soakId, resultSummaries = Just (object ["measurements" .= object ["measurements" .= object []]])}) source.files
+        without <- either (fail . show) pure (buildRunRecord input withoutSummary links)
+        with <- either (fail . show) pure (buildRunRecord input withSummary links)
+        without.computations `shouldBe` ["VC-1"]
+        with.computations `shouldBe` ["VC-1", "VC-2"]
     it "preserves every owner reference from a grouped known-defect result" do
       withSystemTempDirectory "kenshou-grouped-defects" $ \root -> do
         let first = "mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-4" :: Text

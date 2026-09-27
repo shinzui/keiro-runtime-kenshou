@@ -383,6 +383,13 @@ other four, shorter-lived consumers correctly had insufficient leak data.
 Full-rate churn, the deferred poll-cap comparison, cohort repetitions, and
 the assembled-runtime import proof remain open.
 
+EP-18's clean-tree attestation of that soak verified its linked bytes,
+revisions, cohort and environment but remained incomplete on computation
+replay. VC-1 has no independent Kafka oracle, and the immutable run record
+also names VC-2 although this diagnosis-only soak contains no measurement
+summary. The recorder now attaches VC-2 only when that summary is present;
+the earlier record and its incomplete attestation remain intact.
+
 EP-19 published `assurance.verificationEvidence` in `mori://shinzui/okf-profiles` v0.19.0 after 129 rejection fixtures and strict validation of the unchanged 17-concept consumer corpus. This repository now pins that release and narrows its runtime-specific layer and tier vocabularies locally. Its offline evidence checker enforces the GCS data-link policy, and the full `just verify` gate passes. Mori resolves the published profile URI and marks the consumer pin current; ADR-18 records the contract boundary.
 
 EP-10 tightened its core leased-message bound probe: it now waits for 500 ms without source pulls and accepts inbox, concurrency and slack knobs. Three sealed serial, ahead and async runs saturated their handlers, remained within `inboxSize + 3n + slack`, finalized all 1,000 messages, and left no leases. The child plan records the measured values and run IDs.
@@ -670,3 +677,5 @@ Revision note (2026-09-27): Made the baseline, owner-repository repair, and comp
 Revision note (2026-09-27): Corrected that wording after owner clarification. This MasterPlan fills the baseline and tracks owner-profile bug reports and improvement requests; each owning project separately plans and implements fixes. Post-fix verification here waits for a later request. Added deduplicated owner-issue counts and numbered-finding coverage to the register.
 
 Revision note (2026-09-27): Extended the shared known-defect seam to preserve independent owner reports from one scenario, and applied it to Kafka rebalance classification without weakening new-failure blocking.
+
+Revision note (2026-09-27): Recorded clean Kafka rebalance and stability-soak baselines, preserved their incomplete attestations, and narrowed VC-2 references to runs with a replayable measurement summary.
