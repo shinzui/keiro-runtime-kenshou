@@ -221,6 +221,14 @@ def main():
             result = validate(bundle)
             if result.returncode:
                 raise SystemExit(f"valid {target} fixture failed:\n{result.stdout}")
+        external_uri = Path(scratch) / "valid-external-uri"
+        shutil.copytree(BUNDLE, external_uri)
+        external_run = run_record()
+        external_run["data"][0]["uri"] = "file:///tmp/sample"
+        write_concept(external_uri, RUN_PATH, external_run)
+        external_result = validate(external_uri)
+        if external_result.returncode:
+            raise SystemExit(f"shared profile should accept an absolute URI:\n{external_result.stdout}")
         for case in cases:
             bundle = Path(scratch) / case["name"]
             shutil.copytree(BUNDLE, bundle)

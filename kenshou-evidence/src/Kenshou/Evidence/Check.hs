@@ -22,7 +22,7 @@ import Data.Text qualified as Text
 import Data.Text.IO qualified as Text.IO
 import Data.Time (UTCTime, defaultTimeLocale, formatTime, parseTimeM)
 import Kenshou.Core.Id (ScenarioId (..), parseRunId, parseScenarioId, renderLayer)
-import Kenshou.Evidence.Store (ObjectStat (..), ObjectStore (..))
+import Kenshou.Evidence.Store (ObjectStat (..), ObjectStore (..), validateObjectUri)
 import Kenshou.Evidence.Types (mkRevision, mkSha256, sha256Bytes)
 import Okf.Actor (renderActor)
 import Okf.Document (OKFDocument (..), Verification (..), frontmatterKeys, frontmatterLookup, parseDocument, readVerified, removeField)
@@ -272,6 +272,7 @@ checkDocument path document =
           <> concatMap
             ( \value ->
                 [issue "string-typing" "data.uri must be a JSON string" | entryText "uri" value == Nothing]
+                  <> [issue "data-uri" "data.uri must use a durable gs:// object URI" | Just uri <- [entryText "uri" value], either (const True) (const False) (validateObjectUri uri)]
                   <> [issue "hex-shape" "data.digest must be 64 lowercase hexadecimal characters" | maybe True (either (const True) (const False) . mkSha256) (entryText "digest" value)]
             )
             (entries "data")

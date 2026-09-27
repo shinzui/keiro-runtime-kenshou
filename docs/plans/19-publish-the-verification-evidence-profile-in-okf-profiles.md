@@ -54,8 +54,8 @@ To see it working at the end: in `/Users/shinzui/Keikaku/bokuno/okf-profiles`, `
 ## Progress
 
 - [x] (2026-09-27) Milestone 1: IR-7, the three-type `assurance.verificationEvidence` export, a 17-concept example bundle and 129 isolated rejection fixtures are committed in okf-profiles. The focused script and `just check` pass; the requesting 17-concept corpus passes strict validation against the working-tree export without a record edit. Each rejection case was checked for its own diagnostic and by relaxing that constraint until the case turned green.
-- [ ] Milestone 2: generated documentation, amended ADR-6, new ADR-15, and the ADR-9 testing amendment are committed and validate. The v0.19.0 release candidate is committed as `dff865b` on clean `master`; `just check`, `mori validate`, strict ADR and improvement-request validation, and the unchanged consumer corpus gate passed. The package hash is `sha256:85176d78369b6d73c9f13c30277903b629d6bf048a4c7d71fc26e68b99c3eaa6`. The tag is absent locally and on origin. Owner confirmation, tag, push, remote-hash check, and IR-7 completion remain.
-- [ ] Milestone 3: repoint this repository's descriptor and Mori binding after the published tag, verify the existing corpus and gates, update ADR-18 and the MasterPlan, and commit.
+- [x] (2026-09-27) Milestone 2: generated documentation, amended ADR-6, new ADR-15, and the ADR-9 testing amendment validate. The annotated v0.19.0 tag peels to release commit `dff865bd560b58dda6f226f4b6f3e1042a399db9` on origin. The remote and local `package.dhall` both hash to `sha256:85176d78369b6d73c9f13c30277903b629d6bf048a4c7d71fc26e68b99c3eaa6`. IR-7 is completed and pushed as `9809e79` with evidence for all seven acceptance criteria.
+- [x] (2026-09-27) Milestone 3: the pinned v0.19.0 descriptor, local `layer` and `tier` overlay, published Mori binding, and ADR-18 amendment are committed as `06bcbd0`. Strict validation accepts all 17 unchanged concepts; scratch mutations prove the overlay and shared rule still reject invalid values. The offline evidence checker now rejects non-GCS data links, preserving the local storage policy after the shared URI rule widened. Mori resolves the profile URI and reports the pin current. `nix develop -c just verify` passes, including the focused profile script, evidence checker, schema gates, and self-test scenarios. The only file changed under `docs/verification/` is `profile.dhall`.
 
 Preflight on 2026-09-27: strict OKF validation reported `OK: 16 concepts (okf_version 0.2)`, `nix develop -c cabal run -v0 kenshou -- evidence check` reported `evidence clean`, `git status --short docs/verification` was empty, and the corpus contained all four run kinds. EP-18 subsequently completed its attestation acceptance and added a confirmed comparison attestation, bringing the corpus to 17 concepts. `just verify`, a deep GCS evidence check, and `mori validate` passed. EP-19's hard dependency was satisfied before publication began.
 
@@ -64,6 +64,10 @@ Implementation on 2026-09-27: the repeated strict gate reports `OK: 17 concepts`
 ## Surprises & Discoveries
 
 - Observation: with `allowUnknownFields = False`, deleting a field declaration leaves its rejection fixture red because the field becomes unknown. A load-bearing sweep must retain the declaration and relax the relevant presence, vocabulary, format, reference, cardinality, or uniqueness constraint; handle and nested-list policies need composite relaxation. A JSON round-trip of the complete profile into a temporary Dhall descriptor, with explicit restoration of format union constructors, proved all 129 targeted fixtures become valid after their constraint is relaxed. This method and its boundary are recorded in okf-profiles ADR-9.
+
+- Observation: `just verify` runs `git diff --exit-code -- docs/verification` as its index gate. The first run passed the corpus and package tests but stopped on the intended uncommitted descriptor change. After committing the descriptor and confirming `okf index --write` changed no index, the full gate advanced past that check.
+
+- Observation: the second full gate exposed an EP-18 fixture that expected the descriptor itself to reject `file:` data links. The new shared profile correctly accepts absolute URIs, and the recorder rejected non-GCS destinations, but the offline evidence checker did not enforce the storage scheme. The local checker now validates each run data URI with the object-store URI parser even without network access; its Haskell test exercises that finding. The profile fixture now tests a relative URI rejection and separately proves that an absolute `file:` URI is allowed by the shared profile.
 
 
 ## Decision Log
@@ -111,10 +115,37 @@ Implementation on 2026-09-27: the repeated strict gate reports `OK: 17 concepts`
   | `data[].uri` | Widen `uri-with-scheme(gs)` to absolute `uri`; the consumer checker enforces its durable store |
   | Presence classes | No demotions needed; `knownDefects`, `produced`, `previousRun`, `computation`, and `exception` were already optional |
 
+- Decision: Add a `Published` binding to the existing verification bundle entry and retain its legacy `profile` path. EP-18's actual manifest had the legacy path but no explicit `Local` arm, contrary to this plan's expectation. The typed binding takes precedence and supplies Mori's release identity and pin; the path still identifies this repository's narrowing descriptor for older consumers. `mori validate` accepts both and warns about their precedence.
+  Rationale: The catalog reports the binding's v0.19.0 pin as current while local validation continues to use the overlay file. Removing the legacy path would discard an existing integration hint without a demonstrated need.
+  Date: 2026-09-27
+
+- Decision: Enforce the local `gs://` storage policy in the offline `kenshou evidence check` path after widening the shared profile's URI format to any absolute scheme.
+  Rationale: Publication must not silently weaken the consumer's validation. The recorder's create-only storage check and the network checker covered their own paths, but manually edited historical records also need a local, network-independent scheme check.
+  Date: 2026-09-27
+
 
 ## Outcomes & Retrospective
 
-(To be filled during and after implementation.)
+The 17-concept evidence corpus now validates against a released, hash-pinned house
+contract without changing any recorded run or attestation. The catalog's v0.19.0
+release publishes the three-type `assurance.verificationEvidence` export, generated
+documentation, ADRs, an acceptance bundle, and 129 isolated rejection fixtures.
+IR-7 records the release and its remote package hash. The consumer retains its
+specific `layer` and `tier` vocabularies as an overlay and checks durable GCS
+links offline. Both deliberate overlay and shared-rule mutations are rejected;
+Mori resolves the profile URI and calls the consumer pin current. The full
+repository gate passes.
+
+The extra integration work was the offline URI guard. Widening the published
+rule exposed that the earlier local fixture had relied on the descriptor to
+reject `file:` links, while the offline checker had no equivalent rule. The
+checker now uses the store's URI parser, and a focused test protects that
+boundary. The local manifest still has its legacy profile path in addition to
+the typed published binding, so `mori validate` gives a precedence warning but
+validates successfully. The catalog's default profile registry inside okf
+still pins an older release; consumers using the v0.19.0 URL import can adopt
+the contract immediately, while a future okf registry refresh can expose it
+through the built-in list.
 
 
 ## Context and Orientation

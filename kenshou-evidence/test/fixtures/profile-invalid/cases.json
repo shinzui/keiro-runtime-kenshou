@@ -1,6 +1,6 @@
 [
   {"name":"unknown-field","target":"run","op":"set","path":"/p99Millis","value":12,"expect":"frontmatter field not declared by profile: p99Millis"},
-  {"name":"non-durable-uri","target":"run","op":"set","path":"/data/0/uri","value":"file:///tmp/sample","expect":"data"},
+  {"name":"relative-uri","target":"run","op":"set","path":"/data/0/uri","value":"runs/sample","expect":"data[0].uri must match format uri"},
   {"name":"duplicate-data-uri","target":"run","op":"copy","from":"/data/0","path":"/data/-","expect":"duplicate"},
   {"name":"dangling-computation","target":"run","op":"set","path":"/computations/0","value":"VC-9","expect":"VC-9"},
   {"name":"dangling-previous-run","target":"run","op":"set","path":"/previousRun","value":"/runs/selftest/2026/09/missing","expect":"previousRun"},

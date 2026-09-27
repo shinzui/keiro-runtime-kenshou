@@ -290,7 +290,7 @@ main = hspec do
           Left err -> expectationFailure (Text.unpack err)
 
   describe "evidence check" do
-    it "detects event keys, coerced strings and changed committed records" do
+    it "detects event keys, coerced strings, non-durable links and changed committed records" do
       withSystemTempDirectory "kenshou-evidence-check" $ \root -> do
         let runDirectory = root </> "run"
             repo = root </> "repo"
@@ -305,8 +305,10 @@ main = hspec do
         let document = recordToDocument record
             eventKey = document {frontmatter = setField "status" (String "stable") document.frontmatter}
             coerced = document {frontmatter = setField "dimensions" (toJSON [object ["name" .= ("telemetry" :: Text), "value" .= False]]) document.frontmatter}
+            nonDurable = recordToDocument (record {dataLinks = [link {uri = "file:///tmp/sample"} | link <- record.dataLinks]})
         map (.rule) (checkDocument path eventKey) `shouldContain` ["event-keys"]
         map (.rule) (checkDocument path coerced) `shouldContain` ["string-typing"]
+        map (.rule) (checkDocument path nonDurable) `shouldContain` ["data-uri"]
         createDirectoryIfMissing True (takeDirectory (bundle </> path))
         Text.IO.writeFile (bundle </> path) (serializeDocument document)
         callProcess "git" ["init", "-q", repo]
