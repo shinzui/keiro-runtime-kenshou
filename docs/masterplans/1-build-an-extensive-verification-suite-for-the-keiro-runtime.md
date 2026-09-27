@@ -364,7 +364,12 @@ ordering or duplicate replay. The revised oracle separates repeats below a
 sampled commit from repeats across an unsampled assignment callback. A fresh
 4,000-record reduced run conserved all acknowledgements, reached zero lag,
 and sealed only BUG-4 as a nonblocking known defect. EP-11 remains In Progress
-for its broader cohort, soak, benchmark and integration acceptance.
+for its broader cohort, soak, benchmark and integration acceptance. The clean
+released-cohort run `01a0e3bd-ef03-71b4-9486-01ed1bd56a02` is now a
+[digest-linked baseline](../verification/runs/kafka/2026/09/01a0e3bd-ef03-71b4-9486-01ed1bd56a02.md)
+in the OKF bundle. Its first attestation verified the stored bytes and cohort
+but returned incomplete because the Kafka VC-1 oracle is not independently
+recomputable yet and the evidence files were uncommitted during that check.
 
 EP-19 published `assurance.verificationEvidence` in `mori://shinzui/okf-profiles` v0.19.0 after 129 rejection fixtures and strict validation of the unchanged 17-concept consumer corpus. This repository now pins that release and narrows its runtime-specific layer and tier vocabularies locally. Its offline evidence checker enforces the GCS data-link policy, and the full `just verify` gate passes. Mori resolves the published profile URI and marks the consumer pin current; ADR-18 records the contract boundary.
 
