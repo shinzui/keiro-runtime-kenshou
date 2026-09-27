@@ -1,7 +1,7 @@
 module Kenshou.Cli.Registry (bundles, commands, topics) where
 
 import Kenshou.Check.Selftest qualified as CheckSelftest
-import Kenshou.Cli.Attest (measurementRecomputer, pairedComparisonRecomputer)
+import Kenshou.Cli.Attest (measurementRecomputer, pairedComparisonRecomputer, runOutcomeRecomputer)
 import Kenshou.Cli.Command.Cohort (cohortCommand)
 import Kenshou.Cli.Command.Execute (executeCommand)
 import Kenshou.Cli.Command.List (listCommand)
@@ -16,7 +16,6 @@ import Kenshou.Core.Bundle (LayerBundle)
 import Kenshou.Core.Cli (CliCommand, HelpTopic)
 import Kenshou.Core.Selftest qualified as Selftest
 import Kenshou.Diagnose.SelfTest qualified as DiagnoseSelftest
-import Kenshou.Evidence.Attest (coreRecomputers)
 import Kenshou.Evidence.Cli (attestCommandWith, evidenceCommand, recordCommand)
 import Kenshou.Evidence.HistoryCli (historyCommand)
 import Kenshou.Measure.Cli qualified as Measure
@@ -34,7 +33,7 @@ bundles :: [LayerBundle]
 bundles = [Selftest.bundle, MeasureSelftest.bundle, CheckSelftest.bundle, DiagnoseSelftest.bundle, TelemetrySelftest.selfTestBundle, Pgmq.bundle, Kiroku.bundle, Keiro.bundle, Shibuya.bundle, Kafka.bundle]
 
 commands :: [CliCommand]
-commands = [listCommand, planCommand, Help.helpCommand, runCommand, executeCommand, overheadCommand, Measure.summarizeCommand, Measure.compareCommand, Diagnose.diagnoseCommand, historyCommand, recordCommand, attestCommandWith (coreRecomputers <> [measurementRecomputer, pairedComparisonRecomputer]), evidenceCommand, workerCommand, cohortCommand, completionsCommand]
+commands = [listCommand, planCommand, Help.helpCommand, runCommand, executeCommand, overheadCommand, Measure.summarizeCommand, Measure.compareCommand, Diagnose.diagnoseCommand, historyCommand, recordCommand, attestCommandWith [runOutcomeRecomputer, measurementRecomputer, pairedComparisonRecomputer], evidenceCommand, workerCommand, cohortCommand, completionsCommand]
 
 topics :: [HelpTopic]
 topics = Help.topics

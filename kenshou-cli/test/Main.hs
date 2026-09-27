@@ -1,14 +1,34 @@
 module Main (main) where
 
+import Data.Aeson (Value, object, (.=))
+import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.IO qualified as Text
 import Kenshou.Cli (runWithArgs)
+import Kenshou.Cli.Attest (FencingFacts (..), fencingFacts)
 import Kenshou.Cli.Version (appVersionWithGit)
 import System.Exit (ExitCode (..))
 import Test.Hspec (describe, hspec, it, shouldBe, shouldSatisfy)
 
 main :: IO ()
 main = hspec do
+  describe "Kafka fencing outcome oracle" do
+    it "derives the released idle-member failure from separate worker logs" do
+      fencingFacts [] [okEvent 10]
+        `shouldBe` Right (FencingFacts True False False [] ["fenced-member-still-alive-and-idle"])
+
+    it "derives a passing fatal exit from separate worker logs" do
+      fencingFacts [errorEvent "KafkaResponseError RdKafkaRespErrFatal", doneEvent] [okEvent 10]
+        `shouldBe` Right (FencingFacts True True True ["KafkaResponseError RdKafkaRespErrFatal"] [])
+
+    it "keeps an unrelated consumer error blocking" do
+      fencingFacts [errorEvent "unexpected Kafka error"] [okEvent 10]
+        `shouldBe` Right (FencingFacts True False False ["unexpected Kafka error"] ["fencing-unexpected-error", "fencing-fatal-not-observable"])
+
+    it "rejects malformed error evidence" do
+      fencingFacts [object ["type" .= ("error" :: Text)]] [okEvent 10]
+        `shouldBe` Left "an original-consumer error event has no message"
+
   describe "CLI exit contract" do
     it "returns success for help" do
       runWithArgs ["--help"] `shouldReturnCode` ExitSuccess
@@ -70,3 +90,12 @@ leakingRun = "../kenshou-diagnose/test/fixtures/run-leaking"
 
 stalledRun :: FilePath
 stalledRun = "../kenshou-diagnose/test/fixtures/run-stalled"
+
+okEvent :: Int -> Value
+okEvent value = object ["type" .= ("custom" :: Text), "name" .= ("ok" :: Text), "payload" .= object ["value" .= value]]
+
+errorEvent :: Text -> Value
+errorEvent message = object ["type" .= ("error" :: Text), "message" .= message]
+
+doneEvent :: Value
+doneEvent = object ["type" .= ("done" :: Text)]

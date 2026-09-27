@@ -108,6 +108,7 @@ test-suite kenshou-cli-test
   hs-source-dirs: test
   main-is: Main.hs
   build-depends:
+    aeson >=2.2 && <2.3,
     base >=4.21 && <4.22,
     hspec >=2.11 && <2.12,
     kenshou-cli,

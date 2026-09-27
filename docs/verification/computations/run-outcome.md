@@ -21,7 +21,7 @@ algorithmVersion: 1
 appliesTo: [correctness, concurrency, soak, benchmark]
 computationId: VC-1
 implementation: Kenshou.Core.Run
-inputs: [run-spec, run-result, verdicts, diagnosis]
+inputs: [run-spec, run-result, verdicts, diagnosis, logs]
 produces: outcome
 ---
 
@@ -41,3 +41,5 @@ The runner first resolves the scenario and provisions its environment. It execut
 # Verification limit
 
 The sealed result and checker files can establish internal consistency and digest integrity. They cannot independently prove that an arbitrary scenario's reported outcome was true without replaying its domain-specific oracle. An attestation must mark that check incomplete when its required oracle is unavailable.
+
+The Kafka static-member fencing oracle replays the two sealed worker control streams. It derives replacement handling, the original member's fatal error and exit, failure labels, and the cohort-scoped known-defect disposition. If the original exits without a fatal error, the control stream cannot distinguish an exit before the scenario deadline from cleanup afterward, so that case remains incomplete.
