@@ -186,10 +186,11 @@ main = hspec do
         Text.IO.writeFile attestationPath originalAttestation
         scenario <- either (fail . show) pure (parseScenarioId "selftest/kernel/correctness/always-pass")
         observed <- history bundle (HistoryQuery scenario Nothing [] Nothing False) >>= either (fail . show) pure
-        length observed.entries `shouldBe` 3
-        map (.recordKind) observed.entries `shouldBe` ["run", "run", "comparison"]
-        let baselineEntry = (observed.entries !! 0) {trust = "machine-confirmed", attestations = [object ["verdict" .= ("confirmed" :: Text), "attestedAt" .= ("2026-09-26T00:00:03Z" :: Text)]]}
-            laterEntry = (observed.entries !! 1 :: HistoryEntry) {startedAt = "2026-09-26T00:00:02Z"}
+        let fixtureEntries = filter (\entry -> any (`Text.isSuffixOf` entry.concept) [baselineId, candidateId, comparisonId]) observed.entries
+        length fixtureEntries `shouldBe` 3
+        map (.recordKind) fixtureEntries `shouldBe` ["run", "run", "comparison"]
+        let baselineEntry = (fixtureEntries !! 0) {trust = "machine-confirmed", attestations = [object ["verdict" .= ("confirmed" :: Text), "attestedAt" .= ("2026-09-26T00:00:03Z" :: Text)]]}
+            laterEntry = (fixtureEntries !! 1 :: HistoryEntry) {startedAt = "2026-09-26T00:00:02Z"}
         deriveBaseline [baselineEntry, laterEntry] laterEntry `shouldBe` Just baselineEntry.concept
         let runPath = bundle </> "runs/selftest/2026/09/01997f3a-5b7c-7e21-8a44-0d6c2f9b1e55.md"
             actor = ProcessActor "kenshou-attester/0.1.0.0"
@@ -312,6 +313,15 @@ main = hspec do
         missing <- checkBundleWithStore (Just absent) (CheckOptions bundle Nothing True False)
         missing `shouldSatisfy` \case
           Right findings -> any (\finding -> finding.rule == "network" && "missing" `Text.isInfixOf` finding.message) findings
+          Left _ -> False
+        let nextId = "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e56"
+            addedRecord = record {runId = nextId, dataLinks = [link {uri = Text.replace record.runId nextId link.uri} | link <- record.dataLinks]}
+        addedPath <- either (fail . show) pure (runRecordPath addedRecord)
+        Text.IO.writeFile (bundle </> addedPath) (serializeDocument (recordToDocument addedRecord))
+        callProcess "git" ["-C", repo, "add", bundle </> addedPath]
+        stagedAddition <- checkBundle (CheckOptions bundle Nothing False False)
+        stagedAddition `shouldSatisfy` \case
+          Right findings -> not (any (\finding -> finding.rule == "immutability" && finding.concept == addedPath) findings)
           Left _ -> False
         let selfReference = document {frontmatter = setField "previousRun" (String ("/" <> Text.pack path)) document.frontmatter}
         Text.IO.writeFile (bundle </> path) (serializeDocument selfReference)

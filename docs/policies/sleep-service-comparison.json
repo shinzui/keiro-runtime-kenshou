@@ -1,0 +1,32 @@
+{
+  "schema": "kenshou.comparison-policy/v1",
+  "name": "sleep-service-local-comparison",
+  "minimumPairs": 3,
+  "confidenceLevel": 0.95,
+  "bootstrapIterations": 1000,
+  "resamplingSeed": 19,
+  "requireInterleaving": false,
+  "requireGrade": "benchmark",
+  "maxCiRelativeWidth": 1,
+  "maxCheckpointAsymmetry": 1,
+  "metrics": [
+    {
+      "match": "op.request.latency.p99",
+      "direction": "lower-is-better",
+      "relativeLimit": 0.2,
+      "absoluteFloor": 1000000
+    },
+    {
+      "match": "op.request.service.p99",
+      "direction": "lower-is-better",
+      "relativeLimit": 0.2,
+      "absoluteFloor": 1000000
+    },
+    {
+      "match": "op.request.throughput",
+      "direction": "higher-is-better",
+      "relativeLimit": 0.1,
+      "absoluteFloor": 1
+    }
+  ]
+}

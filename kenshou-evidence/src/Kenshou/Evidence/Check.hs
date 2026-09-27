@@ -390,9 +390,12 @@ checkHistory options = do
                         | takeExtension path == ".md",
                           not (isGenerated path) ->
                             let relativePath = makeRelative relative path
-                             in if "D" `isPrefixOf` status || "R" `isPrefixOf` status
-                                  then pure [Finding relativePath "immutability" "committed event was deleted or renamed in the working tree"]
-                                  else compareVersions repo relativePath ("HEAD:" <> path) path
+                             in if "A" `isPrefixOf` status
+                                  then pure []
+                                  else
+                                    if "D" `isPrefixOf` status || "R" `isPrefixOf` status
+                                      then pure [Finding relativePath "immutability" "committed event was deleted or renamed in the working tree"]
+                                      else compareVersions repo relativePath ("HEAD:" <> path) path
                       _ -> pure []
                     _ -> pure []
                   pure (Right (committed <> staged))
