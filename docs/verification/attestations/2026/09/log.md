@@ -1,6 +1,7 @@
 # attestations/2026/09 Update Log
 
 ## 2026-09-27
+* **Addition**: Attested /runs/kafka/2026/09/01a0e41c-947d-76df-80cf-11a7078016ad.md (confirmed).
 * **Addition**: Attested /runs/kafka/2026/09/01a0e402-0b02-7309-b378-3686b0e953a6.md (confirmed).
 * **Addition**: Attested /runs/kafka/2026/09/01a0e402-0b02-7309-b378-3686b0e953a6.md (incomplete).
 * **Addition**: Attested /runs/kafka/2026/09/01a0e3c8-28da-70e4-abcb-81223c70560b.md (incomplete).
