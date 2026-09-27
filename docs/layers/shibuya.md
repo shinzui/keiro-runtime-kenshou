@@ -1,6 +1,6 @@
 # Shibuya layer verification
 
-The `shibuya` layer exercises the framework, its metrics server, and its PGMQ and Kiroku adapters through public service-facing APIs. Core and metrics scenarios use synthetic sources or local HTTP and WebSocket servers. Adapter scenarios use real PostgreSQL, and the process cases keep effects in a durable ledger across worker deaths. Run `kenshou list --layer shibuya --json` for the executable catalogue and `kenshou run <scenario-id> --out runs` for one case. The catalogue below reflects the 53 scenarios registered on 2026-09-26; four planned benchmarks, soaks and trace-continuity cases are still absent.
+The `shibuya` layer exercises the framework, its metrics server, and its PGMQ and Kiroku adapters through public service-facing APIs. Core and metrics scenarios use synthetic sources or local HTTP and WebSocket servers. Adapter scenarios use real PostgreSQL, and the process cases keep effects in a durable ledger across worker deaths. Run `kenshou list --layer shibuya --json` for the executable catalogue and `kenshou run <scenario-id> --out runs` for one case. The catalogue below reflects the 55 scenarios registered on 2026-09-27; four planned benchmarks and four soak pairs remain absent.
 
 The core knobs include `shibuya.inbox-size`, `shibuya.concurrency` (`serial`, `ahead:N`, `async:N`), `shibuya.ordering`, `shibuya.strategy`, `shibuya.processor-kind`, `shibuya.messages`, `shibuya.partitions` and `shibuya.decisions`. Individual cases expose only the knobs they actually read. The leased-message bound probe additionally exposes `bound.slack` and waits for 500 ms without source pulls before sampling. PGMQ cases expose polling, batch, prefetch, visibility-timeout and pool controls; Kiroku cases expose subscription target, batch size, consumer-group size and checkpoint policy. Read the scenario definitions and checked-in run specs in `specs/` for the actual knobs before changing a workload.
 
@@ -45,7 +45,7 @@ Each row gives the full CLI identifier and the behavior checked or measured. `co
 | `shibuya/core-runner/correctness/invalid-config-rejected-before-effects` | Rejects invalid inbox and ordering policies before pulling a source or shutting down an adapter. |
 | `shibuya/core-runner/correctness/nonpositive-concurrency-is-rejected` | Rejects zero and negative concurrency bounds or runs at most one handler. |
 
-### kiroku-adapter (9)
+### kiroku-adapter (10)
 
 | Scenario | Check |
 |---|---|
@@ -58,6 +58,7 @@ Each row gives the full CLI identifier and the behavior checked or measured. `co
 | `shibuya/kiroku-adapter/correctness/ack-decision-mapping` | Checks retry attempts, dead-letter reason mapping, filtered delivery and persisted checkpoint progress. |
 | `shibuya/kiroku-adapter/correctness/halt-and-shutdown-replay` | Restarts after handler halt and forced mid-batch stop without skipping an uncheckpointed Kiroku event. |
 | `shibuya/kiroku-adapter/correctness/in-flight-depth-is-one` | Proves ack-coupled Kiroku delivery stays at depth one even with eight asynchronous Shibuya handlers. |
+| `shibuya/kiroku-adapter/correctness/trace-continuity` | Checks three distinct event-metadata W3C parents, consumer acknowledgement spans and the final checkpoint. |
 
 ### metrics (9)
 
@@ -73,7 +74,7 @@ Each row gives the full CLI identifier and the behavior checked or measured. `co
 | `shibuya/metrics/correctness/websocket-flag-gates-upgrades` | Disabling the WebSocket endpoint prevents an upgrade while the enabled endpoint still serves a snapshot. |
 | `shibuya/metrics/correctness/websocket-unsubscribe-all-suppresses-updates` | Unsubscribing from a processor after subscribe-all suppresses its updates while other subscriptions remain live. |
 
-### pgmq-adapter (13)
+### pgmq-adapter (14)
 
 | Scenario | Check |
 |---|---|
@@ -90,6 +91,7 @@ Each row gives the full CLI identifier and the behavior checked or measured. `co
 | `shibuya/pgmq-adapter/correctness/ack-decision-mapping` | Checks queue, lease, archive, dead-letter and halt state for every PGMQ acknowledgement decision. |
 | `shibuya/pgmq-adapter/correctness/auto-dead-letter-counts-deliveries` | Retry exhaustion and raw reads spend the same delivery budget before the handler runs. |
 | `shibuya/pgmq-adapter/correctness/shutdown-latency-is-bounded-by-polling` | An idle PostgreSQL-backed adapter drains within its configured poll interval and can be stopped twice. |
+| `shibuya/pgmq-adapter/correctness/trace-continuity` | Checks distinct W3C parents, acknowledgement spans and DLQ headers under tracing on and off. |
 
 ## Lifecycle coverage
 
@@ -141,6 +143,8 @@ For the PGMQ adapter, estimate the time a lease can wait inside the pipeline as 
 
 Shibuya does not automatically restart a failed processor. An application restart loop waits for the app's processors to finish, stops the app, rebuilds adapters and processors, and starts a new app with the same durable queue or subscription identity. The PGMQ and Kiroku fault scenarios check eventual conservation through this pattern. Handlers should tolerate duplicate deliveries inside the measured crash window.
 
+The trace-continuity probes use three distinct input traceparents per adapter and check the resulting consumer span parents and acknowledgement attributes. PGMQ additionally checks the active consumer traceparent and preserved upstream traceparent on the DLQ message; with tracing off, the original header passes through unchanged. Kiroku checks event-metadata propagation and the subscription checkpoint. All three PostgreSQL 18 arms passed on the historical, pinned remediation and isolated current-release lanes from clean harness revisions; the [ExecPlan](../plans/10-cover-shibuya-core-and-its-pgmq-and-kiroku-adapters.md) records the nine run IDs. These are trace correctness checks; the overhead comparisons remain open.
+
 ## Remaining acceptance
 
-The lifecycle matrix is fully accounted for. Clean default CLI sweeps ran all 30 non-benchmark core and metrics scenarios on each core lane: historical 0.9.0.3 had 16 direct passes and 14 scoped findings; pinned remediation and isolated Hackage 0.10.0.0 each had 28 passes, with only owner BUG-1 and IR-7 reproduced. The non-default idle-intake halt check reproduced historical REV-4-F1 under ahead, async and partitioned async, then passed on pinned head and Hackage 0.10.0.0. Serial and ahead lease-bound controls passed on all three lanes, while the batch scenarios exercise size, timeout, flush, fallback and keyed paths internally. All nine Kiroku adapter scenarios have historical and current-release evidence on PostgreSQL 17 and 18. Four Shibuya benchmarks, four soak pairs, trace-continuity cases, overhead comparisons, and upstream finding audit described by the ExecPlan remain to be implemented and run. The framework-tax comparison needs a controlled cell rerun to narrow its confidence interval. The forced-stop late-finalization bug needs an owner repair and a rerun. PostgreSQL 18 is the first repair-and-rerun checkpoint for owner fixes; the existing PostgreSQL 17 results remain compatibility evidence.
+The lifecycle matrix is fully accounted for. Clean default CLI sweeps ran all 30 non-benchmark core and metrics scenarios on each core lane: historical 0.9.0.3 had 16 direct passes and 14 scoped findings; pinned remediation and isolated Hackage 0.10.0.0 each had 28 passes, with only owner BUG-1 and IR-7 reproduced. The non-default idle-intake halt check reproduced historical REV-4-F1 under ahead, async and partitioned async, then passed on pinned head and Hackage 0.10.0.0. Serial and ahead lease-bound controls passed on all three lanes, while the batch scenarios exercise size, timeout, flush, fallback and keyed paths internally. The original nine Kiroku adapter scenarios have historical and current-release evidence on PostgreSQL 17 and 18; the new trace scenario has clean PostgreSQL 18 evidence across three lanes. Four Shibuya benchmarks, four soak pairs, overhead comparisons, and upstream finding audit described by the ExecPlan remain to be implemented and run. The framework-tax comparison needs a controlled cell rerun to narrow its confidence interval. The forced-stop late-finalization bug needs an owner repair and a rerun. PostgreSQL 18 is the first repair-and-rerun checkpoint for owner fixes; the existing PostgreSQL 17 results remain compatibility evidence.

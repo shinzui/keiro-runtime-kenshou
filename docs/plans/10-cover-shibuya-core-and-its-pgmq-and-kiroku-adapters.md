@@ -175,7 +175,18 @@ After this plan a maintainer can, from this repository, run `kenshou list --laye
 - [x] (2026-09-26) Registered `sigkill-replay-window` with twenty effect-gated process kills and seeded timed kills while a second thread appends events. Every combination of batch size 1/10/100, category/all-streams target and catch-up/live phase passed on historical 0.5.1.2 and current 0.5.1.3 on PostgreSQL 17/18. The four lanes also passed random-timing controls with 8–9 duplicate positions. Across 52 sealed runs, all 100 live or 200 catch-up events reached durable effects, each worker's positions increased, 200 ms checkpoint samples never decreased, duplicates stayed in killed uncheckpointed windows and maximum adjacent-incarnation replay stayed within the declared batch/publisher bound. The script and result ranges are below.
 - [x] (2026-09-26) Expanded `postgres-outage-and-reconnect` revision 2 with a distinct dedicated-listener fault. The fixture takes a `pg_stat_activity` baseline before starting the consumer, finds the one new `kiroku-listener` PID whose SQL is `LISTEN`, and terminates that exact PID. Current 0.5.1.3 and historical 0.5.1.2 passed on PostgreSQL 18 and, on 2026-09-27, PostgreSQL 17: the listener reconnected with a distinct PID, all 80 events had exactly one durable effect, and the checkpoint reached the final position. The older named-backend and postmaster arms also passed in both PostgreSQL 17 runs, retaining the scoped backend checkpoint-stall implementation finding.
 - [x] (2026-09-27) Completed all nine Kiroku adapter scenarios on historical 0.5.1.2 and current 0.5.1.3 across PostgreSQL 17 and 18, including the crash-shape matrix and revision-two acquisition and listener-outage arms. Historical acquisition reproduces scoped REV-13-F1; the other contract checks pass.
-- [ ] Deliver benchmarks, soaks, telemetry comparisons, upstream finding audit, and ADR/outcome distillation.
+- [x] (2026-09-27) Registered real PGMQ and Kiroku trace-continuity scenarios and passed clean PostgreSQL 18 runs on released, pinned head, and isolated current Hackage lanes. PGMQ checked three distinct W3C parents and acknowledgement decisions through async processing, the active and upstream DLQ headers, and verbatim header forwarding with tracing off. Kiroku checked three distinct event-metadata parents, acknowledgement spans, and the final subscription checkpoint. All nine results are nonblocking; the exact run IDs are below. `nix develop -c just verify` passed before the clean runs.
+- [ ] Deliver the remaining benchmarks, soaks, telemetry overhead comparisons, upstream finding audit, and ADR/outcome distillation.
+
+### PostgreSQL 18 trace-continuity results
+
+Each row is a clean, sealed `runs/<id>/run-result.json` at the listed harness revision. The traced arms observed three consumer spans with distinct expected parent IDs and acknowledgement attributes. The PGMQ tracing-off arms observed zero spans and preserved the source traceparent in the DLQ header. All rows passed with `blocking=false` and PostgreSQL 18.6.
+
+| Arm | Released `5123e6c` | Pinned head `a89ac03` | Isolated current `e92fcf9` |
+| --- | --- | --- | --- |
+| PGMQ SDK in-memory | `01a0e4ab-77b4-7399-80db-653dc6593c1e` | `01a0e4ae-b7a5-7249-ac71-084b7b206d5f` | `01a0e4b1-8152-7058-8377-5d44c0b6c9e1` |
+| PGMQ tracing off | `01a0e4ab-855a-7756-94a0-c7ea349a76cb` | `01a0e4ae-c529-77cb-b1d2-1a9c0dc419bc` | `01a0e4b1-8a67-7220-8c8a-12faf2d53f30` |
+| Kiroku SDK in-memory | `01a0e4ab-91eb-747a-a0a3-8462c7ac4775` | `01a0e4ae-d2e1-73cb-8b00-ac7dc553b6a3` | `01a0e4b1-9326-7120-bf23-c633c1548f13` |
 
 ### Current-release PGMQ CLI results
 
