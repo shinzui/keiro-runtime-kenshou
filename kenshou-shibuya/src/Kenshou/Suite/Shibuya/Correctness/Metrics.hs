@@ -106,7 +106,7 @@ readyNotStuckUnderLoad =
       knownDefect =
         Just $
           KnownDefect
-            { reference = "mori://shinzui/shibuya/okf/reviews/concepts/REV-7",
+            { reference = "mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-7",
               summary = "REV-7-F1",
               expectedFailures = ["REV-7-F1"],
               appliesTo = OnlyWhen (ResolvedFromHackage "shibuya-core" :| [VersionBelow "shibuya-core" "0.10.0.0"])
@@ -221,7 +221,7 @@ healthScenario identifier description finding action =
       knownDefect =
         Just $
           KnownDefect
-            { reference = "mori://shinzui/shibuya/okf/reviews/concepts/REV-8",
+            { reference = "mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-8",
               summary = finding,
               expectedFailures = [finding],
               appliesTo = OnlyWhen (ResolvedFromHackage "shibuya-metrics" :| [VersionBelow "shibuya-metrics" "0.10.0.0"])

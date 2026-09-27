@@ -1,0 +1,7 @@
+# Historical Shibuya health probes ignore terminal lifecycle state
+
+Status: reproduced on released Shibuya metrics 0.9.0.3 and fixed on Hackage 0.10.0.0. Owner report: `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-8`.
+
+`shibuya/metrics/correctness/ready-reflects-a-failed-processor` fails a configured source and checks `/health/ready`. Clean released run `runs/01a0e479-e310-7716-8cc3-af7b54e43fca/run-result.json` reproduced `REV-8-F1`: readiness remained healthy after the worker exited. `shibuya/metrics/correctness/live-reflects-a-stopped-master` stops the application and checks `/health/live` twice. Clean released run `runs/01a0e479-4c79-736f-9bfa-9b85679160a2/run-result.json` reproduced `REV-8-F2`: liveness remained healthy. The isolated Hackage 0.10.0.0 controls passed at `runs/01a0e459-1935-7206-baa0-82f79790af66/run-result.json` and `runs/01a0e458-8a23-7078-b5b3-bc97aaa8e42c/run-result.json`. These run paths are local to this repository.
+
+Published `mori://shinzui/shibuya/okf/capabilities/concepts/CAP-10` exposes a health endpoint for orchestrator probes. Owner `mori://shinzui/shibuya/okf/reviews/concepts/REV-8` traced false readiness to failed workers disappearing from the metrics map and false liveness to reading shared state after master shutdown. Owner `mori://shinzui/shibuya/okf/improvement-requests/concepts/IR-6` requests retained lifecycle state. The finding does not imply that an intentionally empty application must always be unready.
