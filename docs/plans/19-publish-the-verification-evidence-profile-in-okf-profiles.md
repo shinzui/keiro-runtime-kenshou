@@ -17,6 +17,10 @@ provenance:
       at: 2026-09-24T22:53:09Z
       mode: "update"
       note: "Consolidated Progress into delivered outcomes and remaining acceptance"
+    - model: "unknown"
+      at: 2026-09-27T12:54:46Z
+      mode: "implement"
+      note: "Recorded preflight and EP-18 completion blocker; Model discovery unavailable: Runtime supplies only GPT-6 family; no exact model ID or Codex session ID is exposed in environment"
 ---
 
 # Publish the verification evidence profile in okf-profiles
@@ -40,6 +44,8 @@ To see it working at the end: in `/Users/shinzui/Keikaku/bokuno/okf-profiles`, `
 ## Progress
 
 - [ ] Publish the verification evidence profile with fixtures and generated documentation, amend its ADR, release it, and repoint the evidence bundle; verify the publication acceptance in Validation and Acceptance.
+
+Preflight on 2026-09-27: strict OKF validation reports `OK: 16 concepts (okf_version 0.2)`, `nix develop -c cabal run -v0 kenshou -- evidence check` reports `evidence clean`, `git status --short docs/verification` is empty, and the corpus contains all four run kinds. Implementation has not begun because the hard dependency, `docs/plans/18-record-runs-and-attestations-in-a-historic-okf-evidence-bundle.md`, still marks attestation acceptance and its overall delivery unfinished. Resume this plan after those outcomes are verified and marked complete; repeat the preflight then.
 
 ## Surprises & Discoveries
 
