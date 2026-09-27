@@ -1,0 +1,6 @@
+{
+  "schema": "kenshou.run-spec/v1",
+  "scenario": "shibuya/kiroku-adapter/correctness/trace-continuity",
+  "dimensions": { "telemetry.tracing": "sdk-inmemory", "pg.version": "18" },
+  "environment": { "placement": "local", "postgres": { "mode": "ephemeral" } }
+}

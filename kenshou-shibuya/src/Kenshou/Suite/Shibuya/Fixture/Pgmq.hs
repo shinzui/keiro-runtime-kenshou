@@ -10,6 +10,7 @@ module Kenshou.Suite.Shibuya.Fixture.Pgmq
     queueLeaseRows,
     queueLeaseRow,
     queuePayloads,
+    queueHeaders,
     dlqRowsWithReason,
     activeLongPolls,
     ensureEffectsTable,
@@ -244,6 +245,13 @@ queuePayloads :: PgmqFixture -> IO [Value]
 queuePayloads fixture = do
   let table = "pgmq.q_" <> queueNameToText fixture.queue
       statement = Statement.preparable ("select message from " <> table <> " order by msg_id") Encoders.noParams (Decoders.rowList (Decoders.column (Decoders.nonNullable Decoders.jsonb)))
+  result <- Pool.use fixture.pool (Session.statement () statement)
+  either (ioError . userError . show) pure result
+
+queueHeaders :: PgmqFixture -> IO [Maybe Value]
+queueHeaders fixture = do
+  let table = "pgmq.q_" <> queueNameToText fixture.queue
+      statement = Statement.preparable ("select headers from " <> table <> " order by msg_id") Encoders.noParams (Decoders.rowList (Decoders.column (Decoders.nullable Decoders.jsonb)))
   result <- Pool.use fixture.pool (Session.statement () statement)
   either (ioError . userError . show) pure result
 

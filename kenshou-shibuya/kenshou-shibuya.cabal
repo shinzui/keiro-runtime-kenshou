@@ -51,9 +51,11 @@ library
     Kenshou.Suite.Shibuya.Correctness.KirokuAckMapping
     Kenshou.Suite.Shibuya.Correctness.KirokuDepth
     Kenshou.Suite.Shibuya.Correctness.KirokuReplay
+    Kenshou.Suite.Shibuya.Correctness.KirokuTrace
     Kenshou.Suite.Shibuya.Correctness.Metrics
     Kenshou.Suite.Shibuya.Correctness.PgmqAckMapping
     Kenshou.Suite.Shibuya.Correctness.PgmqAdapter
+    Kenshou.Suite.Shibuya.Correctness.PgmqTrace
     Kenshou.Suite.Shibuya.Fixture.Handlers
     Kenshou.Suite.Shibuya.Fixture.Kiroku
     Kenshou.Suite.Shibuya.Fixture.KirokuWorker
@@ -77,6 +79,7 @@ library
     hasql,
     hasql-pool,
     hedgehog >=1.4 && <1.8,
+    hs-opentelemetry-api,
     http-client,
     http-types,
     kenshou-check,
