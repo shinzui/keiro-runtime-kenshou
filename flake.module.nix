@@ -41,9 +41,29 @@
         haskellPackages.callCabal2nix "kenshou-telemetry" (inputs.self + "/kenshou-telemetry") {
           inherit kenshou-core kenshou-measure;
         };
+      kenshou-evidence =
+        haskellPackages.callCabal2nix "kenshou-evidence" (inputs.self + "/kenshou-evidence") {
+          inherit kenshou-core;
+        };
       kenshou-pgmq =
         haskellPackages.callCabal2nix "kenshou-pgmq" (inputs.self + "/kenshou-pgmq") {
           inherit kenshou-check kenshou-core kenshou-diagnose kenshou-measure kenshou-telemetry;
+        };
+      kenshou-kafka =
+        haskellPackages.callCabal2nix "kenshou-kafka" (inputs.self + "/kenshou-kafka") {
+          inherit kenshou-check kenshou-core kenshou-diagnose kenshou-measure kenshou-telemetry;
+        };
+      kenshou-keiro =
+        haskellPackages.callCabal2nix "kenshou-keiro" (inputs.self + "/kenshou-keiro") {
+          inherit kenshou-check kenshou-core kenshou-diagnose kenshou-measure kenshou-telemetry;
+        };
+      kenshou-kiroku =
+        haskellPackages.callCabal2nix "kenshou-kiroku" (inputs.self + "/kenshou-kiroku") {
+          inherit kenshou-check kenshou-core kenshou-diagnose kenshou-measure kenshou-telemetry;
+        };
+      kenshou-shibuya =
+        haskellPackages.callCabal2nix "kenshou-shibuya" (inputs.self + "/kenshou-shibuya") {
+          inherit kenshou-check kenshou-core kenshou-measure kenshou-telemetry;
         };
       kenshou-cli = pkgs.haskell.lib.compose.overrideCabal
         (drv: {
@@ -52,7 +72,7 @@
           ];
         })
         (haskellPackages.callCabal2nix "kenshou-cli" (inputs.self + "/kenshou-cli") {
-          inherit kenshou-check kenshou-core kenshou-diagnose kenshou-measure kenshou-pgmq kenshou-telemetry;
+          inherit kenshou-check kenshou-core kenshou-diagnose kenshou-evidence kenshou-kafka kenshou-keiro kenshou-kiroku kenshou-measure kenshou-pgmq kenshou-shibuya kenshou-telemetry;
         });
     in
     {
