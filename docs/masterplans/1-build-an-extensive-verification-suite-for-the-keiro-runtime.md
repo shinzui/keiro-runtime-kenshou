@@ -507,22 +507,21 @@ requests for this initiative's tooling and infrastructure are excluded.
 | `mori://shinzui/pgmq-hs` | 3 | 3 |
 | `mori://shinzui/shibuya-kafka-adapter` | 6 | 0 |
 | `mori://shinzui/shibuya-pgmq-adapter` | 1 | 0 |
-| `mori://shinzui/kiroku` | 0 | 2 |
+| `mori://shinzui/kiroku` | 0 | 3 |
 | `mori://shinzui/shibuya` | 0 | 2 |
-| **Distinct owner records** | **12** | **7** |
+| **Distinct owner records** | **12** | **8** |
 
 Numbered finding coverage is tracked separately from distinct owner records:
 
 | Finding disposition | Count |
 |---|---:|
-| Primary owner issue linked (12 bug reports, 2 improvement requests) | 14 |
+| Primary owner issue linked (12 bug reports, 3 improvement requests) | 15 |
 | Local harness investigation, owner classification pending (finding 3) | 1 |
-| Owner improvement request URI not recorded (finding 16) | 1 |
+| Owner improvement request URI not recorded | 0 |
 | **Numbered findings** | **16** |
 
-Finding 16 recommends an adapter improvement but has no canonical owner request
-recorded here. A missing link is not proof that an owner has not already filed
-a record. Update this snapshot, the matching local finding, and the register
+Finding 16 now links a dependent adapter request after the existing store-guard
+request. Update this snapshot, the matching local finding, and the register
 when a link or disposition changes. Record owner fixes and any later Kenshou
 re-verification separately from filing counts.
 
@@ -543,7 +542,7 @@ re-verification separately from filing counts.
 - EP-9's five other reproduced improvement probes have non-bug dispositions: `mori://shinzui/kiroku/okf/improvement-requests/concepts/IR-7` explicitly classifies multi-versus-single fresh-stream deadlock avoidance as desired work; `mori://shinzui/kiroku/plans/81-make-consumer-group-topology-durable-and-resize-without-gaps` seeks online resize although CAP-13 says membership is static; `mori://shinzui/kiroku/plans/82-repair-live-reconnect-and-validate-subscription-identity-and-batch-size` seeks a smaller replay window and batch-size validation although CAP-11 permits reconnect replay without that bound and the raw constructor promises no validation; `mori://shinzui/kiroku/plans/83-contain-persistent-publisher-decode-hook-failures` seeks progress or terminal error under a permanently throwing user hook, which the published API does not promise. Revision-2 PostgreSQL 18 runs for all five passed their contract cells and retained the exact desired-behavior labels under `implementationFindings`; their IDs are recorded in EP-9.
 - EP-10 Shibuya findings: the retry/success counter gap is a documented mapping, not a bug; local `docs/findings/14-shibuya-retry-and-success-counters-are-indistinguishable.md` and owner `mori://shinzui/shibuya/okf/improvement-requests/concepts/IR-8` track the requested additive retry count. The transient handler readiness failure is separately tracked by `mori://shinzui/shibuya/okf/improvement-requests/concepts/IR-7`. Audit the remaining reproduced historical 0.9.0.3 lifecycle failures and current-release metrics and adapter failures against existing reviews, remediation plans and bug reports; distinguish fixes already present in 0.10.0.0.
 - EP-10 PGMQ long-poll starvation finding: [local finding](../findings/15-shibuya-pgmq-long-poll-pool-starvation.md); upstream `mori://shinzui/shibuya-pgmq-adapter/okf/bug-reports/concepts/BUG-1`. Historical and current releases reproduce acknowledgement starvation when long polls occupy the shared pool.
-- EP-10 Kiroku same-member duplicate-work finding: [local finding](../findings/16-shibuya-kiroku-same-member-duplicate-work.md). Duplicate work is consistent with the documented at-least-once behavior. The suggested adapter option to expose the owner guard has no canonical improvement-request URI recorded here; check the owning project's existing requests before filing or linking one.
+- EP-10 Kiroku same-member duplicate-work finding: [local finding](../findings/16-shibuya-kiroku-same-member-duplicate-work.md); owner adapter request `mori://shinzui/kiroku/okf/improvement-requests/concepts/IR-17`, dependent on the lifetime store guard in `mori://shinzui/kiroku/okf/improvement-requests/concepts/IR-15`. Duplicate work is consistent with the documented at-least-once behavior and is an improvement request, not a bug report.
 
 
 ## Decision Log
@@ -679,3 +678,5 @@ Revision note (2026-09-27): Corrected that wording after owner clarification. Th
 Revision note (2026-09-27): Extended the shared known-defect seam to preserve independent owner reports from one scenario, and applied it to Kafka rebalance classification without weakening new-failure blocking.
 
 Revision note (2026-09-27): Recorded clean Kafka rebalance and stability-soak baselines, preserved their incomplete attestations, and narrowed VC-2 references to runs with a replayable measurement summary.
+
+Revision note (2026-09-27): Resolved finding 16's owner-report gap with Kiroku IR-17, dependent on the existing lifetime member-guard request IR-15, and updated the distinct-issue register.
