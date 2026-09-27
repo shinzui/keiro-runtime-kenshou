@@ -180,7 +180,8 @@ After this plan a maintainer can, from this repository, run `kenshou list --laye
 - [x] (2026-09-27) Extended revision 2 of `concurrency-sweep` across tracing off, noop, in-memory SDK and OTLP SDK with live served/scraped metrics and ten WebSocket subscribers. Four same-seed clean arms passed at `3dcf307`, including 1,000 exported spans, zero drops, five successful scrapes per HTTP endpoint and ten WebSocket streams in the OTLP arm. A separate three-pair local off-to-noop `kenshou overhead` run emitted a schema-valid report under the provisional Shibuya policy. All six child runs passed cleanly; throughput, p50, allocation, CPU and GC rules passed, while p99 and the overall verdict were inconclusive. IDs are below. `nix develop -c just verify` passed for the code revision; the full telemetry matrix and controlled cell calibration remain open.
 - [x] (2026-09-27) Registered `core-batch/benchmark/batch-size-and-timeout` with a serial unbatched control, size and timeout knobs, scheduled arrivals, per-message finalize latency, trigger counts and telemetry dimensions. The full `nix develop -c just verify` gate passed. Three clean interleaved local pairs and a timeout-triggered control passed at `4a40fde`; the provisional comparison passed throughput but was inconclusive for p99. The exact IDs and observed trigger counts are below. Adapter benchmarks and controlled cell calibration remain open.
 - [x] (2026-09-27) Registered `pgmq-adapter/benchmark/end-to-end-throughput-latency` with direct `pgmq-hasql` read/delete and adapter arms, matched polling, exact JSON payload sizes, and a record after successful delete/finalize. Three clean released-cohort local pairs passed PostgreSQL 18 with 1,000 distinct deletions per arm; the provisional comparison found a throughput regression and passed p99 latency. A clean long-poll/prefetch/16-slot/16-KiB control also passed. The full gate passed before the final raw polling-parity adjustment; that adjustment compiled and the raw arm passed afterward. Run IDs and local limitations are below. Kiroku's adapter benchmark, telemetry overhead and controlled cell calibration remain open.
-- [ ] Deliver the remaining benchmarks, soaks, telemetry overhead comparisons, upstream finding audit, and ADR/outcome distillation.
+- [x] (2026-09-27) Registered the fifth benchmark, `kiroku-adapter/benchmark/end-to-end-throughput-latency`, with direct callback, hand-drained `subscriptionAckStream` and Shibuya adapter arms. Live and catch-up phases, batch and group knobs, serial/async handler choices, intended-append-to-ack histograms and per-member durable checkpoint checks are present. The full `nix develop -c just verify` gate passed. Three clean released-cohort PostgreSQL 18 local ack-stream/adapter pairs and separate clean callback and four-member catch-up controls each passed 1,000-event conservation checks with benchmark grade. The provisional paired comparison passed throughput and was inconclusive for p99; run IDs and local limitations are below.
+- [ ] Deliver the four soak pairs, full telemetry overhead comparisons, controlled cell benchmark calibration, upstream finding audit, and ADR/outcome distillation.
 
 ### PostgreSQL 18 trace-continuity results
 
@@ -240,6 +241,18 @@ Each paired run used the released cohort, PostgreSQL 18, 1,000 scheduled message
 | 403 | `01a0e501-379c-77e2-9b6a-a5f68e20f61e` | `01a0e501-5a62-705e-9d62-097958fec2da` |
 
 The pair order was raw/adapter, adapter/raw, raw/adapter. Comparison `01a0e502-b6e8-72c3-b35e-38984ee1b8a5` in `runs/shibuya-pgmq-end-to-end-comparison.json` is `regression` under `policies/shibuya-pgmq-end-to-end.json`: the raw-to-adapter throughput ratio estimate is 1.147, exceeding the provisional five-percent budget, while p99 latency's ratio of 1.002 passes. This is local evidence requiring controlled-cell calibration. A separate clean run `01a0e504-251f-7573-a1ce-0cc4c21697db` at revision `1078441` passed with 50-message reads, long polling, four prefetched batches, 16 handler slots and exact 16-KiB payloads. Local PostgreSQL did not preload `pg_stat_statements`, so the statement sampler logged missing snapshots; run measurement grade and comparison metrics were still available. The full knob sweep, current-release lane, telemetry dimensions and designated overhead report remain open.
+
+### Kiroku end-to-end benchmark comparison
+
+At clean revision `39f7040`, every released-cohort PostgreSQL 18 paired run scheduled 1,000 appends at 200/s to one run-scoped category and processed exactly 1,000 distinct events without duplicates. The `ack-stream` baseline writes `Continue` into each `AckItem` reply; the adapter candidate records after its real `AckOk` finalizer returns. Both arms independently wait for the durable subscription checkpoint after their measured completions. All six runs had benchmark grade, intended-append-to-ack latency histograms and RTS allocation samples. The local fixture's store pool size is ten. The matched seeds and alternating order were:
+
+| Seed | Ack-stream baseline | Adapter candidate |
+| --- | --- | --- |
+| 501 | `01a0e517-319d-7781-98a8-02ada9ab31a8` | `01a0e517-930a-7171-9084-1c72e9134635` |
+| 502 | `01a0e518-5824-7368-a800-5296d805fb10` | `01a0e518-03ce-7290-936a-4bc7aa5d0753` |
+| 503 | `01a0e518-9e41-73d2-9597-e933a1275217` | `01a0e518-e42d-70c4-b6da-a861d5a72230` |
+
+The order was ack-stream/adapter, adapter/ack-stream, ack-stream/adapter. Comparison `01a0e519-3eae-776c-bdbb-5f5e6c4ed06f` in `runs/shibuya-kiroku-end-to-end-comparison.json` is `inconclusive` under the schema-valid provisional policy `policies/shibuya-kiroku-end-to-end.json`: throughput passed at an adverse ratio of 1.0008 near the offered rate, while the p99 adverse-ratio estimate of 1.61 had a 0.52–4.99 interval. The clean direct-callback control `01a0e519-d5dd-7288-9780-8738f36698f4` and four-member, batch-10, async-eight catch-up control `01a0e51a-20bf-7090-be6a-9af327913d08` also passed with 1,000 distinct events; the latter recorded progress for all four member checkpoints. A callback sample is taken in its handler before `Continue` returns; a hand-drained stream sample is taken after writing its reply, while the adapter sample follows finalizer return. The separate checkpoint oracle establishes durable progress, not the timestamp of that progress. Local PostgreSQL did not preload `pg_stat_statements`, so statement snapshots were unavailable. The remaining knob sweep, current-release lane and cell-calibrated comparison remain open.
 
 ### Current-release PGMQ CLI results
 
@@ -373,6 +386,7 @@ Run `nix develop -c bash scripts/run-shibuya-kiroku-sigkill-matrix.sh cohort/shi
 
 ## Surprises & Discoveries
 
+- The first local Kiroku ack-stream/adapter pair had elevated p99 latency in both arms even though every event and checkpoint completed. Across three paired seeds, the adapter's p99 adverse-ratio interval spans 0.52–4.99, so the provisional local verdict is inconclusive. The offered 200/s rate also keeps both arms near the same throughput; cell calibration and a higher-rate sweep are needed before treating the throughput pass as capacity evidence.
 - The earlier forced-stop probe sampled finalizations only while its handler gate stayed closed. Revision 2 opens that gate after stop returns and before replacement starts, while tracking active handlers, source pulls and handler starts across a repeated stop. Clean runs on historical 0.9.0.3 (`01a0e449-8bb4-746f-86ca-3be1b8aadd6a`) and current 0.10.0.0 (`01a0e44b-aea0-7459-966a-150ea1340c27`) each left four handlers active at stop return and finalized seven messages after the gate opened. Both ultimately conserved all 30 messages. The three late-handler labels are scoped to owner `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-1`; conservation and any unanticipated labels still block.
 - Observation: the generic load-driver CPU saturation gate marked the CPU-bound, in-process Streamly baseline as an infrastructure failure even though all messages and samples were present. The benchmark records a scoped gate exception and separately requires at least one full steady message pass. The default one-thousand-sample threshold for its aggregate pass operation was likewise inappropriate for a pass containing 100,000 or 1,000,000 measured messages. `runLoad` can start a warm-up pass before the zero-duration warm-up closes, so steady message samples may include that pass's tail as well as a complete steady pass; the count is reported explicitly. Local three-pair confidence intervals exceeded the policy width and produced `inconclusive`, leaving cell calibration open.
 
@@ -427,6 +441,10 @@ The dated entries below retain the state when their individual probes were first
 
 
 ## Decision Log
+
+- Decision: Timestamp Kiroku's callback arm when its handler records completion, its hand-drained ack-stream arm after writing `Continue`, and its adapter arm after the `AckOk` finalizer returns. Require a separate per-member checkpoint oracle.
+  Rationale: The callback returns immediately after the sample, while ack-stream and adapter acknowledgement calls return before the subscription worker necessarily persists a checkpoint. The separate oracle proves durable progress without mislabelling the latency endpoint as durable commit.
+  Date: 2026-09-27
 
 - Decision: Dispatch the kernel's hidden `worker --role` protocol from `kenshou-shibuya-run` using the same Shibuya bundle registry as its run command.
   Rationale: The process supervisor re-executes its own binary for real crash and competition scenarios. The layer-only executable must therefore expose the role protocol to run those scenarios against the current Shibuya release without linking the incompatible full Keiro CLI.
@@ -515,7 +533,7 @@ The dated entries below retain the state when their individual probes were first
 
 ## Outcomes & Retrospective
 
-(To be filled during and after implementation.)
+The five planned Shibuya benchmarks now have executable scenarios. Local released-cohort PostgreSQL 18 runs establish the Kiroku three-arm delivery and checkpoint path, with three clean paired ack-stream/adapter trials and separate callback and group controls. The provisional p99 comparison is inconclusive. Milestone 4 remains open for controlled cell comparisons, full knob and telemetry sweeps, four soak pairs and the finding audit.
 
 
 ## Context and Orientation
@@ -789,7 +807,7 @@ Scope: five benchmarks, four soak pairs, two trace-continuity scenarios, the ove
 
 `shibuya/pgmq-adapter/benchmark/end-to-end-throughput-latency` is producer to queue to adapter to `runApp` to a no-op handler to `AckOk`, with latency from the intended send to the completed `finalize`. Knobs: `pgmq-adapter.batch-size` 1, 10, 50, 100; `pgmq-adapter.polling` `standard:1` and `long:5:100`; `pgmq-adapter.prefetch-buffer-size` 0 and 4; `shibuya.concurrency` `serial`, `async:4`, `async:16`; `pgmq-adapter.pool-size` default 10; `bench.payload-bytes` 256 and 16384 (the kernel requires dotted knob names); `bench.arm` `raw-client` (a hand loop of `readMessage` and `deleteMessage` through `pgmq-hasql`) or `adapter`, the difference being the adapter's tax against a real database. This is the second designated overhead benchmark. Tier standard; placement `either`.
 
-`shibuya/kiroku-adapter/benchmark/end-to-end-throughput-latency` is appender to store to subscription to handler to `AckOk` with `bench.arm` in `subscribe-callback`, `ack-stream` (draining `subscriptionAckStream` by hand) and `adapter`, which measures the per-event acknowledgement round trip that upstream's bench leaves out. Knobs: `kiroku-adapter.batch-size` 1, 10, 100; `kiroku-adapter.group-size` 0 and 4; `phase` `catch-up` or `live`; `shibuya.concurrency` `serial` and `async:8`, where flat throughput is the expected finding. Store pool size 10, per the suite's methodology rule. Tier standard.
+`shibuya/kiroku-adapter/benchmark/end-to-end-throughput-latency` is appender to store to subscription to handler and acknowledgement with `bench.arm` in `subscribe-callback`, `ack-stream` (draining `subscriptionAckStream` by hand) and `adapter`. The ack-stream arm measures the per-event acknowledgement round trip that upstream's bench leaves out. Knobs: `kiroku-adapter.batch-size` 1, 10, 100; `kiroku-adapter.group-size` 0 and 4; `bench.phase` `catch-up` or `live` (the kernel requires dotted knob names); `shibuya.concurrency` `serial` and `async:8`, where flat throughput is the expected finding. Store pool size 10, per the suite's methodology rule. Tier standard.
 
 The soaks, each registered by a helper `soakPair :: SoakSpec -> [Scenario]` as `<name>` (tier `soak`, placement `cell`, `soak.duration-seconds` 14400) and `<name>-reduced` (tier `extended`, placement `either`, 1200). All run the system under test in worker roles so that the sampled runtime statistics belong to it alone, and all are judged by the diagnostics toolkit's leak verdict on live bytes after major collections, thread count, descriptors and PostgreSQL connections, plus the correctness ledgers.
 
