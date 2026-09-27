@@ -5,17 +5,17 @@ module Kenshou.Suite.Shibuya.Bench.ConcurrencySweep (scenario) where
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.MVar (MVar, newMVar, withMVar)
 import Control.Concurrent.STM (TBQueue, atomically, newTBQueueIO, readTBQueue, writeTBQueue)
-import Control.Exception (SomeException, displayException, try)
+import Control.Exception (SomeException, displayException, finally, try)
 import Control.Monad (forM_)
 import Data.Aeson (object, (.=))
-import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
+import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Word (Word64)
 import Effectful (IOE, liftIO, runEff, (:>))
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
-import Kenshou.Core.Dimension (noDimensions)
+import Kenshou.Core.Dimension (allTelemetryArms, noDimensions)
 import Kenshou.Core.Env (noEnvironment)
 import Kenshou.Core.Id (Kind (..), parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobInt, knobText, mkKnobName)
@@ -30,15 +30,18 @@ import Kenshou.Measure.Phase qualified as MeasurePhase
 import Kenshou.Measure.Recorder (ErrorCause (..), OpName (..), OpResult (..), WorkerRecorder, newWorkerRecorder, recordOp, registerOp)
 import Kenshou.Measure.Session (MeasureConfig (..), Measurement, appendLoadReport, measureConfigFromKnobs, measuredOutcome, measurementPhaseClock, measurementRecorder, phasePlanFromCore, withMeasurement)
 import Kenshou.Suite.Shibuya.Knobs (PartitionMode (..), parseConcurrency, parseOrdering, parsePartitions)
+import Kenshou.Telemetry (TelemetryHandles (..), telemetryKnobs, telemetrySpecFromContext, withTelemetry)
+import Kenshou.Telemetry.Endpoint (Endpoint (..), EndpointKind (..), reserveFreePort)
 import Shibuya.Adapter (Adapter (..))
-import Shibuya.App (QueueProcessor (..), defaultAppConfig, mkProcessor, runApp, stopApp, waitApp)
+import Shibuya.App (QueueProcessor (..), defaultAppConfig, getAppMaster, mkProcessor, runApp, stopApp, waitApp)
 import Shibuya.Core.Ack (AckDecision (..))
 import Shibuya.Core.AckHandle (AckHandle (..))
 import Shibuya.Core.Ingested (mkIngested)
 import Shibuya.Core.Metrics (ProcessorId (..))
 import Shibuya.Core.Types (Envelope (..), MessageId (..), mkEnvelope)
+import Shibuya.Metrics.Server qualified as Metrics
 import Shibuya.Policy (Concurrency (..))
-import Shibuya.Telemetry.Effect (Tracing, runTracingNoop)
+import Shibuya.Telemetry.Effect (Tracing, runTracing, runTracingNoop)
 import Streamly.Data.Stream qualified as Stream
 import System.Timeout (timeout)
 
@@ -46,12 +49,13 @@ scenario :: Scenario
 scenario =
   Scenario
     { id = either (error . Text.unpack) id (parseScenarioId "shibuya/core-ordering/benchmark/concurrency-sweep"),
-      revision = 1,
+      revision = 2,
       summary = "Measures intended-send-to-finalize latency under serial and configured concurrency at a fixed arrival rate.",
       tier = TierStandard,
       placement = PlaceEither,
       knobs =
-        measureKnobs Benchmark
+        telemetryKnobs
+          <> measureKnobs Benchmark
           <> [ KnobSpec (name "bench.arm") "Serial baseline or configured runner" KnobText (VText "configured") (OneOf (VText "serial" :| [VText "configured"])) [VText "serial", VText "configured"],
                KnobSpec (name "bench.rate") "Scheduled messages per second" KnobInt (VInt 200) (IntRange 200 1000) [VInt 200, VInt 1000],
                KnobSpec (name "shibuya.messages") "Scheduled messages" KnobInt (VInt 1000) (IntRange 1000 10000) [VInt 1000, VInt 10000],
@@ -60,7 +64,7 @@ scenario =
                KnobSpec (name "shibuya.ordering") "strict-in-order, partitioned-in-order, or unordered" KnobText (VText "unordered") AnyValue (map VText ["unordered", "partitioned-in-order"]),
                KnobSpec (name "shibuya.partitions") "none, uniform:N, hot-key:N, or high-cardinality" KnobText (VText "none") AnyValue (map VText ["none", "uniform:16", "hot-key:16", "high-cardinality"])
              ],
-      dimensions = noDimensions,
+      dimensions = allTelemetryArms noDimensions,
       phases = zeroPhases,
       requires = noEnvironment,
       knownDefect = Nothing,
@@ -92,7 +96,15 @@ sampleLoad :: LoadSeries -> Measurement -> LoadCounters -> IO ()
 sampleLoad series measurement counters = sampleLoadSeries series measurement counters.offered counters.started counters.completed counters.failed counters.maxLag
 
 runSweep :: RunContext -> IO ScenarioReport
-runSweep context =
+runSweep context = case telemetrySpecFromContext context of
+  Left problem -> pure (failedWith ["invalid-telemetry-config"] problem)
+  Right telemetrySpec -> do
+    serverRef <- newIORef Nothing
+    withTelemetry telemetrySpec (\telemetry -> runSweepWithTelemetry context telemetry serverRef)
+      `finally` (readIORef serverRef >>= mapM_ Metrics.stopMetricsServer)
+
+runSweepWithTelemetry :: RunContext -> TelemetryHandles -> IORef (Maybe Metrics.MetricsServer) -> IO ScenarioReport
+runSweepWithTelemetry context telemetry serverRef =
   case (parseConcurrency (knobText context.knobs (name "shibuya.concurrency")), parseOrdering (knobText context.knobs (name "shibuya.ordering")), parsePartitions (knobText context.knobs (name "shibuya.partitions")), measureConfigFromKnobs context (phasePlanFromCore context.phases)) of
     (Left problem, _, _, _) -> pure (failedWith ["invalid-concurrency"] problem)
     (_, Left problem, _, _) -> pure (failedWith ["invalid-ordering"] problem)
@@ -115,14 +127,24 @@ runSweep context =
         queue <- newTBQueueIO (fromIntegral (messages + 1))
         MeasurePhase.enterPhase (measurementPhaseClock measurement) MeasurePhase.Steady
         sampleLoad series measurement counters
-        runEff $ runTracingNoop $ do
-          let handler _ = liftIO (threadDelay delay) >> pure AckOk
-              processor = (mkProcessor (benchAdapter queue recorder recorderLock completed counters) handler) {ordering, concurrency}
-          started <- runApp defaultAppConfig [(ProcessorId "concurrency-sweep", processor)]
-          application <- either (error . show) pure started
-          liftIO $ produce queue messages rate partitions (sampleLoad series measurement counters) counters
-          waitApp application
-          stopApp application
+        let flow = do
+              let handler _ = liftIO (threadDelay delay) >> pure AckOk
+                  processor = (mkProcessor (benchAdapter queue recorder recorderLock completed counters) handler) {ordering, concurrency}
+              started <- runApp defaultAppConfig [(ProcessorId "concurrency-sweep", processor)]
+              application <- either (error . show) pure started
+              if telemetry.servesEndpoints
+                then liftIO $ do
+                  port <- reserveFreePort
+                  server <- Metrics.startMetricsServer Metrics.defaultConfig {Metrics.port = port} (getAppMaster application)
+                  writeIORef serverRef (Just server)
+                  registerMetricsEndpoints telemetry port
+                else pure ()
+              liftIO $ produce queue messages rate partitions (sampleLoad series measurement counters) counters
+              waitApp application
+              stopApp application
+        case telemetry.tracer of
+          Just tracer -> runEff (runTracing tracer flow)
+          Nothing -> runEff (runTracingNoop flow)
         count <- readIORef completed
         MeasurePhase.enterPhase (measurementPhaseClock measurement) MeasurePhase.Drain
         sampleLoad series measurement counters
@@ -160,6 +182,15 @@ runSweep context =
                 "steadyBound" .= ("scheduled-message-count" :: Text)
               ]
           pure (base {outcome = measuredOutcome report base.outcome})
+
+registerMetricsEndpoints :: TelemetryHandles -> Int -> IO ()
+registerMetricsEndpoints telemetry port = do
+  let http path = "http://127.0.0.1:" <> Text.pack (show port) <> path
+      ws path = "ws://127.0.0.1:" <> Text.pack (show port) <> path
+  telemetry.registerEndpoint (Endpoint "shibuya-prometheus" PrometheusText (http "/metrics/prometheus") Nothing)
+  telemetry.registerEndpoint (Endpoint "shibuya-json" JsonDocument (http "/metrics") Nothing)
+  telemetry.registerEndpoint (Endpoint "shibuya-health" HealthProbe (http "/health/live") Nothing)
+  telemetry.registerEndpoint (Endpoint "shibuya-ws" WebSocketPush (ws "/ws") Nothing)
 
 produce :: TBQueue (Maybe Delivery) -> Int -> Double -> PartitionMode -> IO () -> LoadCounters -> IO ()
 produce queue messages rate partitions sample counters = do

@@ -1,0 +1,20 @@
+{
+  "schema": "kenshou.run-spec/v1",
+  "scenario": "shibuya/core-ordering/benchmark/concurrency-sweep",
+  "dimensions": {
+    "telemetry.tracing": "sdk-otlp",
+    "telemetry.metrics": "serve-scraped"
+  },
+  "knobs": {
+    "bench.arm": "configured",
+    "bench.rate": 200,
+    "shibuya.messages": 1000,
+    "shibuya.handler-delay-micros": 1000,
+    "shibuya.concurrency": "async:4",
+    "shibuya.ordering": "unordered",
+    "shibuya.partitions": "uniform:16",
+    "metrics.scrape-interval-ms": 1000,
+    "metrics.ws-subscribers": 10
+  },
+  "environment": { "placement": "local" }
+}
