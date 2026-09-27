@@ -27,6 +27,7 @@ library
     Kenshou.Suite.Shibuya.Bench.BatchSizeTimeout
     Kenshou.Suite.Shibuya.Bench.ConcurrencySweep
     Kenshou.Suite.Shibuya.Bench.FrameworkTax
+    Kenshou.Suite.Shibuya.Bench.PgmqEndToEnd
     Kenshou.Suite.Shibuya.Cohort
     Kenshou.Suite.Shibuya.Concurrency.CoreBatch
     Kenshou.Suite.Shibuya.Concurrency.CoreOrdering
@@ -90,6 +91,7 @@ library
     kenshou-telemetry,
     kiroku-store,
     pgmq-effectful,
+    pgmq-hasql,
     shibuya-core,
     shibuya-kiroku-adapter,
     shibuya-metrics,

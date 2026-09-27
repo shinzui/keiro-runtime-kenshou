@@ -5,6 +5,7 @@ import Kenshou.Core.Id (Layer (Shibuya))
 import Kenshou.Suite.Shibuya.Bench.BatchSizeTimeout qualified as BatchSizeTimeout
 import Kenshou.Suite.Shibuya.Bench.ConcurrencySweep qualified as ConcurrencySweep
 import Kenshou.Suite.Shibuya.Bench.FrameworkTax qualified as FrameworkTax
+import Kenshou.Suite.Shibuya.Bench.PgmqEndToEnd qualified as PgmqEndToEnd
 import Kenshou.Suite.Shibuya.Concurrency.CoreBatch qualified as ConcurrentCoreBatch
 import Kenshou.Suite.Shibuya.Concurrency.CoreOrdering qualified as ConcurrentCoreOrdering
 import Kenshou.Suite.Shibuya.Concurrency.CoreRunner qualified as ConcurrentCoreRunner
@@ -28,4 +29,4 @@ import Kenshou.Suite.Shibuya.Correctness.PgmqTrace qualified as PgmqTrace
 import Kenshou.Suite.Shibuya.Roles qualified as Roles
 
 bundle :: LayerBundle
-bundle = LayerBundle Shibuya (CoreRunner.scenarios <> ConcurrentCoreRunner.scenarios <> [FrameworkTax.scenario, ConcurrencySweep.scenario, BatchSizeTimeout.scenario] <> CoreOrdering.scenarios <> ConcurrentCoreOrdering.scenarios <> [KeyedModel.scenario] <> ConcurrentCoreBatch.scenarios <> CoreBatch.scenarios <> Metrics.scenarios <> PgmqAdapter.scenarios <> [PgmqTrace.scenario, KirokuAckMapping.scenario, KirokuDepth.scenario, KirokuReplay.scenario, KirokuTrace.scenario, KirokuTwoOwners.scenario, KirokuRetryRestart.scenario, KirokuStaticGroup.scenario, KirokuGroupAcquisition.scenario, KirokuOutage.scenario, KirokuSigkillReplay.scenario]) Roles.roles
+bundle = LayerBundle Shibuya (CoreRunner.scenarios <> ConcurrentCoreRunner.scenarios <> [FrameworkTax.scenario, ConcurrencySweep.scenario, BatchSizeTimeout.scenario, PgmqEndToEnd.scenario] <> CoreOrdering.scenarios <> ConcurrentCoreOrdering.scenarios <> [KeyedModel.scenario] <> ConcurrentCoreBatch.scenarios <> CoreBatch.scenarios <> Metrics.scenarios <> PgmqAdapter.scenarios <> [PgmqTrace.scenario, KirokuAckMapping.scenario, KirokuDepth.scenario, KirokuReplay.scenario, KirokuTrace.scenario, KirokuTwoOwners.scenario, KirokuRetryRestart.scenario, KirokuStaticGroup.scenario, KirokuGroupAcquisition.scenario, KirokuOutage.scenario, KirokuSigkillReplay.scenario]) Roles.roles

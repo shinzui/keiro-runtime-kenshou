@@ -1,0 +1,17 @@
+{
+  "schema": "kenshou.run-spec/v1",
+  "scenario": "shibuya/pgmq-adapter/benchmark/end-to-end-throughput-latency",
+  "dimensions": { "pg.version": "18" },
+  "knobs": {
+    "bench.arm": "adapter",
+    "bench.rate": 200,
+    "shibuya.messages": 1000,
+    "pgmq-adapter.batch-size": 50,
+    "pgmq-adapter.polling": "long:5:100",
+    "pgmq-adapter.prefetch-buffer-size": 4,
+    "shibuya.concurrency": "async:16",
+    "pgmq-adapter.pool-size": 10,
+    "bench.payload-bytes": 16384
+  },
+  "environment": { "placement": "local", "postgres": { "mode": "ephemeral" } }
+}
