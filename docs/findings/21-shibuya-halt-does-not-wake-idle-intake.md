@@ -1,0 +1,7 @@
+# Historical Shibuya halt does not wake idle intake
+
+Status: reproduced on released `shibuya-core` 0.9.0.3 and fixed on Hackage 0.10.0.0. Owner report: `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-4`.
+
+`shibuya/core-runner/concurrency/halt-wakes-idle-intake` yields one message and then leaves the source idle. The handler returns `AckHalt`; the scenario observes finalization and checks whether `waitApp` completes without further input. Clean released-cohort `ahead:4`, `async:4` and partitioned `async:4` runs `runs/01a0e48a-20db-77b3-a106-ad193a4d11d2/run-result.json`, `runs/01a0e48a-537c-7256-8dc9-5a891ccb7bdf/run-result.json` and `runs/01a0e48a-843b-714c-bbf1-fa223d497cc2/run-result.json` reproduced `REV-4-F1`. The corresponding isolated Hackage 0.10.0.0 runs `runs/01a0e45d-4a06-738d-a298-3b9f7e4ceba1/run-result.json`, `runs/01a0e45d-7b99-7793-b4ca-b1419235545f/run-result.json` and `runs/01a0e45d-b7bb-7518-8a3b-ec91ee765c36/run-result.json` passed. These run paths are local to this repository.
+
+Published `mori://shinzui/shibuya/okf/capabilities/concepts/CAP-2` defines `AckHalt` as stopping processing entirely. Owner `mori://shinzui/shibuya/okf/reviews/concepts/REV-4` identifies the lost wakeup in the historical implementation: the halt flag changes outside the intake STM wait, which observes only inbox availability and source completion. This is a public contract breach for an idle source; the owner report is marked fixed in 0.10.0.0.

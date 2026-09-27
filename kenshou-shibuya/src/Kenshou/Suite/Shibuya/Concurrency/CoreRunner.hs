@@ -25,7 +25,7 @@ import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), 
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Role (ControlMessage (..))
 import Kenshou.Core.Scenario (CohortScope (..), KnownDefect (..), Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
-import Kenshou.Suite.Shibuya.Cohort (knownOnReleasedCore, rev)
+import Kenshou.Suite.Shibuya.Cohort (knownOnReleasedCore, rev, revAt)
 import Kenshou.Suite.Shibuya.Fixture.Handlers (HandlerScript (..), HandlerStats (..), defaultHandlerScript, handlerStats, newHandlerProbe, scriptedHandler)
 import Kenshou.Suite.Shibuya.Fixture.SyntheticAdapter (BrokerEvent (..), BrokerStats (..), FinalizerOutcome (..), ShutdownBehaviour (..), SyntheticBroker, SyntheticConfig (..), brokerEvents, brokerStats, closeInput, defaultSyntheticConfig, newSyntheticBroker, publish, reopenSource, syntheticAdapter)
 import Kenshou.Suite.Shibuya.Knobs (coreKnobs, parseConcurrency, parseOrdering)
@@ -786,7 +786,7 @@ haltWakesIdleIntake =
       dimensions = noDimensions,
       phases = zeroPhases,
       requires = noEnvironment,
-      knownDefect = knownOnReleasedCore (rev 4 "REV-4-F1"),
+      knownDefect = knownOnReleasedCore (revAt "mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-4" "REV-4-F1"),
       run = runHalt
     }
 

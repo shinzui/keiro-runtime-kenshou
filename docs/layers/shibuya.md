@@ -125,7 +125,8 @@ The released core is Shibuya 0.9.0.3. The pinned remediation line carries lifecy
 |---|---|---|---|
 | Blocked adapter shutdown, startup cancellation and sibling cleanup | Reproduced on core 0.9.0.3 | Focused cases pass on pinned remediation | `mori://shinzui/shibuya/okf/reviews/concepts/REV-2`, `mori://shinzui/shibuya/okf/reviews/concepts/REV-3` |
 | Duplicate processor IDs discard a live handle | Reproduced on core 0.9.0.3 | Rejected before source pull on 0.10.0.0 | `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-2` |
-| Idle-intake halt and exhausted finalizer supervision | Reproduced on core 0.9.0.3 | Focused cases pass on pinned remediation | `mori://shinzui/shibuya/okf/reviews/concepts/REV-4` |
+| Idle-intake halt does not wake waitApp | Reproduced on core 0.9.0.3 | Nonserial controls pass on 0.10.0.0 | `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-4` |
+| Exhausted finalizer is supervised as graceful completion | Reproduced on core 0.9.0.3 | Focused case passes on pinned remediation | `mori://shinzui/shibuya/okf/reviews/concepts/REV-4` |
 | Keyed worker failure | Reproduced on core 0.9.0.3 | Focused case passes on pinned remediation | `mori://shinzui/shibuya/okf/reviews/concepts/REV-5` |
 | Nonpositive concurrency removes the handler bound | Reproduced on core 0.9.0.3 | Rejected on 0.10.0.0 | `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-3` |
 | Health readiness/liveness and WebSocket contracts | Scoped failures reproduced on metrics 0.9.0.3 | The 0.10.0.0 default CLI smoke sweep passed the health and WebSocket contracts; transient-exception readiness still reproduces IR-7 | `mori://shinzui/shibuya/okf/reviews/concepts/REV-7`, `mori://shinzui/shibuya/okf/reviews/concepts/REV-8`, `mori://shinzui/shibuya/okf/reviews/concepts/REV-9`, `mori://shinzui/shibuya/okf/improvement-requests/concepts/IR-7` |
