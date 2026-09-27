@@ -1,0 +1,15 @@
+{
+  "schema": "kenshou.run-spec/v1",
+  "scenario": "shibuya/kiroku-adapter/benchmark/end-to-end-throughput-latency",
+  "dimensions": { "pg.version": "18" },
+  "knobs": {
+    "bench.arm": "subscribe-callback",
+    "bench.phase": "catch-up",
+    "bench.rate": 200,
+    "shibuya.messages": 1000,
+    "kiroku-adapter.batch-size": 10,
+    "kiroku-adapter.group-size": 4,
+    "shibuya.concurrency": "serial"
+  },
+  "environment": { "placement": "local", "postgres": { "mode": "ephemeral" } }
+}
