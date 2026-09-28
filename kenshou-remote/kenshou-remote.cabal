@@ -1,0 +1,67 @@
+cabal-version: 3.0
+name: kenshou-remote
+version: 0.1.0.0
+synopsis: Leased verification cell client and storage protocol
+license: BSD-3-Clause
+author: Nadeem Bitar
+maintainer: Nadeem Bitar
+category: Testing
+build-type: Simple
+tested-with: ghc >=9.12 && <9.13
+
+common warnings
+  ghc-options:
+    -Wall
+    -Wcompat
+    -Widentities
+    -Wincomplete-record-updates
+    -Wincomplete-uni-patterns
+    -Wpartial-fields
+    -Wredundant-constraints
+
+  default-language: GHC2024
+  default-extensions:
+    BlockArguments
+    DeriveAnyClass
+    DeriveGeneric
+    DuplicateRecordFields
+    ImportQualifiedPost
+    LambdaCase
+    NoFieldSelectors
+    OverloadedRecordDot
+    OverloadedStrings
+
+library
+  import: warnings
+  hs-source-dirs: src
+  exposed-modules:
+    Kenshou.Remote.Store
+    Kenshou.Remote.Store.File
+
+  build-depends:
+    aeson >=2.2 && <2.3,
+    base >=4.21 && <4.22,
+    base16-bytestring,
+    bytestring >=0.12 && <0.13,
+    cryptohash-sha256,
+    directory,
+    filepath >=1.5 && <1.6,
+    text >=2.1 && <2.2,
+    time,
+    unix,
+
+test-suite kenshou-remote-test
+  import: warnings
+  type: exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is: Main.hs
+  build-depends:
+    base >=4.21 && <4.22,
+    bytestring,
+    directory,
+    filepath,
+    hspec >=2.11 && <2.12,
+    kenshou-remote,
+    process,
+    temporary,
+    text,

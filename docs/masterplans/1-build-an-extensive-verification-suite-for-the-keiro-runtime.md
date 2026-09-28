@@ -239,7 +239,7 @@ There is no local ADR corpus yet: `docs/adr/` does not exist in this repository,
 | 14 | Cover keiro durable execution, timers and sharded subscriptions | docs/plans/14-cover-keiro-durable-execution-timers-and-sharded-subscriptions.md | EP-12 | EP-3, EP-9 | In Progress |
 | 15 | Verify the assembled runtime end to end and under soak | docs/plans/15-verify-the-assembled-runtime-end-to-end-and-under-soak.md | EP-11, EP-12 | EP-3, EP-13, EP-14, EP-17 | Not Started |
 | 16 | Provide leased verification cells in load-testing-infra | docs/plans/16-provide-leased-verification-cells-in-load-testing-infra.md | None | EP-2 | In Progress |
-| 17 | Run kenshou on leased cells with payloads, submission and retrieval | docs/plans/17-run-kenshou-on-leased-cells-with-payloads-submission-and-retrieval.md | EP-2, EP-3, EP-4, EP-7, EP-16 | EP-5 | Not Started |
+| 17 | Run kenshou on leased cells with payloads, submission and retrieval | docs/plans/17-run-kenshou-on-leased-cells-with-payloads-submission-and-retrieval.md | EP-2, EP-3, EP-4, EP-7, EP-16 | EP-5 | In Progress |
 | 18 | Record runs and attestations in a historic OKF evidence bundle | docs/plans/18-record-runs-and-attestations-in-a-historic-okf-evidence-bundle.md | EP-2, EP-4 | EP-5, EP-16, EP-17 | Complete |
 | 19 | Publish the verification evidence profile in okf-profiles | docs/plans/19-publish-the-verification-evidence-profile-in-okf-profiles.md | EP-18 | None | Complete |
 
@@ -705,6 +705,8 @@ distill durable project context from this MasterPlan and its child ExecPlans int
 docs/adr/. Keep task-local execution and coordination details here.
 
 - EP-10 now registers all five planned Shibuya benchmarks and the core batch-key soak pair, exposing 61 scenarios. The Kiroku benchmark's direct callback, ack-coupled stream and adapter controls passed locally, including four static group members with separate checkpoint evidence. Its paired local p99 result remains inconclusive, so no adapter latency budget is accepted before controlled cell calibration. The new soak has an eight-second wiring result only; duration verdicts, three more soak pairs, and the remaining telemetry and finding audits still govern EP-10 completion.
+
+- EP-17 has a new `kenshou-remote` package with the local object-store protocol, including interprocess create-only lease claims and generation fencing. Its five focused tests pass. Payload builds, the Google Cloud Storage adapter, the `kenshou cell` commands, and local/cell parity remain open.
 
 - EP-19 moved the observed three-type evidence contract into okf-profiles v0.19.0 and repointed this repository's bundle to its hash-pinned export. The shared contract keeps runtime-specific vocabularies open; the local overlay narrows them without editing historical evidence. ADR-18 now names the published contract, while the local evidence checker continues to verify storage and byte-level properties beyond the profile language.
 

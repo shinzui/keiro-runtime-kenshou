@@ -47,6 +47,7 @@ Every kenshou run that executed on a cell remains an ordinary kenshou run direct
 
 ## Progress
 
+- [x] (2026-09-27) Started the `kenshou-remote` package and its object-store seam against `mori://shinzui/load-testing-infra`'s version-one cell protocol. The local store implements create-only and generation-checked writes, tombstones, streaming file publication and fetch, prefix listing, server time, and an interprocess advisory lock. Five focused examples pass, including simultaneous claims from four separate processes. The GCS adapter, payload build, cell verbs, and live parity evidence remain open.
 - [ ] Deliver the content-addressed Kenshou payload and `kenshou cell` lifecycle, paired comparisons within a lease, and equivalent local/cell correctness evidence; verify the acceptance commands in Validation and Acceptance.
 
 ## Surprises & Discoveries
