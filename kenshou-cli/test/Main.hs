@@ -1,20 +1,23 @@
 module Main (main) where
 
-import Control.Exception (bracket)
+import Control.Concurrent (forkIO, killThread, threadDelay)
+import Control.Exception (bracket, finally)
 import Data.Aeson (Value, object, (.=))
 import Data.Aeson qualified as Aeson
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString.Lazy qualified as LazyByteString
+import Data.List (find)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.IO qualified as Text
+import Data.Time (getCurrentTime)
 import Kenshou.Cli (runWithArgs)
 import Kenshou.Cli.Attest (FencingFacts (..), fencingFacts)
 import Kenshou.Cli.Version (appVersionWithGit)
 import Kenshou.Core.Id (renderRunId)
-import Kenshou.Remote.Cell.Docs (CellBuckets (..), CellDescriptor (..))
+import Kenshou.Remote.Cell.Docs (CellBuckets (..), CellDescriptor (..), Rejected (..), Submission (..))
 import Kenshou.Remote.Cell.Lease (Lease (..))
-import Kenshou.Remote.Cell.Session.Journal (SessionJournal (..), writeSessionJournal)
+import Kenshou.Remote.Cell.Session.Journal (SessionJournal (..), SliceJournal (..), SliceState (..), readSessionJournal, writeSessionJournal)
 import Kenshou.Remote.Store (Bucket (..), ObjectName (..), ObjectStore (..), Precondition (..))
 import Kenshou.Remote.Store.File (newFileStore)
 import System.Directory (createDirectoryIfMissing, doesFileExist, doesPathExist)
@@ -22,6 +25,7 @@ import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
 import System.IO.Temp (withSystemTempDirectory)
+import System.Timeout (timeout)
 import Test.Hspec (describe, expectationFailure, hspec, it, shouldBe, shouldReturn, shouldSatisfy)
 
 main :: IO ()
@@ -61,6 +65,7 @@ main = hspec do
       runWithArgs ["cell", "watch", "--help"] `shouldReturnCode` ExitSuccess
       runWithArgs ["cell", "route", "--help"] `shouldReturnCode` ExitSuccess
       runWithArgs ["cell", "submit", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["cell", "run", "--help"] `shouldReturnCode` ExitSuccess
       runWithArgs ["cell", "resume", "--help"] `shouldReturnCode` ExitSuccess
 
     it "rejects malformed cell result identifiers and URIs" do
@@ -139,6 +144,55 @@ main = hspec do
           createDirectoryIfMissing True outDir
           writeSessionJournal (outDir </> "session.json") complete
           runWithArgs ["cell", "resume", "--session", outDir] `shouldReturnCode` ExitSuccess
+
+    it "releases a one-command lease when plan preparation fails" $
+      withSystemTempDirectory "kenshou-cell-run" \root -> do
+        store <- newFileStore root
+        descriptorBytes <- LazyByteString.readFile "../kenshou-remote/test/golden/cell/cell.descriptor.v1.json"
+        observed <- either fail pure (Aeson.eitherDecode descriptorBytes :: Either String CellDescriptor)
+        let control = Bucket "control"
+            descriptor = observed {buckets = observed.buckets {control = "control"}}
+            outDir = root </> "run-session"
+            command = ["cell", "run", "--cell", "alpha", "--control-bucket", "control", "--payload", "../kenshou-remote/test/golden/payload.json", "--plan", "../kenshou-core/test/golden/run-plan.minimal.json", "--out", outDir]
+        _ <- store.putObject control (ObjectName "cells/alpha/descriptor.json") "application/json" DoesNotExist (Aeson.encode descriptor)
+        withCellStore root do
+          runWithArgs command `shouldReturnCode` ExitFailure 2
+          store.statObject control (ObjectName "cells/alpha/lease.json") `shouldReturn` Nothing
+          doesPathExist outDir `shouldReturn` False
+
+    it "checkpoints a rejected one-command submission and releases its lease" $
+      withSystemTempDirectory "kenshou-cell-run-rejected" \root -> do
+        store <- newFileStore root
+        descriptorBytes <- LazyByteString.readFile "../kenshou-remote/test/golden/cell/cell.descriptor.v1.json"
+        observed <- either fail pure (Aeson.eitherDecode descriptorBytes :: Either String CellDescriptor)
+        let control = Bucket "control"
+            descriptor = observed {buckets = observed.buckets {control = "control"}}
+            outDir = root </> "run-session"
+            command = ["cell", "run", "--cell", "alpha", "--control-bucket", "control", "--payload", "../kenshou-remote/test/golden/payload.json", "--plan", "../kenshou-core/test/golden/run-plan.minimal.json", "--out", outDir, "--coerce-durable"]
+            awaitMarker = do
+              objects <- store.listObjects control "cells/alpha/submissions/"
+              case find (Text.isSuffixOf "/submission.json" . (.unObjectName) . fst) objects of
+                Nothing -> threadDelay 10000 >> awaitMarker
+                Just (name, _) -> do
+                  stored <- store.getObject control name
+                  case stored of
+                    Nothing -> expectationFailure "submission marker disappeared"
+                    Just (bytes, _) -> do
+                      submission <- either fail pure (Aeson.eitherDecode bytes :: Either String Submission)
+                      now <- getCurrentTime
+                      let prefix = "cells/alpha/submissions/" <> renderRunId submission.runId <> "/rejected.json"
+                      _ <- store.putObject control (ObjectName prefix) "application/json" DoesNotExist (Aeson.encode (Rejected submission.runId "fixture-rejected" now))
+                      pure ()
+        _ <- store.putObject control (ObjectName "cells/alpha/descriptor.json") "application/json" DoesNotExist (Aeson.encode descriptor)
+        worker <- forkIO awaitMarker
+        ( withCellStore root do
+            result <- timeout 15000000 (runWithArgs command)
+            result `shouldBe` Just (ExitFailure 4)
+            store.statObject control (ObjectName "cells/alpha/lease.json") `shouldReturn` Nothing
+            journal <- readSessionJournal (outDir </> "session.json") >>= either (fail . Text.unpack) pure
+            fmap (.state) journal.slices `shouldBe` [SliceRejected]
+          )
+          `finally` killThread worker
 
     it "reads scenario history from a bundle" do
       runWithArgs ["history", "--bundle", "../docs/verification", "--scenario", "selftest/kernel/correctness/always-pass", "--json"] `shouldReturnCode` ExitSuccess

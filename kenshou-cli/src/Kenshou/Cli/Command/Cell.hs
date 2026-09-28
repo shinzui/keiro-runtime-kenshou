@@ -48,7 +48,11 @@ data LeaseCli = LeaseCli !CellLocation !Text !(Maybe Text) !Int !Int !Bool !Bool
 
 data RouteCli = RouteCli ![Text] !(Maybe Text) !FilePath !(Maybe FilePath) !(Maybe FilePath) !FilePath !Bool !Bool
 
-data SubmitCli = SubmitCli !CellLocation !Text ![String] !FilePath !FilePath !Granularity !CachePolicy ![Text] !Bool !Bool !Bool !(Maybe FilePath) !OtlpSink !(Maybe Text) !Bool
+data SubmitSettings = SubmitSettings ![String] !FilePath !FilePath !Granularity !CachePolicy ![Text] !Bool !Bool !Bool !(Maybe FilePath) !OtlpSink !(Maybe Text) !Bool
+
+data SubmitCli = SubmitCli !CellLocation !Text !SubmitSettings
+
+data RunCli = RunCli !CellLocation !SubmitSettings !Int !Int
 
 data CellAction
   = Fetch !Text !Text !FilePath
@@ -59,6 +63,7 @@ data CellAction
   | Watch !CellLocation !Text
   | Route !RouteCli
   | Submit !SubmitCli
+  | Run !RunCli
   | Resume !FilePath !(Maybe Text)
   | Exec !FilePath !FilePath
 
@@ -76,6 +81,7 @@ cellParser =
       <> command "watch" (info (watchParser <**> helper) (progDesc "Follow a cell run to its terminal status"))
       <> command "route" (info (routeParser <**> helper) (progDesc "Split a plan across compatible cells"))
       <> command "submit" (info (submitParser <**> helper) (progDesc "Submit a prepared plan under an existing lease"))
+      <> command "run" (info (runParser <**> helper) (progDesc "Lease, submit, verify and release a cell session"))
       <> command "resume" (info (resumeParser <**> helper) (progDesc "Continue a saved cell session"))
       <> (command "exec" (info (cellExecParser <**> helper) (progDesc "Execute prepared work on a cell driver")) <> internal)
 
@@ -127,20 +133,35 @@ submitParser =
     <$> ( SubmitCli
             <$> cellLocationParser
             <*> strOption (long "lease-id" <> metavar "UUID" <> help "Active lease identifier")
-            <*> some (strOption (long "payload" <> metavar "[LABEL=]FILE" <> help "Payload descriptor; repeat for trial arms"))
-            <*> strOption (long "plan" <> metavar "FILE" <> help "Run plan JSON, or - for stdin")
-            <*> strOption (long "out" <> metavar "DIR" <> help "New session directory")
-            <*> option (eitherReader parseGranularity) (long "granularity" <> metavar "auto|plan|run" <> value GranularityAuto <> showDefaultWith (const "auto") <> help "Submission slice boundary")
-            <*> option (eitherReader parseCachePolicy) (long "cache-policy" <> metavar "cold|warm" <> value Cold <> showDefaultWith (const "cold") <> help "Cell cache reset policy")
-            <*> many (strOption (long "pg-setting" <> metavar "KEY=VALUE" <> help "PostgreSQL reset setting; repeat as needed"))
-            <*> switch (long "skip-incompatible" <> help "Record incompatible runs and submit compatible ones")
-            <*> switch (long "coerce-durable" <> help "Use durable PostgreSQL when the scenario supports it")
-            <*> switch (long "ephemeral-on-driver" <> help "Keep server-control correctness work on the cell driver")
-            <*> optional (strOption (long "routing-rules" <> metavar "FILE" <> help "Replace the built-in routing policy JSON"))
-            <*> option (eitherReader parseOtlpSink) (long "otlp-sink" <> metavar "null|file" <> value NullSink <> showDefaultWith (const "null") <> help "Cell OTLP sink")
-            <*> optional (strOption (long "rts" <> metavar "OPTS" <> help "Runtime system options passed to the payload"))
-            <*> switch (long "dry-run" <> help "Print a planned session without writing or submitting")
+            <*> submitSettingsParser (switch (long "dry-run" <> help "Print a planned session without writing or submitting"))
         )
+
+runParser :: Parser CellAction
+runParser =
+  Run
+    <$> ( RunCli
+            <$> cellLocationParser
+            <*> submitSettingsParser (pure False)
+            <*> option auto (long "ttl" <> metavar "SECONDS" <> value 120 <> showDefault <> help "Held lease lifetime between renewals")
+            <*> option auto (long "wait" <> metavar "SECONDS" <> value 0 <> showDefault <> help "Wait for a busy cell")
+        )
+
+submitSettingsParser :: Parser Bool -> Parser SubmitSettings
+submitSettingsParser dryFlag =
+  SubmitSettings
+    <$> some (strOption (long "payload" <> metavar "[LABEL=]FILE" <> help "Payload descriptor; repeat for trial arms"))
+    <*> strOption (long "plan" <> metavar "FILE" <> help "Run plan JSON, or - for stdin")
+    <*> strOption (long "out" <> metavar "DIR" <> help "New session directory")
+    <*> option (eitherReader parseGranularity) (long "granularity" <> metavar "auto|plan|run" <> value GranularityAuto <> showDefaultWith (const "auto") <> help "Submission slice boundary")
+    <*> option (eitherReader parseCachePolicy) (long "cache-policy" <> metavar "cold|warm" <> value Cold <> showDefaultWith (const "cold") <> help "Cell cache reset policy")
+    <*> many (strOption (long "pg-setting" <> metavar "KEY=VALUE" <> help "PostgreSQL reset setting; repeat as needed"))
+    <*> switch (long "skip-incompatible" <> help "Record incompatible runs and submit compatible ones")
+    <*> switch (long "coerce-durable" <> help "Use durable PostgreSQL when the scenario supports it")
+    <*> switch (long "ephemeral-on-driver" <> help "Keep server-control correctness work on the cell driver")
+    <*> optional (strOption (long "routing-rules" <> metavar "FILE" <> help "Replace the built-in routing policy JSON"))
+    <*> option (eitherReader parseOtlpSink) (long "otlp-sink" <> metavar "null|file" <> value NullSink <> showDefaultWith (const "null") <> help "Cell OTLP sink")
+    <*> optional (strOption (long "rts" <> metavar "OPTS" <> help "Runtime system options passed to the payload"))
+    <*> dryFlag
 
 parseGranularity :: String -> Either String Granularity
 parseGranularity "auto" = Right GranularityAuto
@@ -296,7 +317,7 @@ runCell selected cli = case selected of
                           LazyByteString.writeFile (outDir </> "unroutable.json") (encode documents.report)
                           TextIO.hPutStrLn stderr ("routed plans: " <> Text.pack (show (Map.size documents.perCell)) <> "; see " <> Text.pack (outDir </> "unroutable.json"))
                           pure (if documents.routeComplete then ExitSuccess else ExitFailure 2)
-  Submit (SubmitCli location leaseText payloadFiles planFile outDir granularity cache settingTexts skip coerce ephemeral rulesFile sink rts dryRun)
+  Submit (SubmitCli location leaseText (SubmitSettings payloadFiles planFile outDir granularity cache settingTexts skip coerce ephemeral rulesFile sink rts dryRun))
     | planFile == "-" && rulesFile == Just "-" -> usage "only one JSON document may be read from stdin"
     | otherwise -> case (parseRunId leaseText, traverse parsePgSetting settingTexts) of
         (Left problem, _) -> usage problem
@@ -339,6 +360,29 @@ runCell selected cli = case selected of
                                 Right finished -> do
                                   TextIO.hPutStrLn stderr ("session " <> renderRunId finished.sessionId <> " verified; journal " <> Text.pack (outDir </> "session.json"))
                                   pure (sessionExitCode finished)
+  Run (RunCli location settings ttl waitSeconds)
+    | ttl <= 0 || waitSeconds < 0 -> usage "lease TTL must be positive and wait cannot be negative"
+    | otherwise -> withControl location \store ref _ -> do
+        defaultOwner <- Text.pack . fromMaybe "kenshou" <$> lookupEnv "USER"
+        start <- getCurrentTime
+        let request = LeaseRequest defaultOwner "kenshou cell run" ttl
+            acquire = do
+              outcome <- acquireLease store ref request
+              case outcome of
+                Acquired handle -> do
+                  lease <- leaseSnapshot handle
+                  let execute = runCell (Submit (SubmitCli location (renderRunId lease.leaseId) settings)) cli
+                      releaseCurrent = do
+                        current <- reattachLease store ref lease.leaseId
+                        traverse_ (\active -> do _ <- releaseLease store ref active; pure ()) current
+                  execute `finally` releaseCurrent
+                Busy current -> do
+                  now <- getCurrentTime
+                  if diffUTCTime now start < fromIntegral waitSeconds
+                    then threadDelay 2000000 >> acquire
+                    else unavailable ("cell is busy under lease " <> renderRunId current.leaseId)
+                Quarantined record -> unavailable ("cell is quarantined: " <> record.reason)
+        acquire
   Resume sessionDir selectedLease -> guardIO do
     let journalPath = sessionDir </> "session.json"
     present <- doesPathExist journalPath

@@ -121,6 +121,7 @@ test-suite kenshou-cli-test
     kenshou-remote,
     temporary,
     text >=2.1 && <2.2,
+    time,
 
 test-suite kenshou-linkproof
   import: warnings
