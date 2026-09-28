@@ -377,16 +377,19 @@ The following cross-plan decisions should become ADRs in `docs/adr/` when the ow
 
 EP-17 has checked Nix identities for both cohorts, a visible payload
 publisher, and a capability cache consumed by cell routing and submission.
-Its clean released Linux payload at `c27d368` is content addressed in the
-cell control bucket and has run on alpha. A PostgreSQL 18 round trip and a
-worker IPC scenario both passed locally and on the cell with matching seeds;
-their schema-valid parity reports contain no unexpected differences. The
-worker case explicitly names its child PID as volatile. EP-16 repaired a
+Its clean released Linux payload at `eb2004ff` is content addressed in the
+cell control bucket and has run on alpha. A PostgreSQL 18 round trip, worker
+IPC, and cell-environment scenario passed locally and on the cell with matching
+seeds; their schema-valid parity reports contain no unexpected differences.
+The worker case explicitly names its child PID as volatile. The live
+`cell probe` sealed a passing run and wrote a schema-valid capability cache
+that exactly matches the fetched fingerprint, including available
+`pg_partman`. EP-16 repaired a
 PostgreSQL setup/reset race in `mori://shinzui/load-testing-infra` at
 `2d3ada5`, deployed image `cell-image-postgres18-3vfib0hzp0m7` at
 `effe38a`, and the fresh worker run sealed `completed` with a verified
 reset. The head and diagnostic payload variants, paired comparisons,
-capability probing, further parity cases and the remaining live acceptance
+Kiroku parity, the operator guide and the remaining live acceptance
 matrix remain open.
 
 EP-11 now preserves both owner references for the Kafka rebalance scenario:
@@ -739,7 +742,7 @@ docs/adr/. Keep task-local execution and coordination details here.
 
 - EP-10 now registers all five planned Shibuya benchmarks and the core batch-key soak pair, exposing 61 scenarios. The Kiroku benchmark's direct callback, ack-coupled stream and adapter controls passed locally, including four static group members with separate checkpoint evidence. Its paired local p99 result remains inconclusive, so no adapter latency budget is accepted before controlled cell calibration. The new soak has an eight-second wiring result only; duration verdicts, three more soak pairs, and the remaining telemetry and finding audits still govern EP-10 completion.
 
-- EP-17 has a `kenshou-remote` package with file and GCS object stores. The file store fences create-only claims across processes and handles; the GCS adapter covers generation preconditions, pinned and atomic downloads, paged listing, server time, retries and 8 MiB resumable chunks. Credential selection checks an explicit token, VM metadata, then a cached `gcloud` token. The cell lease client adds exclusive claim, expiry and takeover, renewal, release, reattachment, cancellation, quarantine handling and a generation-fenced run sequence. All 15 owner cell schemas and examples are pinned and validate offline; typed codecs cover the main submission, execution, and result documents. Ninety-one focused remote examples and 31 CLI examples pass. Its payload descriptor covers the complete cell payload and Nix cohort identity, and a clean released Linux closure is published by SHA-256 in GCS. A PostgreSQL 18 run on `cell-alpha` sealed and verified with a nested `passed` result after the owner corrected cell authentication and granted the benchmark role settings-read access in `mori://shinzui/load-testing-infra`. The first local/cell PostgreSQL round-trip parity report found 277 equal fields, 93 named intentional differences, and no unexpected differences; a doctored outcome fails the command. Head and diagnostic payloads, capability probing, paired comparisons, the remaining parity cases, and the wider acceptance matrix remain open.
+- EP-17 has a `kenshou-remote` package with file and GCS object stores. The file store fences create-only claims across processes and handles; the GCS adapter covers generation preconditions, pinned and atomic downloads, paged listing, server time, retries and 8 MiB resumable chunks. Credential selection checks an explicit token, VM metadata, then a cached `gcloud` token. The cell lease client adds exclusive claim, expiry and takeover, renewal, release, reattachment, cancellation, quarantine handling and a generation-fenced run sequence. All 15 owner cell schemas and examples are pinned and validate offline; typed codecs cover the main submission, execution, and result documents. Ninety-six focused remote examples and 31 CLI examples pass. Its payload descriptor covers the complete cell payload and Nix cohort identity, and a clean released Linux closure is published by SHA-256 in GCS. Three matching-seed scenarios now pass locally and on `cell-alpha`: PostgreSQL round trip, worker IPC, and a cell-environment probe. Their parity reports have zero unexpected differences. The live probe wrote a descriptor-keyed capability cache identical to the verified nested fingerprint and found `pg_partman` available. Head and diagnostic payloads, paired comparisons, Kiroku parity, the operator guide, and the wider acceptance matrix remain open.
 
 - EP-19 moved the observed three-type evidence contract into okf-profiles v0.19.0 and repointed this repository's bundle to its hash-pinned export. The shared contract keeps runtime-specific vocabularies open; the local overlay narrows them without editing historical evidence. ADR-18 now names the published contract, while the local evidence checker continues to verify storage and byte-level properties beyond the profile language.
 
