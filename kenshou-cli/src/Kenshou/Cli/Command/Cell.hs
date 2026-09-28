@@ -22,6 +22,7 @@ import Kenshou.Remote.Cell.Exec (cellExec)
 import Kenshou.Remote.Cell.Fetch (FetchError (..), fetchCellRun, verifyCellRun)
 import Kenshou.Remote.Cell.Index (deriveCellRunIndex, writeCellRunIndex)
 import Kenshou.Remote.Cell.Lease (AcquireOutcome (..), CellRef (..), Lease (..), LeaseHandle, LeaseRequest (..), Quarantine (..), acquireLease, leaseSnapshot, reattachLease, releaseLease, resizeLease, validCellName, withHeartbeat)
+import Kenshou.Remote.Cell.Parity (ParityOptions (..), ParityReport (..), compareForParity)
 import Kenshou.Remote.Cell.Prepare (Granularity (..), OtlpSink (..), PrepareOptions (..))
 import Kenshou.Remote.Cell.RouteJson (RouteDocuments (..), routeWorkJson)
 import Kenshou.Remote.Cell.RouteRules (CellCapabilities, defaultRoutingRules, loadCellCapabilities)
@@ -62,6 +63,7 @@ data PayloadPublishCli = PayloadPublishCli !Text !Text !(Maybe Text) !FilePath !
 data CellAction
   = Fetch !Text !Text !FilePath
   | Verify !FilePath
+  | Parity !FilePath !FilePath !(Maybe FilePath) ![Text]
   | Status !CellLocation !Bool
   | LeaseCell !LeaseCli
   | Release !CellLocation !Text
@@ -82,6 +84,7 @@ cellParser =
   hsubparser $
     command "fetch" (info (fetchParser <**> helper) (progDesc "Fetch and verify one sealed cell run"))
       <> command "verify" (info (verifyParser <**> helper) (progDesc "Verify a fetched tree or a sealed GCS run"))
+      <> command "parity" (info (parityParser <**> helper) (progDesc "Compare local and cell verdicts with named placement differences"))
       <> command "status" (info (statusParser <**> helper) (progDesc "Inspect cell descriptor and lease state"))
       <> command "lease" (info (leaseParser <**> helper) (progDesc "Acquire a cell lease"))
       <> command "release" (info (releaseParser <**> helper) (progDesc "Release an owned cell lease"))
@@ -226,6 +229,14 @@ fetchParser =
 verifyParser :: Parser CellAction
 verifyParser = Verify <$> strArgument (metavar "DIR_OR_GS_URI")
 
+parityParser :: Parser CellAction
+parityParser =
+  Parity
+    <$> strOption (long "local" <> metavar "DIR" <> help "Local run directory")
+    <*> strOption (long "cell" <> metavar "DIR" <> help "Fetched nested cell run directory")
+    <*> optional (strOption (long "out" <> metavar "FILE" <> help "Write the parity report to FILE instead of stdout"))
+    <*> many (strOption (long "volatile" <> metavar "PATH" <> help "Allow a named volatile verdict field; repeat as needed"))
+
 runCell :: CellAction -> CliEnv -> IO ExitCode
 runCell selected cli = case selected of
   PublishPayload (PayloadPublishCli cohort variant selectedBucket output root allowDirty) -> do
@@ -287,6 +298,17 @@ runCell selected cli = case selected of
           case fetched of
             Left problem -> fetchFailure problem
             Right tree -> verifyTree tree
+  Parity localDir cellDir output volatile
+    | any (\path -> not ("result.summaries.verdicts." `Text.isPrefixOf` path || "verdicts." `Text.isPrefixOf` path)) volatile -> usage "--volatile must name a field under result.summaries.verdicts or verdicts"
+    | otherwise -> guardIO do
+        report <- compareForParity (ParityOptions volatile) localDir cellDir
+        case output of
+          Nothing -> LazyByteString.putStrLn (encode report)
+          Just path -> do
+            createDirectoryIfMissing True (takeDirectory path)
+            LazyByteString.writeFile path (encode report)
+            TextIO.putStrLn (Text.pack path)
+        pure (if null report.unexpected then ExitSuccess else ExitFailure 1)
   Status location asJson -> withControl location \_ _ snapshot -> do
     if asJson
       then LazyByteString.putStrLn (encode (object ["descriptor" .= snapshot.descriptor, "lease" .= snapshot.lease, "quarantine" .= snapshot.quarantine]))

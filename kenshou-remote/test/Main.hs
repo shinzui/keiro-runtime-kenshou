@@ -18,6 +18,7 @@ import Kenshou.Remote.Payload (Bundle (..), CellPayload (..), CohortCheck (..), 
 import Kenshou.Remote.Store (Bucket (..), ObjectMeta (..), ObjectName (..), ObjectStore (..), Precondition (..), PutOutcome (..))
 import Kenshou.Remote.Store.File (newFileStore)
 import LeaseSpec qualified
+import ParitySpec qualified
 import PayloadSpec qualified
 import PrepareSpec qualified
 import SessionSpec qualified
@@ -50,6 +51,7 @@ tests = do
   GcsSpec.spec
   HealthSpec.spec
   LeaseSpec.spec
+  ParitySpec.spec
   PayloadSpec.spec
   PrepareSpec.spec
   SessionSpec.spec

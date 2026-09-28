@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/kenshou.parity-report.v1.schema.json",
+  "title": "Local and cell run parity report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "localRunResultSha256", "cellRunResultSha256", "equal", "intentional", "unexpected"],
+  "properties": {
+    "schema": {"const": "kenshou.parity-report/v1"},
+    "localRunResultSha256": {"$ref": "#/$defs/digest"},
+    "cellRunResultSha256": {"$ref": "#/$defs/digest"},
+    "equal": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "intentional": {"type": "array", "items": {"$ref": "#/$defs/difference"}},
+    "unexpected": {"type": "array", "items": {"$ref": "#/$defs/difference"}}
+  },
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+    "difference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "local", "cell"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "local": true,
+        "cell": true
+      }
+    }
+  }
+}

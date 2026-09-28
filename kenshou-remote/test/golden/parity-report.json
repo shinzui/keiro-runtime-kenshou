@@ -1,0 +1,10 @@
+{
+  "schema": "kenshou.parity-report/v1",
+  "localRunResultSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "cellRunResultSha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "equal": ["result.outcome", "spec.seed"],
+  "intentional": [
+    {"path": "result.fingerprint.placement", "local": "local", "cell": "cell"}
+  ],
+  "unexpected": []
+}

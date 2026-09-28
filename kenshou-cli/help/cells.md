@@ -38,6 +38,19 @@ results bucket and cell run ID; it writes a verified tree and an index beside
 it. `cell verify` also accepts `gs://BUCKET/runs/CELL_RUN_ID` and checks a
 sealed run without an existing session directory.
 
+Compare a local run directory with a fetched nested cell run directory:
+
+```bash
+kenshou cell parity --local runs/LOCAL_RUN_ID \
+  --cell cell-runs/CELL_RUN_ID/tree/output/NESTED_RUN_ID \
+  --out parity.json
+```
+
+The report lists equal fields, expected placement differences, and unexpected
+differences. The command exits 1 if a scenario input or verdict differs. Use
+`--volatile result.summaries.verdicts.FIELD` only for a known path inside a
+verdict summary.
+
 Route a plan across cells with different PostgreSQL majors:
 
 ```bash
