@@ -75,6 +75,16 @@ tests = do
       length [() | Written _ <- results] `shouldBe` 1
       length [() | PreconditionFailed <- results] `shouldBe` 19
 
+    it "fences independent store handles in one process" $ withSystemTempDirectory "kenshou-cell-store" \root -> do
+      stores <- replicateM 12 (newFileStore root)
+      replies <- replicateM 12 newEmptyMVar
+      let bucket = Bucket "control"
+          object = ObjectName "cells/alpha/lease.json"
+      mapM_ (\(store, reply) -> forkIO (store.putObject bucket object "application/json" DoesNotExist "claim" >>= putMVar reply)) (zip stores replies)
+      results <- mapM takeMVar replies
+      length [() | Written _ <- results] `shouldBe` 1
+      length [() | PreconditionFailed <- results] `shouldBe` 11
+
     it "fences claims made by separate processes" $ withSystemTempDirectory "kenshou-cell-store" \root -> do
       executable <- getExecutablePath
       replies <- replicateM 4 newEmptyMVar

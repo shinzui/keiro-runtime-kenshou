@@ -18,6 +18,7 @@ import Kenshou.Remote.Store (Bucket (..), ObjectMeta (..), ObjectName (..), Obje
 import System.Directory (copyFile, createDirectoryIfMissing, doesFileExist, getFileSize, listDirectory, renameFile)
 import System.FilePath (takeDirectory, takeExtension, (</>))
 import System.IO (SeekMode (AbsoluteSeek))
+import System.IO.Unsafe (unsafePerformIO)
 import System.Posix.IO (LockRequest (..), OpenFileFlags (creat), OpenMode (ReadWrite), closeFd, defaultFileFlags, openFd, waitToSetLock)
 
 data StoredMeta = StoredMeta
@@ -43,7 +44,7 @@ instance FromJSON StoredMeta where
 
 newFileStore :: FilePath -> IO ObjectStore
 newFileStore root = do
-  localLock <- newMVar ()
+  let localLock = processLock
   let stat bucket object = withObjectLock localLock root bucket object \bucketRoot hash -> fmap public <$> readMeta bucketRoot object hash
       get bucket object = withObjectLock localLock root bucket object \bucketRoot hash -> do
         current <- readMeta bucketRoot object hash
@@ -103,6 +104,12 @@ newFileStore root = do
         listObjects = list,
         serverTime = getCurrentTime
       }
+
+-- POSIX record locks are per process, so separate handles in one process also
+-- share a local mutex before taking the cross-process lock.
+{-# NOINLINE processLock #-}
+processLock :: MVar ()
+processLock = unsafePerformIO (newMVar ())
 
 withObjectLock :: MVar () -> FilePath -> Bucket -> ObjectName -> (FilePath -> FilePath -> IO a) -> IO a
 withObjectLock localLock root bucket object action = withBucketLock localLock root bucket \bucketRoot -> do
