@@ -20,6 +20,7 @@ import Kenshou.Remote.Cell.Lease (AcquireOutcome (..), CellRef (..), Lease (..),
 import Kenshou.Remote.Cell.Session (SessionError (..), runSubmission)
 import Kenshou.Remote.Cell.Session qualified as Session
 import Kenshou.Remote.Cell.Session.Journal (LeaseMode (..), SessionJournal (..), SliceJournal (..), SliceState (..), applyTransition, readSessionJournal, writeSessionJournal)
+import Kenshou.Remote.Cell.Session.Resume (resumeObservedSlices)
 import Kenshou.Remote.Cell.Session.Runner (SessionRunError (..), runPlannedSlices)
 import Kenshou.Remote.Cell.Submit (workObjectFor)
 import Kenshou.Remote.Payload (Bundle (..), CellPayload (..))
@@ -149,6 +150,31 @@ spec = describe "one leased cell submission" do
           Left failure -> expectationFailure (show failure)
           Right () -> pure ()
         runPlannedSlices store cellRef (Bucket "results") handle journalPath initial (const (pure ())) `shouldReturn` Left (SessionFileExists journalPath)
+        case journal.slices of
+          [firstSlice, secondSlice] -> do
+            let interrupted =
+                  journal
+                    { slices =
+                        [ firstSlice {state = SliceSealed, entryExitCode = Nothing, fetchedPath = Nothing},
+                          secondSlice {state = SliceSubmitted, cellOutcome = Nothing, entryExitCode = Nothing, manifestSha256 = Nothing, fetchedPath = Nothing}
+                        ]
+                    }
+            writeSessionJournal journalPath interrupted
+            resumed <- resumeObservedSlices store cellRef (Bucket "results") journalPath (const (pure ()))
+            recovered <- case resumed of
+              Left failure -> expectationFailure (show failure) >> error "unreachable"
+              Right value -> pure value
+            fmap (.state) recovered.slices `shouldBe` [SliceVerified, SliceVerified]
+            readSessionJournal journalPath `shouldReturn` Right recovered
+            case recovered.slices of
+              [firstRecovered, secondRecovered] -> do
+                writeSessionJournal journalPath (recovered {slices = [firstRecovered {state = SliceFetched, entryExitCode = Nothing}, secondRecovered]})
+                fetchedAgain <- resumeObservedSlices store cellRef (Bucket "results") journalPath (const (pure ()))
+                case fetchedAgain of
+                  Left failure -> expectationFailure (show failure)
+                  Right value -> fmap (.state) value.slices `shouldBe` [SliceVerified, SliceVerified]
+              _ -> expectationFailure "expected two recovered slices"
+          _ -> expectationFailure "expected two journal slices"
 
 publishSealedFixture :: ObjectStore -> FilePath -> Submission -> RunId -> IO ()
 publishSealedFixture store root submission nested = do

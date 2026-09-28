@@ -42,6 +42,7 @@ library
     Kenshou.Remote.Cell.Prepare
     Kenshou.Remote.Cell.Session
     Kenshou.Remote.Cell.Session.Journal
+    Kenshou.Remote.Cell.Session.Resume
     Kenshou.Remote.Cell.Session.Runner
     Kenshou.Remote.Cell.Submit
     Kenshou.Remote.Cell.Watch
