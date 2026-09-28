@@ -12,19 +12,20 @@ import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
-import FetchSpec (completeTreeWith)
-import Kenshou.Core.Id (newRunId, renderRunId)
+import FetchSpec (completeTreeWithNested)
+import Kenshou.Core.Id (RunId, newRunId, renderRunId)
 import Kenshou.Remote.Cell.Docs (Artifact (..), CellManifest (..), CellOutcome (..), CellPhase (..), CellStatus (..), LogChunks (..), Rejected (..), Submission (..), WorkObject (..))
 import Kenshou.Remote.Cell.Index (CellManifestLink (..), CellRunIndex (..))
 import Kenshou.Remote.Cell.Lease (AcquireOutcome (..), CellRef (..), Lease (..), LeaseHandle, LeaseRequest (..), acquireLease, leaseSnapshot, requestCancel)
 import Kenshou.Remote.Cell.Session (SessionError (..), runSubmission)
 import Kenshou.Remote.Cell.Session qualified as Session
 import Kenshou.Remote.Cell.Session.Journal (LeaseMode (..), SessionJournal (..), SliceJournal (..), SliceState (..), applyTransition, readSessionJournal, writeSessionJournal)
+import Kenshou.Remote.Cell.Session.Runner (SessionRunError (..), runPlannedSlices)
 import Kenshou.Remote.Cell.Submit (workObjectFor)
 import Kenshou.Remote.Payload (Bundle (..), CellPayload (..))
 import Kenshou.Remote.Store (Bucket (..), ObjectName (..), ObjectStore (..), Precondition (..))
 import Kenshou.Remote.Store.File (newFileStore)
-import System.Directory (doesFileExist)
+import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.FilePath ((</>))
 import System.IO.Temp (withSystemTempDirectory)
 import System.Timeout (timeout)
@@ -56,7 +57,7 @@ spec = describe "one leased cell submission" do
     handle <- acquireLease store cellRef request >>= expectAcquired
     submission <- fixtureFor handle
     let journalPath = root </> "out" </> "session.json"
-    checkpoint <- journalCheckpoint journalPath submission
+    (_, checkpoint) <- journalCheckpoint journalPath submission
     _ <- forkIO do
       let marker = ObjectName (submissionPrefix submission <> "submission.json")
       let awaitMarker = do
@@ -78,10 +79,10 @@ spec = describe "one leased cell submission" do
     handle <- acquireLease store cellRef request >>= expectAcquired
     submission <- fixtureFor handle
     let journalPath = root </> "out" </> "session.json"
-    checkpoint <- journalCheckpoint journalPath submission
+    (nested, checkpoint) <- journalCheckpoint journalPath submission
     workerResult <- newEmptyMVar
     _ <- forkIO do
-      completed <- try (publishSealedFixture store root submission) :: IO (Either SomeException ())
+      completed <- try (publishSealedFixture store root submission nested) :: IO (Either SomeException ())
       putMVar workerResult completed
     result <- timeout 10000000 (Session.runSubmissionWithTransitions store cellRef (Bucket "results") handle submission workBytes (root </> "out") (const (pure ())) checkpoint)
     case result of
@@ -94,13 +95,63 @@ spec = describe "one leased cell submission" do
         journal <- readSessionJournal journalPath >>= expectRight
         fmap (.state) journal.slices `shouldBe` [SliceVerified]
         fmap (.manifestSha256) journal.slices `shouldBe` [Just index.cellManifest.sha256]
+        otherRun <- newRunId
+        now <- getCurrentTime
+        case journal.slices of
+          [slice] -> do
+            let mismatched = journal {slices = [slice {state = SliceFetched, entryExitCode = Nothing, runIds = [otherRun]}]}
+            applyTransition now submission.runId (Session.ResultsVerified index) mismatched `shouldBe` Left "verified index nested runs differ from planned slice"
+          _ -> expectationFailure "expected one journal slice"
         worker <- takeMVar workerResult
         case worker of
           Left failure -> expectationFailure (show failure)
           Right () -> pure ()
 
-publishSealedFixture :: ObjectStore -> FilePath -> Submission -> IO ()
-publishSealedFixture store root submission = do
+  it "runs two prepared slices under one lease and checkpoints both results" $ withSystemTempDirectory "kenshou-session" \root -> do
+    store <- newFileStore root
+    handle <- acquireLease store cellRef request >>= expectAcquired
+    first <- fixtureFor handle
+    second <- fixtureFor handle
+    firstNested <- newRunId
+    secondNested <- newRunId
+    sessionId <- newRunId
+    now <- getCurrentTime
+    let sessionDir = root </> "out" </> Text.unpack (renderRunId sessionId)
+        journalPath = sessionDir </> "session.json"
+        firstWork = "slice-0/work.json"
+        secondWork = "slice-1/work.json"
+        makeSlice index submission nested workPath = SliceJournal index submission.runId [index] [nested] submission.reset submission workPath SlicePlanned Nothing Nothing Nothing Nothing Nothing
+        initial = SessionJournal sessionId "alpha" "file" Nothing "control" "results" first.leaseId Held Map.empty (Text.replicate 64 "a") [] [makeSlice 0 first firstNested firstWork, makeSlice 1 second secondNested secondWork] now now
+    createDirectoryIfMissing True (sessionDir </> "slice-0")
+    createDirectoryIfMissing True (sessionDir </> "slice-1")
+    LazyByteString.writeFile (sessionDir </> firstWork) workBytes
+    LazyByteString.writeFile (sessionDir </> secondWork) "wrong"
+    runPlannedSlices store cellRef (Bucket "results") handle journalPath initial (const (pure ())) `shouldReturn` Left (InvalidSession "prepared work digest or size differs: slice-1/work.json")
+    doesFileExist journalPath `shouldReturn` False
+    LazyByteString.writeFile (sessionDir </> secondWork) workBytes
+    workerResult <- newEmptyMVar
+    _ <- forkIO do
+      completed <- try (forM_ [(first, firstNested), (second, secondNested)] \(submission, nested) -> publishSealedFixture store root submission nested) :: IO (Either SomeException ())
+      putMVar workerResult completed
+    result <- timeout 20000000 (runPlannedSlices store cellRef (Bucket "results") handle journalPath initial (const (pure ())))
+    case result of
+      Nothing -> expectationFailure "two-slice session did not finish within twenty seconds"
+      Just (Left failure) -> expectationFailure (show failure)
+      Just (Right journal) -> do
+        fmap (.state) journal.slices `shouldBe` [SliceVerified, SliceVerified]
+        persisted <- readSessionJournal journalPath >>= expectRight
+        persisted `shouldBe` journal
+        forM_ [first, second] \submission -> do
+          indexed <- doesFileExist (root </> "out" </> Text.unpack (renderRunId submission.runId) </> "cell-run.json")
+          indexed `shouldBe` True
+        worker <- takeMVar workerResult
+        case worker of
+          Left failure -> expectationFailure (show failure)
+          Right () -> pure ()
+        runPlannedSlices store cellRef (Bucket "results") handle journalPath initial (const (pure ())) `shouldReturn` Left (SessionFileExists journalPath)
+
+publishSealedFixture :: ObjectStore -> FilePath -> Submission -> RunId -> IO ()
+publishSealedFixture store root submission nested = do
   let marker = ObjectName (submissionPrefix submission <> "submission.json")
       results = Bucket "results"
       resultPrefix = "runs/" <> renderRunId submission.runId <> "/"
@@ -110,7 +161,7 @@ publishSealedFixture store root submission = do
           Nothing -> threadDelay 10000 >> awaitMarker
           Just _ -> pure ()
   awaitMarker
-  (sourceTree, manifest) <- completeTreeWith (root </> "fixture") submission.runId submission.leaseId False False False
+  (sourceTree, manifest) <- completeTreeWithNested (root </> "fixture" </> Text.unpack (renderRunId submission.runId)) submission.runId submission.leaseId nested False False False
   forM_ manifest.artifacts \artifact -> do
     bytes <- LazyByteString.readFile (sourceTree </> Text.unpack artifact.path)
     _ <- store.putObject results (ObjectName (resultPrefix <> artifact.path)) artifact.mediaType DoesNotExist bytes
@@ -152,7 +203,7 @@ expectAcquired _ = expectationFailure "expected acquired lease" >> error "unreac
 expectRight :: Either Text value -> IO value
 expectRight = either (\failure -> expectationFailure (Text.unpack failure) >> error "unreachable") pure
 
-journalCheckpoint :: FilePath -> Submission -> IO (Session.SessionTransition -> IO ())
+journalCheckpoint :: FilePath -> Submission -> IO (RunId, Session.SessionTransition -> IO ())
 journalCheckpoint path submission = do
   now <- getCurrentTime
   identifier <- newRunId
@@ -161,9 +212,12 @@ journalCheckpoint path submission = do
       initial = SessionJournal identifier "alpha" "file" Nothing "control" "results" submission.leaseId Held Map.empty (Text.replicate 64 "a") [] [slice] now now
   writeSessionJournal path initial
   journalRef <- newIORef initial
-  pure \transition -> do
-    current <- readIORef journalRef
-    at <- getCurrentTime
-    changed <- either (ioError . userError . Text.unpack) pure (applyTransition at submission.runId transition current)
-    writeSessionJournal path changed
-    writeIORef journalRef changed
+  pure
+    ( nested,
+      \transition -> do
+        current <- readIORef journalRef
+        at <- getCurrentTime
+        changed <- either (ioError . userError . Text.unpack) pure (applyTransition at submission.runId transition current)
+        writeSessionJournal path changed
+        writeIORef journalRef changed
+    )

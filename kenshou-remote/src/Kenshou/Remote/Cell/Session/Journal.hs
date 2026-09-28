@@ -14,14 +14,14 @@ import Control.Exception (bracket)
 import Control.Monad (unless)
 import Data.Aeson (FromJSON (..), ToJSON (..), eitherDecode, encode, object, withObject, withText, (.:), (.:?), (.=))
 import Data.ByteString.Lazy qualified as LazyByteString
-import Data.List (find)
+import Data.List (find, sort)
 import Data.Map.Strict (Map)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (UTCTime)
 import Kenshou.Core.Id (RunId)
 import Kenshou.Remote.Cell.Docs (CellOutcome, CellStatus (..), Rejected (..), ResetBlock, Submission (..))
-import Kenshou.Remote.Cell.Index (CellManifestLink (..), CellRunIndex (..))
+import Kenshou.Remote.Cell.Index (CellManifestLink (..), CellRunIndex (..), RunLink (..))
 import Kenshou.Remote.Cell.Session (SessionTransition (..))
 import Kenshou.Remote.Payload (PayloadDescriptor)
 import System.Directory (createDirectoryIfMissing, doesFileExist, removeFile, renameFile)
@@ -130,7 +130,7 @@ instance ToJSON SliceJournal where
 instance FromJSON SliceJournal where
   parseJSON = withObject "cell slice journal" \value -> do
     slice <- SliceJournal <$> value .: "index" <*> value .: "cellRun" <*> value .: "ordinals" <*> value .: "runIds" <*> value .: "reset" <*> value .: "submission" <*> value .: "workPath" <*> value .: "state" <*> value .:? "cellOutcome" <*> value .:? "entryExitCode" <*> value .:? "manifestSha256" <*> value .:? "rejectionReason" <*> value .:? "fetchedPath"
-    unless (slice.index >= 0 && slice.cellRun == slice.submission.runId && slice.reset == slice.submission.reset && not (null slice.ordinals) && not (null slice.runIds) && validWorkPath slice.workPath && validSliceState slice) (fail "inconsistent cell slice journal")
+    unless (slice.index >= 0 && slice.cellRun == slice.submission.runId && slice.reset == slice.submission.reset && not (null slice.ordinals) && not (null slice.runIds) && unique slice.ordinals && unique slice.runIds && validWorkPath slice.workPath && validSliceState slice) (fail "inconsistent cell slice journal")
     pure slice
 
 instance ToJSON SessionJournal where
@@ -182,6 +182,7 @@ applyTransition now identifier transition journal = do
     advance slice (ResultsVerified index)
       | index.cellRun /= identifier || index.leaseId /= slice.submission.leaseId = Left "verified index names another run or lease"
       | Just index.cellOutcome /= slice.cellOutcome || Just index.cellManifest.sha256 /= slice.manifestSha256 = Left "verified index disagrees with seal"
+      | sort (fmap (.runId) index.runs) /= sort slice.runIds = Left "verified index nested runs differ from planned slice"
       | otherwise = require SliceFetched slice $ slice {state = SliceVerified, entryExitCode = index.entryExitCode}
     require expected slice next
       | slice.state == expected = Right next
