@@ -70,6 +70,8 @@ cellsOf scenario = case renderScenarioId scenario of
   "shibuya/core-runner/benchmark/framework-tax" -> [(Dispatch, Normal)]
   "shibuya/core-ordering/benchmark/concurrency-sweep" -> [(Dispatch, Normal), (KeyedOrdering, Normal)]
   "shibuya/core-batch/benchmark/batch-size-and-timeout" -> [(Batching, Normal), (Batching, Timeout)]
+  "shibuya/core-batch/soak/high-cardinality-batch-keys" -> [(Batching, Timeout), (IngestionBackpressure, Timeout)]
+  "shibuya/core-batch/soak/high-cardinality-batch-keys-reduced" -> [(Batching, Timeout), (IngestionBackpressure, Timeout)]
   "shibuya/pgmq-adapter/benchmark/end-to-end-throughput-latency" -> [(PgmqPersistence, Normal), (Finalization, Normal)]
   "shibuya/kiroku-adapter/benchmark/end-to-end-throughput-latency" -> [(KirokuPersistence, Normal), (Finalization, Normal)]
   "shibuya/pgmq-adapter/correctness/trace-continuity" -> [(PgmqPersistence, Normal), (Finalization, Normal)]

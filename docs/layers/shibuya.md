@@ -1,6 +1,6 @@
 # Shibuya layer verification
 
-The `shibuya` layer exercises the framework, its metrics server, and its PGMQ and Kiroku adapters through public service-facing APIs. Core and metrics scenarios use synthetic sources or local HTTP and WebSocket servers. Adapter scenarios use real PostgreSQL, and the process cases keep effects in a durable ledger across worker deaths. Run `kenshou list --layer shibuya --json` for the executable catalogue and `kenshou run <scenario-id> --out runs` for one case. The catalogue below reflects the 59 scenarios registered on 2026-09-27; the four soak pairs remain absent.
+The `shibuya` layer exercises the framework, its metrics server, and its PGMQ and Kiroku adapters through public service-facing APIs. Core and metrics scenarios use synthetic sources or local HTTP and WebSocket servers. Adapter scenarios use real PostgreSQL, and the process cases keep effects in a durable ledger across worker deaths. Run `kenshou list --layer shibuya --json` for the executable catalogue and `kenshou run <scenario-id> --out runs` for one case. The catalogue below reflects 61 scenarios registered on 2026-09-27; the core batch-key soak pair has a short wiring check, while its duration verdicts and the other three soak pairs remain open.
 
 The core knobs include `shibuya.inbox-size`, `shibuya.concurrency` (`serial`, `ahead:N`, `async:N`), `shibuya.ordering`, `shibuya.strategy`, `shibuya.processor-kind`, `shibuya.messages`, `shibuya.partitions` and `shibuya.decisions`. Individual cases expose only the knobs they actually read. The leased-message bound probe additionally exposes `bound.slack` and waits for 500 ms without source pulls before sampling. PGMQ cases expose polling, batch, prefetch, visibility-timeout and pool controls; Kiroku cases expose subscription target, batch size, consumer-group size and checkpoint policy. Read the scenario definitions and checked-in run specs in `specs/` for the actual knobs before changing a workload.
 
@@ -8,13 +8,15 @@ The core knobs include `shibuya.inbox-size`, `shibuya.concurrency` (`serial`, `a
 
 Each row gives the full CLI identifier and the behavior checked or measured. `correctness` cases assert a public or explicitly labelled implementation behavior; `concurrency` cases use scheduling gates, processes or faults to exercise the same behavior under overlap.
 
-### core-batch (3)
+### core-batch (5)
 
 | Scenario | Check |
 |---|---|
 | `shibuya/core-batch/benchmark/batch-size-and-timeout` | Measures throughput and intended-send-to-finalize latency under batch size and timeout controls against an unbatched serial arm. |
 | `shibuya/core-batch/concurrency/shutdown-with-partial-batches` | A graceful stop flushes partial batches; a forced stop cannot finalize after returning. |
 | `shibuya/core-batch/correctness/conservation-triggers-and-decisions` | Size, timeout and flush triggers conserve deliveries while fallback, exceptions and keyed concurrency preserve acknowledgements. |
+| `shibuya/core-batch/soak/high-cardinality-batch-keys` | Compares one-second and one-hour keyed batch timeouts under a four-hour cell workload, with separate worker resource and backlog evidence. |
+| `shibuya/core-batch/soak/high-cardinality-batch-keys-reduced` | Runs the same paired worker probe for a 20-minute local duration; its short wiring check does not establish a leak verdict. |
 
 ### core-ordering (5)
 
@@ -104,18 +106,18 @@ Each row gives the full CLI identifier and the behavior checked or measured. `co
 | Boundary | normal | synchronousException | cancellation | timeout | repeatedStop |
 |---|---:|---:|---:|---:|---:|
 | startup-registration | 1 | 2 | 1 | 0 | 1 |
-| ingestion-backpressure | 2 | 1 | 1 | 2 | 1 |
-| dispatch | 4 | 1 | 1 | 1 | 1 |
-| keyed-ordering | 3 | 2 | 1 | 1 | 1 |
-| batching | 1 | 1 | 1 | 1 | 1 |
+| ingestion-backpressure | 2 | 1 | 1 | 4 | 1 |
+| dispatch | 5 | 1 | 1 | 1 | 1 |
+| keyed-ordering | 4 | 2 | 1 | 1 | 1 |
+| batching | 2 | 1 | 1 | 4 | 1 |
 | retry-lease | 2 | 1 | 1 | 2 | 1 |
-| finalization | 1 | 1 | 2 | 1 | 1 |
+| finalization | 5 | 1 | 2 | 1 | 1 |
 | drain-cancel | 1 | 1 | 1 | 1 | 1 |
 | supervision | 2 | 4 | 1 | 1 | 1 |
 | metrics-health | 2 | 2 | 1 | 1 | 1 |
 | metrics-websocket | 1 | 1 | 1 | 2 | 1 |
-| pgmq-persistence | 2 | 3 | 2 | 3 | 2 |
-| kiroku-persistence | 2 | 2 | 3 | 1 | 1 |
+| pgmq-persistence | 4 | 3 | 2 | 3 | 2 |
+| kiroku-persistence | 4 | 2 | 3 | 1 | 1 |
 
 ## Cohort observations
 
@@ -170,4 +172,4 @@ The trace-continuity probes use three distinct input traceparents per adapter an
 
 ## Remaining acceptance
 
-The lifecycle matrix is fully accounted for. Clean default CLI sweeps ran all 30 non-benchmark core and metrics scenarios on each core lane: historical 0.9.0.3 had 16 direct passes and 14 scoped findings; pinned remediation and isolated Hackage 0.10.0.0 each had 28 passes, with only owner BUG-1 and IR-7 reproduced. The non-default idle-intake halt check reproduced historical REV-4-F1 under ahead, async and partitioned async, then passed on pinned head and Hackage 0.10.0.0. Serial and ahead lease-bound controls passed on all three lanes, while the batch scenarios exercise size, timeout, flush, fallback and keyed paths internally. The original nine Kiroku adapter scenarios have historical and current-release evidence on PostgreSQL 17 and 18; the new trace scenario has clean PostgreSQL 18 evidence across three lanes. All five planned benchmarks are registered, with local comparison evidence for their baseline arms. The four soak pairs, full overhead comparisons, controlled cell benchmark calibration, and the upstream finding audit described by the ExecPlan remain open. The forced-stop late-finalization bug needs an owner repair and a rerun. PostgreSQL 18 is the first repair-and-rerun checkpoint for owner fixes; the existing PostgreSQL 17 results remain compatibility evidence.
+The lifecycle matrix is fully accounted for. Clean default CLI sweeps ran all 30 non-benchmark core and metrics scenarios on each core lane: historical 0.9.0.3 had 16 direct passes and 14 scoped findings; pinned remediation and isolated Hackage 0.10.0.0 each had 28 passes, with only owner BUG-1 and IR-7 reproduced. The non-default idle-intake halt check reproduced historical REV-4-F1 under ahead, async and partitioned async, then passed on pinned head and Hackage 0.10.0.0. Serial and ahead lease-bound controls passed on all three lanes, while the batch scenarios exercise size, timeout, flush, fallback and keyed paths internally. The original nine Kiroku adapter scenarios have historical and current-release evidence on PostgreSQL 17 and 18; the new trace scenario has clean PostgreSQL 18 evidence across three lanes. All five planned benchmarks are registered, with local comparison evidence for their baseline arms. The core batch-key soak pair is registered and has a short worker wiring check; its duration verdicts and the other three soak pairs remain open. Full overhead comparisons, controlled cell benchmark calibration, and the remaining finding audit also remain open. The forced-stop late-finalization bug needs an owner repair and a rerun. PostgreSQL 18 is the first repair-and-rerun checkpoint for owner fixes; the existing PostgreSQL 17 results remain compatibility evidence.

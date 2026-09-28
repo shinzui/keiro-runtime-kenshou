@@ -15,6 +15,7 @@ import Kenshou.Core.Role (ControlMessage (..), RoleContext (..), RoleName, Worke
 import Kenshou.Suite.Shibuya.Fixture.KirokuWorker qualified as KirokuWorker
 import Kenshou.Suite.Shibuya.Fixture.PgmqProducer qualified as PgmqProducer
 import Kenshou.Suite.Shibuya.Fixture.PgmqWorker qualified as PgmqWorker
+import Kenshou.Suite.Shibuya.Soak.CoreBatch qualified as SoakCoreBatch
 import Shibuya.Adapter (Adapter (..))
 import Shibuya.App (AppConfig (..), SupervisionStrategy (..), defaultAppConfig, mkProcessor, runApp, waitApp)
 import Shibuya.Core.Ack (AckDecision (..), HaltReason (..))
@@ -29,7 +30,7 @@ import System.Mem (performMajorGC)
 import System.Timeout (timeout)
 
 roles :: [WorkerRole]
-roles = [WorkerRole gcRoleName "Probes Shibuya caller liveness after dropping an application handle." gcProbe, PgmqWorker.role, PgmqProducer.role, KirokuWorker.role]
+roles = [WorkerRole gcRoleName "Probes Shibuya caller liveness after dropping an application handle." gcProbe, PgmqWorker.role, PgmqProducer.role, KirokuWorker.role, SoakCoreBatch.role]
 
 gcRoleName :: RoleName
 gcRoleName = either (error . Text.unpack) id (mkRoleName "shibuya/gc-probe")
