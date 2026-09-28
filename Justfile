@@ -54,6 +54,8 @@ evidence-check:
 
 [group('verification')]
 schemas-check:
+    check-jsonschema --schemafile schemas/kenshou.cohort-identity.v1.schema.json kenshou-core/test/fixtures/cohort-identity.golden.json
+    check-jsonschema --schemafile schemas/kenshou.payload.v1.schema.json kenshou-remote/test/golden/payload.json
     check-jsonschema --schemafile schemas/component-graph.v1.schema.json kenshou-core/data/components.json
     check-jsonschema --schemafile schemas/run-plan.v1.schema.json kenshou-core/test/golden/run-plan.minimal.json
     check-jsonschema --schemafile schemas/plan-summary.v1.schema.json kenshou-core/test/golden/plan-summary.minimal.json
@@ -87,6 +89,7 @@ haskell-build:
 [group('haskell')]
 haskell-test:
     cabal test kenshou-core:tests
+    cabal test kenshou-remote:test:kenshou-remote-test
     cabal test kenshou-measure:test:kenshou-measure-test
     cabal test kenshou-check:test:kenshou-check-test
     cabal test kenshou-diagnose:test:kenshou-diagnose-test
