@@ -38,6 +38,7 @@ import Data.Int (Int64)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (catMaybes)
+import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (UTCTime)
@@ -636,7 +637,7 @@ instance FromJSON CellManifest where
     unless (policy == ("bucket-retention" :: Text)) (fail "unsupported cell retention policy")
     seconds <- retention .: "retentionSeconds"
     manifest <- CellManifest <$> value .: "runId" <*> value .: "cell" <*> value .: "leaseId" <*> value .: "leaseSequence" <*> value .: "sealedAt" <*> value .: "agentVersion" <*> value .: "payload" <*> value .: "outcome" <*> pure seconds <*> value .: "artifacts"
-    unless (validName manifest.cell && manifest.leaseSequence >= 0 && manifest.retentionSeconds >= 0 && validVersion manifest.agentVersion && not (null manifest.artifacts)) (fail "invalid cell manifest")
+    unless (validName manifest.cell && manifest.leaseSequence >= 0 && manifest.retentionSeconds >= 0 && validVersion manifest.agentVersion && not (null manifest.artifacts) && all ((/= "manifest.json") . (.path)) manifest.artifacts && Set.size (Set.fromList (map (.path) manifest.artifacts)) == length manifest.artifacts) (fail "invalid cell manifest")
     pure manifest
 
 expectSchema :: Text -> Object -> Parser ()
@@ -678,7 +679,11 @@ validStorePath value = case Text.stripPrefix "/nix/store/" value of
   Nothing -> False
 
 validArtifactPath :: Text -> Bool
-validArtifactPath value = not (Text.null value) && not (Text.isPrefixOf "/" value) && not (Text.any (== '\0') value) && all (/= "..") (Text.splitOn "/" value)
+validArtifactPath value =
+  not (Text.null value)
+    && not (Text.isPrefixOf "/" value)
+    && not (Text.any (`elem` ['\\', '\0']) value)
+    && all (\part -> not (Text.null part) && part /= "." && part /= "..") (Text.splitOn "/" value)
 
 validPgName :: Text -> Bool
 validPgName value = case Text.uncons value of

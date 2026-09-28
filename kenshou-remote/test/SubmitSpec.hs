@@ -44,7 +44,8 @@ spec = describe "cell submission publication" do
     store <- newFileStore root
     handle <- acquireLease store cellRef request >>= expectAcquired
     submission <- fixtureFor handle
-    let bad = submission {work = submission.work {sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}
+    let badWork = WorkObject "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" submission.work.bytes submission.work.mediaType
+        bad = submission {work = badWork}
     publishSubmission store cellRef handle bad workBytes `shouldThrow` anyIOException
     store.listObjects cellRef.controlBucket (submissionPrefix submission) `shouldReturn` []
 

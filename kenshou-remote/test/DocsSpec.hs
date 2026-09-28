@@ -4,7 +4,8 @@ import Data.Aeson (ToJSON, Value (..), eitherDecode, encode, object, toJSON, (.=
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.Either (isLeft, isRight)
-import Kenshou.Remote.Cell.Docs (Artifact, CellDescriptor, CellEnvironment, CellManifest, CellRunResult, CellStatus, Rejected, Submission)
+import Data.Text (Text)
+import Kenshou.Remote.Cell.Docs (Artifact, CellDescriptor, CellEnvironment, CellManifest (..), CellRunResult, CellStatus, Rejected, Submission)
 import Test.Hspec
 
 spec :: Spec
@@ -57,6 +58,16 @@ spec = describe "cell owner documents" do
   it "rejects an artifact path that escapes the fetched tree" do
     let escaped = "{\"path\":\"../outside\",\"sha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"bytes\":1,\"mediaType\":\"application/json\"}"
     (eitherDecode escaped :: Either String Artifact) `shouldSatisfy` isLeft
+
+  it "rejects ambiguous artifact paths and duplicate manifest entries" do
+    bytes <- LazyByteString.readFile "test/golden/cell/cell.artifact-manifest.v1.json"
+    let badPaths = ["a//b", "a/./b", "a/../b", "a\\b", "/a/b"] :: [Text]
+    mapM_ (\path -> (eitherDecode (encode (object ["path" .= path, "sha256" .= ("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" :: String), "bytes" .= (1 :: Int), "mediaType" .= ("application/json" :: String)])) :: Either String Artifact) `shouldSatisfy` isLeft) badPaths
+    case eitherDecode bytes :: Either String CellManifest of
+      Right manifest -> do
+        let duplicate = manifest {artifacts = manifest.artifacts <> take 1 manifest.artifacts}
+        (eitherDecode (encode duplicate) :: Either String CellManifest) `shouldSatisfy` isLeft
+      _ -> expectationFailure "invalid cell manifest fixture"
 
 checkFixture :: (ToJSON document) => FilePath -> (LazyByteString.ByteString -> Either String document) -> IO ()
 checkFixture name decoder = do

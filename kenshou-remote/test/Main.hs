@@ -23,6 +23,7 @@ import System.FilePath ((</>))
 import System.IO.Temp (withSystemTempDirectory)
 import System.Process (proc, readCreateProcessWithExitCode)
 import Test.Hspec
+import WatchSpec qualified
 
 main :: IO ()
 main =
@@ -41,6 +42,7 @@ tests = do
   GcsSpec.spec
   LeaseSpec.spec
   SubmitSpec.spec
+  WatchSpec.spec
   describe "Kenshou payload descriptor" do
     it "round-trips the complete cell payload and Nix cohort identity" do
       eitherDecode (encode examplePayload) `shouldBe` Right examplePayload

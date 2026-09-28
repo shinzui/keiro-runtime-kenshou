@@ -38,6 +38,7 @@ library
     Kenshou.Remote.Cell.Docs
     Kenshou.Remote.Cell.Lease
     Kenshou.Remote.Cell.Submit
+    Kenshou.Remote.Cell.Watch
     Kenshou.Remote.Payload
     Kenshou.Remote.Store
     Kenshou.Remote.Store.File
@@ -71,6 +72,7 @@ test-suite kenshou-remote-test
     GcsSpec
     LeaseSpec
     SubmitSpec
+    WatchSpec
 
   build-depends:
     aeson,
