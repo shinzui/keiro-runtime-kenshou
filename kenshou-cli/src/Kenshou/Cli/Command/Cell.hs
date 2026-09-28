@@ -2,9 +2,13 @@ module Kenshou.Cli.Command.Cell (cellCommand) where
 
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeAsyncException, SomeException, displayException, finally, fromException, throwIO, try)
-import Data.Aeson (encode, object, (.=))
+import Data.Aeson (FromJSON, eitherDecode, eitherDecodeFileStrict', encode, object, (.=))
 import Data.ByteString.Lazy.Char8 qualified as LazyByteString
+import Data.Foldable (traverse_)
+import Data.List (nub)
+import Data.List.NonEmpty (NonEmpty (..))
 import Data.List.NonEmpty qualified as NonEmpty
+import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -13,17 +17,20 @@ import Data.Time (diffUTCTime, getCurrentTime)
 import Kenshou.Core.Cli (CliCommand (..), CliEnv (..), CliGroup (..))
 import Kenshou.Core.Id (RunId, parseRunId, renderRunId)
 import Kenshou.Remote.Cell.Control (CellSnapshot (..), readCellSnapshot)
-import Kenshou.Remote.Cell.Docs (CellDescriptor (..), CellManifest (..), CellOutcome (..), CellStatus (..), Rejected (..))
+import Kenshou.Remote.Cell.Docs (CachePolicy (..), CellDescriptor (..), CellManifest (..), CellOutcome (..), CellStatus (..), Rejected (..))
 import Kenshou.Remote.Cell.Exec (cellExec)
 import Kenshou.Remote.Cell.Fetch (FetchError (..), fetchCellRun, verifyCellRun)
 import Kenshou.Remote.Cell.Index (deriveCellRunIndex, writeCellRunIndex)
 import Kenshou.Remote.Cell.Lease (AcquireOutcome (..), CellRef (..), Lease (..), LeaseRequest (..), Quarantine (..), acquireLease, leaseSnapshot, reattachLease, releaseLease, validCellName, withHeartbeat)
+import Kenshou.Remote.Cell.Prepare (PrepareOptions (..))
+import Kenshou.Remote.Cell.RouteJson (RouteDocuments (..), routeWorkJson)
+import Kenshou.Remote.Cell.RouteRules (defaultRoutingRules)
 import Kenshou.Remote.Cell.Watch (WatchEvent (..), WatchTerminal (..), watchCellRun)
 import Kenshou.Remote.Store (Bucket (..), ObjectStore)
 import Kenshou.Remote.Store.File (newFileStore)
 import Kenshou.Remote.Store.Gcs (newGcsStore, newTokenProvider)
 import Options.Applicative
-import System.Directory (doesDirectoryExist)
+import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesPathExist)
 import System.Environment (lookupEnv)
 import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
@@ -34,6 +41,8 @@ data CellLocation = CellLocation !Text !(Maybe Text)
 
 data LeaseCli = LeaseCli !CellLocation !Text !(Maybe Text) !Int !Int !Bool !Bool
 
+data RouteCli = RouteCli ![Text] !(Maybe Text) !FilePath !(Maybe FilePath) !(Maybe FilePath) !FilePath !Bool !Bool
+
 data CellAction
   = Fetch !Text !Text !FilePath
   | Verify !FilePath
@@ -41,6 +50,7 @@ data CellAction
   | LeaseCell !LeaseCli
   | Release !CellLocation !Text
   | Watch !CellLocation !Text
+  | Route !RouteCli
   | Exec !FilePath !FilePath
 
 cellCommand :: CliCommand
@@ -55,6 +65,7 @@ cellParser =
       <> command "lease" (info (leaseParser <**> helper) (progDesc "Acquire a cell lease"))
       <> command "release" (info (releaseParser <**> helper) (progDesc "Release an owned cell lease"))
       <> command "watch" (info (watchParser <**> helper) (progDesc "Follow a cell run to its terminal status"))
+      <> command "route" (info (routeParser <**> helper) (progDesc "Split a plan across compatible cells"))
       <> (command "exec" (info (cellExecParser <**> helper) (progDesc "Execute prepared work on a cell driver")) <> internal)
 
 cellLocationParser :: Parser CellLocation
@@ -84,6 +95,20 @@ releaseParser = Release <$> cellLocationParser <*> strOption (long "lease-id" <>
 
 watchParser :: Parser CellAction
 watchParser = Watch <$> cellLocationParser <*> strArgument (metavar "CELL_RUN_ID")
+
+routeParser :: Parser CellAction
+routeParser =
+  Route
+    <$> ( RouteCli
+            <$> some (strOption (long "cell" <> metavar "NAME" <> help "Candidate cell in preference order; repeat to add cells"))
+            <*> optional (strOption (long "control-bucket" <> metavar "BUCKET" <> help "Cell control bucket"))
+            <*> strOption (long "plan" <> metavar "FILE" <> help "Run plan JSON, or - for stdin")
+            <*> optional (strOption (long "payload" <> metavar "FILE" <> help "Payload descriptor for cohort preparation"))
+            <*> optional (strOption (long "routing-rules" <> metavar "FILE" <> help "Replace the built-in routing policy with JSON, or - for stdin"))
+            <*> strOption (long "out" <> metavar "DIR" <> help "Directory for routed plans and refusal report")
+            <*> switch (long "coerce-durable" <> help "Use durable PostgreSQL when the scenario supports it")
+            <*> switch (long "ephemeral-on-driver" <> help "Keep server-control correctness work on the cell driver")
+        )
 
 cellExecParser :: Parser CellAction
 cellExecParser = Exec <$> strArgument (metavar "WORK_FILE") <*> strArgument (metavar "OUT_DIR")
@@ -184,7 +209,44 @@ runCell selected cli = case selected of
         RunSealed status -> do
           TextIO.hPutStrLn stderr ("sealed: " <> Text.pack (show status.outcome))
           pure (if status.outcome == Just Completed then ExitSuccess else ExitFailure 4)
+  Route (RouteCli names bucket planFile payloadFile rulesFile outDir coerce ephemeral)
+    | length (nub names) /= length names || not (all validCellName names) -> usage "cell names must be valid and unique"
+    | planFile == "-" && rulesFile == Just "-" -> usage "only one JSON document may be read from stdin"
+    | payloadFile == Just "-" -> usage "payload must name a file"
+    | otherwise -> case NonEmpty.nonEmpty names of
+        Nothing -> usage "at least one cell is required"
+        Just (first :| rest) -> withControl (CellLocation first bucket) \store ref observed -> do
+          allowed <- maybe ["tan-nb-exp"] (map Text.strip . Text.splitOn "," . Text.pack) <$> lookupEnv "KENSHOU_GCP_ALLOWED_PROJECTS"
+          remaining <- traverse (\name -> readCellSnapshot store (CellRef name ref.controlBucket) allowed) rest
+          case sequence remaining of
+            Left problem -> unavailable problem
+            Right snapshots -> do
+              planResult <- readJsonDocument planFile
+              rulesResult <- maybe (pure (Right defaultRoutingRules)) readJsonDocument rulesFile
+              payloadResult <- traverse eitherDecodeFileStrict' payloadFile
+              case (planResult, rulesResult, sequence payloadResult) of
+                (Left failure, _, _) -> usage (Text.pack failure)
+                (_, Left failure, _) -> usage (Text.pack failure)
+                (_, _, Left failure) -> usage (Text.pack failure)
+                (Right plan, Right rules, Right payload) ->
+                  case routeWorkJson cli.registry ((observed.descriptor, Nothing) :| fmap (\snapshot -> (snapshot.descriptor, Nothing)) snapshots) rules (Map.singleton "default" <$> payload) (PrepareOptions coerce ephemeral [] Cold) plan of
+                    Left problem -> usage problem
+                    Right documents -> guardIO do
+                      exists <- doesPathExist outDir
+                      if exists
+                        then usage "route output path already exists; choose a new directory"
+                        else do
+                          createDirectoryIfMissing True outDir
+                          traverse_ (\(name, planDocument) -> LazyByteString.writeFile (outDir </> "plan." <> Text.unpack name <> ".json") (encode planDocument)) (Map.toAscList documents.perCell)
+                          traverse_ (\planDocument -> LazyByteString.writeFile (outDir </> "plan.local.json") (encode planDocument)) documents.local
+                          LazyByteString.writeFile (outDir </> "unroutable.json") (encode documents.report)
+                          TextIO.hPutStrLn stderr ("routed plans: " <> Text.pack (show (Map.size documents.perCell)) <> "; see " <> Text.pack (outDir </> "unroutable.json"))
+                          pure (if documents.routeComplete then ExitSuccess else ExitFailure 2)
   Exec workFile outDir -> cellExec cli.registry workFile outDir
+
+readJsonDocument :: (FromJSON value) => FilePath -> IO (Either String value)
+readJsonDocument "-" = eitherDecode <$> LazyByteString.getContents
+readJsonDocument path = eitherDecodeFileStrict' path
 
 withControl :: CellLocation -> (ObjectStore -> CellRef -> CellSnapshot -> IO ExitCode) -> IO ExitCode
 withControl (CellLocation name selectedBucket) operation = do

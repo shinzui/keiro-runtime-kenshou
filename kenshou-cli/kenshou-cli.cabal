@@ -114,6 +114,7 @@ test-suite kenshou-cli-test
     base >=4.21 && <4.22,
     bytestring,
     directory,
+    filepath,
     hspec >=2.11 && <2.12,
     kenshou-cli,
     kenshou-core,

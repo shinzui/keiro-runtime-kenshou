@@ -60,6 +60,7 @@ schemas-check:
     check-jsonschema --schemafile schemas/kenshou.cell-run.v1.schema.json kenshou-remote/test/golden/cell-run.json
     check-jsonschema --schemafile schemas/kenshou.cell-session.v1.schema.json kenshou-remote/test/golden/cell-session.json
     check-jsonschema --schemafile schemas/kenshou.cell-capabilities.v1.schema.json kenshou-remote/test/golden/cell-capabilities.json
+    check-jsonschema --schemafile schemas/kenshou.cell-route.v1.schema.json kenshou-remote/test/golden/cell-route.json
     check-jsonschema --schemafile schemas/kenshou.cell-routing.v1.schema.json policies/cell-routing.json
     check-jsonschema --schemafile schemas/kenshou.cell-session.v1.schema.json kenshou-remote/test/golden/cell-session.json
     check-jsonschema --schemafile schemas/component-graph.v1.schema.json kenshou-core/data/components.json

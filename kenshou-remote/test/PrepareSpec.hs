@@ -1,7 +1,9 @@
 module PrepareSpec (spec) where
 
-import Data.Aeson (Value (..), eitherDecode, eitherDecodeFileStrict', encode)
+import Data.Aeson (Value (..), eitherDecode, eitherDecodeFileStrict', encode, toJSON)
+import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString.Lazy qualified as LazyByteString
+import Data.Foldable (toList)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map.Strict qualified as Map
@@ -25,7 +27,8 @@ import Kenshou.Plan.Selector (parseSelector)
 import Kenshou.Remote.Cell.Docs (CachePolicy (..), CellDescriptor (..), Limits (..), PgReset (..), ResetBlock (..), Submission (..))
 import Kenshou.Remote.Cell.Lease (CellRef (..))
 import Kenshou.Remote.Cell.Prepare (Granularity (..), OtlpSink (..), PrepareOptions (..), Prepared (..), PreparedRun (..), RejectReason (..), Routed (..), Slice (..), SubmissionInputs (..), prepareForCell, routePlan, slicePlan, sliceRuns, submissionFor)
-import Kenshou.Remote.Cell.RouteRules (CellCapabilities (..), RoutingRule (..), RuleCondition (..), descriptorDigest, matchingRules)
+import Kenshou.Remote.Cell.RouteJson (RouteDocuments (..), routeWorkJson)
+import Kenshou.Remote.Cell.RouteRules (CellCapabilities (..), RoutingRule (..), RuleCondition (..), defaultRoutingRules, descriptorDigest, matchingRules)
 import Kenshou.Remote.Cell.Submit (workObjectFor)
 import Kenshou.Remote.Payload (Bundle (..), CellPayload (..), PayloadDescriptor (..))
 import Kenshou.Remote.Store (Bucket (..))
@@ -99,6 +102,44 @@ spec = describe "cell run slicing" do
     routed.local `shouldBe` Nothing
     routed.unroutable `shouldBe` []
 
+  it "routes a public JSON plan while preserving its provenance and reporting refusals" do
+    (plan, descriptor, payload) <- preparationFixture
+    let registry = either (error . show) id (mkRegistry [Selftest.bundle])
+        input = toJSON plan
+        route = routeWorkJson registry ((descriptor, Nothing) :| []) [] (Just (Map.singleton "default" payload)) (PrepareOptions True False [] Cold) input
+    documents <- either (\problem -> expectationFailure (Text.unpack problem) >> error "unreachable") pure route
+    documents.routeComplete `shouldBe` True
+    documents.local `shouldBe` Nothing
+    case (input, Map.lookup descriptor.name documents.perCell) of
+      (Object source, Just (Object selected)) -> do
+        KeyMap.lookup "planId" selected `shouldBe` KeyMap.lookup "planId" source
+        KeyMap.lookup "createdAt" selected `shouldBe` KeyMap.lookup "createdAt" source
+        KeyMap.lookup "policy" selected `shouldBe` KeyMap.lookup "policy" source
+        KeyMap.lookup "changes" selected `shouldBe` KeyMap.lookup "changes" source
+        KeyMap.lookup "runs" selected `shouldNotBe` KeyMap.lookup "runs" source
+      _ -> expectationFailure "expected a routed plan object"
+    case input of
+      Object source -> do
+        let originalRun = case KeyMap.lookup "runs" source of
+              Just (Array runs) -> case toList runs of
+                [run] -> run
+                _ -> error "expected one run"
+              _ -> error "missing runs"
+            duplicate = Object (KeyMap.insert "runs" (toJSON [originalRun, originalRun]) source)
+        routeWorkJson registry ((descriptor, Nothing) :| []) [] (Just (Map.singleton "default" payload)) (PrepareOptions True False [] Cold) duplicate `shouldSatisfy` isLeft
+      _ -> expectationFailure "expected a plan object"
+    withoutPayload <- either (\problem -> expectationFailure (Text.unpack problem) >> error "unreachable") pure (routeWorkJson registry ((descriptor, Nothing) :| []) [] Nothing (PrepareOptions True False [] Cold) input)
+    withoutPayload.routeComplete `shouldBe` True
+    case Map.lookup descriptor.name withoutPayload.perCell of
+      Just (Object selected) -> case KeyMap.lookup "runs" selected of
+        Just (Array rows) -> case toList rows of
+          [Object row] -> case KeyMap.lookup "spec" row of
+            Just (Object selectedSpec) -> KeyMap.lookup "cohortExpectation" selectedSpec `shouldBe` Just Null
+            _ -> expectationFailure "expected a selected spec"
+          _ -> expectationFailure "expected one selected run"
+        _ -> expectationFailure "expected runs"
+      _ -> expectationFailure "expected a routed plan"
+
   it "uses cached denials and warns when a matching capability has not been probed" do
     (plan, descriptor, payload) <- preparationFixture
     now <- getCurrentTime
@@ -118,6 +159,7 @@ spec = describe "cell run slicing" do
 
   it "loads the seeded partitioned-queue routing rule" do
     rules <- eitherDecodeFileStrict' "../policies/cell-routing.json" >>= either fail pure
+    rules `shouldBe` defaultRoutingRules
     scenario <- either (error . Text.unpack) pure (parseScenarioId "selftest/kernel/correctness/always-pass")
     knob <- either (error . Text.unpack) pure (mkKnobName "pgmq.queue-kind")
     let base = minimalRunSpec scenario

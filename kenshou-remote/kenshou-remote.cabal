@@ -43,6 +43,7 @@ library
     Kenshou.Remote.Cell.Index
     Kenshou.Remote.Cell.Lease
     Kenshou.Remote.Cell.Prepare
+    Kenshou.Remote.Cell.RouteJson
     Kenshou.Remote.Cell.RouteRules
     Kenshou.Remote.Cell.Session
     Kenshou.Remote.Cell.Session.Journal

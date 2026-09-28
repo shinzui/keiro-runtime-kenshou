@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/kenshou.cell-route.v1.schema.json",
+  "type": "object",
+  "required": ["schema", "planId", "perCell", "localRunIds", "unroutable", "warnings"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {"const": "kenshou.cell-route/v1"},
+    "planId": {"type": "string", "format": "uuid"},
+    "perCell": {
+      "type": "object",
+      "additionalProperties": {"type": "array", "items": {"type": "string", "format": "uuid"}}
+    },
+    "localRunIds": {"type": "array", "items": {"type": "string", "format": "uuid"}},
+    "unroutable": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["runId", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "runId": {"type": "string", "format": "uuid"},
+          "reason": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "warnings": {"type": "array", "items": {"type": "string"}}
+  }
+}

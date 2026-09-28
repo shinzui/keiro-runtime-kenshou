@@ -13,6 +13,7 @@ module Kenshou.Remote.Cell.Prepare
     submissionFor,
     prepareForCell,
     routePlan,
+    routePlanWithoutPayload,
   )
 where
 
@@ -23,7 +24,7 @@ import Data.List (find)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map.Strict qualified as Map
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isNothing)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Kenshou.Core.Bundle (Registry, lookupScenario)
@@ -123,6 +124,10 @@ data SubmissionInputs = SubmissionInputs
 -- rejected entry remains paired with its original run identity.
 prepareForCell :: Registry -> CellDescriptor -> Maybe CellCapabilities -> [RoutingRule] -> Map.Map Text PayloadDescriptor -> PrepareOptions -> RunPlan -> Prepared
 prepareForCell registry descriptor cachedCapabilities routingRules payloads options plan =
+  prepareWithPayload registry descriptor cachedCapabilities routingRules (Just payloads) options plan
+
+prepareWithPayload :: Registry -> CellDescriptor -> Maybe CellCapabilities -> [RoutingRule] -> Maybe (Map.Map Text PayloadDescriptor) -> PrepareOptions -> RunPlan -> Prepared
+prepareWithPayload registry descriptor cachedCapabilities routingRules payloads options plan =
   Prepared
     [prepared | Right (prepared, _) <- results]
     [(entry, reason) | (entry, Left reason) <- zip plan.runs results]
@@ -144,8 +149,8 @@ prepareForCell registry descriptor cachedCapabilities routingRules payloads opti
       if maybe True (== entry.runId) entry.spec.runId then pure () else Left RunIdMismatch
       scenario <- maybe (Left UnknownScenario) Right (lookupScenario registry entry.spec.scenario)
       if scenario.placement == PlaceLocal then Left PlacementLocalOnly else pure ()
-      let label = maybe "default" (\trial -> if Map.member trial.arm payloads then trial.arm else "default") entry.trial
-      payload <- maybe (Left (PayloadLabelUnknown label)) Right (Map.lookup label payloads)
+      let label = maybe "default" (\trial -> if maybe False (Map.member trial.arm) payloads then trial.arm else "default") entry.trial
+      payload <- traverse (\available -> maybe (Left (PayloadLabelUnknown label)) Right (Map.lookup label available)) payloads
       let requirements = scenario.requires
           controlled = case requirements.postgres of
             Just requirement | requirement.needsServerControl -> Just "primary"
@@ -190,14 +195,15 @@ prepareForCell registry descriptor cachedCapabilities routingRules payloads opti
               then Map.fromList [(name, case Map.lookup name prior.extraPostgres of Just ephemeral@(PostgresEphemeral _) -> ephemeral; _ -> PostgresEphemeral []) | (name, _) <- requirements.extraPostgres]
               else Map.fromList [(name, PostgresExternal (ConnFromEnv ("KENSHOU_CELL_PG_URL_" <> variableName name))) | (name, _) <- requirements.extraPostgres]
           env = EnvironmentSpec RunOnCell (Just profile) primary extras prior.kafka prior.telemetry
-          expectation = CohortExpectation (Just payload.cohort) payload.cohortIdentity.identityPlanHash.unPlanHash
+          expectation = maybe originalSpec.cohortExpectation (\selected -> Just (CohortExpectation (Just selected.cohort) selected.cohortIdentity.identityPlanHash.unPlanHash)) payload
           labels = Map.insert "postgresPlacement" (if driverLocal then "driver-ephemeral" else "cell-server") originalSpec.labels
-          spec = RunSpec (Just entry.runId) originalSpec.scenario originalSpec.scenarioRevision originalSpec.knobs dimensions originalSpec.seed originalSpec.phases originalSpec.timeoutSeconds env (Just expectation) originalSpec.comparison labels
+          spec = RunSpec (Just entry.runId) originalSpec.scenario originalSpec.scenarioRevision originalSpec.knobs dimensions originalSpec.seed originalSpec.phases originalSpec.timeoutSeconds env expectation originalSpec.comparison labels
           reset = ResetBlock options.cachePolicy (if Map.null settings then Nothing else Just (PgReset descriptor.postgresMajor [] settings)) (if requirements.kafka then Just (BrokerReset True) else Nothing)
           timeout = fromMaybe (max 60 (entry.estimateMinutes * 60)) originalSpec.timeoutSeconds
           notices =
             ["coerced pg.durability=durable for " <> renderRunId entry.runId | dimensions /= originalSpec.dimensions]
               <> ["capability " <> rule.requires <> " is unprobed for " <> renderRunId entry.runId <> "; run kenshou cell probe" | rule <- rules, maybe True (\cache -> capabilityKnown cache rule.requires == Nothing) activeCapabilities]
+              <> ["payload not selected for " <> renderRunId entry.runId <> "; cohort expectation will be set at submission" | isNothing payloads]
       if timeout <= 0 then Left InvalidTimeout else Right (PreparedRun entry.ordinal entry.runId spec label reset timeout, notices)
 
     combinedSettings scenario spec = foldl add (Right Map.empty) sources
@@ -219,7 +225,13 @@ variableName = Text.map (\character -> if character == '-' then '_' else charact
 -- Prefer the caller's cell order. A rejected run is either retained for local
 -- execution or named as unroutable; its original identity never disappears.
 routePlan :: Registry -> NonEmpty (CellDescriptor, Maybe CellCapabilities) -> [RoutingRule] -> Map.Map Text PayloadDescriptor -> PrepareOptions -> RunPlan -> Routed
-routePlan registry cells routingRules payloads options plan =
+routePlan registry cells routingRules payloads options plan = routePlanWith registry cells routingRules (Just payloads) options plan
+
+routePlanWithoutPayload :: Registry -> NonEmpty (CellDescriptor, Maybe CellCapabilities) -> [RoutingRule] -> PrepareOptions -> RunPlan -> Routed
+routePlanWithoutPayload registry cells routingRules options plan = routePlanWith registry cells routingRules Nothing options plan
+
+routePlanWith :: Registry -> NonEmpty (CellDescriptor, Maybe CellCapabilities) -> [RoutingRule] -> Maybe (Map.Map Text PayloadDescriptor) -> PrepareOptions -> RunPlan -> Routed
+routePlanWith registry cells routingRules payloads options plan =
   Routed (Map.map makePlan assigned) (if null localRuns then Nothing else Just (makePlan localRuns)) rejectedRuns notices
   where
     choices = fmap routeEntry plan.runs
@@ -233,7 +245,7 @@ routePlan registry cells routingRules payloads options plan =
         choose [] firstFailure = Left (entry, fromMaybe UnknownScenario firstFailure)
         choose ((descriptor, capabilities) : rest) firstFailure =
           let one = RunPlan plan.planId plan.createdAt plan.context plan.policy [entry] [] entry.estimateMinutes
-              prepared = prepareForCell registry descriptor capabilities routingRules payloads options one
+              prepared = prepareWithPayload registry descriptor capabilities routingRules payloads options one
            in case prepared.accepted of
                 [accepted] -> Right (descriptor.name, preparedEntry accepted, prepared.warnings)
                 _ -> case prepared.rejected of

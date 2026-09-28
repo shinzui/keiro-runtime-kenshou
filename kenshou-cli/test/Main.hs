@@ -3,6 +3,7 @@ module Main (main) where
 import Control.Exception (bracket)
 import Data.Aeson (Value, object, (.=))
 import Data.Aeson qualified as Aeson
+import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -11,11 +12,14 @@ import Kenshou.Cli (runWithArgs)
 import Kenshou.Cli.Attest (FencingFacts (..), fencingFacts)
 import Kenshou.Cli.Version (appVersionWithGit)
 import Kenshou.Core.Id (renderRunId)
+import Kenshou.Remote.Cell.Docs (CellDescriptor (..))
 import Kenshou.Remote.Cell.Lease (Lease (..))
 import Kenshou.Remote.Store (Bucket (..), ObjectName (..), ObjectStore (..), Precondition (..))
 import Kenshou.Remote.Store.File (newFileStore)
+import System.Directory (doesFileExist)
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.Exit (ExitCode (..))
+import System.FilePath ((</>))
 import System.IO.Temp (withSystemTempDirectory)
 import Test.Hspec (describe, expectationFailure, hspec, it, shouldBe, shouldReturn, shouldSatisfy)
 
@@ -54,6 +58,7 @@ main = hspec do
       runWithArgs ["cell", "lease", "--help"] `shouldReturnCode` ExitSuccess
       runWithArgs ["cell", "release", "--help"] `shouldReturnCode` ExitSuccess
       runWithArgs ["cell", "watch", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["cell", "route", "--help"] `shouldReturnCode` ExitSuccess
 
     it "rejects malformed cell result identifiers and URIs" do
       runWithArgs ["cell", "fetch", "--results-bucket", "test-results", "not-a-run-id", "--out", "test-output"] `shouldReturnCode` ExitFailure 2
@@ -83,6 +88,28 @@ main = hspec do
           runWithArgs (["cell", "status"] <> common) `shouldReturnCode` ExitSuccess
           runWithArgs (["cell", "release"] <> common <> ["--lease-id", Text.unpack (renderRunId record.leaseId)]) `shouldReturnCode` ExitSuccess
           store.statObject control leaseObject `shouldReturn` Nothing
+
+    it "routes a public plan through file-backed cell descriptors" $
+      withSystemTempDirectory "kenshou-cell-route" \root -> do
+        store <- newFileStore root
+        descriptor <- LazyByteString.readFile "../kenshou-remote/test/golden/cell/cell.descriptor.v1.json"
+        observed <- either fail pure (Aeson.eitherDecode descriptor :: Either String CellDescriptor)
+        let control = Bucket "tan-nb-exp-cells-control"
+            outDir = root </> "routed"
+            common = ["cell", "route", "--cell", "beta", "--cell", "alpha", "--control-bucket", "tan-nb-exp-cells-control", "--plan", "../kenshou-core/test/golden/run-plan.minimal.json"]
+        _ <- store.putObject control (ObjectName "cells/beta/descriptor.json") "application/json" DoesNotExist (Aeson.encode (observed {name = "beta", postgresMajor = 17}))
+        _ <- store.putObject control (ObjectName "cells/alpha/descriptor.json") "application/json" DoesNotExist descriptor
+        withCellStore root do
+          runWithArgs (common <> ["--out", outDir, "--coerce-durable"]) `shouldReturnCode` ExitSuccess
+          doesFileExist (outDir </> "plan.alpha.json") `shouldReturn` True
+          doesFileExist (outDir </> "plan.beta.json") `shouldReturn` False
+          report <- Aeson.eitherDecodeFileStrict' (outDir </> "unroutable.json") >>= either fail pure
+          case report of
+            Aeson.Object fields -> KeyMap.lookup "schema" fields `shouldBe` Just (Aeson.String "kenshou.cell-route/v1")
+            _ -> expectationFailure "expected route report"
+          runWithArgs (common <> ["--out", outDir, "--coerce-durable"]) `shouldReturnCode` ExitFailure 2
+          runWithArgs (common <> ["--out", root </> "refused"]) `shouldReturnCode` ExitFailure 2
+          doesFileExist (root </> "refused" </> "unroutable.json") `shouldReturn` True
 
     it "reads scenario history from a bundle" do
       runWithArgs ["history", "--bundle", "../docs/verification", "--scenario", "selftest/kernel/correctness/always-pass", "--json"] `shouldReturnCode` ExitSuccess

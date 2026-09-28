@@ -1,0 +1,8 @@
+{
+  "schema": "kenshou.cell-route/v1",
+  "planId": "0199a3f2-7c1e-7b8a-9d41-3e5f6a7b8c9d",
+  "perCell": {"alpha": ["0199a3f2-7c20-7f00-8a11-0c0d0e0f1011"]},
+  "localRunIds": [],
+  "unroutable": [],
+  "warnings": []
+}

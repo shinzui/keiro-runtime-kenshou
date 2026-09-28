@@ -2,6 +2,7 @@ module Kenshou.Remote.Cell.RouteRules
   ( CellCapabilities (..),
     RuleCondition (..),
     RoutingRule (..),
+    defaultRoutingRules,
     matchingRules,
     capabilityKnown,
     descriptorDigest,
@@ -41,6 +42,14 @@ data RoutingRule = RoutingRule
     why :: !Text
   }
   deriving stock (Eq, Show)
+
+defaultRoutingRules :: [RoutingRule]
+defaultRoutingRules =
+  [ RoutingRule
+      (KnobEquals "pgmq.queue-kind" "partitioned")
+      "postgres.pg_partman"
+      "Partitioned PGMQ queues require pg_partman on the cell PostgreSQL server."
+  ]
 
 instance FromJSON CellCapabilities where
   parseJSON = withObject "cell capabilities" \fields -> do
