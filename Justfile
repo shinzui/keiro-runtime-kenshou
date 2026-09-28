@@ -17,6 +17,10 @@ verify: process-compose-check fmt-check haskell-build haskell-test link-proof co
 graph-check:
     cabal run -v0 kenshou -- plan --graph-check
 
+[group('payload')]
+payload-lock cohort:
+    bash scripts/payload-lock.sh {{cohort}}
+
 [group('docs')]
 adr-validate:
     okf validate docs/adr --strict \
@@ -57,6 +61,7 @@ schemas-check:
     for fixture in kenshou-remote/test/golden/cell/cell.*.v1.json; do schema="${fixture%.json}.schema.json"; check-jsonschema --base-uri "file://$PWD/$schema" --schemafile "$schema" "$fixture" || exit; done
     check-jsonschema --schemafile schemas/kenshou.cohort-identity.v1.schema.json kenshou-core/test/fixtures/cohort-identity.golden.json
     check-jsonschema --schemafile schemas/kenshou.payload.v1.schema.json kenshou-remote/test/golden/payload.json
+    for lock in nix/cohort-locks/*.lock.json; do check-jsonschema --schemafile schemas/kenshou.cohort-nix-lock.v1.schema.json "$lock" || exit; done
     check-jsonschema --schemafile schemas/kenshou.cell-run.v1.schema.json kenshou-remote/test/golden/cell-run.json
     check-jsonschema --schemafile schemas/kenshou.cell-session.v1.schema.json kenshou-remote/test/golden/cell-session.json
     check-jsonschema --schemafile schemas/kenshou.cell-capabilities.v1.schema.json kenshou-remote/test/golden/cell-capabilities.json

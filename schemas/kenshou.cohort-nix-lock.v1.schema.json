@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shinzui.github.io/keiro-runtime-kenshou/schemas/kenshou.cohort-nix-lock.v1.schema.json",
+  "title": "Kenshou cohort Nix source lock",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "cohort", "descriptorSha256", "packages"],
+  "properties": {
+    "schema": { "const": "kenshou.cohort-nix-lock/v1" },
+    "cohort": { "enum": ["released", "head"] },
+    "descriptorSha256": { "$ref": "#/$defs/hexSha256" },
+    "packages": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "pattern": "^[a-z][a-z0-9-]*$" },
+      "additionalProperties": { "oneOf": [{ "$ref": "#/$defs/hackage" }, { "$ref": "#/$defs/git" }] }
+    }
+  },
+  "$defs": {
+    "hexSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "sriSha256": { "type": "string", "pattern": "^sha256-[A-Za-z0-9+/]{43}=$" },
+    "hackage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "version", "sha256", "tarballSha256"],
+      "properties": {
+        "source": { "const": "hackage" },
+        "version": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+)+$" },
+        "sha256": { "$ref": "#/$defs/sriSha256" },
+        "tarballSha256": { "$ref": "#/$defs/hexSha256" }
+      }
+    },
+    "git": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "version", "owner", "repo", "rev", "subdir", "hash"],
+      "properties": {
+        "source": { "const": "git" },
+        "version": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+)+$" },
+        "owner": { "type": "string", "pattern": "^[A-Za-z0-9-]+$" },
+        "repo": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
+        "rev": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "subdir": { "type": "string", "pattern": "^$|^[A-Za-z0-9._/-]+$" },
+        "hash": { "$ref": "#/$defs/sriSha256" }
+      }
+    }
+  }
+}

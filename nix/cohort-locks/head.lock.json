@@ -1,0 +1,265 @@
+{
+  "cohort": "head",
+  "descriptorSha256": "76afbaac70c8b315c9046979c137db896cdfd6e2c036dc592f4a5059f8862189",
+  "packages": {
+    "effectful": {
+      "sha256": "sha256-krNjGxqdbmFpt1g3anTd5ajGtYnyvGaG+AiDLfJN8No=",
+      "source": "hackage",
+      "tarballSha256": "58752ce8aa49ff9ce713011272babb38c9f89cb6513558da612faf724b810ece",
+      "version": "2.6.1.0"
+    },
+    "effectful-core": {
+      "sha256": "sha256-0UTeE7JnUkNx77QobyjKjQFpUVQsz6a1E55WEohJ+hI=",
+      "source": "hackage",
+      "tarballSha256": "9c679af666dafb02220630a4dd389c24beb6e9c4fdbf1ba09e6601933db869f2",
+      "version": "2.6.1.0"
+    },
+    "ephemeral-pg": {
+      "sha256": "sha256-0PyBqpG7iHLSZKfoqRO5uMlm2w821dbfMvNPTt/tKGs=",
+      "source": "hackage",
+      "tarballSha256": "958e476698bf76808f0bebc9c9d16332091e3a2a060b1d5d5ca6836ed9d10c2a",
+      "version": "0.3.1.0"
+    },
+    "hs-opentelemetry-api": {
+      "sha256": "sha256-COhj9Ms1eu1Gt9wTC21oQ37k6vJ9mxlJvYpHtvXff6A=",
+      "source": "hackage",
+      "tarballSha256": "797c1a6c9320c5d7be92920d437398f756745e042351756bb8af7d094662612d",
+      "version": "1.0.0.0"
+    },
+    "hs-opentelemetry-exporter-in-memory": {
+      "sha256": "sha256-bJjUHBNMRKhmkqRRnUrAQIDLWpUrox7F418r2QbVQ6o=",
+      "source": "hackage",
+      "tarballSha256": "b2616d71bebb4f7317b2794da22a94a9a0fb84a400a15354440fa9a72df3d660",
+      "version": "1.0.0.0"
+    },
+    "hs-opentelemetry-exporter-otlp": {
+      "sha256": "sha256-rHgsisH2d45CI9woEDb/j0WnTzllxaE2Mkx5/OmWn0c=",
+      "source": "hackage",
+      "tarballSha256": "692bd3e2de2be465589997570085e02e87cba5bc10d68deaac1f848d8ae27467",
+      "version": "1.0.0.0"
+    },
+    "hs-opentelemetry-exporter-prometheus": {
+      "sha256": "sha256-6yCjTQ/1hriFD2n3zprJDHKBsjLAD5jzlSfOuN/3ej0=",
+      "source": "hackage",
+      "tarballSha256": "4f8d6313c8198c9ad58c0a1ed0137afc99cc25872d00ccd86043402c5d3f025f",
+      "version": "1.0.0.0"
+    },
+    "hs-opentelemetry-otlp": {
+      "sha256": "sha256-kVuKKi6qRx+oBQclTpUnx20Eqw+CRQk8pT4tkcxt1xo=",
+      "source": "hackage",
+      "tarballSha256": "655be27046d80473eaae15034f2541cf670168bf4236c5c5d48d37d56ad2342f",
+      "version": "1.0.0.0"
+    },
+    "hs-opentelemetry-propagator-w3c": {
+      "sha256": "sha256-p8d2Tx8bCVRk6hps8k0qAg/L2gdBVoYuLYJbTzTbI3s=",
+      "source": "hackage",
+      "tarballSha256": "b09feadcd2d3a41561a729373cefb0a420ba492e9e196f790b46d1798aa2e866",
+      "version": "1.0.0.0"
+    },
+    "hs-opentelemetry-sdk": {
+      "sha256": "sha256-kG8gmP8Lr9mPCnJjukCduFI/tADgKCfuelxcQZcXyA8=",
+      "source": "hackage",
+      "tarballSha256": "e4e5040fd2366542feb7d0148c09e1a65a282486a542bb5ceba3b41fda5dae61",
+      "version": "1.0.0.0"
+    },
+    "hs-opentelemetry-semantic-conventions": {
+      "sha256": "sha256-7cIC9dTrd5bJjAsiEyyupi1xSZyc17FpjbACnm0p5ik=",
+      "source": "hackage",
+      "tarballSha256": "c9ba86a46a91a314df57506cab3154d5feae7c38eea345f70e8b5b20b7130ef1",
+      "version": "1.40.0.0"
+    },
+    "hw-kafka-client": {
+      "hash": "sha256-0ojh/7ScAm+ZDKch8x0oL946QA8gQUyXz+07k4lA348=",
+      "owner": "shinzui",
+      "repo": "hw-kafka-client",
+      "rev": "6caed636898a78e9f6e5a9c93eeb5562cbb2580a",
+      "source": "git",
+      "subdir": "",
+      "version": "5.3.0"
+    },
+    "hw-kafka-streamly": {
+      "hash": "sha256-jZLQ2SEdBi3YSvvbVH+5MxGq3mA6tPSsmUJ/6LoEU0U=",
+      "owner": "shinzui",
+      "repo": "hw-kafka-streamly",
+      "rev": "42163022038be4734cff64e96b83360be9c78318",
+      "source": "git",
+      "subdir": "hw-kafka-streamly",
+      "version": "0.2.0.0"
+    },
+    "kafka-effectful": {
+      "sha256": "sha256-aaYTl8mTlnYDM5TVswLA16h0o5/IVfn6smZBXQYG2No=",
+      "source": "hackage",
+      "tarballSha256": "2ac29e16238ac0d52ea5c8377ab28f50fbb12a7a35c1922acc6fac129f0bf66c",
+      "version": "0.3.1.0"
+    },
+    "keiki": {
+      "sha256": "sha256-FdjCXyzFKXvq1B763sQOcVWcv9DkeTKK2RmW/yknngU=",
+      "source": "hackage",
+      "tarballSha256": "cb2b80d6daaca71ab1a7aa8ce78026e76dd8a85570139bf02a6d676c5b02454b",
+      "version": "0.9.1.0"
+    },
+    "keiki-codec-json": {
+      "sha256": "sha256-y4zdM7UCwlkBZSdg3rDL67T6BpWlFK7p3afW/C4h4oc=",
+      "source": "hackage",
+      "tarballSha256": "f78f25ebcaf5eb91dfe53e2a175e4553a40b7ec2abba922f422546a0962152d8",
+      "version": "0.9.1.0"
+    },
+    "keiro": {
+      "sha256": "sha256-cDTQcuP9ihkQpPzzfFe2HMhiMCpZe4+LHrTld+tNmvA=",
+      "source": "hackage",
+      "tarballSha256": "f2b959b35e922557b401e6ba4db24b2bd42ec06824aa6d1c63b95e49ec4b4ad8",
+      "version": "0.17.0.0"
+    },
+    "keiro-core": {
+      "sha256": "sha256-srl0l2lLxVEwkXDjXU0vNt9WliamVh4i8VnUykWv+rs=",
+      "source": "hackage",
+      "tarballSha256": "afb7c90326e64fe6835a5746c54e48a828816389a8a7fee75b7f8150066d07d5",
+      "version": "0.17.0.0"
+    },
+    "keiro-migrations": {
+      "sha256": "sha256-GIVefwcc1424grmE/3CVWgDpsPS8bYj+bBqlnbCBpZs=",
+      "source": "hackage",
+      "tarballSha256": "4eec6cd356c1989c817806713fd38dcd04f2497572b879eb2a423e1f1cf02d47",
+      "version": "0.17.0.0"
+    },
+    "keiro-pgmq": {
+      "sha256": "sha256-8X5yXrnPT3K7SzmGe/dydU83Q0KKKolzhBqrTOwrqhE=",
+      "source": "hackage",
+      "tarballSha256": "41595c6df2df16fd99e6cd0b6fb172267779c6d0d86519bbd49c765e00a858cd",
+      "version": "0.17.0.0"
+    },
+    "keiro-test-support": {
+      "sha256": "sha256-kqCdyVRKMmwVXegAeKb6T/EgNoEfcrnCYvjFrjXZ7bs=",
+      "source": "hackage",
+      "tarballSha256": "e1772a2c252ead9641b350b81b55f4c99590af6902a628578feb561eb0dd89ed",
+      "version": "0.17.0.0"
+    },
+    "kiroku-cli": {
+      "sha256": "sha256-d08WyTSehPwHdBvy1StPU3dIJDb7z5trAz2sGWKgrLM=",
+      "source": "hackage",
+      "tarballSha256": "9a496509212705aafa9640df7c3f87dec7deb801e78b58d35467290b86d0b327",
+      "version": "0.2.0.6"
+    },
+    "kiroku-metrics": {
+      "sha256": "sha256-+HracwpMMD8nXzOsxq28E94aSmHwTV/lgUC2uqJOyXE=",
+      "source": "hackage",
+      "tarballSha256": "52a124ae7cf2f2c2eb3986d72f0124286e720c658b7f0d0ca1e7748476d5a13b",
+      "version": "0.1.0.8"
+    },
+    "kiroku-otel": {
+      "sha256": "sha256-2lX8VgGWWLQmkv1MiNpdwH3HeyeqQ4z1MF7w54IixOc=",
+      "source": "hackage",
+      "tarballSha256": "ba94e93d9e6396a1dc83fe09c2a4555e4ebf8d9639e5ffa9ff81785507393c1f",
+      "version": "0.2.0.8"
+    },
+    "kiroku-store": {
+      "sha256": "sha256-nMLE851vjliXiiA8VUSSfQOZ/vnXBoWJhO7aEzOlZ+k=",
+      "source": "hackage",
+      "tarballSha256": "c56c8fa889e07fe7f075c3233976695699e406b185020b8b86f93de3969d6373",
+      "version": "0.8.0.1"
+    },
+    "kiroku-store-migrations": {
+      "sha256": "sha256-vl3FHaDPeFqy5eLPOX82uJDyR+VUjVNvwrCg5jk7vhk=",
+      "source": "hackage",
+      "tarballSha256": "c5b99bb82aafc1194ef4f40adf4685958d2551979fc152c025f49fa972164370",
+      "version": "0.4.0.0"
+    },
+    "pg-migrate": {
+      "sha256": "sha256-S+ixJ+pi96TR6+LUu5C5MDpqP2bOQmpl3hcU29oSfoA=",
+      "source": "hackage",
+      "tarballSha256": "23df4d45e41fe554acc85869c35349c1dc19250d54d968b60043aa90e13cabd5",
+      "version": "1.1.0.0"
+    },
+    "pg-migrate-cli": {
+      "sha256": "sha256-3MgWvmVc7J6a4k7CLu4U9Q33LruI9k7FQTdkdzXTgtU=",
+      "source": "hackage",
+      "tarballSha256": "a23a615c198196de76700a81fdb30acf4019dd2564fc65fd3a82109d24f3ce34",
+      "version": "1.1.0.0"
+    },
+    "pg-migrate-embed": {
+      "sha256": "sha256-ZQz4EIAP8iJbsWRgliynePLqu2XBmWeWwIYmh1nG/QU=",
+      "source": "hackage",
+      "tarballSha256": "514e8da3816f021ce34bb5aa75853b06c46a634481118143c8a9d4c6a9968688",
+      "version": "1.1.0.0"
+    },
+    "pg-migrate-import-codd": {
+      "sha256": "sha256-lBLS4RWRI1PftsBaUJ46Y0SFWurT/9vN5Wk2WXOXBEY=",
+      "source": "hackage",
+      "tarballSha256": "95034070deff11b0cda8161b73a74b0966b2f519ef24bfa474924712be07c8ee",
+      "version": "1.1.0.0"
+    },
+    "pg-migrate-import-hasql-migration": {
+      "sha256": "sha256-WPfeNP+tkv/LsxeQe5na3aDWdkosUB1ixuGBgzY2MHo=",
+      "source": "hackage",
+      "tarballSha256": "191626960a3a82b7bcaeafdc746ecc9b29f586f79c3100936ad151ec9ceef19f",
+      "version": "1.1.0.0"
+    },
+    "pgmq-config": {
+      "sha256": "sha256-Q1wWzjgAVyc2LARFAiVmjMDivmXhUmaFBrNfcjk+GE0=",
+      "source": "hackage",
+      "tarballSha256": "08c9295ce20a72115b3095a376554eb93c425a32fbca93ab2f089661ce26ec59",
+      "version": "0.6.1.0"
+    },
+    "pgmq-core": {
+      "sha256": "sha256-TQOKR6oJ7tTciUyJQutZNZpSHdEp5c0a4Lek2+9WWDI=",
+      "source": "hackage",
+      "tarballSha256": "c391869f57be3d3a7c1ad75651b1a9bd419583330f016e3e73f152a87dca0f69",
+      "version": "0.6.1.0"
+    },
+    "pgmq-effectful": {
+      "sha256": "sha256-5TCuXQNvtbDlBom4wAY/oHftOT7rPOUcsBG478Iko2U=",
+      "source": "hackage",
+      "tarballSha256": "8824a0ff739b0d0d6ef63f1e663ac270f6e4ab0dbc95c8b31b7e261744c9a291",
+      "version": "0.6.1.0"
+    },
+    "pgmq-hasql": {
+      "sha256": "sha256-25r4ZFxGOfNgAzY2SeqgERQVubCxZ22kUV6nxf8Xtrc=",
+      "source": "hackage",
+      "tarballSha256": "4aea5f0c55e3391f3d14c891d176953e65b66d3bf0e3527143309d66f1df0f07",
+      "version": "0.6.1.0"
+    },
+    "pgmq-migration": {
+      "sha256": "sha256-6Nu5KrNU6XZogZ0yuyKmvsuQVZUryyUjIGuVwgpcaes=",
+      "source": "hackage",
+      "tarballSha256": "bfb5f4f1ae1e2a72204fcbfcf1631f137a36259168f6f1b41b50d7f3bfd3aaf7",
+      "version": "0.6.1.0"
+    },
+    "shibuya-core": {
+      "hash": "sha256-1HMhjusRPVj7z2gZuKqL5tTXO3g4Fx3R5Ctulu2+gAc=",
+      "owner": "shinzui",
+      "repo": "shibuya",
+      "rev": "6461c74cda5235e292d221f36621d09910b3b6f0",
+      "source": "git",
+      "subdir": "shibuya-core",
+      "version": "0.9.0.3"
+    },
+    "shibuya-kafka-adapter": {
+      "sha256": "sha256-AG/qnilIhDcO2IaxwBrQNVb0ff8EhIlg0mTR8SHIgeI=",
+      "source": "hackage",
+      "tarballSha256": "1918bae0c591ab47ba45d044a50170e7a340bddb1b562752cd16f556e86314e6",
+      "version": "0.9.0.1"
+    },
+    "shibuya-kiroku-adapter": {
+      "sha256": "sha256-SvvgUPDC0SYV+gO8ld3MB8EfSWCYJM3KJ1AaoR9e488=",
+      "source": "hackage",
+      "tarballSha256": "e7dcd2560bec0e196bc2687df360486358f75eeb2859b06061abb76914974949",
+      "version": "0.5.1.2"
+    },
+    "shibuya-metrics": {
+      "hash": "sha256-1HMhjusRPVj7z2gZuKqL5tTXO3g4Fx3R5Ctulu2+gAc=",
+      "owner": "shinzui",
+      "repo": "shibuya",
+      "rev": "6461c74cda5235e292d221f36621d09910b3b6f0",
+      "source": "git",
+      "subdir": "shibuya-metrics",
+      "version": "0.9.0.3"
+    },
+    "shibuya-pgmq-adapter": {
+      "sha256": "sha256-KLG/pXSgGycic339TsjC/tn1m0iPM5i78bNDgnUFXmE=",
+      "source": "hackage",
+      "tarballSha256": "45b658364ec61bf178232643cf9c60ee907bbf2e87fa02ddeb43eaa990cb5758",
+      "version": "0.16.0.0"
+    }
+  },
+  "schema": "kenshou.cohort-nix-lock/v1"
+}
