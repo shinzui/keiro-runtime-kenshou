@@ -176,6 +176,11 @@ provenance:
       at: 2026-09-28T17:54:48Z
       mode: "implement"
       note: "Recorded EP-17 payload and capability-cache progress."
+    - model: "gpt-6"
+      harness: "codex"
+      at: 2026-09-28T21:31:15Z
+      mode: "implement"
+      note: "Recorded the published released payload and passing PostgreSQL 18 cell evidence."
 ---
 
 # Build an extensive verification suite for the keiro runtime
@@ -724,7 +729,7 @@ docs/adr/. Keep task-local execution and coordination details here.
 
 - EP-10 now registers all five planned Shibuya benchmarks and the core batch-key soak pair, exposing 61 scenarios. The Kiroku benchmark's direct callback, ack-coupled stream and adapter controls passed locally, including four static group members with separate checkpoint evidence. Its paired local p99 result remains inconclusive, so no adapter latency budget is accepted before controlled cell calibration. The new soak has an eight-second wiring result only; duration verdicts, three more soak pairs, and the remaining telemetry and finding audits still govern EP-10 completion.
 
-- EP-17 has a `kenshou-remote` package with file and GCS object stores. The file store fences create-only claims across processes and handles; the GCS adapter covers generation preconditions, pinned and atomic downloads, paged listing, server time, retries and 8 MiB resumable chunks. Credential selection checks an explicit token, VM metadata, then a cached `gcloud` token. The cell lease client adds exclusive claim, expiry and takeover, renewal, release, reattachment, cancellation, quarantine handling and a generation-fenced run sequence. All 15 owner cell schemas and examples are pinned and validate offline; typed codecs cover the main submission, execution, and result documents. Thirty-two focused remote examples pass. Its Kenshou payload descriptor and schema cover the full cell payload and Nix cohort identity; the identity accepts optional `resolver: cabal|nix` without changing historical Cabal JSON. Payload builds, live GCS and lease acceptance, the `kenshou cell` commands, and local/cell parity remain open.
+- EP-17 has a `kenshou-remote` package with file and GCS object stores. The file store fences create-only claims across processes and handles; the GCS adapter covers generation preconditions, pinned and atomic downloads, paged listing, server time, retries and 8 MiB resumable chunks. Credential selection checks an explicit token, VM metadata, then a cached `gcloud` token. The cell lease client adds exclusive claim, expiry and takeover, renewal, release, reattachment, cancellation, quarantine handling and a generation-fenced run sequence. All 15 owner cell schemas and examples are pinned and validate offline; typed codecs cover the main submission, execution, and result documents. Ninety-one focused remote examples and 31 CLI examples pass. Its payload descriptor covers the complete cell payload and Nix cohort identity, and a clean released Linux closure is published by SHA-256 in GCS. A PostgreSQL 18 run on `cell-alpha` sealed and verified with a nested `passed` result after the owner corrected cell authentication and granted the benchmark role settings-read access in `mori://shinzui/load-testing-infra`. Head and diagnostic payloads, capability probing, paired comparisons, local/cell parity, and the remaining acceptance matrix remain open.
 
 - EP-19 moved the observed three-type evidence contract into okf-profiles v0.19.0 and repointed this repository's bundle to its hash-pinned export. The shared contract keeps runtime-specific vocabularies open; the local overlay narrows them without editing historical evidence. ADR-18 now names the published contract, while the local evidence checker continues to verify storage and byte-level properties beyond the profile language.
 
