@@ -66,7 +66,7 @@ outageScenario scenarioName fault =
           if fault == "postmaster-restart"
             then
               KnownDefect
-                { reference = "mori://shinzui/shibuya-pgmq-adapter/docs/changelog",
+                { reference = "mori://shinzui/shibuya-pgmq-adapter/okf/bug-reports/concepts/BUG-2",
                   summary = "The released adapter does not call onAckFailure after an exhausted acknowledgement error",
                   expectedFailures = ["acknowledgement: ack-failure-hook-not-fired"],
                   appliesTo = OnlyWhen (VersionBelow "shibuya-pgmq-adapter" "0.16.1.0" :| [])

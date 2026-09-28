@@ -53,7 +53,7 @@ scenario =
       knownDefect =
         Just
           KnownDefect
-            { reference = "mori://shinzui/shibuya/okf/reviews/concepts/REV-13",
+            { reference = "mori://shinzui/kiroku/okf/bug-reports/concepts/BUG-4",
               summary = "REV-13-F1: group acquisition can leave earlier members open when a later cleanup throws",
               expectedFailures = ["group-acquisition-release-skipped", "group-acquisition-primary-replaced", "group-acquisition-thread-growth", "group-acquisition-real-thread-growth", "group-acquisition-real-primary-replaced", "group-acquisition-backend-thread-growth", "group-acquisition-backend-primary-replaced"],
               appliesTo = OnlyWhen (VersionBelow "shibuya-kiroku-adapter" "0.5.1.3" :| [])

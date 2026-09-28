@@ -53,7 +53,7 @@ scenario =
       knownDefect =
         Just $
           KnownDefect
-            { reference = "mori://shinzui/shibuya/plans/41-verify-pgmq-acknowledgement-and-dead-letter-recovery-under-faults",
+            { reference = "mori://shinzui/shibuya-pgmq-adapter/okf/bug-reports/concepts/BUG-3",
               summary = "A retried direct dead-letter move can write another DLQ copy after its source deletion committed",
               expectedFailures = ["backend: sampled-duplicate-copy", "backend: duplicate-copy", "lost-commit: sampled-duplicate-copy", "lost-commit: duplicate-copy"],
               appliesTo = OnlyWhen (VersionBelow "shibuya-pgmq-adapter" "0.16.1.0" :| [])
