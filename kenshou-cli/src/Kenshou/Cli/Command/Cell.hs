@@ -32,9 +32,9 @@ import Kenshou.Remote.Cell.Session.Resume (resumeHeldSession, resumeObservedSlic
 import Kenshou.Remote.Cell.Session.Runner (runPlannedSlices)
 import Kenshou.Remote.Cell.Submit (PublishOutcome (Submitted), publishSubmission)
 import Kenshou.Remote.Cell.Watch (WatchEvent (..), WatchTerminal (..), watchCellRun)
-import Kenshou.Remote.Payload (PayloadDescriptor)
+import Kenshou.Remote.Payload (Bundle (..), CellPayload (..), PayloadDescriptor (..))
 import Kenshou.Remote.Payload.Publisher (PublishError (..), PublishOptions (..), publishPayload)
-import Kenshou.Remote.Store (Bucket (..), ObjectName (..), ObjectStore (..))
+import Kenshou.Remote.Store (Bucket (..), ObjectMeta (..), ObjectName (..), ObjectStore (..))
 import Kenshou.Remote.Store.File (newFileStore)
 import Kenshou.Remote.Store.Gcs (newGcsStore, newTokenProvider)
 import Options.Applicative
@@ -71,6 +71,7 @@ data CellAction
   | Run !RunCli
   | Resume !FilePath !(Maybe Text)
   | PublishPayload !PayloadPublishCli
+  | ShowPayload !FilePath
   | Exec !FilePath !FilePath
 
 cellCommand :: CliCommand
@@ -93,7 +94,10 @@ cellParser =
       <> (command "exec" (info (cellExecParser <**> helper) (progDesc "Execute prepared work on a cell driver")) <> internal)
 
 payloadParser :: Parser CellAction
-payloadParser = hsubparser (command "publish" (info (publishPayloadParser <**> helper) (progDesc "Publish a Nix closure after checking its runtime cohort")))
+payloadParser =
+  hsubparser $
+    command "publish" (info (publishPayloadParser <**> helper) (progDesc "Publish a Nix closure after checking its runtime cohort"))
+      <> command "show" (info (ShowPayload <$> strArgument (metavar "FILE") <**> helper) (progDesc "Show a payload descriptor after checking its bundle exists"))
 
 publishPayloadParser :: Parser CellAction
 publishPayloadParser =
@@ -238,6 +242,20 @@ runCell selected cli = case selected of
           Left PublishDirtyWorktree -> unavailable "worktree is dirty; pass --allow-dirty to publish it"
           Left problem -> unavailable (Text.pack (show problem))
           Right _ -> TextIO.putStrLn (Text.pack output) >> pure ExitSuccess
+  ShowPayload path -> guardIO do
+    decoded <- eitherDecodeFileStrict' path
+    case decoded of
+      Left problem -> failVerification (Text.pack problem)
+      Right (descriptor :: PayloadDescriptor) -> case parsePayloadUri descriptor.cell.bundle.uri of
+        Left problem -> failVerification problem
+        Right (bucket, bundleObject) -> do
+          store <- openStore bucket
+          observed <- store.statObject bucket bundleObject
+          case observed of
+            Nothing -> failVerification "payload bundle does not exist"
+            Just meta
+              | meta.size /= descriptor.cell.bundle.bytes -> failVerification "payload bundle size differs from descriptor"
+              | otherwise -> LazyByteString.putStrLn (encode descriptor) >> pure ExitSuccess
   Fetch bucket identifier outDir -> case (validateBucket bucket, parseRunId identifier) of
     (Left problem, _) -> usage problem
     (_, Left problem) -> usage problem
@@ -630,6 +648,15 @@ parseResultsUri suffix = case Text.splitOn "/" suffix of
     parsed <- parseRunId identifier
     pure (checked, parsed)
   _ -> Left "expected gs://BUCKET/runs/CELL_RUN_ID"
+
+parsePayloadUri :: Text -> Either Text (Bucket, ObjectName)
+parsePayloadUri uri = case Text.stripPrefix "gs://" uri of
+  Nothing -> Left "payload bundle URI must use gs://"
+  Just suffix -> case Text.breakOn "/" suffix of
+    (bucketName, path) | not (Text.null path) -> do
+      bucket <- validateBucket bucketName
+      pure (bucket, ObjectName (Text.drop 1 path))
+    _ -> Left "payload bundle URI must name an object"
 
 validateBucket :: Text -> Either Text Bucket
 validateBucket bucket

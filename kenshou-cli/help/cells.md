@@ -9,7 +9,11 @@ Build and publish a payload descriptor:
 
 ```bash
 kenshou cell payload publish --cohort released --out payloads/released.json
+kenshou cell payload show payloads/released.json
 ```
+
+`payload show` validates the descriptor and checks that the bundle object
+exists with the recorded byte size before printing the descriptor as JSON.
 
 Inspect a cell and run a plan in one process:
 

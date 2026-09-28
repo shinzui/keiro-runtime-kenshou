@@ -73,7 +73,21 @@ main = hspec do
       runWithArgs ["cell", "run", "--help"] `shouldReturnCode` ExitSuccess
       runWithArgs ["cell", "resume", "--help"] `shouldReturnCode` ExitSuccess
       runWithArgs ["cell", "payload", "publish", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["cell", "payload", "show", "--help"] `shouldReturnCode` ExitSuccess
       runWithArgs ["help", "cells"] `shouldReturnCode` ExitSuccess
+
+    it "shows a payload only when its bundle exists at the recorded size" $
+      withSystemTempDirectory "kenshou-cell-payload" \root -> do
+        store <- newFileStore root
+        let descriptor = "../kenshou-remote/test/golden/payload.json"
+            bundle = ObjectName "payloads/sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.nar.zst"
+            showPayload = ["cell", "payload", "show", descriptor]
+        withCellStore root do
+          runWithArgs showPayload `shouldReturnCode` ExitFailure 1
+          _ <- store.putObject (Bucket "control") bundle "application/octet-stream" DoesNotExist "xx"
+          runWithArgs showPayload `shouldReturnCode` ExitFailure 1
+          _ <- store.putObject (Bucket "control") bundle "application/octet-stream" NoPrecondition "x"
+          runWithArgs showPayload `shouldReturnCode` ExitSuccess
 
     it "rejects malformed cell result identifiers and URIs" do
       runWithArgs ["cell", "fetch", "--results-bucket", "test-results", "not-a-run-id", "--out", "test-output"] `shouldReturnCode` ExitFailure 2
