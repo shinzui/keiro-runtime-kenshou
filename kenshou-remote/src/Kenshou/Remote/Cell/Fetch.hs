@@ -4,6 +4,7 @@ module Kenshou.Remote.Cell.Fetch
     fetchCellRun,
     verifyCellTree,
     verifyCellRun,
+    verifyCellRunWithStatus,
   )
 where
 
@@ -26,7 +27,7 @@ import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
 import Kenshou.Core.Id (RunId, renderRunId)
 import Kenshou.Core.Manifest (Manifest (..), ManifestFile (..), verifyManifest)
-import Kenshou.Remote.Cell.Docs (Artifact (..), CellManifest (..), CellRunResult (..), ManifestPayload (..), Submission (..), WorkObject (..))
+import Kenshou.Remote.Cell.Docs (Artifact (..), CellManifest (..), CellPhase (..), CellRunResult (..), CellStatus (..), ManifestPayload (..), Submission (..), WorkObject (..))
 import Kenshou.Remote.Payload (Bundle (..), CellPayload (..))
 import Kenshou.Remote.Store (Bucket, ObjectMeta (..), ObjectName (..), ObjectStore (..))
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, listDirectory, pathIsSymbolicLink, removeFile, renameFile)
@@ -44,6 +45,8 @@ data VerifyProblem
   | ManifestsDisagree !Text
   | NestedManifestProblem !Text
   | RunResultMismatch !Text
+  | StatusDigestMismatch
+  | StatusMismatch !Text
   deriving stock (Eq, Show)
 
 data FetchError
@@ -190,6 +193,21 @@ verifyCellRun tree = do
             [] -> Right manifest
             first : rest -> Left (first :| rest)
         _ -> pure (Left (firstProblems submission result))
+
+verifyCellRunWithStatus :: CellStatus -> FilePath -> IO (Either (NonEmpty VerifyProblem) CellManifest)
+verifyCellRunWithStatus status tree = do
+  verified <- verifyCellRun tree
+  case verified of
+    Left problems -> pure (Left problems)
+    Right manifest -> do
+      (digest, _) <- digestFile (tree </> "manifest.json")
+      let problems =
+            [StatusMismatch "status is not sealed or names another cell run" | status.phase /= Sealed || status.runId /= manifest.runId]
+              <> [StatusMismatch "status sequence or outcome differs from cell manifest" | status.leaseSequence /= Just manifest.leaseSequence || status.outcome /= Just manifest.outcome]
+              <> [StatusDigestMismatch | status.manifestSha256 /= Just digest]
+      pure case problems of
+        [] -> Right manifest
+        first : rest -> Left (first :| rest)
 
 readRequired :: (FromJSON document) => FilePath -> Map.Map Text Artifact -> Text -> IO (Either VerifyProblem document)
 readRequired tree byPath relative = case Map.lookup relative byPath of

@@ -9,8 +9,8 @@ import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
 import Kenshou.Core.Id (RunId, newRunId, renderRunId)
 import Kenshou.Core.Manifest (Manifest (..), ManifestFile (..))
-import Kenshou.Remote.Cell.Docs (Artifact (..), CellManifest (..), CellOutcome (..), CellRunResult (..), ManifestPayload (..), Submission (..), WorkObject (..))
-import Kenshou.Remote.Cell.Fetch (FetchError (..), VerifyProblem (..), fetchCellRun, verifyCellRun, verifyCellTree)
+import Kenshou.Remote.Cell.Docs (Artifact (..), CellManifest (..), CellOutcome (..), CellPhase (..), CellRunResult (..), CellStatus (..), LogChunks (..), ManifestPayload (..), Submission (..), WorkObject (..))
+import Kenshou.Remote.Cell.Fetch (FetchError (..), VerifyProblem (..), fetchCellRun, verifyCellRun, verifyCellRunWithStatus, verifyCellTree)
 import Kenshou.Remote.Cell.Submit (workObjectFor)
 import Kenshou.Remote.Payload (Bundle (..), CellPayload (..))
 import Kenshou.Remote.Store (Bucket (..), ObjectName (..), ObjectStore (..), Precondition (..))
@@ -93,6 +93,17 @@ spec = describe "sealed cell tree fetch" do
     result <- verifyCellRun tree
     result `shouldSatisfy` \case
       Left problems -> any isNestedManifestProblem problems
+      Right _ -> False
+
+  it "requires the final status to agree with the fetched seal" $ withSystemTempDirectory "kenshou-verify" \root -> do
+    (tree, manifest) <- completeTree root False False False
+    bytes <- LazyByteString.readFile (tree </> "manifest.json")
+    let sealed = CellStatus manifest.runId Sealed (Just manifest.leaseSequence) manifest.sealedAt Nothing (LogChunks 0 0) (Just manifest.outcome) (Just (digestOf bytes)) (Just [])
+    verifyCellRunWithStatus sealed tree `shouldReturn` Right manifest
+    let wrong = sealed {manifestSha256 = Just (Text.replicate 64 "f")}
+    result <- verifyCellRunWithStatus wrong tree
+    result `shouldSatisfy` \case
+      Left problems -> StatusDigestMismatch `elem` problems
       Right _ -> False
 
 publishFixture :: ObjectStore -> RunId -> IO CellManifest
