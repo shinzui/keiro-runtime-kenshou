@@ -303,6 +303,63 @@ main = hspec do
           runWithArgs command `shouldReturnCode` ExitFailure 2
           store.statObject control leaseObject `shouldReturn` Nothing
 
+    it "rebinds a submitted marker that a prior held lease never accepted" $
+      withSystemTempDirectory "kenshou-cell-resume-unaccepted" \root -> do
+        store <- newFileStore root
+        descriptorBytes <- LazyByteString.readFile "../kenshou-remote/test/golden/cell/cell.descriptor.v1.json"
+        observed <- either fail pure (Aeson.eitherDecode descriptorBytes :: Either String CellDescriptor)
+        template <- Aeson.eitherDecodeFileStrict' "../kenshou-remote/test/golden/cell-session.json" >>= either fail pure
+        let control = Bucket "control"
+            descriptor = observed {buckets = observed.buckets {control = "control"}}
+            outDir = root </> "session"
+            leaseObject = ObjectName "cells/alpha/lease.json"
+        _ <- store.putObject control (ObjectName "cells/alpha/descriptor.json") "application/json" DoesNotExist (Aeson.encode descriptor)
+        withCellStore root do
+          runWithArgs ["cell", "lease", "--cell", "alpha", "--control-bucket", "control", "--purpose", "old-session"] `shouldReturnCode` ExitSuccess
+          oldStored <- store.getObject control leaseObject
+          oldLease <- case oldStored of
+            Just (bytes, _) -> either fail pure (Aeson.eitherDecode bytes :: Either String Lease)
+            Nothing -> expectationFailure "old lease missing" >> error "unreachable"
+          fixtureSlice <- case (template :: SessionJournal).slices of
+            [entry] -> pure entry
+            _ -> expectationFailure "expected one fixture slice" >> error "unreachable"
+          let fixtureSubmission = fixtureSlice.submission
+              fixturePayload = fixtureSubmission.payload
+              fixtureBundle = fixturePayload.bundle
+              payload = fixturePayload {bundle = fixtureBundle {uri = "gs://control/payloads/sha256/" <> fixtureBundle.sha256 <> ".nar.zst"}}
+              oldSubmission = fixtureSubmission {leaseId = oldLease.leaseId, payload = payload, work = workObjectFor "application/json" "{}"}
+              oldSlice = fixtureSlice {submission = oldSubmission, state = SliceSubmitted}
+              journal = template {store = Text.pack ("file:" <> root), controlBucket = "control", resultsBucket = descriptor.buckets.results, leaseId = oldLease.leaseId, slices = [oldSlice]}
+              oldMarker = ObjectName ("cells/alpha/submissions/" <> renderRunId oldSlice.cellRun <> "/submission.json")
+              awaitRetry = do
+                objects <- store.listObjects control "cells/alpha/submissions/"
+                case find (\(name, _) -> name /= oldMarker && Text.isSuffixOf "/submission.json" name.unObjectName) objects of
+                  Nothing -> threadDelay 10000 >> awaitRetry
+                  Just (name, _) -> do
+                    stored <- store.getObject control name
+                    submission <- case stored of
+                      Just (bytes, _) -> either fail pure (Aeson.eitherDecode bytes :: Either String Submission)
+                      Nothing -> fail "retry marker disappeared"
+                    now <- getCurrentTime
+                    let rejected = ObjectName ("cells/alpha/submissions/" <> renderRunId submission.runId <> "/rejected.json")
+                    _ <- store.putObject control rejected "application/json" DoesNotExist (Aeson.encode (Rejected submission.runId "fixture-rejected" now))
+                    pure ()
+          createDirectoryIfMissing True (outDir </> "slice-0")
+          LazyByteString.writeFile (outDir </> "slice-0/work.json") "{}"
+          writeSessionJournal (outDir </> "session.json") journal
+          _ <- store.putObject control oldMarker "application/json" DoesNotExist (Aeson.encode oldSubmission)
+          runWithArgs ["cell", "release", "--cell", "alpha", "--control-bucket", "control", "--lease-id", Text.unpack (renderRunId oldLease.leaseId)] `shouldReturnCode` ExitSuccess
+          worker <- forkIO awaitRetry
+          ( do
+              result <- timeout 15000000 (runWithArgs ["cell", "resume", "--session", outDir])
+              result `shouldBe` Just (ExitFailure 4)
+              finished <- readSessionJournal (outDir </> "session.json") >>= either (fail . Text.unpack) pure
+              fmap (.state) finished.slices `shouldBe` [SliceRejected]
+              fmap (.cellRun) finished.slices `shouldSatisfy` (/= [oldSlice.cellRun])
+              store.statObject control leaseObject `shouldReturn` Nothing
+            )
+            `finally` killThread worker
+
     it "reads scenario history from a bundle" do
       runWithArgs ["history", "--bundle", "../docs/verification", "--scenario", "selftest/kernel/correctness/always-pass", "--json"] `shouldReturnCode` ExitSuccess
 

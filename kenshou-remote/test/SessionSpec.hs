@@ -16,11 +16,12 @@ import FetchSpec (completeTreeWithNested)
 import Kenshou.Core.Id (RunId, newRunId, renderRunId)
 import Kenshou.Remote.Cell.Docs (Artifact (..), CellManifest (..), CellOutcome (..), CellPhase (..), CellStatus (..), LogChunks (..), Rejected (..), Submission (..), WorkObject (..))
 import Kenshou.Remote.Cell.Index (CellManifestLink (..), CellRunIndex (..))
-import Kenshou.Remote.Cell.Lease (AcquireOutcome (..), CellRef (..), Lease (..), LeaseHandle, LeaseRequest (..), acquireLease, leaseSnapshot, requestCancel)
+import Kenshou.Remote.Cell.Lease (AcquireOutcome (..), CellRef (..), Lease (..), LeaseHandle, LeaseRequest (..), acquireLease, leaseSnapshot, releaseLease, requestCancel)
 import Kenshou.Remote.Cell.Session (SessionError (..), runSubmission)
 import Kenshou.Remote.Cell.Session qualified as Session
 import Kenshou.Remote.Cell.Session.Journal (LeaseMode (..), SessionJournal (..), SliceJournal (..), SliceState (..), applyTransition, readSessionJournal, writeSessionJournal)
 import Kenshou.Remote.Cell.Session.Rebind (RebindError (RemoteMarkerExists), rebindPlannedSlices)
+import Kenshou.Remote.Cell.Session.Rebind qualified as Rebind
 import Kenshou.Remote.Cell.Session.Resume (HeldResumeError (..), resumeHeldSession, resumeObservedSlices)
 import Kenshou.Remote.Cell.Session.Runner (SessionRunError (..), runPendingSlices, runPlannedSlices)
 import Kenshou.Remote.Cell.Submit (workObjectFor)
@@ -219,6 +220,46 @@ spec = describe "one leased cell submission" do
                   Left failure -> expectationFailure (show failure)
                   Right () -> pure ()
               _ -> expectationFailure "expected one rebound slice"
+
+  it "retries an unaccepted submitted slice only after a fresh lease fences it" $ withSystemTempDirectory "kenshou-session" \root -> do
+    store <- newFileStore root
+    old <- acquireLease store cellRef request >>= expectAcquired
+    submission <- fixtureFor old
+    nested <- newRunId
+    sessionId <- newRunId
+    now <- getCurrentTime
+    let sessionDir = root </> "out" </> Text.unpack (renderRunId sessionId)
+        journalPath = sessionDir </> "session.json"
+        slice = SliceJournal 0 submission.runId [0] [nested] submission.reset submission "slice-0/work.json" SliceSubmitted Nothing Nothing Nothing Nothing Nothing
+        journal = SessionJournal sessionId "alpha" "file" Nothing "control" "results" submission.leaseId Held Map.empty (Text.replicate 64 "a") [] [slice] now now
+        marker = ObjectName (submissionPrefix submission <> "submission.json")
+        status = ObjectName (submissionPrefix submission <> "status.json")
+        result = ObjectName ("runs/" <> renderRunId submission.runId <> "/cell/result.json")
+    createDirectoryIfMissing True (sessionDir </> "slice-0")
+    LazyByteString.writeFile (sessionDir </> slice.workPath) workBytes
+    writeSessionJournal journalPath journal
+    _ <- store.putObject cellRef.controlBucket marker "application/json" DoesNotExist (encode submission)
+    rebindPlannedSlices store cellRef old journalPath `shouldReturn` Left (Rebind.UnresolvedSlice submission.runId SliceSubmitted)
+    releaseLease store cellRef old `shouldReturn` True
+    fresh <- acquireLease store cellRef request >>= expectAcquired
+    _ <- store.putObject cellRef.controlBucket status "application/json" DoesNotExist "{}"
+    rebindPlannedSlices store cellRef fresh journalPath `shouldReturn` Left (Rebind.UnresolvedSlice submission.runId SliceSubmitted)
+    store.deleteObject cellRef.controlBucket status NoPrecondition `shouldReturn` True
+    _ <- store.putObject (Bucket "results") result "application/json" DoesNotExist "{}"
+    rebindPlannedSlices store cellRef fresh journalPath `shouldReturn` Left (Rebind.UnresolvedSlice submission.runId SliceSubmitted)
+    store.deleteObject (Bucket "results") result NoPrecondition `shouldReturn` True
+    rebound <- rebindPlannedSlices store cellRef fresh journalPath
+    updated <- case rebound of
+      Left failure -> expectationFailure (show failure) >> error "unreachable"
+      Right value -> pure value
+    fmap (.state) updated.slices `shouldBe` [SlicePlanned]
+    updated.leaseId `shouldNotBe` submission.leaseId
+    case updated.slices of
+      [reboundSlice] -> do
+        reboundSlice.cellRun `shouldNotBe` submission.runId
+        reboundSlice.submission.leaseId `shouldBe` updated.leaseId
+        store.statObject cellRef.controlBucket marker >>= (`shouldSatisfy` (maybe False (const True)))
+      _ -> expectationFailure "expected one rebound slice"
 
 publishSealedFixture :: ObjectStore -> FilePath -> Submission -> RunId -> IO ()
 publishSealedFixture store root submission nested = do
