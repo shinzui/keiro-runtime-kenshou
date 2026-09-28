@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/kenshou.cell-routing.v1.schema.json",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["when", "requires", "why"],
+    "additionalProperties": false,
+    "properties": {
+      "when": {
+        "oneOf": [
+          {"type": "object", "required": ["knob", "equals"], "additionalProperties": false,
+           "properties": {"knob": {"type": "string", "minLength": 3}, "equals": {"type": "string"}}},
+          {"type": "object", "required": ["scenario"], "additionalProperties": false,
+           "properties": {"scenario": {"type": "string", "minLength": 1}}}
+        ]
+      },
+      "requires": {"type": "string", "minLength": 1},
+      "why": {"type": "string", "minLength": 1}
+    }
+  }
+}

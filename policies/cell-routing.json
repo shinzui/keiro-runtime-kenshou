@@ -1,0 +1,7 @@
+[
+  {
+    "when": {"knob": "pgmq.queue-kind", "equals": "partitioned"},
+    "requires": "postgres.pg_partman",
+    "why": "Partitioned PGMQ queues require pg_partman on the cell PostgreSQL server."
+  }
+]

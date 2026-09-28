@@ -3,6 +3,7 @@ module Kenshou.Remote.Cell.Prepare
     RejectReason (..),
     PrepareOptions (..),
     Prepared (..),
+    Routed (..),
     PreparedRun (..),
     Slice (..),
     OtlpSink (..),
@@ -11,6 +12,7 @@ module Kenshou.Remote.Cell.Prepare
     slicePlan,
     submissionFor,
     prepareForCell,
+    routePlan,
   )
 where
 
@@ -35,6 +37,7 @@ import Kenshou.Core.Scenario (Placement (..), Scenario (..))
 import Kenshou.Plan.RunPlan (PlannedRun (..), RunPlan (..), TrialInfo (..))
 import Kenshou.Remote.Cell.Docs (BrokerReset (..), CachePolicy (..), CellDescriptor (..), CellImages (..), Limits (..), PgReset (..), Requirements (..), ResetBlock (..), Submission (..), WorkObject (..))
 import Kenshou.Remote.Cell.Lease (CellRef (..))
+import Kenshou.Remote.Cell.RouteRules (CellCapabilities (..), RoutingRule (..), capabilityKnown, descriptorDigest, matchingRules)
 import Kenshou.Remote.Payload (Bundle (..), CellPayload (..), PayloadDescriptor (..))
 import Kenshou.Remote.Store (Bucket (..))
 
@@ -53,6 +56,7 @@ data RejectReason
   | CollidingExtraPostgresName Text
   | RunIdMismatch
   | InvalidTimeout
+  | MissingCapability Text
   | UnsupportedDimensions Text
   deriving stock (Eq, Show)
 
@@ -67,6 +71,14 @@ data PrepareOptions = PrepareOptions
 data Prepared = Prepared
   { accepted :: ![PreparedRun],
     rejected :: ![(PlannedRun, RejectReason)],
+    warnings :: ![Text]
+  }
+  deriving stock (Eq, Show)
+
+data Routed = Routed
+  { perCell :: !(Map.Map Text RunPlan),
+    local :: !(Maybe RunPlan),
+    unroutable :: ![(PlannedRun, RejectReason)],
     warnings :: ![Text]
   }
   deriving stock (Eq, Show)
@@ -109,14 +121,17 @@ data SubmissionInputs = SubmissionInputs
 
 -- Preflight a plan before it is sliced. Nothing is dropped silently: every
 -- rejected entry remains paired with its original run identity.
-prepareForCell :: Registry -> CellDescriptor -> Map.Map Text PayloadDescriptor -> PrepareOptions -> RunPlan -> Prepared
-prepareForCell registry descriptor payloads options plan =
+prepareForCell :: Registry -> CellDescriptor -> Maybe CellCapabilities -> [RoutingRule] -> Map.Map Text PayloadDescriptor -> PrepareOptions -> RunPlan -> Prepared
+prepareForCell registry descriptor cachedCapabilities routingRules payloads options plan =
   Prepared
     [prepared | Right (prepared, _) <- results]
     [(entry, reason) | (entry, Left reason) <- zip plan.runs results]
     (concat [notices | Right (_, notices) <- results])
   where
     results = fmap prepare plan.runs
+    activeCapabilities = case cachedCapabilities of
+      Just cache | cache.cell == descriptor.name && cache.descriptorSha256 == descriptorDigest descriptor -> Just cache
+      _ -> Nothing
     profile =
       "gcp/"
         <> descriptor.zone
@@ -140,6 +155,11 @@ prepareForCell registry descriptor payloads options plan =
         Just name | not driverLocal -> Left (NeedsServerControl name)
         _ -> pure ()
       if requirements.kafka && Text.null descriptor.images.broker then Left NeedsBrokerButCellHasNone else pure ()
+      let rules = matchingRules routingRules entry.spec
+          denied = find (\rule -> maybe False (\cache -> capabilityKnown cache rule.requires == Just False) activeCapabilities) rules
+      case denied of
+        Just rule -> Left (MissingCapability rule.requires)
+        Nothing -> pure ()
       let originalSpec = entry.spec
           dimensions =
             if options.coerceDurable && not driverLocal && controlled == Nothing && (requirements.postgres /= Nothing || not (null requirements.extraPostgres))
@@ -175,7 +195,9 @@ prepareForCell registry descriptor payloads options plan =
           spec = RunSpec (Just entry.runId) originalSpec.scenario originalSpec.scenarioRevision originalSpec.knobs dimensions originalSpec.seed originalSpec.phases originalSpec.timeoutSeconds env (Just expectation) originalSpec.comparison labels
           reset = ResetBlock options.cachePolicy (if Map.null settings then Nothing else Just (PgReset descriptor.postgresMajor [] settings)) (if requirements.kafka then Just (BrokerReset True) else Nothing)
           timeout = fromMaybe (max 60 (entry.estimateMinutes * 60)) originalSpec.timeoutSeconds
-          notices = ["coerced pg.durability=durable for " <> renderRunId entry.runId | dimensions /= originalSpec.dimensions]
+          notices =
+            ["coerced pg.durability=durable for " <> renderRunId entry.runId | dimensions /= originalSpec.dimensions]
+              <> ["capability " <> rule.requires <> " is unprobed for " <> renderRunId entry.runId <> "; run kenshou cell probe" | rule <- rules, maybe True (\cache -> capabilityKnown cache rule.requires == Nothing) activeCapabilities]
       if timeout <= 0 then Left InvalidTimeout else Right (PreparedRun entry.ordinal entry.runId spec label reset timeout, notices)
 
     combinedSettings scenario spec = foldl add (Right Map.empty) sources
@@ -193,6 +215,37 @@ prepareForCell registry descriptor payloads options plan =
 
 variableName :: Text -> Text
 variableName = Text.map (\character -> if character == '-' then '_' else character) . Text.toUpper
+
+-- Prefer the caller's cell order. A rejected run is either retained for local
+-- execution or named as unroutable; its original identity never disappears.
+routePlan :: Registry -> NonEmpty (CellDescriptor, Maybe CellCapabilities) -> [RoutingRule] -> Map.Map Text PayloadDescriptor -> PrepareOptions -> RunPlan -> Routed
+routePlan registry cells routingRules payloads options plan =
+  Routed (Map.map makePlan assigned) (if null localRuns then Nothing else Just (makePlan localRuns)) rejectedRuns notices
+  where
+    choices = fmap routeEntry plan.runs
+    assigned = foldl addCell Map.empty [(name, selected) | Right (name, selected, _) <- choices]
+    localRuns = [entry | Left (entry, reason) <- choices, localReason reason]
+    rejectedRuns = [(entry, reason) | Left (entry, reason) <- choices, not (localReason reason)]
+    notices = concat [messages | Right (_, _, messages) <- choices]
+
+    routeEntry entry = choose (NonEmpty.toList cells) Nothing
+      where
+        choose [] firstFailure = Left (entry, fromMaybe UnknownScenario firstFailure)
+        choose ((descriptor, capabilities) : rest) firstFailure =
+          let one = RunPlan plan.planId plan.createdAt plan.context plan.policy [entry] [] entry.estimateMinutes
+              prepared = prepareForCell registry descriptor capabilities routingRules payloads options one
+           in case prepared.accepted of
+                [accepted] -> Right (descriptor.name, preparedEntry accepted, prepared.warnings)
+                _ -> case prepared.rejected of
+                  [(_, reason)] -> choose rest (Just (fromMaybe reason firstFailure))
+                  _ -> choose rest (Just (fromMaybe UnknownScenario firstFailure))
+        preparedEntry accepted = PlannedRun entry.ordinal entry.runId entry.estimateMinutes entry.reasons entry.trial accepted.spec
+
+    addCell grouped (name, entry) = Map.insertWith (flip (<>)) name [entry] grouped
+    makePlan entries = RunPlan plan.planId plan.createdAt plan.context plan.policy entries plan.skipped (sum (fmap (.estimateMinutes) entries))
+    localReason PlacementLocalOnly = True
+    localReason (NeedsServerControl _) = True
+    localReason _ = False
 
 sliceRuns :: Granularity -> [PreparedRun] -> Either Text [Slice]
 sliceRuns granularity prepared = do
