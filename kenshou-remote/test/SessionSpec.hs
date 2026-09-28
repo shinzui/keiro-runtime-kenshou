@@ -20,8 +20,9 @@ import Kenshou.Remote.Cell.Lease (AcquireOutcome (..), CellRef (..), Lease (..),
 import Kenshou.Remote.Cell.Session (SessionError (..), runSubmission)
 import Kenshou.Remote.Cell.Session qualified as Session
 import Kenshou.Remote.Cell.Session.Journal (LeaseMode (..), SessionJournal (..), SliceJournal (..), SliceState (..), applyTransition, readSessionJournal, writeSessionJournal)
+import Kenshou.Remote.Cell.Session.Rebind (RebindError (RemoteMarkerExists), rebindPlannedSlices)
 import Kenshou.Remote.Cell.Session.Resume (resumeObservedSlices)
-import Kenshou.Remote.Cell.Session.Runner (SessionRunError (..), runPlannedSlices)
+import Kenshou.Remote.Cell.Session.Runner (SessionRunError (..), runPendingSlices, runPlannedSlices)
 import Kenshou.Remote.Cell.Submit (workObjectFor)
 import Kenshou.Remote.Payload (Bundle (..), CellPayload (..))
 import Kenshou.Remote.Store (Bucket (..), ObjectName (..), ObjectStore (..), Precondition (..))
@@ -160,6 +161,7 @@ spec = describe "one leased cell submission" do
                         ]
                     }
             writeSessionJournal journalPath interrupted
+            runPendingSlices store cellRef (Bucket "results") handle journalPath (const (pure ())) `shouldReturn` Left (UnresolvedSlice firstSlice.cellRun SliceSealed)
             resumed <- resumeObservedSlices store cellRef (Bucket "results") journalPath (const (pure ()))
             recovered <- case resumed of
               Left failure -> expectationFailure (show failure) >> error "unreachable"
@@ -173,8 +175,48 @@ spec = describe "one leased cell submission" do
                 case fetchedAgain of
                   Left failure -> expectationFailure (show failure)
                   Right value -> fmap (.state) value.slices `shouldBe` [SliceVerified, SliceVerified]
+                let oldMarker = secondRecovered {state = SlicePlanned, cellOutcome = Nothing, entryExitCode = Nothing, manifestSha256 = Nothing, fetchedPath = Nothing}
+                writeSessionJournal journalPath (recovered {slices = [firstRecovered, oldMarker]})
+                rebindPlannedSlices store cellRef handle journalPath `shouldReturn` Left (RemoteMarkerExists secondRecovered.cellRun)
               _ -> expectationFailure "expected two recovered slices"
           _ -> expectationFailure "expected two journal slices"
+        fresh <- fixtureFor handle
+        freshNested <- newRunId
+        freshSessionId <- newRunId
+        at <- getCurrentTime
+        let freshDir = root </> "out" </> Text.unpack (renderRunId freshSessionId)
+            freshPath = freshDir </> "session.json"
+            freshSlice = SliceJournal 0 fresh.runId [0] [freshNested] fresh.reset fresh "slice-0/work.json" SlicePlanned Nothing Nothing Nothing Nothing Nothing
+            freshJournal = SessionJournal freshSessionId "alpha" "file" Nothing "control" "results" fresh.leaseId Held Map.empty (Text.replicate 64 "a") [] [freshSlice] at at
+        writeSessionJournal freshPath freshJournal
+        rebound <- rebindPlannedSlices store cellRef handle freshPath
+        case rebound of
+          Left failure -> expectationFailure (show failure)
+          Right updated -> do
+            updated.leaseId `shouldBe` fresh.leaseId
+            fmap (.state) updated.slices `shouldBe` [SlicePlanned]
+            fmap (.cellRun) updated.slices `shouldNotBe` [fresh.runId]
+            readSessionJournal freshPath `shouldReturn` Right updated
+            case updated.slices of
+              [pendingSlice] -> do
+                createDirectoryIfMissing True (freshDir </> "slice-0")
+                LazyByteString.writeFile (freshDir </> pendingSlice.workPath) workBytes
+                pendingWorker <- newEmptyMVar
+                _ <- forkIO do
+                  completed <- try (publishSealedFixture store root pendingSlice.submission freshNested) :: IO (Either SomeException ())
+                  putMVar pendingWorker completed
+                continued <- timeout 10000000 (runPendingSlices store cellRef (Bucket "results") handle freshPath (const (pure ())))
+                case continued of
+                  Nothing -> expectationFailure "rebound slice did not finish within ten seconds"
+                  Just (Left failure) -> expectationFailure (show failure)
+                  Just (Right finalJournal) -> do
+                    fmap (.state) finalJournal.slices `shouldBe` [SliceVerified]
+                    readSessionJournal freshPath `shouldReturn` Right finalJournal
+                pendingOutcome <- takeMVar pendingWorker
+                case pendingOutcome of
+                  Left failure -> expectationFailure (show failure)
+                  Right () -> pure ()
+              _ -> expectationFailure "expected one rebound slice"
 
 publishSealedFixture :: ObjectStore -> FilePath -> Submission -> RunId -> IO ()
 publishSealedFixture store root submission nested = do
