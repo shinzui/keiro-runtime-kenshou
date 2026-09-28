@@ -14,11 +14,12 @@ import Data.Time (getCurrentTime)
 import Kenshou.Cli (runWithArgs)
 import Kenshou.Cli.Attest (FencingFacts (..), fencingFacts)
 import Kenshou.Cli.Version (appVersionWithGit)
-import Kenshou.Core.Id (renderRunId)
+import Kenshou.Core.Id (newRunId, renderRunId)
 import Kenshou.Core.Manifest (Manifest (..), ManifestFile (..))
 import Kenshou.Core.Outcome qualified as Outcome
 import Kenshou.Remote.Cell.Docs (Artifact (..), CellBuckets (..), CellDescriptor (..), CellManifest (..), CellOutcome (..), CellPhase (..), CellRunResult (..), CellStatus (..), Limits (..), LogChunks (..), ManifestPayload (..), Rejected (..), Submission (..), WorkObject (..))
 import Kenshou.Remote.Cell.Lease (Lease (..))
+import Kenshou.Remote.Cell.RouteRules (descriptorDigest)
 import Kenshou.Remote.Cell.Session.Journal (LeaseMode (..), SessionJournal (..), SliceJournal (..), SliceState (..), readSessionJournal, writeSessionJournal)
 import Kenshou.Remote.Cell.Submit (workObjectFor)
 import Kenshou.Remote.Payload (Bundle (..), CellPayload (..))
@@ -72,6 +73,7 @@ main = hspec do
       runWithArgs ["cell", "run", "--help"] `shouldReturnCode` ExitSuccess
       runWithArgs ["cell", "resume", "--help"] `shouldReturnCode` ExitSuccess
       runWithArgs ["cell", "payload", "publish", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["help", "cells"] `shouldReturnCode` ExitSuccess
 
     it "rejects malformed cell result identifiers and URIs" do
       runWithArgs ["cell", "fetch", "--results-bucket", "test-results", "not-a-run-id", "--out", "test-output"] `shouldReturnCode` ExitFailure 2
@@ -123,6 +125,31 @@ main = hspec do
           runWithArgs (common <> ["--out", outDir, "--coerce-durable"]) `shouldReturnCode` ExitFailure 2
           runWithArgs (common <> ["--out", root </> "refused"]) `shouldReturnCode` ExitFailure 2
           doesFileExist (root </> "refused" </> "unroutable.json") `shouldReturn` True
+
+    it "uses a matching capability cache and ignores one from an old descriptor" $
+      withSystemTempDirectory "kenshou-cell-capability-route" \root -> do
+        store <- newFileStore root
+        descriptorBytes <- LazyByteString.readFile "../kenshou-remote/test/golden/cell/cell.descriptor.v1.json"
+        descriptor <- either fail pure (Aeson.eitherDecode descriptorBytes :: Either String CellDescriptor)
+        probeId <- newRunId
+        now <- getCurrentTime
+        let control = Bucket "tan-nb-exp-cells-control"
+            directory = root </> "capabilities"
+            rulesPath = root </> "rules.json"
+            cachePath = directory </> "alpha.capabilities.json"
+            command outDir = ["cell", "route", "--cell", "alpha", "--control-bucket", "tan-nb-exp-cells-control", "--plan", "../kenshou-core/test/golden/run-plan.minimal.json", "--routing-rules", rulesPath, "--out", outDir, "--coerce-durable"]
+            cache digest = object ["schema" .= ("kenshou.cell-capabilities/v1" :: Text), "cell" .= ("alpha" :: Text), "descriptorSha256" .= digest, "probedBy" .= renderRunId probeId, "probedAt" .= now, "capabilities" .= object ["postgres.pg_partman" .= False]]
+            rule = object ["when" .= object ["scenario" .= ("selftest/kernel/**" :: Text)], "requires" .= ("postgres.pg_partman" :: Text), "why" .= ("requires extension" :: Text)]
+        createDirectoryIfMissing True directory
+        LazyByteString.writeFile rulesPath (Aeson.encode [rule])
+        _ <- store.putObject control (ObjectName "cells/alpha/descriptor.json") "application/json" DoesNotExist descriptorBytes
+        withCellStore root $ withCapabilityDir directory do
+          LazyByteString.writeFile cachePath (Aeson.encode (cache (descriptorDigest descriptor)))
+          runWithArgs (command (root </> "denied")) `shouldReturnCode` ExitFailure 2
+          doesFileExist (root </> "denied" </> "plan.alpha.json") `shouldReturn` False
+          LazyByteString.writeFile cachePath (Aeson.encode (cache (Text.replicate 64 "0")))
+          runWithArgs (command (root </> "unprobed")) `shouldReturnCode` ExitSuccess
+          doesFileExist (root </> "unprobed" </> "plan.alpha.json") `shouldReturn` True
 
     it "prepares a dry-run submission under an existing file-backed lease" $
       withSystemTempDirectory "kenshou-cell-submit" \root -> do
@@ -431,3 +458,11 @@ withCellStore root operation = bracket (lookupEnv "KENSHOU_CELL_STORE") (restore
   where
     restore name Nothing = unsetEnv name
     restore name (Just prior) = setEnv name prior
+
+withCapabilityDir :: FilePath -> IO value -> IO value
+withCapabilityDir directory operation = bracket (lookupEnv "KENSHOU_CELL_CAPABILITIES_DIR") restore \_ -> do
+  setEnv "KENSHOU_CELL_CAPABILITIES_DIR" directory
+  operation
+  where
+    restore Nothing = unsetEnv "KENSHOU_CELL_CAPABILITIES_DIR"
+    restore (Just prior) = setEnv "KENSHOU_CELL_CAPABILITIES_DIR" prior

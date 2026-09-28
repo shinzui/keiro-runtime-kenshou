@@ -171,6 +171,11 @@ provenance:
       at: 2026-09-27T16:28:26Z
       mode: "implement"
       note: "Recorded grouped owner-defect integration for the Kafka rebalance scenario."
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-28T17:54:48Z
+      mode: "implement"
+      note: "Recorded EP-17 payload and capability-cache progress."
 ---
 
 # Build an extensive verification suite for the keiro runtime
@@ -359,6 +364,14 @@ The following cross-plan decisions should become ADRs in `docs/adr/` when the ow
 
 
 ## Progress
+
+EP-17 now has checked Nix identities for both cohorts, a visible payload
+publisher, and a capability cache consumed by cell routing and submission.
+The head identity gate passes; the remote and CLI suites pass 90 and 29
+examples. The native released payload builds and runs with a Git-aware
+version and an enforced GHC-free runtime closure. EP-17 pins the two
+published dependencies missing from the shared channel locally. A clean
+Linux build, bundle export, and real-cell acceptance remain open.
 
 EP-11 now preserves both owner references for the Kafka rebalance scenario:
 BUG-4 covers premature adapter exits and BUG-6 covers within-assignment

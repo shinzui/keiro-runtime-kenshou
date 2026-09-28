@@ -24,7 +24,7 @@ import Kenshou.Remote.Cell.Index (deriveCellRunIndex, writeCellRunIndex)
 import Kenshou.Remote.Cell.Lease (AcquireOutcome (..), CellRef (..), Lease (..), LeaseHandle, LeaseRequest (..), Quarantine (..), acquireLease, leaseSnapshot, reattachLease, releaseLease, resizeLease, validCellName, withHeartbeat)
 import Kenshou.Remote.Cell.Prepare (Granularity (..), OtlpSink (..), PrepareOptions (..))
 import Kenshou.Remote.Cell.RouteJson (RouteDocuments (..), routeWorkJson)
-import Kenshou.Remote.Cell.RouteRules (defaultRoutingRules)
+import Kenshou.Remote.Cell.RouteRules (CellCapabilities, defaultRoutingRules, loadCellCapabilities)
 import Kenshou.Remote.Cell.Session (SessionTransition (..))
 import Kenshou.Remote.Cell.Session.Build (BuildOptions (..), BuiltSession (..), buildSession)
 import Kenshou.Remote.Cell.Session.Journal (LeaseMode (..), SessionJournal (..), SliceJournal (..), SliceState (..), applyTransition, readSessionJournal, writeSessionJournal)
@@ -334,17 +334,21 @@ runCell selected cli = case selected of
           case sequence remaining of
             Left problem -> unavailable problem
             Right snapshots -> do
+              let descriptors = observed.descriptor : fmap (.descriptor) snapshots
+              capabilityResult <- loadCapabilitiesFor descriptors
               planResult <- readJsonDocument planFile
               rulesResult <- maybe (pure (Right defaultRoutingRules)) readJsonDocument rulesFile
               payloadResult <- traverse eitherDecodeFileStrict' payloadFile
-              case (planResult, rulesResult, sequence payloadResult) of
-                (Left failure, _, _) -> usage (Text.pack failure)
-                (_, Left failure, _) -> usage (Text.pack failure)
-                (_, _, Left failure) -> usage (Text.pack failure)
-                (Right plan, Right rules, Right payload) ->
-                  case routeWorkJson cli.registry ((observed.descriptor, Nothing) :| fmap (\snapshot -> (snapshot.descriptor, Nothing)) snapshots) rules (Map.singleton "default" <$> payload) (PrepareOptions coerce ephemeral [] Cold) plan of
-                    Left problem -> usage problem
-                    Right documents -> guardIO do
+              case (capabilityResult, planResult, rulesResult, sequence payloadResult) of
+                (Left problem, _, _, _) -> usage problem
+                (_, Left failure, _, _) -> usage (Text.pack failure)
+                (_, _, Left failure, _) -> usage (Text.pack failure)
+                (_, _, _, Left failure) -> usage (Text.pack failure)
+                (Right caches, Right plan, Right rules, Right payload) ->
+                  case NonEmpty.nonEmpty (zip descriptors caches) >>= \cells -> Just (routeWorkJson cli.registry cells rules (Map.singleton "default" <$> payload) (PrepareOptions coerce ephemeral [] Cold) plan) of
+                    Nothing -> usage "at least one cell is required"
+                    Just (Left problem) -> usage problem
+                    Just (Right documents) -> guardIO do
                       exists <- doesPathExist outDir
                       if exists
                         then usage "route output path already exists; choose a new directory"
@@ -371,62 +375,67 @@ runCell selected cli = case selected of
                 (Left problem, _) -> usage problem
                 (_, Left failure) -> usage (Text.pack failure)
                 (Right payloads, Right rules) -> do
-                  bytes <- if planFile == "-" then LazyByteString.getContents else LazyByteString.readFile planFile
-                  selectedStore <- lookupEnv "KENSHOU_CELL_STORE"
-                  let options = BuildOptions (PrepareOptions coerce ephemeral settings cache) granularity skip sink rts (24 * 1024 * 1024 * 1024) (20 * 1024 * 1024 * 1024) "0.1.0"
-                      storeLabel = Text.pack (fromMaybe "gs://" selectedStore)
-                  built <- buildSession cli.registry observed.descriptor Nothing rules payloads options storeLabel leaseId bytes
-                  case built of
+                  capabilityResult <- loadCapabilitiesFor [observed.descriptor]
+                  case capabilityResult of
                     Left problem -> usage problem
-                    Right session
-                      | dryRun -> LazyByteString.putStrLn (encode session.journal) >> pure ExitSuccess
-                      | detached && length session.journal.slices /= 1 -> usage "detached sessions require exactly one slice; use --granularity plan for a compatible plan"
-                      | otherwise -> guardIO do
-                          exists <- doesPathExist outDir
-                          if exists
-                            then usage "session output path already exists; choose a new directory"
-                            else do
-                              if detached
-                                then do
-                                  slice <- singleSlice session.journal
-                                  let budget = toInteger slice.submission.limits.wallClockSeconds + 600
-                                  if budget > toInteger (maxBound :: Int)
-                                    then ioError (userError "detached lease budget exceeds supported TTL")
-                                    else do
-                                      lease <- leaseSnapshot active
-                                      enlarged <- resizeLease store ref active (max lease.ttlSeconds (fromInteger budget))
-                                      if enlarged then pure () else ioError (userError "cell lease changed before detached submission")
-                                else pure ()
-                              traverse_
-                                ( \(relative, content) -> do
-                                    let destination = outDir </> relative
-                                    createDirectoryIfMissing True (takeDirectory destination)
-                                    LazyByteString.writeFile destination content
-                                )
-                                session.workFiles
-                              if detached
-                                then do
-                                  slice <- singleSlice session.journal
-                                  let journal = session.journal {leaseMode = Detached}
-                                      journalPath = outDir </> "session.json"
-                                  writeSessionJournal journalPath journal
-                                  work <- LazyByteString.readFile (outDir </> slice.workPath)
-                                  published <- publishSubmission store ref active slice.submission work
-                                  case published of
-                                    Submitted -> do
-                                      now <- getCurrentTime
-                                      checkpoint <- either (ioError . userError . Text.unpack) pure (applyTransition now slice.cellRun SubmissionPublished journal)
-                                      writeSessionJournal journalPath checkpoint
-                                      TextIO.hPutStrLn stderr ("detached session " <> renderRunId checkpoint.sessionId <> " submitted; collect with cell resume --session " <> Text.pack outDir)
-                                      pure ExitSuccess
-                                    other -> unavailable ("detached submission failed: " <> Text.pack (show other))
+                    Right [cachedCapabilities] -> do
+                      bytes <- if planFile == "-" then LazyByteString.getContents else LazyByteString.readFile planFile
+                      selectedStore <- lookupEnv "KENSHOU_CELL_STORE"
+                      let options = BuildOptions (PrepareOptions coerce ephemeral settings cache) granularity skip sink rts (24 * 1024 * 1024 * 1024) (20 * 1024 * 1024 * 1024) "0.1.0"
+                          storeLabel = Text.pack (fromMaybe "gs://" selectedStore)
+                      built <- buildSession cli.registry observed.descriptor cachedCapabilities rules payloads options storeLabel leaseId bytes
+                      case built of
+                        Left problem -> usage problem
+                        Right session
+                          | dryRun -> LazyByteString.putStrLn (encode session.journal) >> pure ExitSuccess
+                          | detached && length session.journal.slices /= 1 -> usage "detached sessions require exactly one slice; use --granularity plan for a compatible plan"
+                          | otherwise -> guardIO do
+                              exists <- doesPathExist outDir
+                              if exists
+                                then usage "session output path already exists; choose a new directory"
                                 else do
-                                  result <- runPlannedSlices store ref (Bucket observed.descriptor.buckets.results) active (outDir </> "session.json") session.journal emitWatchEvent
-                                  case result of
-                                    Left failure -> unavailable (Text.pack (show failure))
-                                    Right finished -> do
-                                      TextIO.hPutStrLn stderr ("session " <> renderRunId finished.sessionId <> " verified; journal " <> Text.pack (outDir </> "session.json"))
-                                      pure (sessionExitCode finished)
+                                  if detached
+                                    then do
+                                      slice <- singleSlice session.journal
+                                      let budget = toInteger slice.submission.limits.wallClockSeconds + 600
+                                      if budget > toInteger (maxBound :: Int)
+                                        then ioError (userError "detached lease budget exceeds supported TTL")
+                                        else do
+                                          lease <- leaseSnapshot active
+                                          enlarged <- resizeLease store ref active (max lease.ttlSeconds (fromInteger budget))
+                                          if enlarged then pure () else ioError (userError "cell lease changed before detached submission")
+                                    else pure ()
+                                  traverse_
+                                    ( \(relative, content) -> do
+                                        let destination = outDir </> relative
+                                        createDirectoryIfMissing True (takeDirectory destination)
+                                        LazyByteString.writeFile destination content
+                                    )
+                                    session.workFiles
+                                  if detached
+                                    then do
+                                      slice <- singleSlice session.journal
+                                      let journal = session.journal {leaseMode = Detached}
+                                          journalPath = outDir </> "session.json"
+                                      writeSessionJournal journalPath journal
+                                      work <- LazyByteString.readFile (outDir </> slice.workPath)
+                                      published <- publishSubmission store ref active slice.submission work
+                                      case published of
+                                        Submitted -> do
+                                          now <- getCurrentTime
+                                          checkpoint <- either (ioError . userError . Text.unpack) pure (applyTransition now slice.cellRun SubmissionPublished journal)
+                                          writeSessionJournal journalPath checkpoint
+                                          TextIO.hPutStrLn stderr ("detached session " <> renderRunId checkpoint.sessionId <> " submitted; collect with cell resume --session " <> Text.pack outDir)
+                                          pure ExitSuccess
+                                        other -> unavailable ("detached submission failed: " <> Text.pack (show other))
+                                    else do
+                                      result <- runPlannedSlices store ref (Bucket observed.descriptor.buckets.results) active (outDir </> "session.json") session.journal emitWatchEvent
+                                      case result of
+                                        Left failure -> unavailable (Text.pack (show failure))
+                                        Right finished -> do
+                                          TextIO.hPutStrLn stderr ("session " <> renderRunId finished.sessionId <> " verified; journal " <> Text.pack (outDir </> "session.json"))
+                                          pure (sessionExitCode finished)
+                    Right _ -> unavailable "cell capability cache count differs from descriptor count"
   Run (RunCli location settings ttl waitSeconds detached)
     | ttl <= 0 || waitSeconds < 0 -> usage "lease TTL must be positive and wait cannot be negative"
     | otherwise -> withControl location \store ref _ -> do
@@ -560,6 +569,11 @@ loadPayloads paths = do
     readPayload label path = do
       result <- eitherDecodeFileStrict' path
       pure (either (Left . Text.pack) (\descriptor -> Right (label, descriptor)) result)
+
+loadCapabilitiesFor :: [CellDescriptor] -> IO (Either Text [Maybe CellCapabilities])
+loadCapabilitiesFor descriptors = do
+  directory <- fromMaybe ".dev/cells" <$> lookupEnv "KENSHOU_CELL_CAPABILITIES_DIR"
+  sequence <$> traverse (loadCellCapabilities directory) descriptors
 
 readJsonDocument :: (FromJSON value) => FilePath -> IO (Either String value)
 readJsonDocument "-" = eitherDecode <$> LazyByteString.getContents

@@ -22,7 +22,8 @@ topics =
     HelpTopic "exit-codes" "Stable process exit codes" (Text.pack $(embedStringFile "help/exit-codes.md")),
     HelpTopic "comparisons" "Paired benchmark comparisons" (Text.pack $(embedStringFile "help/comparisons.md")),
     HelpTopic "diagnostics" "Leak, stall, and profiling diagnosis" (Text.pack $(embedStringFile "help/diagnostics.md")),
-    HelpTopic "evidence" "Durable run records and data links" (Text.pack $(embedStringFile "help/evidence.md"))
+    HelpTopic "evidence" "Durable run records and data links" (Text.pack $(embedStringFile "help/evidence.md")),
+    HelpTopic "cells" "Leased cell execution and result verification" (Text.pack $(embedStringFile "help/cells.md"))
   ]
 
 data HelpOptions = HelpOptions {topic :: Maybe Text, width :: Maybe Int}

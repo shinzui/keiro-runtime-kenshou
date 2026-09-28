@@ -28,13 +28,15 @@ import Kenshou.Remote.Cell.Docs (CachePolicy (..), CellBuckets (..), CellDescrip
 import Kenshou.Remote.Cell.Lease (CellRef (..))
 import Kenshou.Remote.Cell.Prepare (Granularity (..), OtlpSink (..), PrepareOptions (..), Prepared (..), PreparedRun (..), RejectReason (..), Routed (..), Slice (..), SubmissionInputs (..), prepareForCell, routePlan, slicePlan, sliceRuns, submissionFor)
 import Kenshou.Remote.Cell.RouteJson (RouteDocuments (..), routeWorkJson)
-import Kenshou.Remote.Cell.RouteRules (CellCapabilities (..), RoutingRule (..), RuleCondition (..), defaultRoutingRules, descriptorDigest, matchingRules)
+import Kenshou.Remote.Cell.RouteRules (CellCapabilities (..), RoutingRule (..), RuleCondition (..), defaultRoutingRules, descriptorDigest, loadCellCapabilities, matchingRules)
 import Kenshou.Remote.Cell.Session.Build (BuildOptions (..), BuiltSession (..), buildSession)
 import Kenshou.Remote.Cell.Session.Journal (SessionJournal (..), SliceJournal (..))
 import Kenshou.Remote.Cell.Submit (workObjectFor)
 import Kenshou.Remote.Cell.WorkJson (decodeWorkPlan, renderPreparedWork)
 import Kenshou.Remote.Payload (Bundle (..), CellPayload (..), PayloadDescriptor (..))
 import Kenshou.Remote.Store (Bucket (..))
+import System.FilePath ((</>))
+import System.IO.Temp (withSystemTempDirectory)
 import Test.Hspec
 
 spec :: Spec
@@ -217,6 +219,20 @@ spec = describe "cell run slicing" do
   it "round-trips a probed capability cache" do
     cache <- eitherDecodeFileStrict' "test/golden/cell-capabilities.json" >>= either fail pure
     eitherDecode (encode cache) `shouldBe` Right (cache :: CellCapabilities)
+
+  it "loads only a valid cache for the current cell descriptor" $
+    withSystemTempDirectory "kenshou-capabilities" \directory -> do
+      (plan, descriptor, _) <- preparationFixture
+      now <- getCurrentTime
+      let path = directory </> Text.unpack descriptor.name <> ".capabilities.json"
+          cache = CellCapabilities descriptor.name (descriptorDigest descriptor) plan.planId now (Map.singleton "postgres.pg_partman" (Bool False))
+      loadCellCapabilities directory descriptor `shouldReturn` Right Nothing
+      LazyByteString.writeFile path (encode cache)
+      loadCellCapabilities directory descriptor `shouldReturn` Right (Just cache)
+      loadCellCapabilities directory (descriptor {postgresMajor = 17}) `shouldReturn` Right Nothing
+      LazyByteString.writeFile path "invalid JSON"
+      malformed <- loadCellCapabilities directory descriptor
+      malformed `shouldSatisfy` isLeft
 
   it "shares adjacent correctness resets and isolates benchmark and soak runs" do
     first <- prepared 0 Correctness "default" cold

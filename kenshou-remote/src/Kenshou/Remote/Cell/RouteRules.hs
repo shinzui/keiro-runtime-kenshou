@@ -6,10 +6,11 @@ module Kenshou.Remote.Cell.RouteRules
     matchingRules,
     capabilityKnown,
     descriptorDigest,
+    loadCellCapabilities,
   )
 where
 
-import Data.Aeson (FromJSON (..), ToJSON (..), Value (..), encode, object, withObject, (.:), (.=))
+import Data.Aeson (FromJSON (..), ToJSON (..), Value (..), eitherDecodeFileStrict', encode, object, withObject, (.:), (.=))
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.Map.Strict (Map)
@@ -22,7 +23,9 @@ import Kenshou.Core.Id (RunId)
 import Kenshou.Core.Knob (RawKnob (..), mkKnobName)
 import Kenshou.Core.RunSpec (RunSpec (..))
 import Kenshou.Plan.Selector (Selector, matches, parseSelector)
-import Kenshou.Remote.Cell.Docs (CellDescriptor)
+import Kenshou.Remote.Cell.Docs (CellDescriptor (..))
+import System.Directory (doesFileExist)
+import System.FilePath ((</>))
 
 data CellCapabilities = CellCapabilities
   { cell :: !Text,
@@ -108,3 +111,19 @@ capabilityKnown cache name = case Map.lookup name cache.capabilities of
 -- downloaded descriptor cannot invalidate an otherwise identical cell shape.
 descriptorDigest :: CellDescriptor -> Text
 descriptorDigest = Text.drop 7 . sha256Hex . LazyByteString.toStrict . encode
+
+-- A cache belongs to one descriptor revision. Missing and stale files leave
+-- routing in its explicit unprobed state; malformed files must be repaired.
+loadCellCapabilities :: FilePath -> CellDescriptor -> IO (Either Text (Maybe CellCapabilities))
+loadCellCapabilities directory descriptor = do
+  let path = directory </> Text.unpack descriptor.name <> ".capabilities.json"
+  present <- doesFileExist path
+  if not present
+    then pure (Right Nothing)
+    else do
+      decoded <- eitherDecodeFileStrict' path
+      pure case decoded of
+        Left problem -> Left ("invalid capability cache " <> Text.pack path <> ": " <> Text.pack problem)
+        Right cache
+          | cache.cell == descriptor.name && cache.descriptorSha256 == descriptorDigest descriptor -> Right (Just cache)
+          | otherwise -> Right Nothing
