@@ -3,7 +3,13 @@ module Main (main) where
 import Control.Concurrent (forkIO)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 import Control.Monad (replicateM)
+import Data.Aeson (eitherDecode, encode)
 import Data.ByteString.Lazy.Char8 qualified as LazyByteString
+import Data.Either (isLeft)
+import Data.Text qualified as Text
+import Data.Time (UTCTime (..), fromGregorian, secondsToDiffTime)
+import Kenshou.Core.Cohort (CohortIdentity (..), CohortName (..), PlanHash (..))
+import Kenshou.Remote.Payload (Bundle (..), CellPayload (..), CohortCheck (..), Harness (..), PayloadDescriptor (..))
 import Kenshou.Remote.Store (Bucket (..), ObjectMeta (..), ObjectName (..), ObjectStore (..), Precondition (..), PutOutcome (..))
 import Kenshou.Remote.Store.File (newFileStore)
 import System.Directory (getFileSize)
@@ -27,6 +33,15 @@ main =
 
 tests :: Spec
 tests = do
+  describe "Kenshou payload descriptor" do
+    it "round-trips the complete cell payload and Nix cohort identity" do
+      eitherDecode (encode examplePayload) `shouldBe` Right examplePayload
+
+    it "rejects a bundle URI that disagrees with its content digest" do
+      let badBundle = examplePayload.cell.bundle {uri = "gs://control/payloads/sha256/other.nar.zst"}
+          bad = examplePayload {cell = examplePayload.cell {bundle = badBundle}}
+      (eitherDecode (encode bad) :: Either String PayloadDescriptor) `shouldSatisfy` isLeft
+
   describe "file cell object store" do
     it "fences stale generations and preserves tombstones" $ withSystemTempDirectory "kenshou-cell-store" \root -> do
       store <- newFileStore root
@@ -90,3 +105,36 @@ tests = do
 expectWritten :: PutOutcome -> IO ObjectMeta
 expectWritten (Written meta) = pure meta
 expectWritten PreconditionFailed = expectationFailure "write was unexpectedly rejected" >> error "unreachable"
+
+examplePayload :: PayloadDescriptor
+examplePayload =
+  PayloadDescriptor
+    { cohort = "released",
+      variant = "default",
+      flakeAttr = "packages.x86_64-linux.kenshou-released",
+      harness = Harness (Text.replicate 40 "a") False,
+      cohortIdentity =
+        CohortIdentity
+          { identityCohort = CohortName "released",
+            identityCompiler = "ghc-9.12.4",
+            identityCabalVersion = "nix",
+            identityOs = "linux",
+            identityArch = "x86_64",
+            identityIndexState = Nothing,
+            identityPlanHash = PlanHash "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            identityDescriptorSha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            identityComponents = [],
+            identityResolver = Just "nix"
+          },
+      cohortCheck = CohortCheck 0,
+      cell =
+        CellPayload
+          { bundle = Bundle "gs://control/payloads/sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.nar.zst" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" 1,
+            storePath = "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-kenshou-released",
+            narHash = "sha256-example",
+            closurePaths = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-kenshou-released"],
+            system = "x86_64-linux",
+            command = ["bin/kenshou", "cell", "exec"]
+          },
+      createdAt = UTCTime (fromGregorian 2026 9 27) (secondsToDiffTime 0)
+    }

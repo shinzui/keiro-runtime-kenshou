@@ -1,0 +1,350 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/kenshou.payload.v1.schema.json",
+  "title": "Content-addressed Kenshou verification cell payload",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "cohort",
+    "variant",
+    "flakeAttr",
+    "harness",
+    "cohortIdentity",
+    "cohortCheck",
+    "cell",
+    "createdAt"
+  ],
+  "properties": {
+    "schema": {
+      "const": "kenshou.payload/v1"
+    },
+    "cohort": {
+      "enum": [
+        "released",
+        "head"
+      ]
+    },
+    "variant": {
+      "enum": [
+        "default",
+        "info-table",
+        "profiled"
+      ]
+    },
+    "flakeAttr": {
+      "type": "string",
+      "pattern": "^packages\\.x86_64-linux\\.kenshou-(released|head)(-info-table|-profiled)?$"
+    },
+    "harness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "revision",
+        "dirty"
+      ],
+      "properties": {
+        "revision": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        },
+        "dirty": {
+          "type": "boolean"
+        }
+      }
+    },
+    "cohortIdentity": {
+      "$ref": "#/$defs/cohortIdentity"
+    },
+    "cohortCheck": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "packagesChecked"
+      ],
+      "properties": {
+        "status": {
+          "const": "consistent"
+        },
+        "packagesChecked": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "cell": {
+      "$ref": "#/$defs/cellPayload"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "$defs": {
+    "storePath": {
+      "type": "string",
+      "pattern": "^/nix/store/[a-z0-9]{32}-[^/]+$"
+    },
+    "cellPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "kind",
+        "bundle",
+        "storePath",
+        "narHash",
+        "closurePaths",
+        "system",
+        "command"
+      ],
+      "properties": {
+        "schema": {
+          "const": "cell.payload/v1"
+        },
+        "kind": {
+          "const": "nix-nar-bundle"
+        },
+        "bundle": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "uri",
+            "sha256",
+            "bytes"
+          ],
+          "properties": {
+            "uri": {
+              "type": "string",
+              "pattern": "^gs://[^/]+/payloads/sha256/[a-f0-9]{64}\\.nar\\.zst$"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "bytes": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "storePath": {
+          "$ref": "#/$defs/storePath"
+        },
+        "narHash": {
+          "type": "string",
+          "minLength": 1
+        },
+        "closurePaths": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/storePath"
+          }
+        },
+        "system": {
+          "const": "x86_64-linux"
+        },
+        "command": {
+          "const": [
+            "bin/kenshou",
+            "cell",
+            "exec"
+          ]
+        }
+      }
+    },
+    "cohortIdentity": {
+      "title": "Kenshou resolved cohort identity",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "cohort",
+        "compiler",
+        "cabalVersion",
+        "os",
+        "arch",
+        "indexState",
+        "planHash",
+        "descriptorSha256",
+        "components"
+      ],
+      "properties": {
+        "schema": {
+          "const": "kenshou.cohort-identity/v1"
+        },
+        "resolver": {
+          "enum": [
+            "cabal",
+            "nix"
+          ]
+        },
+        "cohort": {
+          "type": "string",
+          "minLength": 1
+        },
+        "compiler": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cabalVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "os": {
+          "type": "string",
+          "minLength": 1
+        },
+        "arch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "indexState": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "planHash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "descriptorSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "components": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/component"
+          }
+        }
+      }
+    },
+    "component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "moriUri",
+        "packages"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "moriUri": {
+          "type": "string",
+          "pattern": "^mori://"
+        },
+        "packages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/package"
+          }
+        }
+      }
+    },
+    "package": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version",
+        "source"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/source"
+        }
+      }
+    },
+    "source": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "sha256"
+          ],
+          "properties": {
+            "type": {
+              "const": "hackage"
+            },
+            "sha256": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "location",
+            "rev",
+            "subdir"
+          ],
+          "properties": {
+            "type": {
+              "const": "git"
+            },
+            "location": {
+              "type": "string"
+            },
+            "rev": {
+              "type": "string"
+            },
+            "subdir": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "const": "boot"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "path"
+          ],
+          "properties": {
+            "type": {
+              "const": "local"
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

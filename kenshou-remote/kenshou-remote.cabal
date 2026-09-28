@@ -35,6 +35,7 @@ library
   import: warnings
   hs-source-dirs: src
   exposed-modules:
+    Kenshou.Remote.Payload
     Kenshou.Remote.Store
     Kenshou.Remote.Store.File
 
@@ -46,6 +47,7 @@ library
     cryptohash-sha256,
     directory,
     filepath >=1.5 && <1.6,
+    kenshou-core,
     text >=2.1 && <2.2,
     time,
     unix,
@@ -56,12 +58,15 @@ test-suite kenshou-remote-test
   hs-source-dirs: test
   main-is: Main.hs
   build-depends:
+    aeson,
     base >=4.21 && <4.22,
     bytestring,
     directory,
     filepath,
     hspec >=2.11 && <2.12,
+    kenshou-core,
     kenshou-remote,
     process,
     temporary,
     text,
+    time,

@@ -1,0 +1,79 @@
+{
+  "cell": {
+    "bundle": {
+      "bytes": 1,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "uri": "gs://control/payloads/sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.nar.zst"
+    },
+    "closurePaths": [
+      "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-kenshou-released"
+    ],
+    "command": [
+      "bin/kenshou",
+      "cell",
+      "exec"
+    ],
+    "kind": "nix-nar-bundle",
+    "narHash": "sha256-example",
+    "schema": "cell.payload/v1",
+    "storePath": "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-kenshou-released",
+    "system": "x86_64-linux"
+  },
+  "cohort": "released",
+  "cohortCheck": {
+    "packagesChecked": 2,
+    "status": "consistent"
+  },
+  "cohortIdentity": {
+    "arch": "x86_64",
+    "cabalVersion": "nix",
+    "cohort": "released",
+    "compiler": "ghc-9.12.4",
+    "components": [
+      {
+        "id": "foo",
+        "moriUri": "mori://example/foo",
+        "packages": [
+          {
+            "name": "foo",
+            "source": {
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "type": "hackage"
+            },
+            "version": "1.0.0"
+          }
+        ]
+      },
+      {
+        "id": "bar",
+        "moriUri": "mori://example/bar",
+        "packages": [
+          {
+            "name": "bar",
+            "source": {
+              "location": "https://example.com/bar.git",
+              "rev": "0123456789abcdef0123456789abcdef01234567",
+              "subdir": "bar",
+              "type": "git"
+            },
+            "version": "2.0.0"
+          }
+        ]
+      }
+    ],
+    "descriptorSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "indexState": "2026-09-20T13:44:47Z",
+    "os": "linux",
+    "planHash": "sha256:857e6ff76844ccdf1903dc62d6518fe59b64e34d4bc626873efe2534934f1cc7",
+    "resolver": "nix",
+    "schema": "kenshou.cohort-identity/v1"
+  },
+  "createdAt": "2026-09-27T00:00:00Z",
+  "flakeAttr": "packages.x86_64-linux.kenshou-released",
+  "harness": {
+    "dirty": false,
+    "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "schema": "kenshou.payload/v1",
+  "variant": "default"
+}
