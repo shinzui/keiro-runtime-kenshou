@@ -13,7 +13,9 @@ import Data.Text.IO qualified as Text
 import Data.Time (getCurrentTime)
 import Kenshou.Cli (runWithArgs)
 import Kenshou.Cli.Attest (FencingFacts (..), fencingFacts)
+import Kenshou.Cli.Cohort (resolveDefaultCohortIdentity)
 import Kenshou.Cli.Version (appVersionWithGit)
+import Kenshou.Core.Cohort (CohortIdentity (..), CohortName (..))
 import Kenshou.Core.Id (newRunId, renderRunId)
 import Kenshou.Core.Manifest (Manifest (..), ManifestFile (..))
 import Kenshou.Core.Outcome qualified as Outcome
@@ -25,7 +27,7 @@ import Kenshou.Remote.Cell.Submit (workObjectFor)
 import Kenshou.Remote.Payload (Bundle (..), CellPayload (..))
 import Kenshou.Remote.Store (Bucket (..), ObjectName (..), ObjectStore (..), Precondition (..))
 import Kenshou.Remote.Store.File (newFileStore)
-import System.Directory (createDirectoryIfMissing, doesFileExist, doesPathExist)
+import System.Directory (createDirectoryIfMissing, doesFileExist, doesPathExist, makeAbsolute, withCurrentDirectory)
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
@@ -53,6 +55,16 @@ main = hspec do
         `shouldBe` Left "an original-consumer error event has no message"
 
   describe "CLI exit contract" do
+    it "resolves the wrapped cohort identity outside a source checkout" $
+      withSystemTempDirectory "kenshou-wrapped-cohort" \root -> do
+        fixture <- makeAbsolute "../kenshou-core/test/fixtures/cohort-identity.golden.json"
+        withEnvVariable "KENSHOU_COHORT_IDENTITY" fixture $
+          withCurrentDirectory root do
+            resolved <- resolveDefaultCohortIdentity
+            case resolved of
+              Left problem -> expectationFailure (show problem)
+              Right identity -> identity.identityCohort `shouldBe` CohortName "released"
+
     it "returns success for help" do
       runWithArgs ["--help"] `shouldReturnCode` ExitSuccess
 
@@ -480,3 +492,11 @@ withCapabilityDir directory operation = bracket (lookupEnv "KENSHOU_CELL_CAPABIL
   where
     restore Nothing = unsetEnv "KENSHOU_CELL_CAPABILITIES_DIR"
     restore (Just prior) = setEnv "KENSHOU_CELL_CAPABILITIES_DIR" prior
+
+withEnvVariable :: String -> String -> IO value -> IO value
+withEnvVariable name selected operation = bracket (lookupEnv name) restore \_ -> do
+  setEnv name selected
+  operation
+  where
+    restore Nothing = unsetEnv name
+    restore (Just prior) = setEnv name prior

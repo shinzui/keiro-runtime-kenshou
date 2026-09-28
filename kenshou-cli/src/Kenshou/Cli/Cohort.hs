@@ -2,6 +2,7 @@
 
 module Kenshou.Cli.Cohort
   ( runCohortCommand,
+    resolveDefaultCohortIdentity,
   )
 where
 
@@ -17,6 +18,11 @@ import System.Environment (lookupEnv)
 import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
 import System.IO (stderr)
+
+resolveDefaultCohortIdentity :: IO (Either CohortError CohortIdentity)
+resolveDefaultCohortIdentity = do
+  selected <- lookupEnv "KENSHOU_COHORT_IDENTITY"
+  resolveCohortIdentity (maybe (FromProject "." Nothing Nothing) FromIdentityFile selected)
 
 runCohortCommand :: CohortCommand -> IO ExitCode
 runCohortCommand (CohortShow json projectDir planJson identityOption) = do

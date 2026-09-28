@@ -26,11 +26,13 @@ import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
-import Kenshou.Core.Id (RunId, renderRunId)
+import Kenshou.Core.Id (RunId, parseRunId, renderRunId)
 import Kenshou.Core.Manifest (Manifest (..), ManifestFile (..), verifyManifest)
 import Kenshou.Core.Outcome qualified as Outcome
+import Kenshou.Plan.RunPlan (PlannedRun (..), RunPlan (..))
 import Kenshou.Remote.Cell.Docs (Artifact (..), CellManifest (..), CellPhase (..), CellRunResult (..), CellStatus (..), ManifestPayload (..), Submission (..), WorkObject (..))
 import Kenshou.Remote.Cell.Docs qualified as Cell
+import Kenshou.Remote.Cell.WorkJson (decodeWorkPlan)
 import Kenshou.Remote.Payload (Bundle (..), CellPayload (..))
 import Kenshou.Remote.Store (Bucket, ObjectMeta (..), ObjectName (..), ObjectStore (..))
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, listDirectory, pathIsSymbolicLink, removeFile, renameFile)
@@ -192,12 +194,21 @@ verifyCellRun tree = do
                 [PayloadMismatch "submission run, lease or payload differs from cell manifest" | submitted.runId /= manifest.runId || submitted.leaseId /= manifest.leaseId || submitted.payload.bundle.sha256 /= manifest.payload.sha256 || submitted.payload.storePath /= manifest.payload.storePath]
                   <> [RunResultMismatch "cell result differs from cell manifest" | cellResult.runId /= manifest.runId || cellResult.cell /= manifest.cell || cellResult.leaseId /= manifest.leaseId || cellResult.leaseSequence /= manifest.leaseSequence || cellResult.outcome /= manifest.outcome]
           workProblems <- checkWork tree byPath submitted
+          planned <- readPlannedRuns tree
           let nested = nestedManifestPaths manifest.artifacts
               nestedIds = Set.fromList (map fst nested)
-              outputIds = Set.fromList [run | artifact <- manifest.artifacts, "output" : run : _file : _ <- [Text.splitOn "/" artifact.path]]
-              absentNested = [NestedManifestProblem ("output/" <> run <> "/manifest.json: missing") | run <- Set.toList (outputIds Set.\\ nestedIds)]
+              (planProblems, expectedIds) = case planned of
+                Left problem -> ([problem], Set.empty)
+                Right identifiers -> ([], identifiers)
+              absentNested =
+                [ NestedManifestProblem ("output/" <> run <> "/manifest.json: missing")
+                | manifest.outcome == Cell.Completed,
+                  run <- Set.toList (expectedIds Set.\\ nestedIds)
+                ]
+              unexpectedNested =
+                [NestedManifestProblem ("output/" <> run <> "/manifest.json: run was not planned") | run <- Set.toList (nestedIds Set.\\ expectedIds)]
           nestedProblems <- concat <$> traverse (checkNested tree byPath manifest.payload.sha256) nested
-          let problems = identityProblems <> workProblems <> absentNested <> nestedProblems
+          let problems = identityProblems <> workProblems <> planProblems <> absentNested <> unexpectedNested <> nestedProblems
           pure case problems of
             [] -> Right manifest
             first : rest -> Left (first :| rest)
@@ -239,9 +250,18 @@ checkWork tree byPath submitted = case Map.lookup "submission/work" byPath of
     (digest, size) <- digestFile (tree </> "submission" </> "work")
     pure [PayloadMismatch "submission work differs from its declared digest or size" | digest /= submitted.work.sha256 || size /= submitted.work.bytes || artifact.sha256 /= submitted.work.sha256 || artifact.bytes /= submitted.work.bytes]
 
+readPlannedRuns :: FilePath -> IO (Either VerifyProblem (Set.Set Text))
+readPlannedRuns tree = do
+  bytes <- LazyByteString.readFile (tree </> "submission" </> "work")
+  pure case eitherDecode bytes :: Either String Value of
+    Left failure -> Left (InvalidManifest ("submission/work: " <> Text.pack failure))
+    Right value -> case decodeWorkPlan value of
+      Left failure -> Left (InvalidManifest ("submission/work: " <> failure))
+      Right plan -> Right (Set.fromList (map (renderRunId . (.runId)) plan.runs))
+
 nestedManifestPaths :: [Artifact] -> [(Text, Text)]
 nestedManifestPaths artifacts =
-  [(run, artifact.path) | artifact <- artifacts, ["output", run, "manifest.json"] <- [Text.splitOn "/" artifact.path]]
+  [(run, artifact.path) | artifact <- artifacts, ["output", run, "manifest.json"] <- [Text.splitOn "/" artifact.path], Right _ <- [parseRunId run]]
 
 checkNested :: FilePath -> Map.Map Text Artifact -> Text -> (Text, Text) -> IO [VerifyProblem]
 checkNested tree byPath bundleDigest (run, path) = do

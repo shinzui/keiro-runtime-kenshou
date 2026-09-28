@@ -7,9 +7,10 @@ import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
-import Kenshou.Core.Id (RunId, newRunId, renderRunId)
+import Kenshou.Core.Id (RunId, newRunId, parseScenarioId, renderRunId)
 import Kenshou.Core.Manifest (Manifest (..), ManifestFile (..))
 import Kenshou.Core.Outcome qualified as Outcome
+import Kenshou.Core.RunSpec (minimalRunSpec)
 import Kenshou.Remote.Cell.Docs (Artifact (..), CellManifest (..), CellOutcome (..), CellPhase (..), CellRunResult (..), CellStatus (..), LogChunks (..), ManifestPayload (..), Submission (..), WorkObject (..))
 import Kenshou.Remote.Cell.Fetch (FetchError (..), VerifyProblem (..), effectiveOutcome, fetchCellRun, verifyCellRun, verifyCellRunWithStatus, verifyCellTree)
 import Kenshou.Remote.Cell.Index (CellRunIndex (..), RunLink (..), deriveCellRunIndex, writeCellRunIndex)
@@ -77,6 +78,20 @@ spec = describe "sealed cell tree fetch" do
   it "cross-checks the submission, cell result and nested Kenshou manifest" $ withSystemTempDirectory "kenshou-verify" \root -> do
     (tree, manifest) <- completeTree root False False False
     verifyCellRun tree `shouldReturn` Right manifest
+
+  it "accepts cell support directories without nested run manifests" $ withSystemTempDirectory "kenshou-verify" \root -> do
+    (tree, manifest) <- completeTree root False False False
+    let supporting = [("output/kenshou-cell/context.json", "{}"), ("output/specs/0001.json", "{}")]
+        expanded = manifest {artifacts = manifest.artifacts <> [artifactFor name bytes | (name, bytes) <- supporting]}
+    mapM_
+      ( \(name, bytes) -> do
+          let destination = tree </> Text.unpack name
+          createDirectoryIfMissing True (takeDirectory destination)
+          LazyByteString.writeFile destination bytes
+      )
+      supporting
+    LazyByteString.writeFile (tree </> "manifest.json") (encode expanded)
+    verifyCellRun tree `shouldReturn` Right expanded
 
   it "rejects a payload identity mismatch after all file digests pass" $ withSystemTempDirectory "kenshou-verify" \root -> do
     (tree, _) <- completeTree root True False False
@@ -179,9 +194,10 @@ completeTreeWithNested :: FilePath -> RunId -> RunId -> RunId -> Bool -> Bool ->
 completeTreeWithNested root identifier lease nestedId wrongPayload wrongRunId unsafeNested = do
   otherId <- newRunId
   now <- getCurrentTime
+  scenario <- either (ioError . userError . Text.unpack) pure (parseScenarioId "selftest/kernel/correctness/always-pass")
   source <- LazyByteString.readFile "test/golden/cell/cell.submission.v1.json"
   fixture <- either (ioError . userError) pure (eitherDecode source :: Either String Submission)
-  let workBytes = "{}"
+  let workBytes = encode (object ["schema" .= ("kenshou.run-plan/v1" :: Text), "planId" .= identifier, "runs" .= [object ["ordinal" .= (1 :: Int), "runId" .= nestedId, "estimateMinutes" .= (1 :: Int), "spec" .= minimalRunSpec scenario]]])
       workInfo = workObjectFor "application/json" workBytes
       submitted = Submission identifier lease fixture.payload workInfo fixture.env fixture.reset fixture.limits fixture.requires fixture.labels
       payloadDigest = fixture.payload.bundle.sha256

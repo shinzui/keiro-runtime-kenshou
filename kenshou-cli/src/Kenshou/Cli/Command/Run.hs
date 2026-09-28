@@ -7,10 +7,10 @@ import Data.List.NonEmpty qualified as NonEmpty
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.IO qualified as Text.IO
+import Kenshou.Cli.Cohort (resolveDefaultCohortIdentity)
 import Kenshou.Cli.Config
 import Kenshou.Core.Cli
 import Kenshou.Core.Cli.Config
-import Kenshou.Core.Cohort (CohortSource (..), resolveCohortIdentity)
 import Kenshou.Core.Id
 import Kenshou.Core.Knob (parseAssignment)
 import Kenshou.Core.Outcome (renderOutcome)
@@ -124,7 +124,7 @@ runHandler options environment = case schemaDiagnostic options.config.diagnostic
                 else Text.IO.putStrLn (renderOutcome output.result.outcome <> "  " <> renderScenarioId output.result.scenario <> "  " <> Text.pack output.directory)
               pure (if output.result.exitCode == 0 then ExitSuccess else ExitFailure output.result.exitCode)
 
-    loadCohort Nothing = first (("unable to resolve cohort identity: " <>) . Text.pack . show) <$> resolveCohortIdentity (FromProject "." Nothing Nothing)
+    loadCohort Nothing = first (("unable to resolve cohort identity: " <>) . Text.pack . show) <$> resolveDefaultCohortIdentity
     loadCohort (Just source) = loadDocument "cohort identity" source
 
     loadJsonDocument Nothing = pure (Right Nothing)

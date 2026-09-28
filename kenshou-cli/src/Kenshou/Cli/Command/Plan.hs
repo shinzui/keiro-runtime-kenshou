@@ -11,6 +11,7 @@ import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.IO qualified as Text.IO
+import Kenshou.Cli.Cohort (resolveDefaultCohortIdentity)
 import Kenshou.Core.Bundle (allScenarios)
 import Kenshou.Core.Cli
 import Kenshou.Core.Cohort qualified as Cohort
@@ -146,7 +147,7 @@ planSelection options suite graph catalog = case (traverse (parseSelector) optio
 writeRunPlan :: PlanOptions -> Maybe Suite -> ComponentGraph -> [ScenarioInfo] -> [Change] -> [Warning] -> [Selected] -> IO ExitCode
 writeRunPlan options suite graph catalog changes warnings selected = do
   seedResult <- makeSeed options.seedValue
-  cohortResult <- first (("unable to resolve cohort identity: " <>) . Text.pack . show) <$> Cohort.resolveCohortIdentity (Cohort.FromProject "." Nothing Nothing)
+  cohortResult <- first (("unable to resolve cohort identity: " <>) . Text.pack . show) <$> resolveDefaultCohortIdentity
   case (seedResult, cohortResult, (\seed -> makePolicy options suite seed) =<< seedResult) of
     (Left err, _, _) -> usage err
     (_, Left err, _) -> usage err
