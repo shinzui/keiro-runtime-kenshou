@@ -71,6 +71,7 @@ main = hspec do
       runWithArgs ["cell", "submit", "--help"] `shouldReturnCode` ExitSuccess
       runWithArgs ["cell", "run", "--help"] `shouldReturnCode` ExitSuccess
       runWithArgs ["cell", "resume", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["cell", "payload", "publish", "--help"] `shouldReturnCode` ExitSuccess
 
     it "rejects malformed cell result identifiers and URIs" do
       runWithArgs ["cell", "fetch", "--results-bucket", "test-results", "not-a-run-id", "--out", "test-output"] `shouldReturnCode` ExitFailure 2

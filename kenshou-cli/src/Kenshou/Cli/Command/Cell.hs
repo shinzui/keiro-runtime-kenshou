@@ -33,6 +33,7 @@ import Kenshou.Remote.Cell.Session.Runner (runPlannedSlices)
 import Kenshou.Remote.Cell.Submit (PublishOutcome (Submitted), publishSubmission)
 import Kenshou.Remote.Cell.Watch (WatchEvent (..), WatchTerminal (..), watchCellRun)
 import Kenshou.Remote.Payload (PayloadDescriptor)
+import Kenshou.Remote.Payload.Publisher (PublishError (..), PublishOptions (..), publishPayload)
 import Kenshou.Remote.Store (Bucket (..), ObjectName (..), ObjectStore (..))
 import Kenshou.Remote.Store.File (newFileStore)
 import Kenshou.Remote.Store.Gcs (newGcsStore, newTokenProvider)
@@ -56,6 +57,8 @@ data SubmitCli = SubmitCli !CellLocation !Text !SubmitSettings !Bool
 
 data RunCli = RunCli !CellLocation !SubmitSettings !Int !Int !Bool
 
+data PayloadPublishCli = PayloadPublishCli !Text !Text !(Maybe Text) !FilePath !FilePath !Bool
+
 data CellAction
   = Fetch !Text !Text !FilePath
   | Verify !FilePath
@@ -67,6 +70,7 @@ data CellAction
   | Submit !SubmitCli
   | Run !RunCli
   | Resume !FilePath !(Maybe Text)
+  | PublishPayload !PayloadPublishCli
   | Exec !FilePath !FilePath
 
 cellCommand :: CliCommand
@@ -85,7 +89,23 @@ cellParser =
       <> command "submit" (info (submitParser <**> helper) (progDesc "Submit a prepared plan under an existing lease"))
       <> command "run" (info (runParser <**> helper) (progDesc "Lease, submit, verify and release a cell session"))
       <> command "resume" (info (resumeParser <**> helper) (progDesc "Continue a saved cell session"))
+      <> command "payload" (info (payloadParser <**> helper) (progDesc "Build and publish a checked cell payload"))
       <> (command "exec" (info (cellExecParser <**> helper) (progDesc "Execute prepared work on a cell driver")) <> internal)
+
+payloadParser :: Parser CellAction
+payloadParser = hsubparser (command "publish" (info (publishPayloadParser <**> helper) (progDesc "Publish a Nix closure after checking its runtime cohort")))
+
+publishPayloadParser :: Parser CellAction
+publishPayloadParser =
+  PublishPayload
+    <$> ( PayloadPublishCli
+            <$> strOption (long "cohort" <> metavar "released|head" <> help "Pinned runtime cohort")
+            <*> strOption (long "variant" <> metavar "default|info-table|profiled" <> value "default" <> showDefault <> help "Executable build variant")
+            <*> optional (strOption (long "control-bucket" <> metavar "BUCKET" <> help "Payload control bucket"))
+            <*> strOption (long "out" <> metavar "FILE" <> help "Payload descriptor JSON output")
+            <*> strOption (long "root" <> metavar "DIR" <> value "." <> showDefault <> help "Flake and cohort descriptor root")
+            <*> switch (long "allow-dirty" <> help "Permit a payload from a dirty worktree")
+        )
 
 cellLocationParser :: Parser CellLocation
 cellLocationParser =
@@ -204,6 +224,20 @@ verifyParser = Verify <$> strArgument (metavar "DIR_OR_GS_URI")
 
 runCell :: CellAction -> CliEnv -> IO ExitCode
 runCell selected cli = case selected of
+  PublishPayload (PayloadPublishCli cohort variant selectedBucket output root allowDirty) -> do
+    configured <- lookupEnv "KENSHOU_CELL_CONTROL_BUCKET"
+    let bucketName = fromMaybe (maybe "tan-nb-exp-cells-control" Text.pack configured) selectedBucket
+    case validateBucket bucketName of
+      Left problem -> usage problem
+      Right bucket -> guardIO do
+        store <- openStore bucket
+        published <- publishPayload store (PublishOptions root cohort variant bucket output allowDirty)
+        case published of
+          Left (PublishInvalidSelection problem) -> usage problem
+          Left (PublishCohortMismatch problem) -> failVerification problem
+          Left PublishDirtyWorktree -> unavailable "worktree is dirty; pass --allow-dirty to publish it"
+          Left problem -> unavailable (Text.pack (show problem))
+          Right _ -> TextIO.putStrLn (Text.pack output) >> pure ExitSuccess
   Fetch bucket identifier outDir -> case (validateBucket bucket, parseRunId identifier) of
     (Left problem, _) -> usage problem
     (_, Left problem) -> usage problem

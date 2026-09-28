@@ -1,14 +1,18 @@
 module PayloadSpec (spec) where
 
-import Data.Aeson (eitherDecode, object, (.=))
+import Data.Aeson (eitherDecode, eitherDecodeStrict', object, (.=))
 import Data.Aeson.Key qualified as Key
+import Data.ByteString qualified as ByteString
 import Data.ByteString.Lazy qualified as LazyByteString
+import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.Text qualified as Text
+import Kenshou.Core.Cohort (CohortDescriptor (..), CohortIdentity (..), CohortName (..), ComponentSpec (..), PackagePin (..), PackageSource (..), PlanHash (..), ResolvedComponent (..), ResolvedPackage (..))
 import Kenshou.Remote.Cell.Docs (WorkObject (..))
 import Kenshou.Remote.Cell.Submit (workObjectFor)
-import Kenshou.Remote.Payload (Bundle (..), CellPayload (..), PayloadDescriptor (..))
+import Kenshou.Remote.Payload (Bundle (..), CellPayload (..), CohortCheck (..), Harness (..), PayloadDescriptor (..))
 import Kenshou.Remote.Payload.Nix (BundleInfo (..), ClosureInfo (..), NixError (..), NixTools (..), exportBundleWith, parseClosureInfo)
 import Kenshou.Remote.Payload.Publish (BundlePublishError (..), publishBundle)
+import Kenshou.Remote.Payload.Publisher (PublishError (..), PublishOptions (..), PublisherDeps (..), publishPayloadWith)
 import Kenshou.Remote.Store (Bucket (..), ObjectName (..), ObjectStore (..), Precondition (..))
 import Kenshou.Remote.Store.File (newFileStore)
 import System.Directory (Permissions (..), doesFileExist, getPermissions, listDirectory, setPermissions)
@@ -18,6 +22,40 @@ import Test.Hspec
 
 spec :: Spec
 spec = describe "content-addressed payload publication" do
+  it "checks a Nix identity before build, then publishes its exported bundle and descriptor" $ withSystemTempDirectory "kenshou-publisher" \root -> do
+    identity <- releasedIdentity
+    store <- newFileStore (root </> "store")
+    builds <- newIORef (0 :: Int)
+    let output = root </> "payload.json"
+        options = PublishOptions ".." "released" "default" (Bucket "control") output False
+        storePath = "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-kenshou"
+        work = workObjectFor "application/octet-stream" bundleBytes
+        exported destination = do
+          LazyByteString.writeFile destination bundleBytes
+          pure (Right (BundleInfo destination work.sha256 work.bytes (ClosureInfo storePath "sha256-root" [storePath])))
+        deps selected =
+          PublisherDeps
+            (\_ -> pure (Right (Harness (Text.replicate 40 "a") False)))
+            (\_ -> pure (Right selected))
+            (\_ -> modifyIORef' builds (+ 1) >> pure (Right storePath))
+            (\_ -> exported)
+    let stale = identity {identityDescriptorSha256 = Text.replicate 64 "0"}
+    rejected <- publishPayloadWith (deps stale) store options
+    rejected `shouldBe` Left (PublishCohortMismatch "Nix identity descriptor digest differs from the selected descriptor")
+    readIORef builds `shouldReturn` 0
+    store.listObjects (Bucket "control") "payloads/sha256/" `shouldReturn` []
+    accepted <- publishPayloadWith (deps identity) store options
+    descriptor <- case accepted of
+      Left problem -> expectationFailure (show problem) >> error "unreachable"
+      Right payload -> pure payload
+    descriptor.cohortCheck.packagesChecked `shouldBe` 41
+    descriptor.cell.bundle.sha256 `shouldBe` work.sha256
+    readIORef builds `shouldReturn` 1
+    stored <- store.getObject (Bucket "control") (objectFor descriptor)
+    fmap fst stored `shouldBe` Just bundleBytes
+    saved <- eitherDecode <$> LazyByteString.readFile output
+    saved `shouldBe` Right descriptor
+
   it "reads the root NAR hash and complete closure from Nix metadata" do
     let root = "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-kenshou"
         dependency = "/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-dependency"
@@ -117,3 +155,26 @@ writeTool path contents = do
   writeFile path contents
   permissions <- getPermissions path
   setPermissions path permissions {executable = True}
+
+releasedIdentity :: IO CohortIdentity
+releasedIdentity = do
+  contents <- ByteString.readFile "../cohort/released.json"
+  descriptor <- either (ioError . userError) pure (eitherDecodeStrict' contents :: Either String CohortDescriptor)
+  let resolved component =
+        ResolvedComponent
+          component.componentId
+          component.componentMoriUri
+          [ResolvedPackage pin.pinName pin.pinVersion (FromHackage Nothing) | pin <- component.componentPackages]
+  pure
+    ( CohortIdentity
+        (CohortName "released")
+        "ghc-9.12.4"
+        "nix"
+        "linux"
+        "x86_64"
+        (Just descriptor.descriptorIndexState)
+        (PlanHash ("sha256:" <> Text.replicate 64 "a"))
+        "44c8d2c5a775e67346f6f84abbbe0a9ce15550df747c4647f2c8857fcd82370b"
+        (map resolved descriptor.descriptorComponents)
+        (Just "nix")
+    )

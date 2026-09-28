@@ -57,6 +57,7 @@ library
     Kenshou.Remote.Payload
     Kenshou.Remote.Payload.Nix
     Kenshou.Remote.Payload.Publish
+    Kenshou.Remote.Payload.Publisher
     Kenshou.Remote.Store
     Kenshou.Remote.Store.File
     Kenshou.Remote.Store.Gcs
