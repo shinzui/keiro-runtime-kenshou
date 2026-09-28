@@ -16,6 +16,7 @@ import Data.Char (isSpace)
 import Data.List (find)
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Data.Word (Word64)
 import Kenshou.Measure.Sampler.Csv
 import System.CPUTime (getCPUTime)
 import System.Directory (listDirectory)
@@ -26,7 +27,7 @@ import Data.Text.IO qualified as Text
 #endif
 
 #ifdef darwin_HOST_OS
-import Foreign
+import Foreign (Ptr, alloca, peek)
 import Foreign.C.Types
 
 foreign import ccall unsafe "kenshou_proc_taskinfo" c_procTaskInfo :: Ptr Word64 -> Ptr CInt -> IO CInt
