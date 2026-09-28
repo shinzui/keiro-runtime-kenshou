@@ -14,9 +14,10 @@ import Kenshou.Cli.Version (appVersionWithGit)
 import Kenshou.Core.Id (renderRunId)
 import Kenshou.Remote.Cell.Docs (CellBuckets (..), CellDescriptor (..))
 import Kenshou.Remote.Cell.Lease (Lease (..))
+import Kenshou.Remote.Cell.Session.Journal (SessionJournal (..), writeSessionJournal)
 import Kenshou.Remote.Store (Bucket (..), ObjectName (..), ObjectStore (..), Precondition (..))
 import Kenshou.Remote.Store.File (newFileStore)
-import System.Directory (doesFileExist, doesPathExist)
+import System.Directory (createDirectoryIfMissing, doesFileExist, doesPathExist)
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
@@ -60,6 +61,7 @@ main = hspec do
       runWithArgs ["cell", "watch", "--help"] `shouldReturnCode` ExitSuccess
       runWithArgs ["cell", "route", "--help"] `shouldReturnCode` ExitSuccess
       runWithArgs ["cell", "submit", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["cell", "resume", "--help"] `shouldReturnCode` ExitSuccess
 
     it "rejects malformed cell result identifiers and URIs" do
       runWithArgs ["cell", "fetch", "--results-bucket", "test-results", "not-a-run-id", "--out", "test-output"] `shouldReturnCode` ExitFailure 2
@@ -132,6 +134,11 @@ main = hspec do
           runWithArgs (common <> ["--coerce-durable"]) `shouldReturnCode` ExitSuccess
           doesPathExist outDir `shouldReturn` False
           runWithArgs common `shouldReturnCode` ExitFailure 2
+          template <- Aeson.eitherDecodeFileStrict' "../kenshou-remote/test/golden/cell-session.json" >>= either fail pure
+          let complete = (template :: SessionJournal) {store = Text.pack ("file:" <> root), controlBucket = "control", resultsBucket = descriptor.buckets.results, leaseId = lease.leaseId, slices = []}
+          createDirectoryIfMissing True outDir
+          writeSessionJournal (outDir </> "session.json") complete
+          runWithArgs ["cell", "resume", "--session", outDir] `shouldReturnCode` ExitSuccess
 
     it "reads scenario history from a bundle" do
       runWithArgs ["history", "--bundle", "../docs/verification", "--scenario", "selftest/kernel/correctness/always-pass", "--json"] `shouldReturnCode` ExitSuccess

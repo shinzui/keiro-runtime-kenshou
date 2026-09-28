@@ -21,12 +21,13 @@ import Kenshou.Remote.Cell.Docs (CachePolicy (..), CellBuckets (..), CellDescrip
 import Kenshou.Remote.Cell.Exec (cellExec)
 import Kenshou.Remote.Cell.Fetch (FetchError (..), fetchCellRun, verifyCellRun)
 import Kenshou.Remote.Cell.Index (deriveCellRunIndex, writeCellRunIndex)
-import Kenshou.Remote.Cell.Lease (AcquireOutcome (..), CellRef (..), Lease (..), LeaseRequest (..), Quarantine (..), acquireLease, leaseSnapshot, reattachLease, releaseLease, validCellName, withHeartbeat)
+import Kenshou.Remote.Cell.Lease (AcquireOutcome (..), CellRef (..), Lease (..), LeaseHandle, LeaseRequest (..), Quarantine (..), acquireLease, leaseSnapshot, reattachLease, releaseLease, validCellName, withHeartbeat)
 import Kenshou.Remote.Cell.Prepare (Granularity (..), OtlpSink (..), PrepareOptions (..))
 import Kenshou.Remote.Cell.RouteJson (RouteDocuments (..), routeWorkJson)
 import Kenshou.Remote.Cell.RouteRules (defaultRoutingRules)
 import Kenshou.Remote.Cell.Session.Build (BuildOptions (..), BuiltSession (..), buildSession)
-import Kenshou.Remote.Cell.Session.Journal (SessionJournal (..), SliceJournal (..), SliceState (..))
+import Kenshou.Remote.Cell.Session.Journal (SessionJournal (..), SliceJournal (..), SliceState (..), readSessionJournal)
+import Kenshou.Remote.Cell.Session.Resume (resumeHeldSession)
 import Kenshou.Remote.Cell.Session.Runner (runPlannedSlices)
 import Kenshou.Remote.Cell.Watch (WatchEvent (..), WatchTerminal (..), watchCellRun)
 import Kenshou.Remote.Payload (PayloadDescriptor)
@@ -58,6 +59,7 @@ data CellAction
   | Watch !CellLocation !Text
   | Route !RouteCli
   | Submit !SubmitCli
+  | Resume !FilePath !(Maybe Text)
   | Exec !FilePath !FilePath
 
 cellCommand :: CliCommand
@@ -74,6 +76,7 @@ cellParser =
       <> command "watch" (info (watchParser <**> helper) (progDesc "Follow a cell run to its terminal status"))
       <> command "route" (info (routeParser <**> helper) (progDesc "Split a plan across compatible cells"))
       <> command "submit" (info (submitParser <**> helper) (progDesc "Submit a prepared plan under an existing lease"))
+      <> command "resume" (info (resumeParser <**> helper) (progDesc "Continue a saved cell session"))
       <> (command "exec" (info (cellExecParser <**> helper) (progDesc "Execute prepared work on a cell driver")) <> internal)
 
 cellLocationParser :: Parser CellLocation
@@ -154,6 +157,12 @@ parseOtlpSink :: String -> Either String OtlpSink
 parseOtlpSink "null" = Right NullSink
 parseOtlpSink "file" = Right FileSink
 parseOtlpSink _ = Left "expected null or file"
+
+resumeParser :: Parser CellAction
+resumeParser =
+  Resume
+    <$> strOption (long "session" <> metavar "DIR" <> help "Directory containing session.json")
+    <*> optional (strOption (long "lease-id" <> metavar "UUID" <> help "Use this active lease instead of the journal lease"))
 
 cellExecParser :: Parser CellAction
 cellExecParser = Exec <$> strArgument (metavar "WORK_FILE") <*> strArgument (metavar "OUT_DIR")
@@ -330,7 +339,47 @@ runCell selected cli = case selected of
                                 Right finished -> do
                                   TextIO.hPutStrLn stderr ("session " <> renderRunId finished.sessionId <> " verified; journal " <> Text.pack (outDir </> "session.json"))
                                   pure (sessionExitCode finished)
+  Resume sessionDir selectedLease -> guardIO do
+    let journalPath = sessionDir </> "session.json"
+    present <- doesPathExist journalPath
+    if not present
+      then unavailable "session.json is missing"
+      else do
+        decoded <- readSessionJournal journalPath
+        case decoded of
+          Left problem -> usage problem
+          Right journal -> do
+            selectedStore <- Text.pack . fromMaybe "gs://" <$> lookupEnv "KENSHOU_CELL_STORE"
+            if selectedStore /= journal.store
+              then usage "selected cell store differs from the session journal"
+              else case traverse parseRunId selectedLease of
+                Left problem -> usage problem
+                Right requested -> withControl (CellLocation journal.cell (Just journal.controlBucket)) \store ref observed -> do
+                  if observed.descriptor.buckets.results /= journal.resultsBucket
+                    then usage "cell results bucket differs from the session journal"
+                    else do
+                      let expected = fromMaybe journal.leaseId requested
+                      existing <- reattachLease store ref expected
+                      case existing of
+                        Just handle -> continueSession store ref journalPath journal handle
+                        Nothing | requested /= Nothing -> unavailable "cell has no matching selected lease"
+                        Nothing -> do
+                          owner <- Text.pack . fromMaybe "kenshou" <$> lookupEnv "USER"
+                          acquired <- acquireLease store ref (LeaseRequest owner ("resume " <> renderRunId journal.sessionId) 120)
+                          case acquired of
+                            Busy current -> unavailable ("cell is busy under lease " <> renderRunId current.leaseId)
+                            Quarantined record -> unavailable ("cell is quarantined: " <> record.reason)
+                            Acquired handle -> continueSession store ref journalPath journal handle `finally` (do _ <- releaseLease store ref handle; pure ())
   Exec workFile outDir -> cellExec cli.registry workFile outDir
+
+continueSession :: ObjectStore -> CellRef -> FilePath -> SessionJournal -> LeaseHandle -> IO ExitCode
+continueSession store ref journalPath journal handle = do
+  resumed <- resumeHeldSession store ref (Bucket journal.resultsBucket) handle journalPath emitWatchEvent
+  case resumed of
+    Left failure -> unavailable (Text.pack (show failure))
+    Right finished -> do
+      TextIO.hPutStrLn stderr ("session " <> renderRunId finished.sessionId <> " verified; journal " <> Text.pack journalPath)
+      pure (sessionExitCode finished)
 
 sessionExitCode :: SessionJournal -> ExitCode
 sessionExitCode journal
