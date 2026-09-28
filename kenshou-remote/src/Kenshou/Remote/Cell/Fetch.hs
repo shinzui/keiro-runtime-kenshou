@@ -5,6 +5,7 @@ module Kenshou.Remote.Cell.Fetch
     verifyCellTree,
     verifyCellRun,
     verifyCellRunWithStatus,
+    effectiveOutcome,
   )
 where
 
@@ -27,7 +28,9 @@ import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
 import Kenshou.Core.Id (RunId, renderRunId)
 import Kenshou.Core.Manifest (Manifest (..), ManifestFile (..), verifyManifest)
+import Kenshou.Core.Outcome qualified as Outcome
 import Kenshou.Remote.Cell.Docs (Artifact (..), CellManifest (..), CellPhase (..), CellRunResult (..), CellStatus (..), ManifestPayload (..), Submission (..), WorkObject (..))
+import Kenshou.Remote.Cell.Docs qualified as Cell
 import Kenshou.Remote.Payload (Bundle (..), CellPayload (..))
 import Kenshou.Remote.Store (Bucket, ObjectMeta (..), ObjectName (..), ObjectStore (..))
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, listDirectory, pathIsSymbolicLink, removeFile, renameFile)
@@ -57,6 +60,12 @@ data FetchError
   | ObjectCorrupt !Text
   | VerificationFailed !(NonEmpty VerifyProblem)
   deriving stock (Eq, Show)
+
+effectiveOutcome :: Cell.CellOutcome -> Bool -> Outcome.Outcome -> Outcome.Outcome
+effectiveOutcome Cell.Completed _ recorded = recorded
+effectiveOutcome Cell.InfrastructureFailure _ _ = Outcome.InfrastructureFailure
+effectiveOutcome Cell.Cancelled complete recorded = if complete then recorded else Outcome.Errored
+effectiveOutcome Cell.TimedOut complete recorded = if complete then recorded else Outcome.Errored
 
 fetchCellRun :: ObjectStore -> Bucket -> RunId -> FilePath -> IO (Either FetchError FilePath)
 fetchCellRun store bucket identifier outDir = do

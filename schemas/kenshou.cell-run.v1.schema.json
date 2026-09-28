@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/kenshou.cell-run.v1.schema.json",
+  "title": "Verified cell run index",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "cellRun", "cell", "leaseId", "leaseSequence", "resultsBaseUri", "dataBaseUri", "cellManifest", "cellOutcome", "reasons", "entryExitCode", "evidence", "runs", "verifiedAt"],
+  "properties": {
+    "schema": {"const": "kenshou.cell-run/v1"},
+    "cellRun": {"$ref": "#/$defs/runId"},
+    "cell": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,62}$"},
+    "leaseId": {"$ref": "#/$defs/runId"},
+    "leaseSequence": {"type": "integer", "minimum": 0},
+    "resultsBaseUri": {"type": "string", "pattern": "^gs://[^/]+/runs/[a-f0-9-]+$"},
+    "dataBaseUri": {"type": "string", "pattern": "^gs://[^/]+/runs/[a-f0-9-]+/output$"},
+    "cellManifest": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256", "bytes"],
+      "properties": {
+        "path": {"const": "manifest.json"},
+        "sha256": {"$ref": "#/$defs/digest"},
+        "bytes": {"type": "integer", "minimum": 1}
+      }
+    },
+    "cellOutcome": {"enum": ["completed", "infrastructure-failure", "cancelled", "timed-out"]},
+    "reasons": {"type": "array", "items": {"type": "string"}},
+    "entryExitCode": {"type": ["integer", "null"]},
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["kind", "path", "sha256", "bytes", "mediaType"],
+        "properties": {
+          "kind": {"enum": ["cell-fingerprint", "cell-health", "cell-reset-evidence", "cell-metrics-export"]},
+          "path": {"type": "string", "minLength": 1},
+          "sha256": {"$ref": "#/$defs/digest"},
+          "bytes": {"type": "integer", "minimum": 0},
+          "mediaType": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "runs": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["runId", "path", "scenario", "manifestSha256", "recordedOutcome", "effectiveOutcome", "overrideReason"],
+        "properties": {
+          "runId": {"$ref": "#/$defs/runId"},
+          "path": {"type": "string", "pattern": "^output/[a-f0-9-]+$"},
+          "scenario": {"type": "string", "minLength": 1},
+          "manifestSha256": {"$ref": "#/$defs/digest"},
+          "recordedOutcome": {"$ref": "#/$defs/outcome"},
+          "effectiveOutcome": {"$ref": "#/$defs/outcome"},
+          "overrideReason": {"type": ["string", "null"]}
+        }
+      }
+    },
+    "verifiedAt": {"type": "string", "format": "date-time"}
+  },
+  "$defs": {
+    "runId": {"type": "string", "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-7[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$"},
+    "digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "outcome": {"enum": ["passed", "failed", "errored", "inconclusive", "infrastructure-failure"]}
+  }
+}

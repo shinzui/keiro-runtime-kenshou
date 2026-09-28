@@ -37,6 +37,7 @@ library
   exposed-modules:
     Kenshou.Remote.Cell.Docs
     Kenshou.Remote.Cell.Fetch
+    Kenshou.Remote.Cell.Index
     Kenshou.Remote.Cell.Lease
     Kenshou.Remote.Cell.Submit
     Kenshou.Remote.Cell.Watch

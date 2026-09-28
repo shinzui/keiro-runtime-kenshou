@@ -1,0 +1,20 @@
+{
+  "schema": "kenshou.cell-run/v1",
+  "cellRun": "0199a3c2-7b1e-7c44-9d0a-3f5e2a61b7c9",
+  "cell": "alpha",
+  "leaseId": "0199a3c1-0d52-7f10-8a77-6e0c4b2d9f01",
+  "leaseSequence": 2,
+  "resultsBaseUri": "gs://tan-nb-exp-cells-results/runs/0199a3c2-7b1e-7c44-9d0a-3f5e2a61b7c9",
+  "dataBaseUri": "gs://tan-nb-exp-cells-results/runs/0199a3c2-7b1e-7c44-9d0a-3f5e2a61b7c9/output",
+  "cellManifest": {"path": "manifest.json", "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "bytes": 5210},
+  "cellOutcome": "completed",
+  "reasons": [],
+  "entryExitCode": 0,
+  "evidence": [
+    {"kind": "cell-fingerprint", "path": "cell/fingerprint.json", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "bytes": 3904, "mediaType": "application/json"}
+  ],
+  "runs": [
+    {"runId": "0199a3f2-7c20-7f00-8a11-0c0d0e0f1011", "path": "output/0199a3f2-7c20-7f00-8a11-0c0d0e0f1011", "scenario": "selftest/kernel/correctness/postgres-roundtrip", "manifestSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "recordedOutcome": "passed", "effectiveOutcome": "passed", "overrideReason": null}
+  ],
+  "verifiedAt": "2026-09-27T12:00:00Z"
+}

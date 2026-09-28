@@ -1,6 +1,6 @@
 module FetchSpec (spec) where
 
-import Data.Aeson (eitherDecode, encode, object, (.=))
+import Data.Aeson (Value, eitherDecode, encode, object, (.=))
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.Foldable (toList)
 import Data.List.NonEmpty (NonEmpty (..))
@@ -9,8 +9,10 @@ import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
 import Kenshou.Core.Id (RunId, newRunId, renderRunId)
 import Kenshou.Core.Manifest (Manifest (..), ManifestFile (..))
+import Kenshou.Core.Outcome qualified as Outcome
 import Kenshou.Remote.Cell.Docs (Artifact (..), CellManifest (..), CellOutcome (..), CellPhase (..), CellRunResult (..), CellStatus (..), LogChunks (..), ManifestPayload (..), Submission (..), WorkObject (..))
-import Kenshou.Remote.Cell.Fetch (FetchError (..), VerifyProblem (..), fetchCellRun, verifyCellRun, verifyCellRunWithStatus, verifyCellTree)
+import Kenshou.Remote.Cell.Fetch (FetchError (..), VerifyProblem (..), effectiveOutcome, fetchCellRun, verifyCellRun, verifyCellRunWithStatus, verifyCellTree)
+import Kenshou.Remote.Cell.Index (CellRunIndex (..), RunLink (..), deriveCellRunIndex, writeCellRunIndex)
 import Kenshou.Remote.Cell.Submit (workObjectFor)
 import Kenshou.Remote.Payload (Bundle (..), CellPayload (..))
 import Kenshou.Remote.Store (Bucket (..), ObjectName (..), ObjectStore (..), Precondition (..))
@@ -22,6 +24,19 @@ import Test.Hspec
 
 spec :: Spec
 spec = describe "sealed cell tree fetch" do
+  it "round-trips the derived cell-run index fixture" do
+    bytes <- LazyByteString.readFile "test/golden/cell-run.json"
+    case eitherDecode bytes :: Either String CellRunIndex of
+      Left failure -> expectationFailure failure
+      Right index -> eitherDecode (encode index) `shouldBe` (eitherDecode bytes :: Either String Value)
+
+  it "maps cell failures onto effective nested-run outcomes" do
+    effectiveOutcome Completed True Outcome.Failed `shouldBe` Outcome.Failed
+    effectiveOutcome InfrastructureFailure True Outcome.Passed `shouldBe` Outcome.InfrastructureFailure
+    effectiveOutcome Cancelled True Outcome.Passed `shouldBe` Outcome.Passed
+    effectiveOutcome Cancelled False Outcome.Passed `shouldBe` Outcome.Errored
+    effectiveOutcome TimedOut False Outcome.Inconclusive `shouldBe` Outcome.Errored
+
   it "requires a seal, verifies bytes, and repairs a damaged local artifact on replay" $ withSystemTempDirectory "kenshou-fetch" \root -> do
     store <- newFileStore (root </> "store")
     identifier <- newRunId
@@ -100,11 +115,28 @@ spec = describe "sealed cell tree fetch" do
     bytes <- LazyByteString.readFile (tree </> "manifest.json")
     let sealed = CellStatus manifest.runId Sealed (Just manifest.leaseSequence) manifest.sealedAt Nothing (LogChunks 0 0) (Just manifest.outcome) (Just (digestOf bytes)) (Just [])
     verifyCellRunWithStatus sealed tree `shouldReturn` Right manifest
-    let wrong = sealed {manifestSha256 = Just (Text.replicate 64 "f")}
+    let wrong = CellStatus sealed.runId sealed.phase sealed.leaseSequence sealed.updatedAt sealed.phaseStartedAt sealed.logChunks sealed.outcome (Just (Text.replicate 64 "f")) sealed.reasons
     result <- verifyCellRunWithStatus wrong tree
     result `shouldSatisfy` \case
       Left problems -> StatusDigestMismatch `elem` problems
       Right _ -> False
+
+  it "derives a durable index beside a verified cell tree" $ withSystemTempDirectory "kenshou-index" \root -> do
+    (tree, manifest) <- completeTree root False False False
+    derived <- deriveCellRunIndex (Bucket "results") Nothing tree
+    case derived of
+      Left failure -> expectationFailure (show failure)
+      Right index -> do
+        index.cellRun `shouldBe` manifest.runId
+        index.resultsBaseUri `shouldBe` ("gs://results/runs/" <> renderRunId manifest.runId)
+        index.dataBaseUri `shouldBe` (index.resultsBaseUri <> "/output")
+        length index.runs `shouldBe` 1
+        map (.recordedOutcome) index.runs `shouldBe` [Outcome.Passed]
+        map (.effectiveOutcome) index.runs `shouldBe` [Outcome.Passed]
+        destination <- writeCellRunIndex tree index
+        destination `shouldBe` root </> "cell-run.json"
+        stored <- LazyByteString.readFile destination
+        eitherDecode stored `shouldBe` Right index
 
 publishFixture :: ObjectStore -> RunId -> IO CellManifest
 publishFixture store identifier = do
@@ -148,7 +180,7 @@ completeTree root wrongPayload wrongRunId unsafeNested = do
       manifestDigest = if wrongPayload then Text.replicate 64 "b" else payloadDigest
       manifestPayload = ManifestPayload manifestDigest fixture.payload.storePath
       cellResult = CellRunResult identifier "alpha" lease 1 Completed (Just 0) Nothing []
-      runBytes = encode (object ["schema" .= ("kenshou.run-result/v1" :: Text), "runId" .= (if wrongRunId then otherId else nestedId), "fingerprint" .= object ["cell" .= object ["payload" .= object ["bundleSha256" .= payloadDigest]]]])
+      runBytes = encode (object ["schema" .= ("kenshou.run-result/v1" :: Text), "runId" .= (if wrongRunId then otherId else nestedId), "scenario" .= ("selftest/kernel/correctness/always-pass" :: Text), "outcome" .= Outcome.Passed, "fingerprint" .= object ["cell" .= object ["payload" .= object ["bundleSha256" .= payloadDigest]]]])
       nestedFile = ManifestFile (if unsafeNested then "../escape" else "run-result.json") ("sha256:" <> digestOf runBytes) (fromIntegral (LazyByteString.length runBytes)) "application/json"
       nestedManifest = Manifest nestedId now [nestedFile]
       files =
