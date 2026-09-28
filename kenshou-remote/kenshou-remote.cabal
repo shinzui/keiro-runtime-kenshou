@@ -44,6 +44,7 @@ library
     Kenshou.Remote.Cell.Submit
     Kenshou.Remote.Cell.Watch
     Kenshou.Remote.Payload
+    Kenshou.Remote.Payload.Publish
     Kenshou.Remote.Store
     Kenshou.Remote.Store.File
     Kenshou.Remote.Store.Gcs
@@ -76,6 +77,7 @@ test-suite kenshou-remote-test
     FetchSpec
     GcsSpec
     LeaseSpec
+    PayloadSpec
     SessionSpec
     SubmitSpec
     WatchSpec
