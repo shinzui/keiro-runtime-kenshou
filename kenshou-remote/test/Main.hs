@@ -17,6 +17,7 @@ import Kenshou.Remote.Store (Bucket (..), ObjectMeta (..), ObjectName (..), Obje
 import Kenshou.Remote.Store.File (newFileStore)
 import LeaseSpec qualified
 import PayloadSpec qualified
+import PrepareSpec qualified
 import SessionSpec qualified
 import SubmitSpec qualified
 import System.Directory (getFileSize)
@@ -46,6 +47,7 @@ tests = do
   GcsSpec.spec
   LeaseSpec.spec
   PayloadSpec.spec
+  PrepareSpec.spec
   SessionSpec.spec
   SubmitSpec.spec
   WatchSpec.spec
