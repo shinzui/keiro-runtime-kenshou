@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/kenshou.cell-session.v1.schema.json",
+  "title": "Durable cell session journal",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "sessionId", "cell", "store", "project", "controlBucket", "resultsBucket", "leaseId", "leaseMode", "payloads", "planSha256", "rejectedRuns", "slices", "createdAt", "updatedAt"],
+  "properties": {
+    "schema": {"const": "kenshou.cell-session/v1"},
+    "sessionId": {"$ref": "#/$defs/runId"},
+    "cell": {"type": "string", "minLength": 1},
+    "store": {"type": "string", "minLength": 1},
+    "project": {"type": ["string", "null"]},
+    "controlBucket": {"type": "string", "minLength": 1},
+    "resultsBucket": {"type": "string", "minLength": 1},
+    "leaseId": {"$ref": "#/$defs/runId"},
+    "leaseMode": {"enum": ["held", "detached"]},
+    "payloads": {"type": "object", "additionalProperties": {"type": "object"}},
+    "planSha256": {"$ref": "#/$defs/digest"},
+    "rejectedRuns": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["runId", "reason"],
+        "properties": {"runId": {"$ref": "#/$defs/runId"}, "reason": {"type": "string", "minLength": 1}}
+      }
+    },
+    "slices": {"type": "array", "items": {"$ref": "#/$defs/slice"}},
+    "createdAt": {"type": "string", "format": "date-time"},
+    "updatedAt": {"type": "string", "format": "date-time"}
+  },
+  "$defs": {
+    "runId": {"type": "string", "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-7[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$"},
+    "digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "slice": {
+      "type": "object", "additionalProperties": false,
+      "required": ["index", "cellRun", "ordinals", "runIds", "reset", "submission", "workPath", "state", "cellOutcome", "entryExitCode", "manifestSha256", "rejectionReason", "fetchedPath"],
+      "properties": {
+        "index": {"type": "integer", "minimum": 0},
+        "cellRun": {"$ref": "#/$defs/runId"},
+        "ordinals": {"type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 0}},
+        "runIds": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/runId"}},
+        "reset": {"type": "object", "required": ["cachePolicy"], "properties": {"cachePolicy": {"enum": ["cold", "warm"]}}},
+        "submission": {"type": "object", "required": ["schema", "runId", "leaseId", "reset"], "properties": {"schema": {"const": "cell.submission/v1"}, "runId": {"$ref": "#/$defs/runId"}, "leaseId": {"$ref": "#/$defs/runId"}}},
+        "workPath": {"type": "string", "minLength": 1},
+        "state": {"enum": ["planned", "submitted", "sealed", "rejected", "fetched", "verified"]},
+        "cellOutcome": {"enum": ["completed", "infrastructure-failure", "cancelled", "timed-out", null]},
+        "entryExitCode": {"type": ["integer", "null"]},
+        "manifestSha256": {"anyOf": [{"$ref": "#/$defs/digest"}, {"type": "null"}]},
+        "rejectionReason": {"type": ["string", "null"]},
+        "fetchedPath": {"type": ["string", "null"]}
+      }
+    }
+  }
+}

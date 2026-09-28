@@ -58,6 +58,8 @@ schemas-check:
     check-jsonschema --schemafile schemas/kenshou.cohort-identity.v1.schema.json kenshou-core/test/fixtures/cohort-identity.golden.json
     check-jsonschema --schemafile schemas/kenshou.payload.v1.schema.json kenshou-remote/test/golden/payload.json
     check-jsonschema --schemafile schemas/kenshou.cell-run.v1.schema.json kenshou-remote/test/golden/cell-run.json
+    check-jsonschema --schemafile schemas/kenshou.cell-session.v1.schema.json kenshou-remote/test/golden/cell-session.json
+    check-jsonschema --schemafile schemas/kenshou.cell-session.v1.schema.json kenshou-remote/test/golden/cell-session.json
     check-jsonschema --schemafile schemas/component-graph.v1.schema.json kenshou-core/data/components.json
     check-jsonschema --schemafile schemas/run-plan.v1.schema.json kenshou-core/test/golden/run-plan.minimal.json
     check-jsonschema --schemafile schemas/plan-summary.v1.schema.json kenshou-core/test/golden/plan-summary.minimal.json

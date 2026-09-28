@@ -1,0 +1,118 @@
+{
+  "schema": "kenshou.cell-session/v1",
+  "sessionId": "0199a3c3-7b1e-7c44-9d0a-3f5e2a61b7c9",
+  "cell": "alpha",
+  "store": "gs://",
+  "project": "tan-nb-exp",
+  "controlBucket": "tan-nb-exp-cells-control",
+  "resultsBucket": "tan-nb-exp-cells-results",
+  "leaseId": "0199a3c1-0d52-7f10-8a77-6e0c4b2d9f01",
+  "leaseMode": "held",
+  "payloads": {},
+  "planSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "rejectedRuns": [],
+  "slices": [
+    {
+      "index": 0,
+      "cellRun": "0199a3c2-7b1e-7c44-9d0a-3f5e2a61b7c9",
+      "ordinals": [
+        0
+      ],
+      "runIds": [
+        "0199a3c4-7b1e-7c44-9d0a-3f5e2a61b7c9"
+      ],
+      "reset": {
+        "postgres": {
+          "major": 18,
+          "databases": [
+            {
+              "name": "benchmark",
+              "owner": "benchmark",
+              "template": "template0"
+            }
+          ],
+          "settings": {
+            "checkpoint_timeout": "30min",
+            "max_wal_size": "16GB"
+          }
+        },
+        "cachePolicy": "cold",
+        "broker": {
+          "wipe": true
+        }
+      },
+      "submission": {
+        "schema": "cell.submission/v1",
+        "runId": "0199a3c2-7b1e-7c44-9d0a-3f5e2a61b7c9",
+        "leaseId": "0199a3c1-0d52-7f10-8a77-6e0c4b2d9f01",
+        "payload": {
+          "schema": "cell.payload/v1",
+          "kind": "nix-nar-bundle",
+          "bundle": {
+            "uri": "gs://tan-nb-exp-cells-control/payloads/sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.nar.zst",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "bytes": 48211934
+          },
+          "storePath": "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-cell-fixture-hello",
+          "narHash": "sha256-example",
+          "closurePaths": [
+            "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-cell-fixture-hello"
+          ],
+          "system": "x86_64-linux",
+          "command": [
+            "bin/cell-fixture-hello"
+          ]
+        },
+        "work": {
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "bytes": 212,
+          "mediaType": "application/json"
+        },
+        "env": {
+          "EXAMPLE": "value"
+        },
+        "reset": {
+          "postgres": {
+            "major": 18,
+            "databases": [
+              {
+                "name": "benchmark",
+                "owner": "benchmark",
+                "template": "template0"
+              }
+            ],
+            "settings": {
+              "checkpoint_timeout": "30min",
+              "max_wal_size": "16GB"
+            }
+          },
+          "cachePolicy": "cold",
+          "broker": {
+            "wipe": true
+          }
+        },
+        "limits": {
+          "wallClockSeconds": 3600,
+          "memoryMaxBytes": 25769803776,
+          "outputMaxBytes": 21474836480
+        },
+        "requires": {
+          "protocol": "cell.protocol/v1",
+          "minAgentVersion": "0.1.0"
+        },
+        "labels": {
+          "arm": "candidate"
+        }
+      },
+      "workPath": "slice-0/work.json",
+      "state": "planned",
+      "cellOutcome": null,
+      "entryExitCode": null,
+      "manifestSha256": null,
+      "rejectionReason": null,
+      "fetchedPath": null
+    }
+  ],
+  "createdAt": "2026-09-27T12:00:00Z",
+  "updatedAt": "2026-09-27T12:00:00Z"
+}

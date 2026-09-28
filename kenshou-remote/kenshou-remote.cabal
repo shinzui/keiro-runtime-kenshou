@@ -40,6 +40,7 @@ library
     Kenshou.Remote.Cell.Index
     Kenshou.Remote.Cell.Lease
     Kenshou.Remote.Cell.Session
+    Kenshou.Remote.Cell.Session.Journal
     Kenshou.Remote.Cell.Submit
     Kenshou.Remote.Cell.Watch
     Kenshou.Remote.Payload
@@ -83,6 +84,7 @@ test-suite kenshou-remote-test
     aeson,
     base >=4.21 && <4.22,
     bytestring,
+    containers,
     directory,
     filepath,
     hspec >=2.11 && <2.12,

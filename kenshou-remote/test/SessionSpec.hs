@@ -6,15 +6,20 @@ import Control.Exception (SomeException, try)
 import Control.Monad (forM_)
 import Data.Aeson (eitherDecode, encode)
 import Data.ByteString.Lazy qualified as LazyByteString
+import Data.Either (isLeft)
+import Data.IORef (newIORef, readIORef, writeIORef)
+import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
 import FetchSpec (completeTreeWith)
 import Kenshou.Core.Id (newRunId, renderRunId)
 import Kenshou.Remote.Cell.Docs (Artifact (..), CellManifest (..), CellOutcome (..), CellPhase (..), CellStatus (..), LogChunks (..), Rejected (..), Submission (..), WorkObject (..))
-import Kenshou.Remote.Cell.Index (CellRunIndex (..))
+import Kenshou.Remote.Cell.Index (CellManifestLink (..), CellRunIndex (..))
 import Kenshou.Remote.Cell.Lease (AcquireOutcome (..), CellRef (..), Lease (..), LeaseHandle, LeaseRequest (..), acquireLease, leaseSnapshot, requestCancel)
 import Kenshou.Remote.Cell.Session (SessionError (..), runSubmission)
+import Kenshou.Remote.Cell.Session qualified as Session
+import Kenshou.Remote.Cell.Session.Journal (LeaseMode (..), SessionJournal (..), SliceJournal (..), SliceState (..), applyTransition, readSessionJournal, writeSessionJournal)
 import Kenshou.Remote.Cell.Submit (workObjectFor)
 import Kenshou.Remote.Payload (Bundle (..), CellPayload (..))
 import Kenshou.Remote.Store (Bucket (..), ObjectName (..), ObjectStore (..), Precondition (..))
@@ -27,6 +32,17 @@ import Test.Hspec
 
 spec :: Spec
 spec = describe "one leased cell submission" do
+  it "round-trips a durable journal and rejects skipped transitions" do
+    journal <- readSessionJournal "test/golden/cell-session.json" >>= expectRight
+    now <- getCurrentTime
+    identifier <- case journal.slices of
+      [slice] -> pure slice.cellRun
+      _ -> expectationFailure "expected one golden slice" >> error "unreachable"
+    applyTransition now identifier (Session.ResultsFetched "tree") journal `shouldSatisfy` isLeft
+    submitted <- expectRight (applyTransition now identifier Session.SubmissionPublished journal)
+    fmap (.state) submitted.slices `shouldBe` [SliceSubmitted]
+    applyTransition now identifier Session.SubmissionPublished submitted `shouldSatisfy` isLeft
+
   it "stops before publication when the lease was cancelled" $ withSystemTempDirectory "kenshou-session" \root -> do
     store <- newFileStore root
     handle <- acquireLease store cellRef request >>= expectAcquired
@@ -39,6 +55,8 @@ spec = describe "one leased cell submission" do
     store <- newFileStore root
     handle <- acquireLease store cellRef request >>= expectAcquired
     submission <- fixtureFor handle
+    let journalPath = root </> "out" </> "session.json"
+    checkpoint <- journalCheckpoint journalPath submission
     _ <- forkIO do
       let marker = ObjectName (submissionPrefix submission <> "submission.json")
       let awaitMarker = do
@@ -50,17 +68,22 @@ spec = describe "one leased cell submission" do
       now <- getCurrentTime
       _ <- store.putObject cellRef.controlBucket (ObjectName (submissionPrefix submission <> "rejected.json")) "application/json" DoesNotExist (encode (Rejected submission.runId "unsafe-command" now))
       pure ()
-    runSubmission store cellRef (Bucket "results") handle submission workBytes (root <> "/out") (const (pure ())) `shouldReturn` Left (SubmissionRejected "unsafe-command")
+    Session.runSubmissionWithTransitions store cellRef (Bucket "results") handle submission workBytes (root </> "out") (const (pure ())) checkpoint `shouldReturn` Left (SubmissionRejected "unsafe-command")
+    journal <- readSessionJournal journalPath >>= expectRight
+    fmap (.state) journal.slices `shouldBe` [SliceRejected]
+    fmap (.rejectionReason) journal.slices `shouldBe` [Just "unsafe-command"]
 
   it "takes one submission through a sealed local protocol agent and writes the index" $ withSystemTempDirectory "kenshou-session" \root -> do
     store <- newFileStore root
     handle <- acquireLease store cellRef request >>= expectAcquired
     submission <- fixtureFor handle
+    let journalPath = root </> "out" </> "session.json"
+    checkpoint <- journalCheckpoint journalPath submission
     workerResult <- newEmptyMVar
     _ <- forkIO do
       completed <- try (publishSealedFixture store root submission) :: IO (Either SomeException ())
       putMVar workerResult completed
-    result <- timeout 10000000 (runSubmission store cellRef (Bucket "results") handle submission workBytes (root </> "out") (const (pure ())))
+    result <- timeout 10000000 (Session.runSubmissionWithTransitions store cellRef (Bucket "results") handle submission workBytes (root </> "out") (const (pure ())) checkpoint)
     case result of
       Nothing -> expectationFailure "session did not observe the sealed result within ten seconds"
       Just (Left failure) -> expectationFailure (show failure)
@@ -68,6 +91,9 @@ spec = describe "one leased cell submission" do
         index.cellRun `shouldBe` submission.runId
         indexed <- doesFileExist (root </> "out" </> Text.unpack (renderRunId submission.runId) </> "cell-run.json")
         indexed `shouldBe` True
+        journal <- readSessionJournal journalPath >>= expectRight
+        fmap (.state) journal.slices `shouldBe` [SliceVerified]
+        fmap (.manifestSha256) journal.slices `shouldBe` [Just index.cellManifest.sha256]
         worker <- takeMVar workerResult
         case worker of
           Left failure -> expectationFailure (show failure)
@@ -122,3 +148,22 @@ request = LeaseRequest "tester@workstation" "verification" 120
 expectAcquired :: AcquireOutcome -> IO LeaseHandle
 expectAcquired (Acquired handle) = pure handle
 expectAcquired _ = expectationFailure "expected acquired lease" >> error "unreachable"
+
+expectRight :: Either Text value -> IO value
+expectRight = either (\failure -> expectationFailure (Text.unpack failure) >> error "unreachable") pure
+
+journalCheckpoint :: FilePath -> Submission -> IO (Session.SessionTransition -> IO ())
+journalCheckpoint path submission = do
+  now <- getCurrentTime
+  identifier <- newRunId
+  nested <- newRunId
+  let slice = SliceJournal 0 submission.runId [0] [nested] submission.reset submission "slice-0/work.json" SlicePlanned Nothing Nothing Nothing Nothing Nothing
+      initial = SessionJournal identifier "alpha" "file" Nothing "control" "results" submission.leaseId Held Map.empty (Text.replicate 64 "a") [] [slice] now now
+  writeSessionJournal path initial
+  journalRef <- newIORef initial
+  pure \transition -> do
+    current <- readIORef journalRef
+    at <- getCurrentTime
+    changed <- either (ioError . userError . Text.unpack) pure (applyTransition at submission.runId transition current)
+    writeSessionJournal path changed
+    writeIORef journalRef changed
