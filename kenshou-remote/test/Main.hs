@@ -9,6 +9,7 @@ import Data.Either (isLeft)
 import Data.Text qualified as Text
 import Data.Time (UTCTime (..), fromGregorian, secondsToDiffTime)
 import DocsSpec qualified
+import FetchSpec qualified
 import GcsSpec qualified
 import Kenshou.Core.Cohort (CohortIdentity (..), CohortName (..), PlanHash (..))
 import Kenshou.Remote.Payload (Bundle (..), CellPayload (..), CohortCheck (..), Harness (..), PayloadDescriptor (..))
@@ -39,6 +40,7 @@ main =
 tests :: Spec
 tests = do
   DocsSpec.spec
+  FetchSpec.spec
   GcsSpec.spec
   LeaseSpec.spec
   SubmitSpec.spec

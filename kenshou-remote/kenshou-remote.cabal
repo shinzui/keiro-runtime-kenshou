@@ -36,6 +36,7 @@ library
   hs-source-dirs: src
   exposed-modules:
     Kenshou.Remote.Cell.Docs
+    Kenshou.Remote.Cell.Fetch
     Kenshou.Remote.Cell.Lease
     Kenshou.Remote.Cell.Submit
     Kenshou.Remote.Cell.Watch
@@ -69,6 +70,7 @@ test-suite kenshou-remote-test
   main-is: Main.hs
   other-modules:
     DocsSpec
+    FetchSpec
     GcsSpec
     LeaseSpec
     SubmitSpec
