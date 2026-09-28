@@ -8,6 +8,7 @@ module Kenshou.Remote.Cell.Lease
     AcquireOutcome (..),
     acquireLease,
     renewLease,
+    startLeaseRun,
     releaseLease,
     reattachLease,
     requestCancel,
@@ -121,7 +122,7 @@ acquireLease store ref request = do
   acquire identifier (0 :: Int)
   where
     acquire identifier attempts = do
-      unless (attempts < 12) (ioError (userError "lease claim contention exceeded retry limit"))
+      unless (attempts < maxCasAttempts) (ioError (userError "lease claim contention exceeded retry limit"))
       now <- store.serverTime
       let proposed = Lease identifier ref.cellName request.owner request.purpose request.ttlSeconds now now False 0
       result <- store.putObject ref.controlBucket (leaseName ref) "application/json" DoesNotExist (encode proposed)
@@ -162,6 +163,19 @@ renewLease store ref handle = modifyMVar handle.state \(lease, generation, held)
         Written meta -> pure ((renewed, meta.generation, True), True)
         PreconditionFailed -> pure ((lease, generation, False), False)
 
+startLeaseRun :: ObjectStore -> CellRef -> LeaseHandle -> IO (Maybe Int)
+startLeaseRun store ref handle = modifyMVar handle.state \(lease, generation, held) ->
+  if not held || lease.cancelRequested
+    then pure ((lease, generation, False), Nothing)
+    else do
+      unless (lease.cell == ref.cellName) (ioError (userError "lease handle names another cell"))
+      unless (lease.runsStarted < maxBound) (ioError (userError "lease run sequence overflow"))
+      let started = lease {runsStarted = lease.runsStarted + 1}
+      result <- store.putObject ref.controlBucket (leaseName ref) "application/json" (GenerationIs generation) (encode started)
+      case result of
+        Written meta -> pure ((started, meta.generation, True), Just started.runsStarted)
+        PreconditionFailed -> pure ((lease, generation, False), Nothing)
+
 releaseLease :: ObjectStore -> CellRef -> LeaseHandle -> IO Bool
 releaseLease store ref handle = modifyMVar handle.state \(lease, generation, held) ->
   if not held
@@ -184,7 +198,7 @@ requestCancel store ref expected force = do
   attempt (0 :: Int)
   where
     attempt count = do
-      unless (count < 12) (ioError (userError "lease cancellation contention exceeded retry limit"))
+      unless (count < maxCasAttempts) (ioError (userError "lease cancellation contention exceeded retry limit"))
       current <- readCurrent store ref
       case current of
         Nothing -> pure False
@@ -257,3 +271,6 @@ validCellName value =
     && Text.length value <= 63
     && Text.head value `elem` (['a' .. 'z'] <> ['0' .. '9'])
     && Text.all (\character -> character `elem` (['a' .. 'z'] <> ['0' .. '9'] <> "-")) value
+
+maxCasAttempts :: Int
+maxCasAttempts = 32

@@ -53,7 +53,7 @@ Every kenshou run that executed on a cell remains an ordinary kenshou run direct
 - [x] (2026-09-27) Fenced separate local-store handles within one process as well as separate processes; POSIX record locks alone do not serialize handles in one process. The eight-example remote suite passes, including both concurrent claim forms.
 - [x] (2026-09-27) Added the remote test suite and both cohort/payload schema fixtures to the repository-wide `just verify` recipes. The exact remote test target and `just schemas-check` passed; payload publication remains open.
 - [x] (2026-09-27) Implemented the GCS object-store adapter against the JSON API: generation preconditions, pinned media reads, atomic file downloads, paged listings, server Date, bounded 429/5xx response retries, and 8 MiB resumable chunks with a status query after transient upload responses. The token provider chooses the explicit token, VM metadata, then a 45-minute cached `gcloud` token. Sixteen remote examples pass with a local HTTP server, including a 503 upload recovery; `nix develop -c just verify` passes. Network-interruption recovery and a live GCS acceptance run remain open.
-- [x] (2026-09-27) Added the cell lease client over the shared store: exclusive claim, server-time expiry with the 30-second grace, generation-fenced takeover, renewal and release, reattachment, explicit cancellation, quarantine release, and a heartbeat thread. Owner lease and quarantine examples and schemas are copied at `ef159677`; 24 remote examples and `nix develop -c just verify` pass. The full cell submission lifecycle and live lease acceptance remain open.
+- [x] (2026-09-27) Added the cell lease client over the shared store: exclusive claim, server-time expiry with the 30-second grace, generation-fenced takeover, renewal and release, reattachment, explicit cancellation, quarantine release, and a heartbeat thread. Owner lease and quarantine examples and schemas are copied at `ef159677`; 24 remote examples and `nix develop -c just verify` pass. A subsequent generation-fenced `startLeaseRun` update increments `runsStarted` for each slice, matching the Rust agent's submission sequence; its focused test passes. The full cell submission lifecycle and live lease acceptance remain open.
 - [ ] Deliver the content-addressed Kenshou payload and `kenshou cell` lifecycle, paired comparisons within a lease, and equivalent local/cell correctness evidence; verify the acceptance commands in Validation and Acceptance.
 
 ## Surprises & Discoveries
@@ -332,6 +332,7 @@ data LeaseRequest = LeaseRequest {owner :: Text, purpose :: Text, ttlSeconds :: 
 data AcquireOutcome = Acquired LeaseHandle | Busy Lease | Quarantined Quarantine
 acquireLease :: ObjectStore -> CellRef -> LeaseRequest -> IO AcquireOutcome
 renewLease :: ObjectStore -> CellRef -> LeaseHandle -> IO Bool -- False: the lease is lost
+startLeaseRun :: ObjectStore -> CellRef -> LeaseHandle -> IO (Maybe Int) -- generation-fenced lease sequence
 releaseLease :: ObjectStore -> CellRef -> LeaseHandle -> IO Bool
 reattachLease :: ObjectStore -> CellRef -> LeaseId -> IO (Maybe LeaseHandle) -- for resume and release by identifier
 requestCancel :: ObjectStore -> CellRef -> Maybe LeaseId {- expected owner lease -} -> Bool {- force -} -> IO Bool
