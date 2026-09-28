@@ -1,0 +1,18 @@
+{
+  "schema": "cell.environment/v1",
+  "cell": "alpha",
+  "runId": "0199a3c2-7b1e-7c44-9d0a-3f5e2a61b7c9",
+  "leaseId": "0199a3c1-0d52-7f10-8a77-6e0c4b2d9f01",
+  "postgres": {
+    "major": 18,
+    "host": "10.0.0.2",
+    "port": 5432,
+    "database": "benchmark",
+    "user": "benchmark",
+    "connectionString": "host=10.0.0.2 port=5432 dbname=benchmark user=benchmark"
+  },
+  "broker": null,
+  "otlp": null,
+  "metrics": {"victoriaMetricsUrl": "http://10.0.0.4:8428"},
+  "drivers": [{"index": 0, "host": "10.0.0.3"}]
+}

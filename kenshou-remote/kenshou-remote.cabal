@@ -35,6 +35,7 @@ library
   import: warnings
   hs-source-dirs: src
   exposed-modules:
+    Kenshou.Remote.Cell.Docs
     Kenshou.Remote.Cell.Lease
     Kenshou.Remote.Payload
     Kenshou.Remote.Store
@@ -46,6 +47,7 @@ library
     base >=4.21 && <4.22,
     base16-bytestring,
     bytestring >=0.12 && <0.13,
+    containers,
     cryptohash-sha256,
     directory,
     filepath >=1.5 && <1.6,
@@ -64,6 +66,7 @@ test-suite kenshou-remote-test
   hs-source-dirs: test
   main-is: Main.hs
   other-modules:
+    DocsSpec
     GcsSpec
     LeaseSpec
 

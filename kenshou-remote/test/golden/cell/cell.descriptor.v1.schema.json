@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shinzui.dev/load-testing-infra/schemas/cell/cell.descriptor.v1.schema.json",
+  "title": "Verification cell descriptor",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "name", "project", "zone", "postgresMajor", "instances", "addresses", "shape", "images", "buckets", "agentProtocol"],
+  "properties": {
+    "schema": {"const": "cell.descriptor/v1"},
+    "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,40}$"},
+    "project": {"type": "string", "minLength": 1},
+    "zone": {"type": "string", "minLength": 1},
+    "postgresMajor": {"enum": [17, 18]},
+    "instances": {
+      "type": "object", "additionalProperties": false,
+      "required": ["postgres", "drivers", "monitoring"],
+      "properties": {
+        "postgres": {"type": "string", "minLength": 1},
+        "drivers": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "monitoring": {"type": "string", "minLength": 1}
+      }
+    },
+    "addresses": {
+      "type": "object", "additionalProperties": false,
+      "required": ["postgres", "drivers", "monitoring"],
+      "properties": {
+        "postgres": {"type": "string", "format": "ipv4"},
+        "drivers": {"type": "array", "minItems": 1, "items": {"type": "string", "format": "ipv4"}},
+        "monitoring": {"type": "string", "format": "ipv4"}
+      }
+    },
+    "shape": {
+      "type": "object", "additionalProperties": false,
+      "required": ["postgres", "driver", "monitoring", "scheduling"],
+      "properties": {
+        "postgres": {"type": "object", "required": ["machineType", "diskType", "diskSizeGb"], "properties": {
+          "machineType": {"type": "string"}, "diskType": {"type": "string"},
+          "diskSizeGb": {"type": "integer", "minimum": 1}, "provisionedIops": {"type": ["integer", "null"]}
+        }},
+        "driver": {"type": "object", "required": ["machineType", "count", "bootDiskSizeGb"], "properties": {
+          "machineType": {"type": "string"}, "count": {"type": "integer", "minimum": 1},
+          "bootDiskSizeGb": {"type": "integer", "minimum": 1}
+        }},
+        "monitoring": {"type": "object", "required": ["machineType"], "properties": {"machineType": {"type": "string"}}},
+        "scheduling": {"type": "object", "required": ["onHostMaintenance", "compactPlacement"], "properties": {
+          "onHostMaintenance": {"enum": ["MIGRATE", "TERMINATE"]},
+          "minCpuPlatform": {"type": ["string", "null"]},
+          "compactPlacement": {"type": "boolean"}
+        }}
+      }
+    },
+    "images": {
+      "type": "object", "additionalProperties": false,
+      "required": ["driver", "postgres", "monitoring", "broker"],
+      "properties": {
+        "driver": {"type": "string", "minLength": 1},
+        "postgres": {"type": "string", "minLength": 1},
+        "monitoring": {"type": "string", "minLength": 1},
+        "broker": {"type": "string"}
+      }
+    },
+    "buckets": {
+      "type": "object", "additionalProperties": false,
+      "required": ["control", "results"],
+      "properties": {
+        "control": {"type": "string", "minLength": 1},
+        "results": {"type": "string", "minLength": 1}
+      }
+    },
+    "agentProtocol": {"const": "cell.protocol/v1"}
+  }
+}

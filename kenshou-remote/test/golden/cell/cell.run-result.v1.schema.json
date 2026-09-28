@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shinzui.dev/load-testing-infra/schemas/cell/cell.run-result.v1.schema.json",
+  "title": "Verification cell execution result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "runId", "cell", "leaseId", "leaseSequence", "outcome", "entryExitCode", "entrySignal", "reasons"],
+  "properties": {
+    "schema": {"const": "cell.run-result/v1"},
+    "runId": {"$ref": "#/$defs/identifier"},
+    "cell": {"$ref": "#/$defs/identifier"},
+    "leaseId": {"$ref": "#/$defs/identifier"},
+    "leaseSequence": {"type": "integer", "minimum": 0},
+    "outcome": {"enum": ["completed", "infrastructure-failure", "cancelled", "timed-out"]},
+    "entryExitCode": {"type": ["integer", "null"]},
+    "entrySignal": {"type": ["integer", "null"]},
+    "reasons": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+  },
+  "$defs": {
+    "identifier": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,62}$"}
+  }
+}

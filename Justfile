@@ -54,8 +54,7 @@ evidence-check:
 
 [group('verification')]
 schemas-check:
-    check-jsonschema --schemafile kenshou-remote/test/golden/cell/cell.lease.v1.schema.json kenshou-remote/test/golden/cell/cell.lease.v1.json
-    check-jsonschema --schemafile kenshou-remote/test/golden/cell/cell.quarantine.v1.schema.json kenshou-remote/test/golden/cell/cell.quarantine.v1.json
+    for fixture in kenshou-remote/test/golden/cell/cell.*.v1.json; do schema="${fixture%.json}.schema.json"; check-jsonschema --base-uri "file://$PWD/$schema" --schemafile "$schema" "$fixture" || exit; done
     check-jsonschema --schemafile schemas/kenshou.cohort-identity.v1.schema.json kenshou-core/test/fixtures/cohort-identity.golden.json
     check-jsonschema --schemafile schemas/kenshou.payload.v1.schema.json kenshou-remote/test/golden/payload.json
     check-jsonschema --schemafile schemas/component-graph.v1.schema.json kenshou-core/data/components.json

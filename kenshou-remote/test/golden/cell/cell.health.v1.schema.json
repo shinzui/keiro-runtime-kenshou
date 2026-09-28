@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shinzui.dev/load-testing-infra/schemas/cell/cell.health.v1.schema.json",
+  "title": "Verification cell health gate evidence",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema", "runId", "windowStart", "windowEnd", "passed", "gates"],
+  "properties": {
+    "schema": {"const": "cell.health/v1"},
+    "runId": {"$ref": "#/$defs/identifier"},
+    "windowStart": {"type": "string", "format": "date-time"},
+    "windowEnd": {"type": "string", "format": "date-time"},
+    "passed": {"type": "boolean"},
+    "gates": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/gate"}}
+  },
+  "allOf": [{
+    "if": {"properties": {"passed": {"const": true}}, "required": ["passed"]},
+    "then": {"properties": {"gates": {"items": {"properties": {"status": {"const": "ok"}}}}}},
+    "else": {"properties": {"gates": {"contains": {"properties": {"status": {"const": "tripped"}}, "required": ["status"]}}}}
+  }],
+  "$defs": {
+    "identifier": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,62}$"},
+    "gate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "machine", "status", "observed", "threshold", "at"],
+      "properties": {
+        "name": {"enum": ["host-maintenance", "background-load", "storage-pressure", "incomplete-reset", "version-mismatch"]},
+        "machine": {"$ref": "#/$defs/identifier"},
+        "status": {"enum": ["ok", "tripped"]},
+        "observed": {"type": ["number", "string", "boolean", "object"]},
+        "threshold": {"type": ["number", "string", "boolean", "object", "null"]},
+        "at": {"type": "string", "format": "date-time"},
+        "detail": {"type": "string"}
+      }
+    }
+  }
+}

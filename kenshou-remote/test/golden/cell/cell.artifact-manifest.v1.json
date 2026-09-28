@@ -1,0 +1,21 @@
+{
+  "schema": "cell.artifact-manifest/v1",
+  "layout": 1,
+  "runId": "0199a3c2-7b1e-7c44-9d0a-3f5e2a61b7c9",
+  "cell": "alpha",
+  "leaseId": "0199a3c1-0d52-7f10-8a77-6e0c4b2d9f01",
+  "leaseSequence": 2,
+  "sealedAt": "2026-09-25T12:21:07Z",
+  "agentVersion": "0.1.0",
+  "payload": {
+    "kind": "nix-nar-bundle",
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "storePath": "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-cell-fixture-hello"
+  },
+  "outcome": "completed",
+  "retention": {"policy": "bucket-retention", "retentionSeconds": 34560000},
+  "artifacts": [
+    {"path": "cell/result.json", "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "bytes": 412, "mediaType": "application/json"},
+    {"path": "output/result.json", "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "bytes": 96, "mediaType": "application/json"}
+  ]
+}

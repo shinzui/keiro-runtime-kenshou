@@ -1,0 +1,18 @@
+{
+  "schema": "cell.health/v1",
+  "runId": "0199a3c2-7b1e-7c44-9d0a-3f5e2a61b7c9",
+  "windowStart": "2026-09-25T12:00:00Z",
+  "windowEnd": "2026-09-25T12:01:00Z",
+  "passed": false,
+  "gates": [
+    {
+      "name": "host-maintenance", "machine": "cell-alpha-postgres", "status": "tripped",
+      "observed": "MIGRATE_ON_HOST_MAINTENANCE", "threshold": "NONE",
+      "at": "2026-09-25T12:00:30Z", "detail": "maintenance event during run"
+    },
+    {
+      "name": "background-load", "machine": "cell-alpha-driver-0", "status": "ok",
+      "observed": 1.2, "threshold": 5, "at": "2026-09-25T12:00:10Z"
+    }
+  ]
+}

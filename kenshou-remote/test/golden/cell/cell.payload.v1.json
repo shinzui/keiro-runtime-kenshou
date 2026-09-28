@@ -1,0 +1,14 @@
+{
+  "schema": "cell.payload/v1",
+  "kind": "nix-nar-bundle",
+  "bundle": {
+    "uri": "gs://tan-nb-exp-cells-control/payloads/sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.nar.zst",
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "bytes": 48211934
+  },
+  "storePath": "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-cell-fixture-hello",
+  "narHash": "sha256-example",
+  "closurePaths": ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-cell-fixture-hello"],
+  "system": "x86_64-linux",
+  "command": ["bin/cell-fixture-hello"]
+}

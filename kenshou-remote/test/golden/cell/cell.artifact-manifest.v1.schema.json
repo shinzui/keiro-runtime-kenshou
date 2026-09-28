@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shinzui.dev/load-testing-infra/schemas/cell/cell.artifact-manifest.v1.schema.json",
+  "title": "Sealed verification cell result manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "layout", "runId", "cell", "leaseId", "leaseSequence", "sealedAt", "agentVersion", "payload", "outcome", "retention", "artifacts"],
+  "properties": {
+    "schema": {"const": "cell.artifact-manifest/v1"},
+    "layout": {"const": 1},
+    "runId": {"$ref": "#/$defs/identifier"},
+    "cell": {"$ref": "#/$defs/identifier"},
+    "leaseId": {"$ref": "#/$defs/identifier"},
+    "leaseSequence": {"type": "integer", "minimum": 0},
+    "sealedAt": {"type": "string", "format": "date-time"},
+    "agentVersion": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "payload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "sha256", "storePath"],
+      "properties": {
+        "kind": {"const": "nix-nar-bundle"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "storePath": {"type": "string", "pattern": "^/nix/store/[a-z0-9]{32}-[^/]+$"}
+      }
+    },
+    "outcome": {"enum": ["completed", "infrastructure-failure", "cancelled", "timed-out"]},
+    "retention": {
+      "type": "object", "additionalProperties": false,
+      "required": ["policy", "retentionSeconds"],
+      "properties": {
+        "policy": {"const": "bucket-retention"},
+        "retentionSeconds": {"type": "integer", "minimum": 0}
+      }
+    },
+    "artifacts": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["path", "sha256", "bytes", "mediaType"],
+        "properties": {
+          "path": {"type": "string", "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$))[^\\u0000]+$"},
+          "sha256": {"$ref": "#/$defs/sha256"},
+          "bytes": {"type": "integer", "minimum": 0},
+          "mediaType": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "identifier": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,62}$"},
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  }
+}

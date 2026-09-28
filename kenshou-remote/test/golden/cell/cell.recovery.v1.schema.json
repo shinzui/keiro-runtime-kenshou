@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shinzui.dev/load-testing-infra/schemas/cell/cell.recovery.v1.schema.json",
+  "title": "Verification cell interrupted-run recovery",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "runId", "reason", "at"],
+  "properties": {
+    "schema": {"const": "cell.recovery/v1"},
+    "runId": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,62}$"},
+    "reason": {"const": "agent-restarted"},
+    "at": {"type": "string", "format": "date-time"}
+  }
+}

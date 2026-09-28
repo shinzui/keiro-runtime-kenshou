@@ -1,0 +1,6 @@
+{
+  "schema": "cell.reset-request/v1",
+  "runId": "0199a3c2-7b1e-7c44-9d0a-3f5e2a61b7c9",
+  "leaseId": "lease-001",
+  "reset": {"cachePolicy": "warm"}
+}

@@ -83,7 +83,7 @@ instance FromJSON CellPayload where
     kind <- value .: "kind"
     unless (schema == ("cell.payload/v1" :: Text) && kind == ("nix-nar-bundle" :: Text)) (fail "unsupported cell payload")
     payload <- CellPayload <$> value .: "bundle" <*> value .: "storePath" <*> value .: "narHash" <*> value .: "closurePaths" <*> value .: "system" <*> value .: "command"
-    unless (payload.system == "x86_64-linux" && payload.storePath `elem` payload.closurePaths && payload.command == ["bin/kenshou", "cell", "exec"] && validStorePath payload.storePath && all validStorePath payload.closurePaths) (fail "invalid Kenshou cell payload")
+    unless (payload.system == "x86_64-linux" && payload.storePath `elem` payload.closurePaths && not (null payload.closurePaths) && unique payload.closurePaths && validStorePath payload.storePath && all validStorePath payload.closurePaths && not (Text.null payload.narHash) && validCommand payload.command) (fail "invalid cell payload")
     pure payload
 
 instance ToJSON Harness where
@@ -131,7 +131,7 @@ instance FromJSON PayloadDescriptor where
             "info-table" -> "-info-table"
             "profiled" -> "-profiled"
             _ -> "-invalid"
-    unless (descriptor.variant `elem` ["default", "info-table", "profiled"] && descriptor.cohort == unCohortName descriptor.cohortIdentity.identityCohort && descriptor.flakeAttr == expectedAttr && descriptor.cohortIdentity.identityResolver == Just "nix") (fail "inconsistent Kenshou payload identity")
+    unless (descriptor.variant `elem` ["default", "info-table", "profiled"] && descriptor.cohort == unCohortName descriptor.cohortIdentity.identityCohort && descriptor.flakeAttr == expectedAttr && descriptor.cohortIdentity.identityResolver == Just "nix" && descriptor.cell.command == ["bin/kenshou", "cell", "exec"]) (fail "inconsistent Kenshou payload identity")
     pure descriptor
 
 validSha256 :: Text -> Bool
@@ -148,3 +148,16 @@ validStorePath path = case Text.stripPrefix "/nix/store/" path of
   Nothing -> False
   where
     validNixBase32 character = character `elem` ("0123456789abcdfghijklmnpqrsvwxyz" :: String)
+
+validCommand :: [Text] -> Bool
+validCommand [] = False
+validCommand (first : rest) =
+  not (Text.null first)
+    && not (Text.isPrefixOf "/" first)
+    && not (Text.any (== '\0') first)
+    && all (/= "..") (Text.splitOn "/" first)
+    && all (not . Text.null) rest
+
+unique :: (Eq value) => [value] -> Bool
+unique [] = True
+unique (first : rest) = first `notElem` rest && unique rest

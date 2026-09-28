@@ -1,0 +1,20 @@
+{
+  "schema": "cell.reset-evidence/v1",
+  "runId": "0199a3c2-7b1e-7c44-9d0a-3f5e2a61b7c9",
+  "cell": "alpha",
+  "cachePolicy": "cold",
+  "startedAt": "2026-09-25T12:00:00Z",
+  "finishedAt": "2026-09-25T12:00:05Z",
+  "verified": true,
+  "steps": [
+    {"name": "stop-driver-processes", "startedAt": "2026-09-25T12:00:00Z", "finishedAt": "2026-09-25T12:00:01Z", "status": "ok"},
+    {"name": "reset-postgres", "startedAt": "2026-09-25T12:00:01Z", "finishedAt": "2026-09-25T12:00:05Z", "status": "ok"}
+  ],
+  "postgres": {
+    "version": "PostgreSQL 18.1",
+    "databases": ["benchmark", "postgres"],
+    "settings": [{"name": "checkpoint_timeout", "setting": "1800", "source": "configuration file"}],
+    "walLsn": "0/1734400",
+    "checkpoint": {"numRequested": 1, "numDone": 1}
+  }
+}

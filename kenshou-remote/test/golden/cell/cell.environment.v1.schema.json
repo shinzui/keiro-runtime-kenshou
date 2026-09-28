@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shinzui.dev/load-testing-infra/schemas/cell/cell.environment.v1.schema.json",
+  "title": "Environment made available to a verification cell payload",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "cell", "runId", "leaseId", "postgres", "broker", "otlp", "metrics", "drivers"],
+  "properties": {
+    "schema": {"const": "cell.environment/v1"},
+    "cell": {"$ref": "#/$defs/identifier"},
+    "runId": {"$ref": "#/$defs/identifier"},
+    "leaseId": {"$ref": "#/$defs/identifier"},
+    "postgres": {
+      "type": "object", "additionalProperties": false,
+      "required": ["major", "host", "port", "database", "user", "connectionString"],
+      "properties": {
+        "major": {"enum": [17, 18]},
+        "host": {"type": "string", "format": "ipv4"},
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "database": {"type": "string", "minLength": 1},
+        "user": {"type": "string", "minLength": 1},
+        "connectionString": {"type": "string", "minLength": 1}
+      }
+    },
+    "broker": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "object", "additionalProperties": false, "required": ["bootstrapServers", "adminUrl", "implementation", "version"], "properties": {
+          "bootstrapServers": {"type": "string", "minLength": 1},
+          "adminUrl": {"type": "string", "format": "uri"},
+          "implementation": {"type": "string", "minLength": 1},
+          "version": {"type": "string", "minLength": 1}
+        }}
+      ]
+    },
+    "otlp": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "object", "additionalProperties": false, "required": ["null", "file"], "properties": {
+          "null": {"$ref": "#/$defs/otlpEndpoint"},
+          "file": {"$ref": "#/$defs/otlpEndpoint"}
+        }}
+      ]
+    },
+    "metrics": {
+      "type": "object", "additionalProperties": false,
+      "required": ["victoriaMetricsUrl"],
+      "properties": {"victoriaMetricsUrl": {"type": "string", "format": "uri"}}
+    },
+    "drivers": {
+      "type": "array", "minItems": 1,
+      "items": {"type": "object", "additionalProperties": false, "required": ["index", "host"], "properties": {
+        "index": {"type": "integer", "minimum": 0},
+        "host": {"type": "string", "format": "ipv4"}
+      }}
+    },
+    "clock": {
+      "type": "object", "additionalProperties": false,
+      "required": ["skewBoundMicros"],
+      "properties": {"skewBoundMicros": {"type": "integer", "minimum": 0}}
+    },
+    "faultHook": {"type": "string", "minLength": 1}
+  },
+  "$defs": {
+    "identifier": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,62}$"},
+    "otlpEndpoint": {
+      "type": "object", "additionalProperties": false,
+      "required": ["grpc", "http"],
+      "properties": {
+        "grpc": {"type": "string", "format": "uri"},
+        "http": {"type": "string", "format": "uri"}
+      }
+    }
+  }
+}

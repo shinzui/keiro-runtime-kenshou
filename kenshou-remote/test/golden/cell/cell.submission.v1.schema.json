@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shinzui.dev/load-testing-infra/schemas/cell/cell.submission.v1.schema.json",
+  "title": "Verification cell run submission",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "runId", "leaseId", "payload", "work", "env", "reset", "limits", "requires", "labels"],
+  "properties": {
+    "schema": {"const": "cell.submission/v1"},
+    "runId": {"$ref": "#/$defs/identifier"},
+    "leaseId": {"$ref": "#/$defs/identifier"},
+    "payload": {"$ref": "cell.payload.v1.schema.json"},
+    "work": {
+      "type": "object", "additionalProperties": false,
+      "required": ["sha256", "bytes", "mediaType"],
+      "properties": {
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "bytes": {"type": "integer", "minimum": 0},
+        "mediaType": {"type": "string", "minLength": 1}
+      }
+    },
+    "env": {"$ref": "#/$defs/stringMap"},
+    "reset": {
+      "type": "object", "additionalProperties": false,
+      "required": ["cachePolicy"],
+      "properties": {
+        "cachePolicy": {"enum": ["cold", "warm"]},
+        "postgres": {
+          "type": "object", "additionalProperties": false,
+          "required": ["major", "databases", "settings"],
+          "properties": {
+            "major": {"enum": [17, 18]},
+            "databases": {
+              "type": "array", "uniqueItems": true,
+              "items": {
+                "type": "object", "additionalProperties": false,
+                "required": ["name", "owner", "template"],
+                "properties": {
+                  "name": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,62}$"},
+                  "owner": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,62}$"},
+                  "template": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,62}$"}
+                }
+              }
+            },
+            "settings": {"$ref": "#/$defs/stringMap"}
+          }
+        },
+        "broker": {
+          "type": "object", "additionalProperties": false,
+          "required": ["wipe"],
+          "properties": {"wipe": {"type": "boolean"}}
+        }
+      }
+    },
+    "limits": {
+      "type": "object", "additionalProperties": false,
+      "required": ["wallClockSeconds", "memoryMaxBytes", "outputMaxBytes"],
+      "properties": {
+        "wallClockSeconds": {"type": "integer", "minimum": 1},
+        "memoryMaxBytes": {"type": "integer", "minimum": 1},
+        "outputMaxBytes": {"type": "integer", "minimum": 1}
+      }
+    },
+    "requires": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocol", "minAgentVersion"],
+      "properties": {
+        "protocol": {"const": "cell.protocol/v1"},
+        "minAgentVersion": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+        "capabilities": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "labels": {"$ref": "#/$defs/stringMap"}
+  },
+  "$defs": {
+    "identifier": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,62}$"},
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "stringMap": {"type": "object", "additionalProperties": {"type": "string"}, "propertyNames": {"pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$"}}
+  }
+}

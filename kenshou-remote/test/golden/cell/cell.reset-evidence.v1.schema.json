@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shinzui.dev/load-testing-infra/schemas/cell/cell.reset-evidence.v1.schema.json",
+  "title": "Verification cell reset evidence",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema", "runId", "cell", "cachePolicy", "startedAt", "finishedAt", "verified", "steps", "postgres"],
+  "properties": {
+    "schema": {"const": "cell.reset-evidence/v1"},
+    "runId": {"$ref": "#/$defs/identifier"},
+    "cell": {"$ref": "#/$defs/identifier"},
+    "cachePolicy": {"enum": ["warm", "cold"]},
+    "startedAt": {"type": "string", "format": "date-time"},
+    "finishedAt": {"type": "string", "format": "date-time"},
+    "verified": {"type": "boolean"},
+    "steps": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/step"}},
+    "postgres": {"type": ["object", "null"], "additionalProperties": false,
+      "required": ["version", "databases", "settings", "walLsn", "checkpoint"],
+      "properties": {
+        "version": {"type": "string", "minLength": 1},
+        "databases": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/identifier"}},
+        "settings": {"type": "array", "items": {"type": "object", "additionalProperties": false,
+          "required": ["name", "setting", "source"],
+          "properties": {"name": {"type": "string"}, "setting": {"type": "string"}, "source": {"type": "string"}}}},
+        "walLsn": {"type": "string"},
+        "checkpoint": {"type": "object"}
+      }
+    }
+  },
+  "allOf": [{
+    "if": {"properties": {"verified": {"const": true}}, "required": ["verified"]},
+    "then": {"properties": {"steps": {"items": {"properties": {"status": {"const": "ok"}}}}}},
+    "else": {"properties": {"steps": {"contains": {"properties": {"status": {"const": "failed"}}, "required": ["status"]}}}}
+  }],
+  "$defs": {
+    "identifier": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,62}$"},
+    "step": {"type": "object", "additionalProperties": false,
+      "required": ["name", "startedAt", "finishedAt", "status"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "startedAt": {"type": "string", "format": "date-time"},
+        "finishedAt": {"type": "string", "format": "date-time"},
+        "status": {"enum": ["ok", "failed"]},
+        "detail": {"type": "string"}
+      }
+    }
+  }
+}

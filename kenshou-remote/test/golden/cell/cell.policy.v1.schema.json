@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shinzui.dev/load-testing-infra/schemas/cell/cell.policy.v1.schema.json",
+  "title": "Verification cell idle and fault policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "idleStopMinutes", "keepWarmUntil", "allowFaultInjection", "health"],
+  "properties": {
+    "schema": {"const": "cell.policy/v1"},
+    "idleStopMinutes": {"type": "integer", "minimum": 1, "maximum": 1440},
+    "keepWarmUntil": {"type": ["string", "null"], "format": "date-time"},
+    "allowFaultInjection": {"type": "boolean"},
+    "health": {
+      "type": "object", "additionalProperties": false,
+      "required": ["settleCpuMaxPercent", "runStealCpuMaxPercent", "startFreeDiskMinPercent", "runFreeDiskMinPercent"],
+      "properties": {
+        "settleCpuMaxPercent": {"type": "number", "minimum": 0, "maximum": 100},
+        "runStealCpuMaxPercent": {"type": "number", "minimum": 0, "maximum": 100},
+        "startFreeDiskMinPercent": {"type": "number", "minimum": 0, "maximum": 100},
+        "runFreeDiskMinPercent": {"type": "number", "minimum": 0, "maximum": 100}
+      }
+    }
+  }
+}

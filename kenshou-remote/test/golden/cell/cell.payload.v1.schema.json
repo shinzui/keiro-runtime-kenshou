@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shinzui.dev/load-testing-infra/schemas/cell/cell.payload.v1.schema.json",
+  "title": "Content-addressed verification cell payload",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "kind", "bundle", "storePath", "narHash", "closurePaths", "system", "command"],
+  "properties": {
+    "schema": {"const": "cell.payload/v1"},
+    "kind": {"const": "nix-nar-bundle"},
+    "bundle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["uri", "sha256", "bytes"],
+      "properties": {
+        "uri": {"type": "string", "pattern": "^gs://[^/]+/payloads/sha256/[a-f0-9]{64}\\.nar\\.zst$"},
+        "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "bytes": {"type": "integer", "minimum": 1}
+      }
+    },
+    "storePath": {"$ref": "#/$defs/storePath"},
+    "narHash": {"type": "string", "minLength": 1},
+    "closurePaths": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/storePath"}},
+    "system": {"const": "x86_64-linux"},
+    "command": {
+      "type": "array", "minItems": 1,
+      "items": {"type": "string", "minLength": 1},
+      "prefixItems": [{"type": "string", "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$))[^\\u0000]+$"}]
+    }
+  },
+  "$defs": {
+    "storePath": {"type": "string", "pattern": "^/nix/store/[a-z0-9]{32}-[^/]+$"}
+  }
+}

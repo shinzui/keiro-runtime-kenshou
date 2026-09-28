@@ -8,6 +8,7 @@ import Data.ByteString.Lazy.Char8 qualified as LazyByteString
 import Data.Either (isLeft)
 import Data.Text qualified as Text
 import Data.Time (UTCTime (..), fromGregorian, secondsToDiffTime)
+import DocsSpec qualified
 import GcsSpec qualified
 import Kenshou.Core.Cohort (CohortIdentity (..), CohortName (..), PlanHash (..))
 import Kenshou.Remote.Payload (Bundle (..), CellPayload (..), CohortCheck (..), Harness (..), PayloadDescriptor (..))
@@ -35,6 +36,7 @@ main =
 
 tests :: Spec
 tests = do
+  DocsSpec.spec
   GcsSpec.spec
   LeaseSpec.spec
   describe "Kenshou payload descriptor" do
@@ -45,6 +47,10 @@ tests = do
       let badBundle = examplePayload.cell.bundle {uri = "gs://control/payloads/sha256/other.nar.zst"}
           bad = examplePayload {cell = examplePayload.cell {bundle = badBundle}}
       (eitherDecode (encode bad) :: Either String PayloadDescriptor) `shouldSatisfy` isLeft
+
+    it "requires the Kenshou entry point even though the cell protocol accepts other commands" do
+      let generic = examplePayload {cell = examplePayload.cell {command = ["bin/cell-fixture-hello"]}}
+      (eitherDecode (encode generic) :: Either String PayloadDescriptor) `shouldSatisfy` isLeft
 
   describe "file cell object store" do
     it "fences stale generations and preserves tombstones" $ withSystemTempDirectory "kenshou-cell-store" \root -> do
