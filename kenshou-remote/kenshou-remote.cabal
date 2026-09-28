@@ -39,6 +39,7 @@ library
     Kenshou.Remote.Cell.Docs
     Kenshou.Remote.Cell.Exec
     Kenshou.Remote.Cell.Fetch
+    Kenshou.Remote.Cell.Health
     Kenshou.Remote.Cell.Index
     Kenshou.Remote.Cell.Lease
     Kenshou.Remote.Cell.Prepare
@@ -83,6 +84,7 @@ test-suite kenshou-remote-test
     ExecSpec
     FetchSpec
     GcsSpec
+    HealthSpec
     LeaseSpec
     PayloadSpec
     PrepareSpec

@@ -23,6 +23,7 @@ import Kenshou.Plan.Execute (ExecuteOptions (..), executePlan)
 import Kenshou.Plan.RunPlan (PlannedRun (..), RunPlan (..))
 import Kenshou.Plan.Summary (summaryExitCode)
 import Kenshou.Remote.Cell.Docs (CellBroker (..), CellEnvironment (..), CellPostgres (..), OtlpEndpoint (..), OtlpSinks (..))
+import Kenshou.Remote.Cell.Health (withCellHealthFile)
 import Kenshou.Remote.Cell.Prepare (OtlpSink (..))
 import System.Directory (Permissions (..), createDirectoryIfMissing, doesFileExist, getPermissions)
 import System.Environment (lookupEnv, setEnv, unsetEnv)
@@ -222,8 +223,10 @@ executeOnDriver registry workFile outDir = do
       if driverCount > 1
         then setEnv "KENSHOU_CLOCK_SKEW_BOUND_MICROS" (show (maybe 50000 id environment.clockSkewBoundMicros))
         else unsetEnv "KENSHOU_CLOCK_SKEW_BOUND_MICROS"
+      healthFile <- lookupEnv "CELL_HEALTH_FILE"
       let runPlan = executePlan (ExecuteOptions planPath outDir False False Nothing Nothing)
-      summary <- if faultEnabled then healAll environment.faultHook >> runPlan `finally` healAll environment.faultHook else runPlan
+          withHealth = withCellHealthFile healthFile noticePath cellRun runPlan
+      summary <- if faultEnabled then healAll environment.faultHook >> withHealth `finally` healAll environment.faultHook else withHealth
       pure (summaryExitCode summary)
 
 healAll :: Maybe Text -> IO ()

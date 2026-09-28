@@ -12,6 +12,7 @@ import DocsSpec qualified
 import ExecSpec qualified
 import FetchSpec qualified
 import GcsSpec qualified
+import HealthSpec qualified
 import Kenshou.Core.Cohort (CohortIdentity (..), CohortName (..), PlanHash (..))
 import Kenshou.Remote.Payload (Bundle (..), CellPayload (..), CohortCheck (..), Harness (..), PayloadDescriptor (..))
 import Kenshou.Remote.Store (Bucket (..), ObjectMeta (..), ObjectName (..), ObjectStore (..), Precondition (..), PutOutcome (..))
@@ -47,6 +48,7 @@ tests = do
   ExecSpec.execSpec
   FetchSpec.spec
   GcsSpec.spec
+  HealthSpec.spec
   LeaseSpec.spec
   PayloadSpec.spec
   PrepareSpec.spec
