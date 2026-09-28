@@ -34,7 +34,7 @@ data Command = CohortCommand CohortCommand
 
 data CohortCommand
   = CohortShow Bool FilePath (Maybe FilePath) (Maybe FilePath)
-  | CohortCheck FilePath (Maybe FilePath) (Maybe FilePath)
+  | CohortCheck FilePath (Maybe FilePath) (Maybe FilePath) (Maybe FilePath)
   deriving stock (Eq, Show)
 
 commandParserInfo :: ParserInfo Command
@@ -61,7 +61,7 @@ cohortCommandParser =
         <*> projectDirOption
         <*> optional planJsonOption
         <*> optional identityOption
-    checkParser = CohortCheck <$> projectDirOption <*> optional planJsonOption <*> optional descriptorOption
+    checkParser = CohortCheck <$> projectDirOption <*> optional planJsonOption <*> optional descriptorOption <*> optional identityOption
 
 projectDirOption :: Parser FilePath
 projectDirOption = strOption (long "project-dir" <> metavar "DIR" <> value "." <> help "Cabal project directory")

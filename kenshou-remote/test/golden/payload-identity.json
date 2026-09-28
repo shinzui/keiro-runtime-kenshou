@@ -1,0 +1,12 @@
+{
+  "schema": "kenshou.payload-identity/v1",
+  "cohort": "released",
+  "variant": "default",
+  "system": "x86_64-linux",
+  "compiler": "ghc-9.12.4",
+  "nixpkgsRevision": "d5dfd8e6716dde34398bc14bc87c10dece9c8c68",
+  "haskellNixRevision": "7b696dc80f8aaccaf1783fda0ab6a7f978a67134",
+  "packages": [
+    { "name": "kenshou-cli", "version": "0.1.0.0" }
+  ]
+}

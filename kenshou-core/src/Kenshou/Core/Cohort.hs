@@ -159,7 +159,9 @@ data CohortError
   deriving stock (Eq, Show)
 
 data CohortMismatch
-  = MissingPackage Text
+  = CohortNameMismatch CohortName CohortName
+  | CompilerMismatch Text Text
+  | MissingPackage Text
   | VersionMismatch Text Text Text
   | SourceMismatch Text SourceSpec PackageSource
   | LocalPathSource Text FilePath
@@ -428,8 +430,12 @@ planHash value = do
   pure (PlanHash ("sha256:" <> sha256Hex (Text.Encoding.encodeUtf8 material)))
 
 checkCohort :: CohortDescriptor -> CohortIdentity -> [CohortMismatch]
-checkCohort descriptor identity = concatMap checkComponent (descriptorComponents descriptor)
+checkCohort descriptor identity = identityMismatches <> concatMap checkComponent (descriptorComponents descriptor)
   where
+    identityMismatches =
+      [CohortNameMismatch (descriptorName descriptor) (identityCohort identity) | descriptorName descriptor /= identityCohort identity]
+        <> [CompilerMismatch (descriptorCompiler descriptor) (identityCompiler identity) | descriptorCompiler descriptor /= identityCompiler identity]
+
     resolvedByName =
       Map.fromList
         [ (resolvedPackageName package, package)

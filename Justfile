@@ -21,6 +21,10 @@ graph-check:
 payload-lock cohort:
     bash scripts/payload-lock.sh {{cohort}}
 
+[group('payload')]
+payload-check cohort:
+    @tmp=$(mktemp); trap 'rm -f -- "$tmp"' EXIT; system=${KENSHOU_PAYLOAD_SYSTEM:-$(nix eval --raw --impure --expr builtins.currentSystem)}; nix eval --json ".#packages.$system.kenshou-{{cohort}}.cohortIdentity" > "$tmp"; check-jsonschema --schemafile schemas/kenshou.cohort-identity.v1.schema.json "$tmp"; cabal run -v0 kenshou -- cohort check --descriptor cohort/{{cohort}}.json --identity "$tmp"
+
 [group('docs')]
 adr-validate:
     okf validate docs/adr --strict \
@@ -61,6 +65,7 @@ schemas-check:
     for fixture in kenshou-remote/test/golden/cell/cell.*.v1.json; do schema="${fixture%.json}.schema.json"; check-jsonschema --base-uri "file://$PWD/$schema" --schemafile "$schema" "$fixture" || exit; done
     check-jsonschema --schemafile schemas/kenshou.cohort-identity.v1.schema.json kenshou-core/test/fixtures/cohort-identity.golden.json
     check-jsonschema --schemafile schemas/kenshou.payload.v1.schema.json kenshou-remote/test/golden/payload.json
+    check-jsonschema --schemafile schemas/kenshou.payload-identity.v1.schema.json kenshou-remote/test/golden/payload-identity.json
     for lock in nix/cohort-locks/*.lock.json; do check-jsonschema --schemafile schemas/kenshou.cohort-nix-lock.v1.schema.json "$lock" || exit; done
     check-jsonschema --schemafile schemas/kenshou.cell-run.v1.schema.json kenshou-remote/test/golden/cell-run.json
     check-jsonschema --schemafile schemas/kenshou.cell-session.v1.schema.json kenshou-remote/test/golden/cell-session.json

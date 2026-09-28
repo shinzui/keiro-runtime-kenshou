@@ -34,9 +34,15 @@ runCohortCommand (CohortShow json projectDir planJson identityOption) = do
         then LazyByteString.putStrLn (Aeson.encode identity)
         else Text.IO.putStr (renderCohortIdentity identity)
       pure ExitSuccess
-runCohortCommand (CohortCheck projectDir planJson descriptorOverride) = do
+runCohortCommand (CohortCheck projectDir planJson descriptorOverride identityOption) = do
+  identityEnvironment <- lookupEnv "KENSHOU_COHORT_IDENTITY"
   descriptorResult <- loadActiveDescriptor projectDir descriptorOverride
-  identityResult <- resolveCohortIdentity (FromProject projectDir planJson descriptorOverride)
+  identityResult <-
+    resolveCohortIdentity $
+      maybe
+        (FromProject projectDir planJson descriptorOverride)
+        FromIdentityFile
+        (identityOption <|> identityEnvironment)
   case (descriptorResult, identityResult) of
     (Left err, _) -> reportError err
     (_, Left err) -> reportError err
@@ -69,6 +75,10 @@ renderError (CohortPlanError message) = message
 renderError (CohortInvalidActive message) = message
 
 renderMismatch :: CohortMismatch -> Text
+renderMismatch (CohortNameMismatch (CohortName expected) (CohortName actual)) =
+  "cohort: expected " <> expected <> ", resolved " <> actual
+renderMismatch (CompilerMismatch expected actual) =
+  "compiler: expected " <> expected <> ", resolved " <> actual
 renderMismatch (MissingPackage packageName) = "missing package: " <> packageName
 renderMismatch (VersionMismatch packageName expected actual) =
   packageName <> ": expected version " <> expected <> ", resolved " <> actual

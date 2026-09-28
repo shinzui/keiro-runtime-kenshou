@@ -103,10 +103,14 @@ mismatchSpec = describe "checkCohort" do
         wrongVersion = identityWith [ResolvedPackage "foo" "2.0.0" (FromHackage Nothing)]
         wrongSource = identityWith [ResolvedPackage "foo" "1.0.0" (FromGit "https://example.com/foo.git" "abc" Nothing)]
         localSource = identityWith [ResolvedPackage "foo" "1.0.0" (FromLocalPath "/tmp/foo")]
+        wrongCohort = (identityWith [ResolvedPackage "foo" "1.0.0" (FromHackage Nothing)]) {identityCohort = CohortName "head"}
+        wrongCompiler = (identityWith [ResolvedPackage "foo" "1.0.0" (FromHackage Nothing)]) {identityCompiler = "ghc-9.10.3"}
     checkCohort descriptor missing `shouldContain` [MissingPackage "foo"]
     checkCohort descriptor wrongVersion `shouldContain` [VersionMismatch "foo" "1.0.0" "2.0.0"]
     checkCohort descriptor wrongSource `shouldContain` [SourceMismatch "foo" HackageSource (FromGit "https://example.com/foo.git" "abc" Nothing)]
     checkCohort descriptor localSource `shouldContain` [LocalPathSource "foo" "/tmp/foo"]
+    checkCohort descriptor wrongCohort `shouldContain` [CohortNameMismatch (CohortName "released") (CohortName "head")]
+    checkCohort descriptor wrongCompiler `shouldContain` [CompilerMismatch "ghc-9.12.4" "ghc-9.10.3"]
 
 activeCohortSpec :: Spec
 activeCohortSpec = describe "activeCohortName" do

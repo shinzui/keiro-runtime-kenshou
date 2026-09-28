@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/kenshou.payload-identity.v1.schema.json",
+  "title": "Kenshou Nix payload build identity",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "cohort", "variant", "system", "compiler", "nixpkgsRevision", "haskellNixRevision", "packages"],
+  "properties": {
+    "schema": { "const": "kenshou.payload-identity/v1" },
+    "cohort": { "enum": ["released", "head"] },
+    "variant": { "enum": ["default", "info-table", "profiled"] },
+    "system": { "type": "string", "pattern": "^(aarch64-darwin|x86_64-linux)$" },
+    "compiler": { "type": "string", "pattern": "^ghc-[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "nixpkgsRevision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "haskellNixRevision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "packages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "version"],
+        "properties": {
+          "name": { "type": "string", "pattern": "^kenshou-" },
+          "version": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

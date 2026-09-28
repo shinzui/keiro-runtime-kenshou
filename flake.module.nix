@@ -2,6 +2,8 @@
 # Nix includes it in the flake source.
 { inputs, ... }:
 {
+  imports = [ ./nix/kenshou ];
+
   perSystem = { pkgs, system, ... }:
     let
       unfreePkgs = import inputs.nixpkgs {
@@ -81,7 +83,7 @@
     in
     {
       haskellProject.extraDevPackages =
-        [ pkgs.git pkgs.dhall pkgs.dhall-json pkgs.check-jsonschema unfreePkgs.redpanda-client pgEnvHook ]
+        [ pkgs.git pkgs.dhall pkgs.dhall-json pkgs.check-jsonschema pkgs.zstd pkgs.google-cloud-sdk unfreePkgs.redpanda-client pgEnvHook ]
         ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.procps pkgs.lsof ];
 
       treefmt.programs.fourmolu.package = pkgs.haskell.packages.ghc9124.fourmolu;
@@ -89,6 +91,5 @@
       packages.kenshou-core = kenshou-core;
       packages.kenshou-remote = kenshou-remote;
       packages.kenshou-cli = kenshou-cli;
-      packages.default = kenshou-cli;
     };
 }
