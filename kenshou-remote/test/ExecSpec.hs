@@ -91,7 +91,7 @@ execSpec = describe "cell-side run-plan resolution" do
       Left problem -> expectationFailure (show problem)
       Right resolved -> case resolved.runs of
         [run] -> do
-          lookup (name "remote.expect-placement") run.spec.knobs `shouldBe` Just (RawText "cell")
+          lookup (name "remote.expect-placement") run.spec.knobs `shouldBe` Nothing
           lookup (name "remote.otlp-endpoint") run.spec.knobs `shouldBe` Just (RawText "http://10.0.0.4:5318")
           lookup (name "remote.kafka-bootstrap") run.spec.knobs `shouldBe` Just (RawText "10.0.0.5:9092")
         _ -> expectationFailure "expected one remote probe run"

@@ -155,15 +155,13 @@ resolveSpec registry environment sink spec = do
     bindRemoteScenario knobs
       | renderScenarioId spec.scenario /= "selftest/remote/correctness/cell-environment" = pure knobs
       | otherwise = do
-          placementName <- mkKnobName "remote.expect-placement"
           otlpName <- mkKnobName "remote.otlp-endpoint"
           kafkaName <- mkKnobName "remote.kafka-bootstrap"
           let selectedOtlp = case environment.otlp of
                 Nothing -> ""
                 Just sinks -> case sink of NullSink -> sinks.nullEndpoint.http; FileSink -> sinks.fileEndpoint.http
               selectedKafka = maybe "" (.bootstrapServers) environment.broker
-              placed = assign placementName "cell" knobs
-              withOtlp = assignWhenBlank otlpName selectedOtlp placed
+              withOtlp = assignWhenBlank otlpName selectedOtlp knobs
           pure (assignWhenBlank kafkaName selectedKafka withOtlp)
 
     assignWhenBlank name value knobs
