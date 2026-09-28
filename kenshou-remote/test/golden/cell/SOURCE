@@ -1,0 +1,7 @@
+mori://shinzui/load-testing-infra
+Commit: ef1596775d4df5a31b8de3a4b833adeeaf0f8021
+Project-relative source paths (artifact-level URIs pending):
+  schemas/cell/cell.lease.v1.schema.json
+  schemas/cell/cell.quarantine.v1.schema.json
+  schemas/cell/examples/cell.lease.v1.json
+  schemas/cell/examples/cell.quarantine.v1.json

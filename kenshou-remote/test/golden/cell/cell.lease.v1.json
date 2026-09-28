@@ -1,0 +1,12 @@
+{
+  "schema": "cell.lease/v1",
+  "leaseId": "0199a3c1-0d52-7f10-8a77-6e0c4b2d9f01",
+  "cell": "alpha",
+  "owner": "nadeem@workstation",
+  "purpose": "fixture-abba",
+  "ttlSeconds": 120,
+  "acquiredAt": "2026-09-25T12:00:00Z",
+  "heartbeatAt": "2026-09-25T12:00:40Z",
+  "cancelRequested": false,
+  "runsStarted": 2
+}

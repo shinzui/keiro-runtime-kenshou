@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shinzui.dev/load-testing-infra/schemas/cell/cell.lease.v1.schema.json",
+  "title": "Exclusive verification cell lease",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "leaseId", "cell", "owner", "purpose", "ttlSeconds", "acquiredAt", "heartbeatAt", "cancelRequested", "runsStarted"],
+  "properties": {
+    "schema": {"const": "cell.lease/v1"},
+    "leaseId": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,62}$"},
+    "cell": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,62}$"},
+    "owner": {"type": "string", "minLength": 1},
+    "purpose": {"type": "string", "minLength": 1},
+    "ttlSeconds": {"type": "integer", "minimum": 1},
+    "acquiredAt": {"type": "string", "format": "date-time"},
+    "heartbeatAt": {"type": "string", "format": "date-time"},
+    "cancelRequested": {"type": "boolean"},
+    "runsStarted": {"type": "integer", "minimum": 0}
+  }
+}

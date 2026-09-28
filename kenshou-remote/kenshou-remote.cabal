@@ -35,6 +35,7 @@ library
   import: warnings
   hs-source-dirs: src
   exposed-modules:
+    Kenshou.Remote.Cell.Lease
     Kenshou.Remote.Payload
     Kenshou.Remote.Store
     Kenshou.Remote.Store.File
@@ -62,7 +63,10 @@ test-suite kenshou-remote-test
   type: exitcode-stdio-1.0
   hs-source-dirs: test
   main-is: Main.hs
-  other-modules: GcsSpec
+  other-modules:
+    GcsSpec
+    LeaseSpec
+
   build-depends:
     aeson,
     base >=4.21 && <4.22,

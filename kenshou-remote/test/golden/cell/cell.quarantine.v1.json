@@ -1,0 +1,7 @@
+{
+  "schema": "cell.quarantine/v1",
+  "cell": "alpha",
+  "reason": "reset-failed",
+  "runId": "0199a3c2-7b1e-7c44-9d0a-3f5e2a61b7c9",
+  "at": "2026-09-25T12:05:00Z"
+}
