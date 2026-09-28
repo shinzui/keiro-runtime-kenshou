@@ -15,6 +15,7 @@ import Kenshou.Remote.Payload (Bundle (..), CellPayload (..), CohortCheck (..), 
 import Kenshou.Remote.Store (Bucket (..), ObjectMeta (..), ObjectName (..), ObjectStore (..), Precondition (..), PutOutcome (..))
 import Kenshou.Remote.Store.File (newFileStore)
 import LeaseSpec qualified
+import SubmitSpec qualified
 import System.Directory (getFileSize)
 import System.Environment (getArgs, getExecutablePath)
 import System.Exit (ExitCode (..))
@@ -39,6 +40,7 @@ tests = do
   DocsSpec.spec
   GcsSpec.spec
   LeaseSpec.spec
+  SubmitSpec.spec
   describe "Kenshou payload descriptor" do
     it "round-trips the complete cell payload and Nix cohort identity" do
       eitherDecode (encode examplePayload) `shouldBe` Right examplePayload

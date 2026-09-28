@@ -37,6 +37,7 @@ library
   exposed-modules:
     Kenshou.Remote.Cell.Docs
     Kenshou.Remote.Cell.Lease
+    Kenshou.Remote.Cell.Submit
     Kenshou.Remote.Payload
     Kenshou.Remote.Store
     Kenshou.Remote.Store.File
@@ -69,6 +70,7 @@ test-suite kenshou-remote-test
     DocsSpec
     GcsSpec
     LeaseSpec
+    SubmitSpec
 
   build-depends:
     aeson,

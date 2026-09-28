@@ -8,7 +8,6 @@ module Kenshou.Remote.Cell.Lease
     AcquireOutcome (..),
     acquireLease,
     renewLease,
-    startLeaseRun,
     releaseLease,
     reattachLease,
     requestCancel,
@@ -162,19 +161,6 @@ renewLease store ref handle = modifyMVar handle.state \(lease, generation, held)
       case result of
         Written meta -> pure ((renewed, meta.generation, True), True)
         PreconditionFailed -> pure ((lease, generation, False), False)
-
-startLeaseRun :: ObjectStore -> CellRef -> LeaseHandle -> IO (Maybe Int)
-startLeaseRun store ref handle = modifyMVar handle.state \(lease, generation, held) ->
-  if not held || lease.cancelRequested
-    then pure ((lease, generation, False), Nothing)
-    else do
-      unless (lease.cell == ref.cellName) (ioError (userError "lease handle names another cell"))
-      unless (lease.runsStarted < maxBound) (ioError (userError "lease run sequence overflow"))
-      let started = lease {runsStarted = lease.runsStarted + 1}
-      result <- store.putObject ref.controlBucket (leaseName ref) "application/json" (GenerationIs generation) (encode started)
-      case result of
-        Written meta -> pure ((started, meta.generation, True), Just started.runsStarted)
-        PreconditionFailed -> pure ((lease, generation, False), Nothing)
 
 releaseLease :: ObjectStore -> CellRef -> LeaseHandle -> IO Bool
 releaseLease store ref handle = modifyMVar handle.state \(lease, generation, held) ->

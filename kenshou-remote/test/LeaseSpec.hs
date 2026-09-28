@@ -9,7 +9,7 @@ import Data.Either (isRight)
 import Data.Maybe (isJust)
 import Data.Time (addUTCTime, getCurrentTime)
 import Kenshou.Core.Id (newRunId)
-import Kenshou.Remote.Cell.Lease (AcquireOutcome (..), CellRef (..), Lease (..), LeaseHandle, LeaseRequest (..), Quarantine (..), acquireLease, leaseHeld, leaseSnapshot, reattachLease, releaseLease, renewLease, requestCancel, startLeaseRun, withHeartbeat)
+import Kenshou.Remote.Cell.Lease (AcquireOutcome (..), CellRef (..), Lease (..), LeaseHandle, LeaseRequest (..), Quarantine (..), acquireLease, leaseHeld, leaseSnapshot, reattachLease, releaseLease, renewLease, requestCancel, withHeartbeat)
 import Kenshou.Remote.Store (Bucket (..), ObjectName (..), ObjectStore (..), Precondition (..))
 import Kenshou.Remote.Store.File (newFileStore)
 import System.IO.Temp (withSystemTempDirectory)
@@ -32,10 +32,6 @@ spec = describe "cell lease protocol" do
     renewLease store cellRef handle `shouldReturn` True
     renewed <- leaseSnapshot handle
     renewed.heartbeatAt `shouldSatisfy` (>= first.heartbeatAt)
-    startLeaseRun store cellRef handle `shouldReturn` Just 1
-    startLeaseRun store cellRef handle `shouldReturn` Just 2
-    started <- leaseSnapshot handle
-    started.runsStarted `shouldBe` 2
     reattached <- reattachLease store cellRef first.leaseId
     isJust reattached `shouldBe` True
     releaseLease store cellRef handle `shouldReturn` True
@@ -86,7 +82,7 @@ spec = describe "cell lease protocol" do
     second <- acquireLease store cellRef request >>= expectAcquired
     requestCancel store cellRef Nothing True `shouldReturn` True
     leaseHeld second `shouldReturn` True
-    startLeaseRun store cellRef second `shouldReturn` Nothing
+    renewLease store cellRef second `shouldReturn` False
 
   it "round-trips the cell lease document" $ withSystemTempDirectory "kenshou-lease" \root -> do
     store <- newFileStore root
