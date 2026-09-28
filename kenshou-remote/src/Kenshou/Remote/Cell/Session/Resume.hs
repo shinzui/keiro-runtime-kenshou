@@ -1,6 +1,8 @@
 module Kenshou.Remote.Cell.Session.Resume
   ( ResumeError (..),
+    HeldResumeError (..),
     resumeObservedSlices,
+    resumeHeldSession,
   )
 where
 
@@ -12,9 +14,11 @@ import Data.Time (getCurrentTime)
 import Kenshou.Core.Id (RunId)
 import Kenshou.Remote.Cell.Fetch (FetchError, VerifyProblem, fetchCellRun)
 import Kenshou.Remote.Cell.Index (deriveCellRunIndex, writeCellRunIndex)
-import Kenshou.Remote.Cell.Lease (CellRef (..))
+import Kenshou.Remote.Cell.Lease (CellRef (..), LeaseHandle)
 import Kenshou.Remote.Cell.Session (SessionTransition (..))
 import Kenshou.Remote.Cell.Session.Journal (SessionJournal (..), SliceJournal (..), SliceState (..), applyTransition, readSessionJournal, writeSessionJournal)
+import Kenshou.Remote.Cell.Session.Rebind (RebindError, rebindPlannedSlices)
+import Kenshou.Remote.Cell.Session.Runner (SessionRunError, runPendingSlices)
 import Kenshou.Remote.Cell.Watch (WatchEvent, WatchSnapshot (..), WatchTerminal (..), newWatchCursor, pollCellRun)
 import Kenshou.Remote.Store (Bucket (..), ObjectStore)
 import System.FilePath (takeDirectory)
@@ -24,6 +28,25 @@ data ResumeError
   | ResultFetchFailed !RunId !FetchError
   | ResultVerificationFailed !RunId !(NonEmpty VerifyProblem)
   deriving stock (Eq, Show)
+
+data HeldResumeError
+  = ObservationError !ResumeError
+  | RebindingError !RebindError
+  | ContinuationError !SessionRunError
+  deriving stock (Eq, Show)
+
+resumeHeldSession :: ObjectStore -> CellRef -> Bucket -> LeaseHandle -> FilePath -> (WatchEvent -> IO ()) -> IO (Either HeldResumeError SessionJournal)
+resumeHeldSession store ref resultsBucket handle journalPath emit = do
+  observed <- resumeObservedSlices store ref resultsBucket journalPath emit
+  case observed of
+    Left failure -> pure (Left (ObservationError failure))
+    Right _ -> do
+      rebound <- rebindPlannedSlices store ref handle journalPath
+      case rebound of
+        Left failure -> pure (Left (RebindingError failure))
+        Right _ -> do
+          continued <- runPendingSlices store ref resultsBucket handle journalPath emit
+          pure (either (Left . ContinuationError) Right continued)
 
 -- Reconcile observations and collect already sealed results. Planned or still
 -- running slices remain untouched for a later lease-aware resume step.

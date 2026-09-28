@@ -21,7 +21,7 @@ import Kenshou.Remote.Cell.Session (SessionError (..), runSubmission)
 import Kenshou.Remote.Cell.Session qualified as Session
 import Kenshou.Remote.Cell.Session.Journal (LeaseMode (..), SessionJournal (..), SliceJournal (..), SliceState (..), applyTransition, readSessionJournal, writeSessionJournal)
 import Kenshou.Remote.Cell.Session.Rebind (RebindError (RemoteMarkerExists), rebindPlannedSlices)
-import Kenshou.Remote.Cell.Session.Resume (resumeObservedSlices)
+import Kenshou.Remote.Cell.Session.Resume (HeldResumeError (..), resumeHeldSession, resumeObservedSlices)
 import Kenshou.Remote.Cell.Session.Runner (SessionRunError (..), runPendingSlices, runPlannedSlices)
 import Kenshou.Remote.Cell.Submit (workObjectFor)
 import Kenshou.Remote.Payload (Bundle (..), CellPayload (..))
@@ -168,6 +168,7 @@ spec = describe "one leased cell submission" do
               Right value -> pure value
             fmap (.state) recovered.slices `shouldBe` [SliceVerified, SliceVerified]
             readSessionJournal journalPath `shouldReturn` Right recovered
+            resumeHeldSession store cellRef (Bucket "results") handle journalPath (const (pure ())) `shouldReturn` Right recovered
             case recovered.slices of
               [firstRecovered, secondRecovered] -> do
                 writeSessionJournal journalPath (recovered {slices = [firstRecovered {state = SliceFetched, entryExitCode = Nothing}, secondRecovered]})
@@ -178,6 +179,7 @@ spec = describe "one leased cell submission" do
                 let oldMarker = secondRecovered {state = SlicePlanned, cellOutcome = Nothing, entryExitCode = Nothing, manifestSha256 = Nothing, fetchedPath = Nothing}
                 writeSessionJournal journalPath (recovered {slices = [firstRecovered, oldMarker]})
                 rebindPlannedSlices store cellRef handle journalPath `shouldReturn` Left (RemoteMarkerExists secondRecovered.cellRun)
+                resumeHeldSession store cellRef (Bucket "results") handle journalPath (const (pure ())) `shouldReturn` Left (RebindingError (RemoteMarkerExists secondRecovered.cellRun))
               _ -> expectationFailure "expected two recovered slices"
           _ -> expectationFailure "expected two journal slices"
         fresh <- fixtureFor handle
