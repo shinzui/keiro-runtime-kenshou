@@ -198,7 +198,9 @@ prepareWithPayload registry descriptor cachedCapabilities routingRules payloads 
           expectation = maybe originalSpec.cohortExpectation (\selected -> Just (CohortExpectation (Just selected.cohort) selected.cohortIdentity.identityPlanHash.unPlanHash)) payload
           labels = Map.insert "postgresPlacement" (if driverLocal then "driver-ephemeral" else "cell-server") originalSpec.labels
           spec = RunSpec (Just entry.runId) originalSpec.scenario originalSpec.scenarioRevision originalSpec.knobs dimensions originalSpec.seed originalSpec.phases originalSpec.timeoutSeconds env expectation originalSpec.comparison labels
-          reset = ResetBlock options.cachePolicy (if Map.null settings then Nothing else Just (PgReset descriptor.postgresMajor [] settings)) (if requirements.kafka then Just (BrokerReset True) else Nothing)
+          -- The released cell agent currently requires a PostgreSQL role reset
+          -- even when the scenario itself has no database requirement.
+          reset = ResetBlock options.cachePolicy (Just (PgReset descriptor.postgresMajor [] settings)) (if requirements.kafka then Just (BrokerReset True) else Nothing)
           timeout = fromMaybe (max 60 (entry.estimateMinutes * 60)) originalSpec.timeoutSeconds
           notices =
             ["coerced pg.durability=durable for " <> renderRunId entry.runId | dimensions /= originalSpec.dimensions]

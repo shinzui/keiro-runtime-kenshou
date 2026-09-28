@@ -20,7 +20,7 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (UTCTime)
 import Kenshou.Core.Id (RunId)
-import Kenshou.Remote.Cell.Docs (CellOutcome, CellStatus (..), Rejected (..), ResetBlock, Submission (..))
+import Kenshou.Remote.Cell.Docs (CellOutcome (..), CellStatus (..), Rejected (..), ResetBlock, Submission (..))
 import Kenshou.Remote.Cell.Index (CellManifestLink (..), CellRunIndex (..), RunLink (..))
 import Kenshou.Remote.Cell.Session (SessionTransition (..))
 import Kenshou.Remote.Payload (PayloadDescriptor)
@@ -182,7 +182,8 @@ applyTransition now identifier transition journal = do
     advance slice (ResultsVerified index)
       | index.cellRun /= identifier || index.leaseId /= slice.submission.leaseId = Left "verified index names another run or lease"
       | Just index.cellOutcome /= slice.cellOutcome || Just index.cellManifest.sha256 /= slice.manifestSha256 = Left "verified index disagrees with seal"
-      | sort (fmap (.runId) index.runs) /= sort slice.runIds = Left "verified index nested runs differ from planned slice"
+      | index.cellOutcome == Completed && sort (fmap (.runId) index.runs) /= sort slice.runIds = Left "verified index nested runs differ from planned slice"
+      | any (\run -> run.runId `notElem` slice.runIds) index.runs = Left "verified index nested runs differ from planned slice"
       | otherwise = require SliceFetched slice $ slice {state = SliceVerified, entryExitCode = index.entryExitCode}
     require expected slice next
       | slice.state == expected = Right next

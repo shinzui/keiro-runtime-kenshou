@@ -63,6 +63,23 @@ spec = describe "cell run slicing" do
     fmap snd (prepareForCell registry (descriptor {postgresMajor = 17}) Nothing [] payloads (options {coerceDurable = True}) plan).rejected `shouldBe` [PgVersionMismatch 18 17]
     fmap snd (prepareForCell registry descriptor Nothing [] payloads (options {coerceDurable = True, pgSettings = [("fsync", "off")]}) plan).rejected `shouldBe` [ConflictingPostgresSetting "fsync"]
 
+  it "keeps the owner PostgreSQL reset path for a worker with no database requirement" do
+    (plan, descriptor, payload) <- preparationFixture
+    worker <- either (\problem -> expectationFailure (Text.unpack problem) >> error "unreachable") pure (parseScenarioId "selftest/kernel/concurrency/worker-echo")
+    let registry = either (error . show) id (mkRegistry [Selftest.bundle])
+        payloads = Map.singleton "default" payload
+        workerPlan = case plan.runs of
+          [PlannedRun ordinal identifier estimate reasons trial _] ->
+            let base = minimalRunSpec worker
+                workerSpec = RunSpec (Just identifier) worker base.scenarioRevision base.knobs base.dimensions base.seed base.phases base.timeoutSeconds base.environment base.cohortExpectation base.comparison base.labels
+             in plan {runs = [PlannedRun ordinal identifier estimate reasons trial workerSpec]}
+          _ -> error "expected one planned run"
+    case (prepareForCell registry descriptor Nothing [] payloads (PrepareOptions False False [] Warm) workerPlan).accepted of
+      [preparedRun] -> do
+        preparedRun.spec.environment.postgres `shouldBe` Nothing
+        preparedRun.reset.postgres `shouldBe` Just (PgReset descriptor.postgresMajor [] Map.empty)
+      _ -> expectationFailure "expected one worker run"
+
   it "keeps server-control work off the cell server unless the driver is explicitly selected" do
     (plan, descriptor, payload) <- preparationFixture
     let originalRegistry = either (error . show) id (mkRegistry [Selftest.bundle])
@@ -79,7 +96,7 @@ spec = describe "cell run slicing" do
     case (prepareForCell registry descriptor Nothing [] payloads (options {ephemeralOnDriver = True}) plan).accepted of
       [run] -> do
         run.spec.environment.postgres `shouldBe` Just (PostgresEphemeral [])
-        run.reset.postgres `shouldBe` Nothing
+        run.reset.postgres `shouldBe` Just (PgReset descriptor.postgresMajor [] Map.empty)
       _ -> expectationFailure "expected one driver-local prepared run"
     let routed = routePlan registry ((descriptor, Nothing) :| []) [] payloads options plan
     fmap (.planId) routed.local `shouldBe` Just plan.planId

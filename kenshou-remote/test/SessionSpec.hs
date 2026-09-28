@@ -104,6 +104,11 @@ spec = describe "one leased cell submission" do
           [slice] -> do
             let mismatched = journal {slices = [slice {state = SliceFetched, entryExitCode = Nothing, runIds = [otherRun]}]}
             applyTransition now submission.runId (Session.ResultsVerified index) mismatched `shouldBe` Left "verified index nested runs differ from planned slice"
+            let preEntryFailure = index {cellOutcome = InfrastructureFailure, runs = []}
+                fetchedFailure = journal {slices = [slice {state = SliceFetched, entryExitCode = Nothing, cellOutcome = Just InfrastructureFailure}]}
+            case applyTransition now submission.runId (Session.ResultsVerified preEntryFailure) fetchedFailure of
+              Right completed -> fmap (.state) completed.slices `shouldBe` [SliceVerified]
+              Left problem -> expectationFailure (Text.unpack problem)
           _ -> expectationFailure "expected one journal slice"
         worker <- takeMVar workerResult
         case worker of
