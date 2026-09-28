@@ -1,6 +1,6 @@
 module FetchSpec (spec) where
 
-import Data.Aeson (encode)
+import Data.Aeson (eitherDecode, encode, object, (.=))
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.Foldable (toList)
 import Data.List.NonEmpty (NonEmpty (..))
@@ -8,13 +8,15 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
 import Kenshou.Core.Id (RunId, newRunId, renderRunId)
-import Kenshou.Remote.Cell.Docs (Artifact (..), CellManifest (..), CellOutcome (..), ManifestPayload (..), WorkObject (..))
-import Kenshou.Remote.Cell.Fetch (FetchError (..), VerifyProblem (..), fetchCellRun, verifyCellTree)
+import Kenshou.Core.Manifest (Manifest (..), ManifestFile (..))
+import Kenshou.Remote.Cell.Docs (Artifact (..), CellManifest (..), CellOutcome (..), CellRunResult (..), ManifestPayload (..), Submission (..), WorkObject (..))
+import Kenshou.Remote.Cell.Fetch (FetchError (..), VerifyProblem (..), fetchCellRun, verifyCellRun, verifyCellTree)
 import Kenshou.Remote.Cell.Submit (workObjectFor)
+import Kenshou.Remote.Payload (Bundle (..), CellPayload (..))
 import Kenshou.Remote.Store (Bucket (..), ObjectName (..), ObjectStore (..), Precondition (..))
 import Kenshou.Remote.Store.File (newFileStore)
-import System.Directory (doesFileExist, removeFile)
-import System.FilePath ((</>))
+import System.Directory (createDirectoryIfMissing, doesFileExist, removeFile)
+import System.FilePath (takeDirectory, (</>))
 import System.IO.Temp (withSystemTempDirectory)
 import Test.Hspec
 
@@ -57,6 +59,42 @@ spec = describe "sealed cell tree fetch" do
     fetchCellRun store bucket identifier (root </> "out") `shouldReturn` Left (ObjectCorrupt "cell/result.json")
     doesFileExist (root </> "out" </> Text.unpack (renderRunId identifier) </> "tree" </> "cell" </> "result.json") `shouldReturn` False
 
+  it "cross-checks the submission, cell result and nested Kenshou manifest" $ withSystemTempDirectory "kenshou-verify" \root -> do
+    (tree, manifest) <- completeTree root False False False
+    verifyCellRun tree `shouldReturn` Right manifest
+
+  it "rejects a payload identity mismatch after all file digests pass" $ withSystemTempDirectory "kenshou-verify" \root -> do
+    (tree, _) <- completeTree root True False False
+    result <- verifyCellRun tree
+    result `shouldSatisfy` \case
+      Left problems -> any isPayloadMismatch problems
+      Right _ -> False
+
+  it "requires a nested manifest and a matching nested run identifier" $ withSystemTempDirectory "kenshou-verify" \root -> do
+    (tree, _) <- completeTree (root </> "wrong-id") False True False
+    mismatch <- verifyCellRun tree
+    mismatch `shouldSatisfy` \case
+      Left problems -> any isRunResultMismatch problems
+      Right _ -> False
+    (otherTree, manifest) <- completeTree (root </> "missing") False False False
+    case [artifact.path | artifact <- manifest.artifacts, "/manifest.json" `Text.isSuffixOf` artifact.path] of
+      [nestedPath] -> do
+        removeFile (otherTree </> Text.unpack nestedPath)
+        let withoutNested = manifest {artifacts = filter ((/= nestedPath) . (.path)) manifest.artifacts}
+        LazyByteString.writeFile (otherTree </> "manifest.json") (encode withoutNested)
+        absent <- verifyCellRun otherTree
+        absent `shouldSatisfy` \case
+          Left problems -> any isNestedManifestProblem problems
+          Right _ -> False
+      _ -> expectationFailure "expected one nested manifest"
+
+  it "rejects an unsafe nested path before calling the kernel verifier" $ withSystemTempDirectory "kenshou-verify" \root -> do
+    (tree, _) <- completeTree root False False True
+    result <- verifyCellRun tree
+    result `shouldSatisfy` \case
+      Left problems -> any isNestedManifestProblem problems
+      Right _ -> False
+
 publishFixture :: ObjectStore -> RunId -> IO CellManifest
 publishFixture store identifier = do
   lease <- newRunId
@@ -82,6 +120,63 @@ bucket = Bucket "results"
 
 resultBytes :: LazyByteString.ByteString
 resultBytes = "{\"schema\":\"cell.run-result/v1\"}"
+
+completeTree :: FilePath -> Bool -> Bool -> Bool -> IO (FilePath, CellManifest)
+completeTree root wrongPayload wrongRunId unsafeNested = do
+  identifier <- newRunId
+  lease <- newRunId
+  nestedId <- newRunId
+  otherId <- newRunId
+  now <- getCurrentTime
+  source <- LazyByteString.readFile "test/golden/cell/cell.submission.v1.json"
+  fixture <- either (ioError . userError) pure (eitherDecode source :: Either String Submission)
+  let workBytes = "{}"
+      workInfo = workObjectFor "application/json" workBytes
+      submitted = Submission identifier lease fixture.payload workInfo fixture.env fixture.reset fixture.limits fixture.requires fixture.labels
+      payloadDigest = fixture.payload.bundle.sha256
+      manifestDigest = if wrongPayload then Text.replicate 64 "b" else payloadDigest
+      manifestPayload = ManifestPayload manifestDigest fixture.payload.storePath
+      cellResult = CellRunResult identifier "alpha" lease 1 Completed (Just 0) Nothing []
+      runBytes = encode (object ["schema" .= ("kenshou.run-result/v1" :: Text), "runId" .= (if wrongRunId then otherId else nestedId), "fingerprint" .= object ["cell" .= object ["payload" .= object ["bundleSha256" .= payloadDigest]]]])
+      nestedFile = ManifestFile (if unsafeNested then "../escape" else "run-result.json") ("sha256:" <> digestOf runBytes) (fromIntegral (LazyByteString.length runBytes)) "application/json"
+      nestedManifest = Manifest nestedId now [nestedFile]
+      files =
+        [ ("submission/work", workBytes),
+          ("submission/submission.json", encode submitted),
+          ("cell/result.json", encode cellResult),
+          ("output/" <> renderRunId nestedId <> "/run-result.json", runBytes),
+          ("output/" <> renderRunId nestedId <> "/manifest.json", encode nestedManifest)
+        ]
+      artifacts = [artifactFor name bytes | (name, bytes) <- files]
+      manifest = CellManifest identifier "alpha" lease 1 now "0.1.0" manifestPayload Completed 3600 artifacts
+      tree = root </> "tree"
+  mapM_
+    ( \(name, bytes) -> do
+        let destination = tree </> Text.unpack name
+        createDirectoryIfMissing True (takeDirectory destination)
+        LazyByteString.writeFile destination bytes
+    )
+    files
+  LazyByteString.writeFile (tree </> "manifest.json") (encode manifest)
+  pure (tree, manifest)
+
+artifactFor :: Text -> LazyByteString.ByteString -> Artifact
+artifactFor name bytes = let info = workObjectFor "application/json" bytes in Artifact name info.sha256 info.bytes "application/json"
+
+digestOf :: LazyByteString.ByteString -> Text
+digestOf bytes = (workObjectFor "application/json" bytes).sha256
+
+isPayloadMismatch :: VerifyProblem -> Bool
+isPayloadMismatch (PayloadMismatch _) = True
+isPayloadMismatch _ = False
+
+isRunResultMismatch :: VerifyProblem -> Bool
+isRunResultMismatch (RunResultMismatch _) = True
+isRunResultMismatch _ = False
+
+isNestedManifestProblem :: VerifyProblem -> Bool
+isNestedManifestProblem (NestedManifestProblem _) = True
+isNestedManifestProblem _ = False
 
 hasDigestMismatch :: Either (NonEmpty VerifyProblem) CellManifest -> Bool
 hasDigestMismatch (Left problems) = DigestMismatch "cell/result.json" `elem` toList problems

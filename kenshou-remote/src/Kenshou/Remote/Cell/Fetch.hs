@@ -3,25 +3,31 @@ module Kenshou.Remote.Cell.Fetch
     VerifyProblem (..),
     fetchCellRun,
     verifyCellTree,
+    verifyCellRun,
   )
 where
 
 import Control.Exception (bracket)
 import Control.Monad (forM)
 import Crypto.Hash.SHA256 qualified as SHA256
-import Data.Aeson (eitherDecode)
+import Data.Aeson (FromJSON, Value (..), eitherDecode)
+import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Base16 qualified as Base16
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.Int (Int64)
+import Data.List (sort)
 import Data.List.NonEmpty (NonEmpty (..))
+import Data.Map.Strict qualified as Map
 import Data.Maybe (catMaybes, listToMaybe)
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
 import Kenshou.Core.Id (RunId, renderRunId)
-import Kenshou.Remote.Cell.Docs (Artifact (..), CellManifest (..))
+import Kenshou.Core.Manifest (Manifest (..), ManifestFile (..), verifyManifest)
+import Kenshou.Remote.Cell.Docs (Artifact (..), CellManifest (..), CellRunResult (..), ManifestPayload (..), Submission (..), WorkObject (..))
+import Kenshou.Remote.Payload (Bundle (..), CellPayload (..))
 import Kenshou.Remote.Store (Bucket, ObjectMeta (..), ObjectName (..), ObjectStore (..))
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, listDirectory, pathIsSymbolicLink, removeFile, renameFile)
 import System.FilePath (takeDirectory, (</>))
@@ -34,6 +40,10 @@ data VerifyProblem
   | DigestMismatch !Text
   | SizeMismatch !Text
   | UnsafeEntry !Text
+  | PayloadMismatch !Text
+  | ManifestsDisagree !Text
+  | NestedManifestProblem !Text
+  | RunResultMismatch !Text
   deriving stock (Eq, Show)
 
 data FetchError
@@ -151,6 +161,126 @@ verifyCellTree tree = do
                       pure case problems of
                         [] -> Right manifest
                         first : rest -> Left (first :| rest)
+
+-- This is the evidence gate after the cell-level size and digest verification.
+-- Validate nested paths before calling the kernel verifier, whose standalone
+-- entry point assumes its manifest came from a trusted local run directory.
+verifyCellRun :: FilePath -> IO (Either (NonEmpty VerifyProblem) CellManifest)
+verifyCellRun tree = do
+  verified <- verifyCellTree tree
+  case verified of
+    Left problems -> pure (Left problems)
+    Right manifest -> do
+      let byPath = Map.fromList [(artifact.path, artifact) | artifact <- manifest.artifacts]
+      submission <- readRequired tree byPath "submission/submission.json" :: IO (Either VerifyProblem Submission)
+      result <- readRequired tree byPath "cell/result.json" :: IO (Either VerifyProblem CellRunResult)
+      case (submission, result) of
+        (Right submitted, Right cellResult) -> do
+          let identityProblems =
+                [PayloadMismatch "submission run, lease or payload differs from cell manifest" | submitted.runId /= manifest.runId || submitted.leaseId /= manifest.leaseId || submitted.payload.bundle.sha256 /= manifest.payload.sha256 || submitted.payload.storePath /= manifest.payload.storePath]
+                  <> [RunResultMismatch "cell result differs from cell manifest" | cellResult.runId /= manifest.runId || cellResult.cell /= manifest.cell || cellResult.leaseId /= manifest.leaseId || cellResult.leaseSequence /= manifest.leaseSequence || cellResult.outcome /= manifest.outcome]
+          workProblems <- checkWork tree byPath submitted
+          let nested = nestedManifestPaths manifest.artifacts
+              nestedIds = Set.fromList (map fst nested)
+              outputIds = Set.fromList [run | artifact <- manifest.artifacts, "output" : run : _file : _ <- [Text.splitOn "/" artifact.path]]
+              absentNested = [NestedManifestProblem ("output/" <> run <> "/manifest.json: missing") | run <- Set.toList (outputIds Set.\\ nestedIds)]
+          nestedProblems <- concat <$> traverse (checkNested tree byPath manifest.payload.sha256) nested
+          let problems = identityProblems <> workProblems <> absentNested <> nestedProblems
+          pure case problems of
+            [] -> Right manifest
+            first : rest -> Left (first :| rest)
+        _ -> pure (Left (firstProblems submission result))
+
+readRequired :: (FromJSON document) => FilePath -> Map.Map Text Artifact -> Text -> IO (Either VerifyProblem document)
+readRequired tree byPath relative = case Map.lookup relative byPath of
+  Nothing -> pure (Left (Missing relative))
+  Just _ -> do
+    bytes <- LazyByteString.readFile (tree </> Text.unpack relative)
+    pure case eitherDecode bytes of
+      Left failure -> Left (InvalidManifest (relative <> ": " <> Text.pack failure))
+      Right document -> Right document
+
+firstProblems :: Either VerifyProblem left -> Either VerifyProblem right -> NonEmpty VerifyProblem
+firstProblems left right = case catMaybes [either Just (const Nothing) left, either Just (const Nothing) right] of
+  first : rest -> first :| rest
+  [] -> InvalidManifest "missing required cell document" :| []
+
+checkWork :: FilePath -> Map.Map Text Artifact -> Submission -> IO [VerifyProblem]
+checkWork tree byPath submitted = case Map.lookup "submission/work" byPath of
+  Nothing -> pure [Missing "submission/work"]
+  Just artifact -> do
+    (digest, size) <- digestFile (tree </> "submission" </> "work")
+    pure [PayloadMismatch "submission work differs from its declared digest or size" | digest /= submitted.work.sha256 || size /= submitted.work.bytes || artifact.sha256 /= submitted.work.sha256 || artifact.bytes /= submitted.work.bytes]
+
+nestedManifestPaths :: [Artifact] -> [(Text, Text)]
+nestedManifestPaths artifacts =
+  [(run, artifact.path) | artifact <- artifacts, ["output", run, "manifest.json"] <- [Text.splitOn "/" artifact.path]]
+
+checkNested :: FilePath -> Map.Map Text Artifact -> Text -> (Text, Text) -> IO [VerifyProblem]
+checkNested tree byPath bundleDigest (run, path) = do
+  decoded <- readRequired tree byPath path :: IO (Either VerifyProblem Manifest)
+  case decoded of
+    Left problem -> pure [problem]
+    Right nested
+      | renderRunId nested.runId /= run -> pure [NestedManifestProblem (path <> ": run ID differs from directory")]
+      | otherwise -> do
+          let relativeFiles = map (Text.pack . (.path)) nested.files
+          if any (not . safeRelative) relativeFiles || length relativeFiles /= Set.size (Set.fromList relativeFiles)
+            then pure [NestedManifestProblem (path <> ": unsafe or duplicate nested path")]
+            else do
+              let prefix = "output/" <> run <> "/"
+                  expected = sort (path : map (prefix <>) relativeFiles)
+                  actual = sort [name | name <- Map.keys byPath, prefix `Text.isPrefixOf` name]
+                  setProblem = [ManifestsDisagree (path <> ": nested file set differs from cell manifest") | expected /= actual]
+                  metadataProblems =
+                    [ ManifestsDisagree (full <> ": digest or size differs between manifests")
+                    | file <- nested.files,
+                      let full = prefix <> Text.pack file.path,
+                      Just artifact <- [Map.lookup full byPath],
+                      Just artifact.sha256 /= Text.stripPrefix "sha256:" file.sha256 || fromIntegral artifact.bytes /= file.bytes
+                    ]
+              checked <- verifyManifest (tree </> "output" </> Text.unpack run)
+              let kernelProblems = case checked of
+                    Left problems -> [NestedManifestProblem (path <> ": " <> Text.pack (show problems))]
+                    Right () -> []
+              fingerprintProblems <- checkFingerprint tree prefix run bundleDigest
+              pure (setProblem <> metadataProblems <> kernelProblems <> fingerprintProblems)
+
+checkFingerprint :: FilePath -> Text -> Text -> Text -> IO [VerifyProblem]
+checkFingerprint tree prefix run expected = do
+  let relative = prefix <> "run-result.json"
+  present <- doesFileExist (tree </> Text.unpack relative)
+  if not present
+    then pure [RunResultMismatch (relative <> ": missing")]
+    else do
+      bytes <- LazyByteString.readFile (tree </> Text.unpack relative)
+      pure case eitherDecode bytes :: Either String Value of
+        Left failure -> [RunResultMismatch (relative <> ": " <> Text.pack failure)]
+        Right value ->
+          [RunResultMismatch (relative <> ": run ID differs from directory") | resultRunId value /= Just run]
+            <> [RunResultMismatch (relative <> ": payload fingerprint differs from submission") | fingerprintDigest value /= Just expected]
+
+resultRunId :: Value -> Maybe Text
+resultRunId (Object result) = do
+  String identifier <- KeyMap.lookup "runId" result
+  pure identifier
+resultRunId _ = Nothing
+
+fingerprintDigest :: Value -> Maybe Text
+fingerprintDigest (Object result) = do
+  Object fingerprint <- KeyMap.lookup "fingerprint" result
+  Object cell <- KeyMap.lookup "cell" fingerprint
+  Object payload <- KeyMap.lookup "payload" cell
+  String digest <- KeyMap.lookup "bundleSha256" payload
+  pure digest
+fingerprintDigest _ = Nothing
+
+safeRelative :: Text -> Bool
+safeRelative value =
+  not (Text.null value)
+    && not (Text.isPrefixOf "/" value)
+    && not (Text.any (`elem` ['\\', '\0']) value)
+    && all (\part -> not (Text.null part) && part /= "." && part /= "..") (Text.splitOn "/" value)
 
 listTree :: FilePath -> IO ([Text], [Text])
 listTree root = go ""
