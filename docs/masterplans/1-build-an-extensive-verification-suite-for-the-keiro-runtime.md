@@ -375,16 +375,19 @@ The following cross-plan decisions should become ADRs in `docs/adr/` when the ow
 
 ## Progress
 
-EP-17 now has checked Nix identities for both cohorts, a visible payload
+EP-17 has checked Nix identities for both cohorts, a visible payload
 publisher, and a capability cache consumed by cell routing and submission.
-The head identity gate passes; the remote and CLI suites pass 90 and 30
-examples. The native released payload builds and runs with a Git-aware
-version and an enforced GHC-free runtime closure. EP-17 pins the two
-published dependencies missing from the shared channel locally. A clean
-Linux build at `d4c03dd` produced a content-addressed released bundle in
-the cell control bucket; a fresh download matched its descriptor's SHA-256
-and size. The head and diagnostic variants, real-cell acceptance, paired
-comparisons and parity remain open.
+Its clean released Linux payload at `c27d368` is content addressed in the
+cell control bucket and has run on alpha. A PostgreSQL 18 round trip and a
+worker IPC scenario both passed locally and on the cell with matching seeds;
+their schema-valid parity reports contain no unexpected differences. The
+worker case explicitly names its child PID as volatile. EP-16 repaired a
+PostgreSQL setup/reset race in `mori://shinzui/load-testing-infra` at
+`2d3ada5`, deployed image `cell-image-postgres18-3vfib0hzp0m7` at
+`effe38a`, and the fresh worker run sealed `completed` with a verified
+reset. The head and diagnostic payload variants, paired comparisons,
+capability probing, further parity cases and the remaining live acceptance
+matrix remain open.
 
 EP-11 now preserves both owner references for the Kafka rebalance scenario:
 BUG-4 covers premature adapter exits and BUG-6 covers within-assignment
@@ -509,6 +512,8 @@ The SIGKILL recovery tree was fetched and verified again after all cell VMs were
 EP-18 completed its first milestone: `docs/verification` validates as an OKF v0.2 bundle with three versioned computation definitions, 20 negative profile probes and a missing-reference control. Mori and the repository recipes recognize the bundle. [ADR-18](../adr/0018-keep-verification-records-immutable-and-derive-baselines.md) fixes immutable digest-linked records and derived baselines; [ADR-19](../adr/0019-relax-the-evidence-profile-after-records-are-committed.md) fixes compatibility of the historical profile. The `record`, `attest`, `history` and seeded-corpus milestones remain open. The first definition records the runner's actual scenario-report outcome path, so the future attester must establish an explicit replayable oracle before claiming to recompute an arbitrary scenario verdict.
 
 ## Surprises & Discoveries
+
+- EP-17's database-free worker scenario still needed the PostgreSQL reset block required by EP-16's current driver. A live run then exposed a race between `postgresql.service` restart and `postgresql-setup.service` database creation: the setup unit recreated `benchmark` while reset verification was reading the database list. EP-16 now waits for setup completion in the role executor; the next live worker run passed and its local/cell parity report has zero unexpected fields. The owner code is in `mori://shinzui/load-testing-infra` at project-relative path `nixos/pkgs/cell-agent/src/src/reset/postgres.rs` (artifact-level URI pending).
 
 - EP-10's adapter finding audit filed `mori://shinzui/shibuya-pgmq-adapter/okf/bug-reports/concepts/BUG-2` for the historical exhausted-acknowledgement hook, `mori://shinzui/shibuya-pgmq-adapter/okf/bug-reports/concepts/BUG-3` for duplicate direct-DLQ copies, and `mori://shinzui/kiroku/okf/bug-reports/concepts/BUG-4` for partial group-acquisition cleanup. Published-current adapter controls passed on PostgreSQL 17 and 18. Clean released PostgreSQL 18 runs at `9297d59` reproduced the exact hook and group-cleanup findings (`01a0e55b-52c2-75d3-aa5b-680edeff9115`, `01a0e55d-02ea-77e4-909c-f9163be0cdb5`). Two 10,000-message atomic-move reruns (`01a0e55c-0eb5-737c-9336-220939cbcd0f`, `01a0e55c-9391-73b5-a2da-b49cfa472ca3`) passed without triggering the timing-dependent duplicate; earlier pinned historical runs reproduced two and nine copies. All four new result schemas and both owner OKF bundles validated; the 34-example Shibuya package suite passed. Remaining EP-10 acceptance work stays open.
 
