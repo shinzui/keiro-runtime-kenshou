@@ -15,9 +15,13 @@ import Kenshou.Cli (runWithArgs)
 import Kenshou.Cli.Attest (FencingFacts (..), fencingFacts)
 import Kenshou.Cli.Version (appVersionWithGit)
 import Kenshou.Core.Id (renderRunId)
-import Kenshou.Remote.Cell.Docs (CellBuckets (..), CellDescriptor (..), Rejected (..), Submission (..))
+import Kenshou.Core.Manifest (Manifest (..), ManifestFile (..))
+import Kenshou.Core.Outcome qualified as Outcome
+import Kenshou.Remote.Cell.Docs (Artifact (..), CellBuckets (..), CellDescriptor (..), CellManifest (..), CellOutcome (..), CellPhase (..), CellRunResult (..), CellStatus (..), LogChunks (..), ManifestPayload (..), Rejected (..), Submission (..), WorkObject (..))
 import Kenshou.Remote.Cell.Lease (Lease (..))
 import Kenshou.Remote.Cell.Session.Journal (SessionJournal (..), SliceJournal (..), SliceState (..), readSessionJournal, writeSessionJournal)
+import Kenshou.Remote.Cell.Submit (workObjectFor)
+import Kenshou.Remote.Payload (Bundle (..), CellPayload (..))
 import Kenshou.Remote.Store (Bucket (..), ObjectName (..), ObjectStore (..), Precondition (..))
 import Kenshou.Remote.Store.File (newFileStore)
 import System.Directory (createDirectoryIfMissing, doesFileExist, doesPathExist)
@@ -191,6 +195,75 @@ main = hspec do
             store.statObject control (ObjectName "cells/alpha/lease.json") `shouldReturn` Nothing
             journal <- readSessionJournal (outDir </> "session.json") >>= either (fail . Text.unpack) pure
             fmap (.state) journal.slices `shouldBe` [SliceRejected]
+          )
+          `finally` killThread worker
+
+    it "fetches and verifies a sealed one-command submission" $
+      withSystemTempDirectory "kenshou-cell-run-sealed" \root -> do
+        store <- newFileStore root
+        descriptorBytes <- LazyByteString.readFile "../kenshou-remote/test/golden/cell/cell.descriptor.v1.json"
+        observed <- either fail pure (Aeson.eitherDecode descriptorBytes :: Either String CellDescriptor)
+        let control = Bucket "control"
+            results = Bucket observed.buckets.results
+            descriptor = observed {buckets = observed.buckets {control = "control"}}
+            outDir = root </> "run-session"
+            command = ["cell", "run", "--cell", "alpha", "--control-bucket", "control", "--payload", "../kenshou-remote/test/golden/payload.json", "--plan", "../kenshou-core/test/golden/run-plan.minimal.json", "--out", outDir, "--coerce-durable"]
+            awaitMarker = do
+              objects <- store.listObjects control "cells/alpha/submissions/"
+              case find (Text.isSuffixOf "/submission.json" . (.unObjectName) . fst) objects of
+                Nothing -> threadDelay 10000 >> awaitMarker
+                Just (name, _) -> do
+                  marker <- store.getObject control name
+                  submission <- case marker of
+                    Just (bytes, _) -> either fail pure (Aeson.eitherDecode bytes :: Either String Submission)
+                    Nothing -> fail "submission marker disappeared"
+                  journal <- readSessionJournal (outDir </> "session.json") >>= either (fail . Text.unpack) pure
+                  nestedId <- case journal.slices of
+                    [slice] -> case slice.runIds of
+                      [identifier] -> pure identifier
+                      _ -> fail "expected one nested run"
+                    _ -> fail "expected one cell slice"
+                  let prefix = "cells/alpha/submissions/" <> renderRunId submission.runId <> "/"
+                  work <- store.getObject control (ObjectName (prefix <> "work"))
+                  workBytes <- case work of
+                    Just (bytes, _) -> pure bytes
+                    Nothing -> fail "submission work disappeared"
+                  now <- getCurrentTime
+                  let payloadDigest = submission.payload.bundle.sha256
+                      nestedBytes = Aeson.encode (object ["schema" .= ("kenshou.run-result/v1" :: Text), "runId" .= nestedId, "scenario" .= ("selftest/kernel/correctness/postgres-roundtrip" :: Text), "outcome" .= Outcome.Passed, "fingerprint" .= object ["cell" .= object ["payload" .= object ["bundleSha256" .= payloadDigest]]]])
+                      nestedInfo = workObjectFor "application/json" nestedBytes
+                      nestedManifest = Manifest nestedId now [ManifestFile "run-result.json" ("sha256:" <> nestedInfo.sha256) (fromIntegral nestedInfo.bytes) "application/json"]
+                      files =
+                        [ ("submission/work", workBytes),
+                          ("submission/submission.json", Aeson.encode submission),
+                          ("cell/result.json", Aeson.encode (CellRunResult submission.runId "alpha" submission.leaseId 1 Completed (Just 0) Nothing [])),
+                          ("output/" <> renderRunId nestedId <> "/run-result.json", nestedBytes),
+                          ("output/" <> renderRunId nestedId <> "/manifest.json", Aeson.encode nestedManifest)
+                        ]
+                      artifactFor (path, bytes) = let info = workObjectFor "application/json" bytes in Artifact path info.sha256 info.bytes "application/json"
+                      manifest = CellManifest submission.runId "alpha" submission.leaseId 1 now "0.1.0" (ManifestPayload payloadDigest submission.payload.storePath) Completed 3600 (map artifactFor files)
+                      manifestBytes = Aeson.encode manifest
+                      manifestDigest = (workObjectFor "application/json" manifestBytes).sha256
+                  mapM_
+                    ( \(path, bytes) -> do
+                        _ <- store.putObject results (ObjectName ("runs/" <> renderRunId submission.runId <> "/" <> path)) "application/json" DoesNotExist bytes
+                        pure ()
+                    )
+                    files
+                  _ <- store.putObject results (ObjectName ("runs/" <> renderRunId submission.runId <> "/manifest.json")) "application/json" DoesNotExist manifestBytes
+                  _ <- store.putObject control (ObjectName (prefix <> "status.json")) "application/json" DoesNotExist (Aeson.encode (CellStatus submission.runId Sealed (Just 1) now Nothing (LogChunks 0 0) (Just Completed) (Just manifestDigest) (Just [])))
+                  pure ()
+        _ <- store.putObject control (ObjectName "cells/alpha/descriptor.json") "application/json" DoesNotExist (Aeson.encode descriptor)
+        worker <- forkIO awaitMarker
+        ( withCellStore root do
+            result <- timeout 15000000 (runWithArgs command)
+            result `shouldBe` Just ExitSuccess
+            store.statObject control (ObjectName "cells/alpha/lease.json") `shouldReturn` Nothing
+            journal <- readSessionJournal (outDir </> "session.json") >>= either (fail . Text.unpack) pure
+            fmap (.state) journal.slices `shouldBe` [SliceVerified]
+            case journal.slices of
+              [slice] -> doesFileExist (root </> Text.unpack (renderRunId slice.cellRun) </> "cell-run.json") `shouldReturn` True
+              _ -> expectationFailure "expected one verified cell slice"
           )
           `finally` killThread worker
 
