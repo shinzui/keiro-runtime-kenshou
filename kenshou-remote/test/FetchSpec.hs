@@ -1,4 +1,4 @@
-module FetchSpec (spec) where
+module FetchSpec (spec, completeTreeWith) where
 
 import Data.Aeson (Value, eitherDecode, encode, object, (.=))
 import Data.ByteString.Lazy qualified as LazyByteString
@@ -168,6 +168,10 @@ completeTree :: FilePath -> Bool -> Bool -> Bool -> IO (FilePath, CellManifest)
 completeTree root wrongPayload wrongRunId unsafeNested = do
   identifier <- newRunId
   lease <- newRunId
+  completeTreeWith root identifier lease wrongPayload wrongRunId unsafeNested
+
+completeTreeWith :: FilePath -> RunId -> RunId -> Bool -> Bool -> Bool -> IO (FilePath, CellManifest)
+completeTreeWith root identifier lease wrongPayload wrongRunId unsafeNested = do
   nestedId <- newRunId
   otherId <- newRunId
   now <- getCurrentTime

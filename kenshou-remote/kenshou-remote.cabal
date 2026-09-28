@@ -39,6 +39,7 @@ library
     Kenshou.Remote.Cell.Fetch
     Kenshou.Remote.Cell.Index
     Kenshou.Remote.Cell.Lease
+    Kenshou.Remote.Cell.Session
     Kenshou.Remote.Cell.Submit
     Kenshou.Remote.Cell.Watch
     Kenshou.Remote.Payload
@@ -74,6 +75,7 @@ test-suite kenshou-remote-test
     FetchSpec
     GcsSpec
     LeaseSpec
+    SessionSpec
     SubmitSpec
     WatchSpec
 

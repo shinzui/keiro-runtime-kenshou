@@ -16,6 +16,7 @@ import Kenshou.Remote.Payload (Bundle (..), CellPayload (..), CohortCheck (..), 
 import Kenshou.Remote.Store (Bucket (..), ObjectMeta (..), ObjectName (..), ObjectStore (..), Precondition (..), PutOutcome (..))
 import Kenshou.Remote.Store.File (newFileStore)
 import LeaseSpec qualified
+import SessionSpec qualified
 import SubmitSpec qualified
 import System.Directory (getFileSize)
 import System.Environment (getArgs, getExecutablePath)
@@ -43,6 +44,7 @@ tests = do
   FetchSpec.spec
   GcsSpec.spec
   LeaseSpec.spec
+  SessionSpec.spec
   SubmitSpec.spec
   WatchSpec.spec
   describe "Kenshou payload descriptor" do
