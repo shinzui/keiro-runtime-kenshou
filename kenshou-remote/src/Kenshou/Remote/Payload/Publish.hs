@@ -1,5 +1,6 @@
 module Kenshou.Remote.Payload.Publish
   ( BundlePublishError (..),
+    digestFile,
     publishBundle,
   )
 where

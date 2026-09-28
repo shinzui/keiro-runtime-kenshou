@@ -1,20 +1,57 @@
 module PayloadSpec (spec) where
 
-import Data.Aeson (eitherDecode)
+import Data.Aeson (eitherDecode, object, (.=))
+import Data.Aeson.Key qualified as Key
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.Text qualified as Text
 import Kenshou.Remote.Cell.Docs (WorkObject (..))
 import Kenshou.Remote.Cell.Submit (workObjectFor)
 import Kenshou.Remote.Payload (Bundle (..), CellPayload (..), PayloadDescriptor (..))
+import Kenshou.Remote.Payload.Nix (BundleInfo (..), ClosureInfo (..), NixError (..), NixTools (..), exportBundleWith, parseClosureInfo)
 import Kenshou.Remote.Payload.Publish (BundlePublishError (..), publishBundle)
 import Kenshou.Remote.Store (Bucket (..), ObjectName (..), ObjectStore (..), Precondition (..))
 import Kenshou.Remote.Store.File (newFileStore)
+import System.Directory (Permissions (..), doesFileExist, getPermissions, listDirectory, setPermissions)
 import System.FilePath ((</>))
 import System.IO.Temp (withSystemTempDirectory)
 import Test.Hspec
 
 spec :: Spec
 spec = describe "content-addressed payload publication" do
+  it "reads the root NAR hash and complete closure from Nix metadata" do
+    let root = "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-kenshou"
+        dependency = "/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-dependency"
+        metadata =
+          object
+            [ Key.fromText (Text.pack root) .= object ["narHash" .= ("sha256-root" :: Text.Text)],
+              Key.fromText (Text.pack dependency) .= object ["narHash" .= ("sha256-dependency" :: Text.Text)]
+            ]
+    parseClosureInfo root metadata `shouldBe` Right (ClosureInfo root "sha256-root" [root, dependency])
+    parseClosureInfo dependency (object [Key.fromText (Text.pack root) .= object ["narHash" .= ("sha256-root" :: Text.Text)]])
+      `shouldBe` Left (NixInvalidOutput "closure metadata omits the requested store path")
+
+  it "streams a closure export through compression and removes a failed temporary bundle" $ withSystemTempDirectory "kenshou-nix-export" \root -> do
+    let storePath = "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-kenshou"
+        destination = root </> "bundle.nar.zst"
+        tools = NixTools (root </> "nix") (root </> "nix-store") (root </> "zstd")
+        exported = "exported bytes"
+        work = workObjectFor "application/octet-stream" exported
+    writeTool tools.nixExecutable (unlines ["#!/bin/sh", "printf '%s' '{\"" <> storePath <> "\":{\"narHash\":\"sha256-root\"}}'"])
+    writeTool tools.nixStoreExecutable (unlines ["#!/bin/sh", "printf 'exported bytes'"])
+    writeTool tools.zstdExecutable (unlines ["#!/bin/sh", "cat > \"$6\""])
+    exportBundleWith tools storePath destination
+      `shouldReturn` Right (BundleInfo destination work.sha256 work.bytes (ClosureInfo storePath "sha256-root" [storePath]))
+    LazyByteString.readFile destination `shouldReturn` exported
+    writeTool tools.zstdExecutable (unlines ["#!/bin/sh", "exit 7"])
+    let failedDestination = root </> "failed.nar.zst"
+    result <- exportBundleWith tools storePath failedDestination
+    result `shouldSatisfy` \case
+      Left (NixCommandFailed executable _ _ _) -> executable == tools.zstdExecutable
+      _ -> False
+    doesFileExist failedDestination `shouldReturn` False
+    entries <- listDirectory root
+    filter (Text.isPrefixOf ".kenshou-payload-" . Text.pack) entries `shouldBe` []
+
   it "publishes a checked bundle once and accepts an identical retry" $ withSystemTempDirectory "kenshou-payload" \root -> do
     store <- newFileStore (root </> "store")
     let source = root </> "bundle.nar.zst"
@@ -74,3 +111,9 @@ objectFor descriptor = ObjectName ("payloads/sha256/" <> descriptor.cell.bundle.
 
 bundleBytes :: LazyByteString.ByteString
 bundleBytes = "bundle-bytes"
+
+writeTool :: FilePath -> String -> IO ()
+writeTool path contents = do
+  writeFile path contents
+  permissions <- getPermissions path
+  setPermissions path permissions {executable = True}
