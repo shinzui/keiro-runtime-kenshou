@@ -1,14 +1,23 @@
 module Main (main) where
 
+import Control.Exception (bracket)
 import Data.Aeson (Value, object, (.=))
+import Data.Aeson qualified as Aeson
+import Data.ByteString.Lazy qualified as LazyByteString
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.IO qualified as Text
 import Kenshou.Cli (runWithArgs)
 import Kenshou.Cli.Attest (FencingFacts (..), fencingFacts)
 import Kenshou.Cli.Version (appVersionWithGit)
+import Kenshou.Core.Id (renderRunId)
+import Kenshou.Remote.Cell.Lease (Lease (..))
+import Kenshou.Remote.Store (Bucket (..), ObjectName (..), ObjectStore (..), Precondition (..))
+import Kenshou.Remote.Store.File (newFileStore)
+import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.Exit (ExitCode (..))
-import Test.Hspec (describe, hspec, it, shouldBe, shouldSatisfy)
+import System.IO.Temp (withSystemTempDirectory)
+import Test.Hspec (describe, expectationFailure, hspec, it, shouldBe, shouldReturn, shouldSatisfy)
 
 main :: IO ()
 main = hspec do
@@ -41,6 +50,10 @@ main = hspec do
       runWithArgs ["cell", "--help"] `shouldReturnCode` ExitSuccess
       runWithArgs ["cell", "fetch", "--help"] `shouldReturnCode` ExitSuccess
       runWithArgs ["cell", "verify", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["cell", "status", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["cell", "lease", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["cell", "release", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["cell", "watch", "--help"] `shouldReturnCode` ExitSuccess
 
     it "rejects malformed cell result identifiers and URIs" do
       runWithArgs ["cell", "fetch", "--results-bucket", "test-results", "not-a-run-id", "--out", "test-output"] `shouldReturnCode` ExitFailure 2
@@ -49,6 +62,27 @@ main = hspec do
     it "distinguishes an unavailable cell tree from invalid evidence" do
       runWithArgs ["cell", "verify", "test/fixtures/does-not-exist"] `shouldReturnCode` ExitFailure 4
       runWithArgs ["cell", "verify", leakingRun] `shouldReturnCode` ExitFailure 1
+
+    it "acquires, reports and releases a lease through the file-backed cell CLI" $
+      withSystemTempDirectory "kenshou-cell-cli" \root -> do
+        store <- newFileStore root
+        descriptor <- LazyByteString.readFile "../kenshou-remote/test/golden/cell/cell.descriptor.v1.json"
+        let control = Bucket "tan-nb-exp-cells-control"
+            leaseObject = ObjectName "cells/alpha/lease.json"
+            common = ["--cell", "alpha", "--control-bucket", "tan-nb-exp-cells-control"]
+        _ <- store.putObject control (ObjectName "cells/alpha/descriptor.json") "application/json" DoesNotExist descriptor
+        withCellStore root do
+          runWithArgs (["cell", "status"] <> common <> ["--json"]) `shouldReturnCode` ExitSuccess
+          runWithArgs (["cell", "lease"] <> common <> ["--purpose", "cli-test"]) `shouldReturnCode` ExitSuccess
+          stored <- store.getObject control leaseObject
+          record <- case stored of
+            Just (bytes, _) -> case Aeson.eitherDecode bytes of
+              Right lease -> pure (lease :: Lease)
+              Left problem -> expectationFailure problem >> error "unreachable"
+            Nothing -> expectationFailure "lease was not published" >> error "unreachable"
+          runWithArgs (["cell", "status"] <> common) `shouldReturnCode` ExitSuccess
+          runWithArgs (["cell", "release"] <> common <> ["--lease-id", Text.unpack (renderRunId record.leaseId)]) `shouldReturnCode` ExitSuccess
+          store.statObject control leaseObject `shouldReturn` Nothing
 
     it "reads scenario history from a bundle" do
       runWithArgs ["history", "--bundle", "../docs/verification", "--scenario", "selftest/kernel/correctness/always-pass", "--json"] `shouldReturnCode` ExitSuccess
@@ -110,3 +144,13 @@ errorEvent message = object ["type" .= ("error" :: Text), "message" .= message]
 
 doneEvent :: Value
 doneEvent = object ["type" .= ("done" :: Text)]
+
+withCellStore :: FilePath -> IO value -> IO value
+withCellStore root operation = bracket (lookupEnv "KENSHOU_CELL_STORE") (restore "KENSHOU_CELL_STORE") \_ ->
+  bracket (lookupEnv "KENSHOU_GCP_ALLOWED_PROJECTS") (restore "KENSHOU_GCP_ALLOWED_PROJECTS") \_ -> do
+    setEnv "KENSHOU_CELL_STORE" ("file:" <> root)
+    setEnv "KENSHOU_GCP_ALLOWED_PROJECTS" "tan-nb-exp"
+    operation
+  where
+    restore name Nothing = unsetEnv name
+    restore name (Just prior) = setEnv name prior

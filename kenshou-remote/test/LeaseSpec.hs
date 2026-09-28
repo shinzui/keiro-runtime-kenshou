@@ -9,6 +9,7 @@ import Data.Either (isRight)
 import Data.Maybe (isJust)
 import Data.Time (addUTCTime, getCurrentTime)
 import Kenshou.Core.Id (newRunId)
+import Kenshou.Remote.Cell.Control (CellSnapshot (..), readCellSnapshot)
 import Kenshou.Remote.Cell.Lease (AcquireOutcome (..), CellRef (..), Lease (..), LeaseHandle, LeaseRequest (..), Quarantine (..), acquireLease, leaseHeld, leaseSnapshot, reattachLease, releaseLease, renewLease, requestCancel, withHeartbeat)
 import Kenshou.Remote.Store (Bucket (..), ObjectName (..), ObjectStore (..), Precondition (..))
 import Kenshou.Remote.Store.File (newFileStore)
@@ -99,6 +100,22 @@ spec = describe "cell lease protocol" do
     decodedQuarantine `shouldSatisfy` isRight
     fmap (eitherDecode . encode) decodedLease `shouldBe` Right (eitherDecode leaseBytes :: Either String Value)
     fmap (eitherDecode . encode) decodedQuarantine `shouldBe` Right (eitherDecode quarantineBytes :: Either String Value)
+
+  it "reads owner control objects only for an allowed project and matching bucket" $ withSystemTempDirectory "kenshou-cell-control" \root -> do
+    store <- newFileStore root
+    descriptor <- LazyByteString.readFile "test/golden/cell/cell.descriptor.v1.json"
+    let ref = CellRef "alpha" (Bucket "tan-nb-exp-cells-control")
+    _ <- store.putObject ref.controlBucket (ObjectName "cells/alpha/descriptor.json") "application/json" DoesNotExist descriptor
+    snapshot <- readCellSnapshot store ref ["tan-nb-exp"]
+    case snapshot of
+      Right observed -> do
+        observed.lease `shouldBe` Nothing
+        observed.quarantine `shouldBe` Nothing
+      Left problem -> expectationFailure (show problem)
+    readCellSnapshot store ref ["another-project"] `shouldReturn` Left "cell project is outside KENSHOU_GCP_ALLOWED_PROJECTS: tan-nb-exp"
+    let wrongBucket = CellRef "alpha" (Bucket "other-control")
+    _ <- store.putObject wrongBucket.controlBucket (ObjectName "cells/alpha/descriptor.json") "application/json" DoesNotExist descriptor
+    readCellSnapshot store wrongBucket ["tan-nb-exp"] `shouldReturn` Left "cell descriptor control bucket differs from selected bucket"
 
 cellRef :: CellRef
 cellRef = CellRef "alpha" (Bucket "control")

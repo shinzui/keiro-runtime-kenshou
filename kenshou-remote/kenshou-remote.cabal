@@ -35,6 +35,7 @@ library
   import: warnings
   hs-source-dirs: src
   exposed-modules:
+    Kenshou.Remote.Cell.Control
     Kenshou.Remote.Cell.Docs
     Kenshou.Remote.Cell.Fetch
     Kenshou.Remote.Cell.Index

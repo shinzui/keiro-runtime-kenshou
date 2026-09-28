@@ -14,6 +14,7 @@ module Kenshou.Remote.Cell.Lease
     leaseSnapshot,
     leaseHeld,
     withHeartbeat,
+    validCellName,
   )
 where
 

@@ -112,8 +112,13 @@ test-suite kenshou-cli-test
   build-depends:
     aeson >=2.2 && <2.3,
     base >=4.21 && <4.22,
+    bytestring,
+    directory,
     hspec >=2.11 && <2.12,
     kenshou-cli,
+    kenshou-core,
+    kenshou-remote,
+    temporary,
     text >=2.1 && <2.2,
 
 test-suite kenshou-linkproof

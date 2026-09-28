@@ -1,15 +1,23 @@
 module Kenshou.Cli.Command.Cell (cellCommand) where
 
-import Control.Exception (SomeAsyncException, SomeException, displayException, fromException, throwIO, try)
+import Control.Concurrent (threadDelay)
+import Control.Exception (SomeAsyncException, SomeException, displayException, finally, fromException, throwIO, try)
+import Data.Aeson (encode, object, (.=))
+import Data.ByteString.Lazy.Char8 qualified as LazyByteString
 import Data.List.NonEmpty qualified as NonEmpty
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.IO qualified as TextIO
+import Data.Time (diffUTCTime, getCurrentTime)
 import Kenshou.Core.Cli (CliCommand (..), CliEnv, CliGroup (..))
 import Kenshou.Core.Id (RunId, parseRunId, renderRunId)
-import Kenshou.Remote.Cell.Docs (CellManifest (..))
+import Kenshou.Remote.Cell.Control (CellSnapshot (..), readCellSnapshot)
+import Kenshou.Remote.Cell.Docs (CellDescriptor (..), CellManifest (..), CellOutcome (..), CellStatus (..), Rejected (..))
 import Kenshou.Remote.Cell.Fetch (FetchError (..), fetchCellRun, verifyCellRun)
 import Kenshou.Remote.Cell.Index (deriveCellRunIndex, writeCellRunIndex)
+import Kenshou.Remote.Cell.Lease (AcquireOutcome (..), CellRef (..), Lease (..), LeaseRequest (..), Quarantine (..), acquireLease, leaseSnapshot, reattachLease, releaseLease, validCellName, withHeartbeat)
+import Kenshou.Remote.Cell.Watch (WatchEvent (..), WatchTerminal (..), watchCellRun)
 import Kenshou.Remote.Store (Bucket (..), ObjectStore)
 import Kenshou.Remote.Store.File (newFileStore)
 import Kenshou.Remote.Store.Gcs (newGcsStore, newTokenProvider)
@@ -18,12 +26,20 @@ import System.Directory (doesDirectoryExist)
 import System.Environment (lookupEnv)
 import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
-import System.IO (stderr)
+import System.IO (hFlush, stderr, stdout)
 import System.IO.Temp (withSystemTempDirectory)
+
+data CellLocation = CellLocation !Text !(Maybe Text)
+
+data LeaseCli = LeaseCli !CellLocation !Text !(Maybe Text) !Int !Int !Bool !Bool
 
 data CellAction
   = Fetch !Text !Text !FilePath
   | Verify !FilePath
+  | Status !CellLocation !Bool
+  | LeaseCell !LeaseCli
+  | Release !CellLocation !Text
+  | Watch !CellLocation !Text
 
 cellCommand :: CliCommand
 cellCommand = CliCommand "cell" "Run and inspect leased verification cells" Execution False (runCell <$> cellParser)
@@ -33,6 +49,38 @@ cellParser =
   hsubparser $
     command "fetch" (info (fetchParser <**> helper) (progDesc "Fetch and verify one sealed cell run"))
       <> command "verify" (info (verifyParser <**> helper) (progDesc "Verify a fetched tree or a sealed GCS run"))
+      <> command "status" (info (statusParser <**> helper) (progDesc "Inspect cell descriptor and lease state"))
+      <> command "lease" (info (leaseParser <**> helper) (progDesc "Acquire a cell lease"))
+      <> command "release" (info (releaseParser <**> helper) (progDesc "Release an owned cell lease"))
+      <> command "watch" (info (watchParser <**> helper) (progDesc "Follow a cell run to its terminal status"))
+
+cellLocationParser :: Parser CellLocation
+cellLocationParser =
+  CellLocation
+    <$> strOption (long "cell" <> metavar "NAME" <> help "Cell name")
+    <*> optional (strOption (long "control-bucket" <> metavar "BUCKET" <> help "Cell control bucket"))
+
+statusParser :: Parser CellAction
+statusParser = Status <$> cellLocationParser <*> switch (long "json" <> help "Print JSON")
+
+leaseParser :: Parser CellAction
+leaseParser =
+  LeaseCell
+    <$> ( LeaseCli
+            <$> cellLocationParser
+            <*> strOption (long "purpose" <> metavar "TEXT" <> help "Purpose recorded in the lease")
+            <*> optional (strOption (long "owner" <> metavar "TEXT" <> help "Lease owner; defaults to USER"))
+            <*> option auto (long "ttl" <> metavar "SECONDS" <> value 120 <> showDefault <> help "Lease lifetime between renewals")
+            <*> option auto (long "wait" <> metavar "SECONDS" <> value 0 <> showDefault <> help "Wait for a busy lease")
+            <*> switch (long "hold" <> help "Renew in the foreground until interrupted")
+            <*> switch (long "json" <> help "Print the lease document as JSON")
+        )
+
+releaseParser :: Parser CellAction
+releaseParser = Release <$> cellLocationParser <*> strOption (long "lease-id" <> metavar "UUID" <> help "Expected lease identifier")
+
+watchParser :: Parser CellAction
+watchParser = Watch <$> cellLocationParser <*> strArgument (metavar "CELL_RUN_ID")
 
 fetchParser :: Parser CellAction
 fetchParser =
@@ -77,6 +125,87 @@ runCell selected _ = case selected of
           case fetched of
             Left problem -> fetchFailure problem
             Right tree -> verifyTree tree
+  Status location asJson -> withControl location \_ _ snapshot -> do
+    if asJson
+      then LazyByteString.putStrLn (encode (object ["descriptor" .= snapshot.descriptor, "lease" .= snapshot.lease, "quarantine" .= snapshot.quarantine]))
+      else do
+        let descriptor = snapshot.descriptor
+        TextIO.putStrLn ("cell " <> descriptor.name <> " project=" <> descriptor.project <> " zone=" <> descriptor.zone <> " pg=" <> Text.pack (show descriptor.postgresMajor))
+        TextIO.putStrLn ("lease " <> maybe "none" (renderRunId . (.leaseId)) snapshot.lease)
+        TextIO.putStrLn ("quarantine " <> maybe "none" (.reason) snapshot.quarantine)
+    pure ExitSuccess
+  LeaseCell (LeaseCli location purpose owner ttl waitSeconds hold asJson)
+    | ttl <= 0 || waitSeconds < 0 || Text.null purpose || maybe False Text.null owner -> usage "lease purpose and TTL must be positive; wait cannot be negative"
+    | otherwise -> withControl location \store ref _ -> do
+        defaultOwner <- Text.pack . fromMaybe "kenshou" <$> lookupEnv "USER"
+        let request = LeaseRequest (fromMaybe defaultOwner owner) purpose ttl
+        start <- getCurrentTime
+        let acquire = do
+              outcome <- acquireLease store ref request
+              case outcome of
+                Acquired handle -> do
+                  record <- leaseSnapshot handle
+                  if asJson
+                    then LazyByteString.putStrLn (encode record)
+                    else TextIO.putStrLn ("lease " <> renderRunId record.leaseId <> " ttl=" <> Text.pack (show record.ttlSeconds))
+                  if hold
+                    then withHeartbeat store ref handle (holdLease) `finally` (do _ <- releaseLease store ref handle; pure ())
+                    else pure ExitSuccess
+                Busy current -> do
+                  now <- getCurrentTime
+                  if diffUTCTime now start < fromIntegral waitSeconds
+                    then threadDelay 2000000 >> acquire
+                    else unavailable ("cell is busy under lease " <> renderRunId current.leaseId)
+                Quarantined record -> unavailable ("cell is quarantined: " <> record.reason)
+        acquire
+  Release location leaseText -> case parseRunId leaseText of
+    Left problem -> usage problem
+    Right expected -> withControl location \store ref _ -> do
+      reattached <- reattachLease store ref expected
+      case reattached of
+        Nothing -> unavailable "cell has no matching lease"
+        Just handle -> do
+          released <- releaseLease store ref handle
+          if released then TextIO.putStrLn ("released " <> leaseText) >> pure ExitSuccess else unavailable "cell lease changed before release"
+  Watch location runText -> case parseRunId runText of
+    Left problem -> usage problem
+    Right identifier -> withControl location \store ref _ -> do
+      terminal <- watchCellRun store ref identifier emitWatchEvent
+      case terminal of
+        RunRejected rejected -> do
+          TextIO.hPutStrLn stderr ("rejected: " <> rejected.reason)
+          pure (if rejected.reason `elem` ["lease-mismatch", "payload-digest-mismatch"] then ExitFailure 4 else ExitFailure 2)
+        RunSealed status -> do
+          TextIO.hPutStrLn stderr ("sealed: " <> Text.pack (show status.outcome))
+          pure (if status.outcome == Just Completed then ExitSuccess else ExitFailure 4)
+
+withControl :: CellLocation -> (ObjectStore -> CellRef -> CellSnapshot -> IO ExitCode) -> IO ExitCode
+withControl (CellLocation name selectedBucket) operation = do
+  configured <- lookupEnv "KENSHOU_CELL_CONTROL_BUCKET"
+  let bucketName = fromMaybe (maybe "tan-nb-exp-cells-control" Text.pack configured) selectedBucket
+  case validateBucket bucketName of
+    Left problem -> usage problem
+    Right bucket
+      | not (validCellName name) -> usage "invalid cell name"
+      | otherwise -> guardIO do
+          store <- openStore bucket
+          allowed <- maybe ["tan-nb-exp"] (map Text.strip . Text.splitOn "," . Text.pack) <$> lookupEnv "KENSHOU_GCP_ALLOWED_PROJECTS"
+          let ref = CellRef name bucket
+          snapshot <- readCellSnapshot store ref allowed
+          case snapshot of
+            Left problem -> unavailable problem
+            Right observed -> operation store ref observed
+
+holdLease :: IO Bool -> IO ExitCode
+holdLease stillHeld = do
+  held <- stillHeld
+  if held then threadDelay 1000000 >> holdLease stillHeld else unavailable "lease was lost"
+
+emitWatchEvent :: WatchEvent -> IO ()
+emitWatchEvent event = case event of
+  PhaseChanged phase -> TextIO.hPutStrLn stderr ("phase: " <> Text.pack (show phase))
+  StdoutChunk bytes -> LazyByteString.hPut stdout bytes >> hFlush stdout
+  StderrChunk bytes -> LazyByteString.hPut stderr bytes >> hFlush stderr
 
 verifyTree :: FilePath -> IO ExitCode
 verifyTree tree = do
