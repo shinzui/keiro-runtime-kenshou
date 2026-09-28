@@ -17,4 +17,5 @@ db/
 result
 result-*
 /runs/
+/payloads/
 .pre-commit-config.yaml

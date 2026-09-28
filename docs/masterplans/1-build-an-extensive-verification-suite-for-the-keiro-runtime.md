@@ -367,11 +367,14 @@ The following cross-plan decisions should become ADRs in `docs/adr/` when the ow
 
 EP-17 now has checked Nix identities for both cohorts, a visible payload
 publisher, and a capability cache consumed by cell routing and submission.
-The head identity gate passes; the remote and CLI suites pass 90 and 29
+The head identity gate passes; the remote and CLI suites pass 90 and 30
 examples. The native released payload builds and runs with a Git-aware
 version and an enforced GHC-free runtime closure. EP-17 pins the two
 published dependencies missing from the shared channel locally. A clean
-Linux build, bundle export, and real-cell acceptance remain open.
+Linux build at `d4c03dd` produced a content-addressed released bundle in
+the cell control bucket; a fresh download matched its descriptor's SHA-256
+and size. The head and diagnostic variants, real-cell acceptance, paired
+comparisons and parity remain open.
 
 EP-11 now preserves both owner references for the Kafka rebalance scenario:
 BUG-4 covers premature adapter exits and BUG-6 covers within-assignment
