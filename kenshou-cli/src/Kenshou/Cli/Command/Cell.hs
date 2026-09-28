@@ -2,7 +2,10 @@ module Kenshou.Cli.Command.Cell (cellCommand) where
 
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeAsyncException, SomeException, displayException, finally, fromException, throwIO, try)
-import Data.Aeson (FromJSON, eitherDecode, eitherDecodeFileStrict', encode, object, (.=))
+import Data.Aeson (FromJSON, Value (..), eitherDecode, eitherDecodeFileStrict', encode, object, (.=))
+import Data.Aeson qualified as Aeson
+import Data.Aeson.Key qualified as Key
+import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString.Lazy.Char8 qualified as LazyByteString
 import Data.Foldable (traverse_)
 import Data.List (nub)
@@ -15,7 +18,7 @@ import Data.Text qualified as Text
 import Data.Text.IO qualified as TextIO
 import Data.Time (diffUTCTime, getCurrentTime)
 import Kenshou.Core.Cli (CliCommand (..), CliEnv (..), CliGroup (..))
-import Kenshou.Core.Id (RunId, parseRunId, renderRunId)
+import Kenshou.Core.Id (RunId, newRunId, parseRunId, renderRunId)
 import Kenshou.Remote.Cell.Control (CellSnapshot (..), readCellSnapshot)
 import Kenshou.Remote.Cell.Docs (CachePolicy (..), CellBuckets (..), CellDescriptor (..), CellManifest (..), CellOutcome (..), CellStatus (..), Limits (..), Rejected (..), Submission (..))
 import Kenshou.Remote.Cell.Exec (cellExec)
@@ -25,7 +28,7 @@ import Kenshou.Remote.Cell.Lease (AcquireOutcome (..), CellRef (..), Lease (..),
 import Kenshou.Remote.Cell.Parity (ParityOptions (..), ParityReport (..), compareForParity)
 import Kenshou.Remote.Cell.Prepare (Granularity (..), OtlpSink (..), PrepareOptions (..))
 import Kenshou.Remote.Cell.RouteJson (RouteDocuments (..), routeWorkJson)
-import Kenshou.Remote.Cell.RouteRules (CellCapabilities, defaultRoutingRules, loadCellCapabilities)
+import Kenshou.Remote.Cell.RouteRules (CellCapabilities (..), defaultRoutingRules, descriptorDigest, loadCellCapabilities)
 import Kenshou.Remote.Cell.Session (SessionTransition (..))
 import Kenshou.Remote.Cell.Session.Build (BuildOptions (..), BuiltSession (..), buildSession)
 import Kenshou.Remote.Cell.Session.Journal (LeaseMode (..), SessionJournal (..), SliceJournal (..), SliceState (..), applyTransition, readSessionJournal, writeSessionJournal)
@@ -39,12 +42,13 @@ import Kenshou.Remote.Store (Bucket (..), ObjectMeta (..), ObjectName (..), Obje
 import Kenshou.Remote.Store.File (newFileStore)
 import Kenshou.Remote.Store.Gcs (newGcsStore, newTokenProvider)
 import Options.Applicative
-import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesPathExist)
-import System.Environment (lookupEnv)
+import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesPathExist, renameFile)
+import System.Environment (getExecutablePath, lookupEnv)
 import System.Exit (ExitCode (..))
 import System.FilePath (takeDirectory, (</>))
 import System.IO (hFlush, stderr, stdout)
 import System.IO.Temp (withSystemTempDirectory)
+import System.Process (readProcessWithExitCode)
 
 data CellLocation = CellLocation !Text !(Maybe Text)
 
@@ -57,6 +61,8 @@ data SubmitSettings = SubmitSettings ![String] !FilePath !FilePath !Granularity 
 data SubmitCli = SubmitCli !CellLocation !Text !SubmitSettings !Bool
 
 data RunCli = RunCli !CellLocation !SubmitSettings !Int !Int !Bool
+
+data ProbeCli = ProbeCli !CellLocation !FilePath !(Maybe FilePath)
 
 data PayloadPublishCli = PayloadPublishCli !Text !Text !(Maybe Text) !FilePath !FilePath !Bool
 
@@ -71,6 +77,7 @@ data CellAction
   | Route !RouteCli
   | Submit !SubmitCli
   | Run !RunCli
+  | Probe !ProbeCli
   | Resume !FilePath !(Maybe Text)
   | PublishPayload !PayloadPublishCli
   | ShowPayload !FilePath
@@ -92,6 +99,7 @@ cellParser =
       <> command "route" (info (routeParser <**> helper) (progDesc "Split a plan across compatible cells"))
       <> command "submit" (info (submitParser <**> helper) (progDesc "Submit a prepared plan under an existing lease"))
       <> command "run" (info (runParser <**> helper) (progDesc "Lease, submit, verify and release a cell session"))
+      <> command "probe" (info (probeParser <**> helper) (progDesc "Run a cell environment probe and cache capabilities"))
       <> command "resume" (info (resumeParser <**> helper) (progDesc "Continue a saved cell session"))
       <> command "payload" (info (payloadParser <**> helper) (progDesc "Build and publish a checked cell payload"))
       <> (command "exec" (info (cellExecParser <**> helper) (progDesc "Execute prepared work on a cell driver")) <> internal)
@@ -175,6 +183,15 @@ runParser =
             <*> option auto (long "ttl" <> metavar "SECONDS" <> value 120 <> showDefault <> help "Held lease lifetime between renewals")
             <*> option auto (long "wait" <> metavar "SECONDS" <> value 0 <> showDefault <> help "Wait for a busy cell")
             <*> switch (long "detach" <> help "Submit one slice and leave its budgeted lease to run after this process exits")
+        )
+
+probeParser :: Parser CellAction
+probeParser =
+  Probe
+    <$> ( ProbeCli
+            <$> cellLocationParser
+            <*> strOption (long "payload" <> metavar "FILE" <> help "Published payload descriptor with the cell-environment scenario")
+            <*> optional (strOption (long "out" <> metavar "FILE" <> help "Capability cache JSON; defaults to the configured cache directory"))
         )
 
 submitSettingsParser :: Parser Bool -> Parser SubmitSettings
@@ -513,6 +530,7 @@ runCell selected cli = case selected of
                     else unavailable ("cell is busy under lease " <> renderRunId current.leaseId)
                 Quarantined record -> unavailable ("cell is quarantined: " <> record.reason)
         acquire
+  Probe request -> runProbe cli request
   Resume sessionDir selectedLease -> guardIO do
     let journalPath = sessionDir </> "session.json"
     present <- doesPathExist journalPath
@@ -585,6 +603,91 @@ sessionExitCode journal
   | any ((== Just 1) . (.entryExitCode)) journal.slices = ExitFailure 1
   | all ((== Just 0) . (.entryExitCode)) journal.slices = ExitSuccess
   | otherwise = ExitFailure 4
+
+runProbe :: CliEnv -> ProbeCli -> IO ExitCode
+runProbe cli (ProbeCli location payload output) = withControl location \_ _ observed -> do
+  cacheDirectory <- fromMaybe ".dev/cells" <$> lookupEnv "KENSHOU_CELL_CAPABILITIES_DIR"
+  identifier <- newRunId
+  let sessionDirectory = cacheDirectory </> "probes" </> Text.unpack (renderRunId identifier)
+      planFile = sessionDirectory <> ".plan.json"
+      cacheFile = fromMaybe (cacheDirectory </> Text.unpack observed.descriptor.name <> ".capabilities.json") output
+      settings = SubmitSettings [payload] planFile sessionDirectory GranularityRun Cold [] False False False Nothing NullSink Nothing False
+      planArguments =
+        [ "plan",
+          "--all",
+          "--select",
+          "selftest/remote/correctness/cell-environment",
+          "--placement",
+          "cell",
+          "--seed",
+          "7",
+          "--dim",
+          "pg.durability=durable",
+          "--dim",
+          "pg.version=" <> show observed.descriptor.postgresMajor,
+          "--out",
+          planFile
+        ]
+  createDirectoryIfMissing True (takeDirectory planFile)
+  executable <- getExecutablePath
+  (planned, _, planErrors) <- readProcessWithExitCode executable planArguments ""
+  if planned /= ExitSuccess
+    then usage ("cell probe could not plan its environment scenario: " <> Text.pack planErrors)
+    else do
+      result <- runCell (Run (RunCli location settings 120 0 False)) cli
+      if result /= ExitSuccess
+        then pure result
+        else do
+          saved <- readSessionJournal (sessionDirectory </> "session.json")
+          case saved of
+            Right journal -> case journal.slices of
+              [slice] | slice.state == SliceVerified -> case slice.runIds of
+                [nested] -> do
+                  let runResult = takeDirectory sessionDirectory </> Text.unpack (renderRunId slice.cellRun) </> "tree" </> "output" </> Text.unpack (renderRunId nested) </> "run-result.json"
+                  document <- eitherDecodeFileStrict' runResult
+                  case document >>= extractProbeCapabilities slice.cellRun of
+                    Left problem -> failVerification ("cell probe result has no valid capabilities: " <> Text.pack problem)
+                    Right capabilities -> do
+                      now <- getCurrentTime
+                      let cache = CellCapabilities observed.descriptor.name (descriptorDigest observed.descriptor) slice.cellRun now capabilities
+                          temporary = cacheFile <> "." <> Text.unpack (renderRunId identifier) <> ".tmp"
+                      createDirectoryIfMissing True (takeDirectory cacheFile)
+                      LazyByteString.writeFile temporary (encode cache)
+                      renameFile temporary cacheFile
+                      TextIO.putStrLn (Text.pack cacheFile)
+                      pure ExitSuccess
+                _ -> failVerification "cell probe verified a slice with an unexpected nested run count"
+              _ -> failVerification "cell probe did not verify exactly one slice"
+            Left problem -> failVerification ("cell probe session is invalid: " <> problem)
+
+extractProbeCapabilities :: RunId -> Value -> Either String (Map.Map Text Value)
+extractProbeCapabilities expectedCellRun (Object root) = do
+  schema <- member "schema" root
+  if schema == String "kenshou.run-result/v1" then pure () else Left "unexpected run-result schema"
+  outcome <- member "outcome" root
+  if outcome == String "passed" then pure () else Left "probe run did not pass"
+  fingerprint <- member "fingerprint" root
+  cell <- asObject "fingerprint.cell" =<< member "cell" =<< asObject "fingerprint" fingerprint
+  cellRun <- member "cellRun" cell
+  if cellRun == Aeson.toJSON expectedCellRun then pure () else Left "probe cell run identity differs from the verified slice"
+  capabilities <- member "capabilities" cell
+  case Aeson.fromJSON capabilities of
+    Aeson.Error problem -> Left problem
+    Aeson.Success values
+      | all primitive (Map.elems values) && all (`Map.member` values) required -> Right values
+      | otherwise -> Left "probe capabilities are missing or contain a non-primitive value"
+  where
+    primitive (Bool _) = True
+    primitive (String _) = True
+    primitive (Number _) = True
+    primitive _ = False
+    required = ["postgres.major", "postgres.pg_partman", "postgres.second-server", "postgres.control-hook", "broker", "otlp.null", "otlp.file", "fault-hook"]
+    member :: Text -> KeyMap.KeyMap Value -> Either String Value
+    member name fields = maybe (Left ("missing " <> Text.unpack name)) Right (KeyMap.lookup (Key.fromText name) fields)
+    asObject :: String -> Value -> Either String (KeyMap.KeyMap Value)
+    asObject _ (Object fields) = Right fields
+    asObject label _ = Left (label <> " is not an object")
+extractProbeCapabilities _ _ = Left "run result is not an object"
 
 parsePgSetting :: Text -> Either Text (Text, Text)
 parsePgSetting setting = case Text.breakOn "=" setting of

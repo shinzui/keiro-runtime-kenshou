@@ -15,6 +15,18 @@ kenshou cell payload show payloads/released.json
 `payload show` validates the descriptor and checks that the bundle object
 exists with the recorded byte size before printing the descriptor as JSON.
 
+Probe a cell after publishing a payload that contains the environment
+scenario:
+
+```bash
+kenshou cell probe --cell alpha --payload payloads/released.json
+```
+
+The probe runs under a lease, verifies the sealed result, and writes
+`.dev/cells/alpha.capabilities.json`. Route and submit use this cache to check
+optional capabilities such as `pg_partman`. The cache is tied to the cell
+descriptor and is refreshed by running the probe again.
+
 Inspect a cell and run a plan in one process:
 
 ```bash

@@ -59,6 +59,7 @@ library
     Kenshou.Remote.Payload.Nix
     Kenshou.Remote.Payload.Publish
     Kenshou.Remote.Payload.Publisher
+    Kenshou.Remote.Selftest
     Kenshou.Remote.Store
     Kenshou.Remote.Store.File
     Kenshou.Remote.Store.Gcs
@@ -76,6 +77,7 @@ library
     http-client-tls,
     http-types,
     kenshou-core,
+    network,
     process,
     text >=2.1 && <2.2,
     time,

@@ -152,8 +152,8 @@ exportToFile tools paths destination = do
           exportExit <- waitForProcess exportProcess
           pure case (exportExit, compressExit) of
             (ExitSuccess, ExitSuccess) -> Right ()
-            (failure, _) | failure /= ExitSuccess -> Left (NixCommandFailed tools.nixStoreExecutable exportArgs failure "closure export failed")
-            (_, failure) -> Left (NixCommandFailed tools.zstdExecutable compressArgs failure "bundle compression failed")
+            (_, failure) | failure /= ExitSuccess -> Left (NixCommandFailed tools.zstdExecutable compressArgs failure "bundle compression failed")
+            (failure, _) -> Left (NixCommandFailed tools.nixStoreExecutable exportArgs failure "closure export failed")
 
 runCommand :: FilePath -> [String] -> IO (Either NixError Text)
 runCommand executable arguments = do

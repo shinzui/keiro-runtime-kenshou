@@ -24,6 +24,7 @@ import Kenshou.Plan.Selector (parseSelector)
 import Kenshou.Remote.Cell.Docs (CellBroker (..), CellEnvironment (..), CellPostgres (..), OtlpEndpoint (..), OtlpSinks (..))
 import Kenshou.Remote.Cell.Exec (cellExec, resolveOnCell, resolveWorkJson)
 import Kenshou.Remote.Cell.Prepare (OtlpSink (..))
+import Kenshou.Remote.Selftest qualified as RemoteSelftest
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
@@ -72,6 +73,28 @@ execSpec = describe "cell-side run-plan resolution" do
         _ -> expectationFailure "expected one tracing run"
     resolveOnCell tracingRegistry environment FileSink tracing `shouldSatisfy` isLeft
     resolveOnCell tracingRegistry (withEndpoints environment (Just broker) Nothing) FileSink tracing `shouldSatisfy` isLeft
+
+  it "fills the remote environment probe from the cell descriptor" do
+    (plan, environment) <- fixtures
+    let scenario = either (error . Text.unpack) id (parseScenarioId "selftest/remote/correctness/cell-environment")
+        broker = CellBroker "10.0.0.5:9092" "http://10.0.0.5:9644" "redpanda" "v25"
+        sinks = OtlpSinks (OtlpEndpoint "http://10.0.0.4:4317" "http://10.0.0.4:4318") (OtlpEndpoint "http://10.0.0.4:5317" "http://10.0.0.4:5318")
+        cell = withEndpoints environment (Just broker) (Just sinks)
+        change entry =
+          let old = entry.spec
+              spec = RunSpec old.runId scenario old.scenarioRevision old.knobs old.dimensions old.seed old.phases old.timeoutSeconds old.environment old.cohortExpectation old.comparison old.labels
+           in PlannedRun entry.ordinal entry.runId entry.estimateMinutes entry.reasons entry.trial spec
+        changed = RunPlan plan.planId plan.createdAt plan.context plan.policy (fmap change plan.runs) plan.skipped plan.estimateMinutes
+        durable = withDimensions [("pg.durability", "durable"), ("pg.version", "18")] changed
+        name text = either (error . Text.unpack) id (mkKnobName text)
+    case resolveOnCell remoteRegistry cell FileSink durable of
+      Left problem -> expectationFailure (show problem)
+      Right resolved -> case resolved.runs of
+        [run] -> do
+          lookup (name "remote.expect-placement") run.spec.knobs `shouldBe` Just (RawText "cell")
+          lookup (name "remote.otlp-endpoint") run.spec.knobs `shouldBe` Just (RawText "http://10.0.0.4:5318")
+          lookup (name "remote.kafka-bootstrap") run.spec.knobs `shouldBe` Just (RawText "10.0.0.5:9092")
+        _ -> expectationFailure "expected one remote probe run"
 
   it "leaves a secondary driver idle without requiring the work or environment" $
     withSystemTempDirectory "kenshou-cell-exec" \root ->
@@ -128,6 +151,9 @@ fixtures = do
 
 registry :: Registry
 registry = either (error . show) id (mkRegistry [Selftest.bundle])
+
+remoteRegistry :: Registry
+remoteRegistry = either (error . show) id (mkRegistry [Selftest.bundle, RemoteSelftest.bundle])
 
 tracingRegistry :: Registry
 tracingRegistry = either (error . show) id (mkRegistry [LayerBundle Selftest [enhanced] []])

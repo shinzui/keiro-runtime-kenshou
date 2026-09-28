@@ -87,7 +87,8 @@ resolveSpec registry environment sink spec = do
   postgres <- bindPostgres scenario dimensions
   extras <- bindExtras scenario postgres
   kafka <- bindKafka scenario
-  knobs <- bindOtlp scenario dimensions
+  telemetryKnobs <- bindOtlp scenario dimensions
+  knobs <- bindRemoteScenario telemetryKnobs
   let prior = spec.environment
       cellEnvironment = EnvironmentSpec RunOnCell prior.machineProfile postgres extras kafka prior.telemetry
   pure (RunSpec spec.runId spec.scenario spec.scenarioRevision knobs spec.dimensions spec.seed spec.phases spec.timeoutSeconds cellEnvironment spec.cohortExpectation spec.comparison spec.labels)
@@ -150,6 +151,28 @@ resolveSpec registry environment sink spec = do
           if Text.null endpoint
             then Left "cell OTLP sink has no HTTP endpoint"
             else pure ((name, RawText endpoint) : filter ((/= name) . fst) spec.knobs)
+
+    bindRemoteScenario knobs
+      | renderScenarioId spec.scenario /= "selftest/remote/correctness/cell-environment" = pure knobs
+      | otherwise = do
+          placementName <- mkKnobName "remote.expect-placement"
+          otlpName <- mkKnobName "remote.otlp-endpoint"
+          kafkaName <- mkKnobName "remote.kafka-bootstrap"
+          let selectedOtlp = case environment.otlp of
+                Nothing -> ""
+                Just sinks -> case sink of NullSink -> sinks.nullEndpoint.http; FileSink -> sinks.fileEndpoint.http
+              selectedKafka = maybe "" (.bootstrapServers) environment.broker
+              placed = assign placementName "cell" knobs
+              withOtlp = assignWhenBlank otlpName selectedOtlp placed
+          pure (assignWhenBlank kafkaName selectedKafka withOtlp)
+
+    assignWhenBlank name value knobs
+      | Text.null value || maybe False (not . blank) (lookup name knobs) = knobs
+      | otherwise = assign name value knobs
+    blank (RawText value) = Text.null value
+    blank (RawJson (String value)) = Text.null value
+    blank _ = False
+    assign name value knobs = (name, RawText value) : filter ((/= name) . fst) knobs
 
 variableName :: Text -> Text
 variableName = Text.map (\character -> if character == '-' then '_' else character) . Text.toUpper
@@ -219,7 +242,8 @@ executeOnDriver registry workFile outDir = do
           executableHook <- if available then (.executable) <$> getPermissions (Text.unpack hook) else pure False
           if executableHook then setEnv "KENSHOU_CELL_FAULT_HOOK" (Text.unpack hook) else unsetEnv "KENSHOU_CELL_FAULT_HOOK"
           pure executableHook
-      LazyByteString.writeFile contextPath (encode (cellContext environment driverIndex driverCount sink faultEnabled payload))
+      pgPartman <- probePgPartman environment.postgres.connectionString
+      LazyByteString.writeFile contextPath (encode (cellContext environment driverIndex driverCount sink faultEnabled pgPartman payload))
       if driverCount > 1
         then setEnv "KENSHOU_CLOCK_SKEW_BOUND_MICROS" (show (maybe 50000 id environment.clockSkewBoundMicros))
         else unsetEnv "KENSHOU_CLOCK_SKEW_BOUND_MICROS"
@@ -241,16 +265,36 @@ setExtraPostgres connection spec = mapM_ setOne (Map.elems spec.environment.extr
     setOne (PostgresExternal (ConnFromEnv name)) | "KENSHOU_CELL_PG_URL_" `Text.isPrefixOf` name = setEnv (Text.unpack name) (Text.unpack connection)
     setOne _ = pure ()
 
-cellContext :: CellEnvironment -> Int -> Int -> OtlpSink -> Bool -> Map.Map Text Text -> Value
-cellContext environment driverIndex driverCount sink faultEnabled payload =
+probePgPartman :: Text -> IO (Maybe Text)
+probePgPartman connection = do
+  (code, output, errors) <- readProcessWithExitCode "psql" ["-d", Text.unpack connection, "-Atqc", "SELECT COALESCE((SELECT default_version FROM pg_available_extensions WHERE name = 'pg_partman'), '')"] ""
+  case code of
+    ExitSuccess -> pure case Text.strip (Text.pack output) of
+      "" -> Nothing
+      version -> Just version
+    _ -> ioError (userError ("PostgreSQL extension probe failed: " <> errors))
+
+cellContext :: CellEnvironment -> Int -> Int -> OtlpSink -> Bool -> Maybe Text -> Map.Map Text Text -> Value
+cellContext environment driverIndex driverCount sink faultEnabled pgPartman payload =
   object
     [ "schema" .= ("kenshou.cell-context/v1" :: Text),
       "cell" .= environment.cell,
       "cellRun" .= environment.runId,
       "leaseId" .= environment.leaseId,
       "driver" .= object ["index" .= driverIndex, "count" .= driverCount],
-      "postgres" .= object ["major" .= environment.postgres.major, "host" .= environment.postgres.host, "port" .= environment.postgres.port, "placement" .= ("cell-server" :: Text), "extraPostgres" .= ("shared-server" :: Text)],
+      "postgres" .= object ["major" .= environment.postgres.major, "host" .= environment.postgres.host, "port" .= environment.postgres.port, "placement" .= ("cell-server" :: Text), "extraPostgres" .= ("shared-server" :: Text), "extensions" .= object ["pg_partman" .= object ["available" .= maybe False (const True) pgPartman, "version" .= pgPartman]]],
       "broker" .= environment.broker,
+      "capabilities"
+        .= object
+          [ "postgres.major" .= Text.pack (show environment.postgres.major),
+            "postgres.pg_partman" .= maybe False (const True) pgPartman,
+            "postgres.second-server" .= False,
+            "postgres.control-hook" .= False,
+            "broker" .= maybe "none" (\broker -> broker.implementation <> " " <> broker.version) environment.broker,
+            "otlp.null" .= maybe False (not . Text.null . (.nullEndpoint.http)) environment.otlp,
+            "otlp.file" .= maybe False (not . Text.null . (.fileEndpoint.http)) environment.otlp,
+            "fault-hook" .= faultEnabled
+          ],
       "otlpSink" .= (case sink of NullSink -> "null" :: Text; FileSink -> "file"),
       "faultHook" .= faultEnabled,
       "clock" .= object ["skewBoundMicros" .= environment.clockSkewBoundMicros],
