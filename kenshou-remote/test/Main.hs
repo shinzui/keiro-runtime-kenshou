@@ -8,6 +8,7 @@ import Data.ByteString.Lazy.Char8 qualified as LazyByteString
 import Data.Either (isLeft)
 import Data.Text qualified as Text
 import Data.Time (UTCTime (..), fromGregorian, secondsToDiffTime)
+import GcsSpec qualified
 import Kenshou.Core.Cohort (CohortIdentity (..), CohortName (..), PlanHash (..))
 import Kenshou.Remote.Payload (Bundle (..), CellPayload (..), CohortCheck (..), Harness (..), PayloadDescriptor (..))
 import Kenshou.Remote.Store (Bucket (..), ObjectMeta (..), ObjectName (..), ObjectStore (..), Precondition (..), PutOutcome (..))
@@ -33,6 +34,7 @@ main =
 
 tests :: Spec
 tests = do
+  GcsSpec.spec
   describe "Kenshou payload descriptor" do
     it "round-trips the complete cell payload and Nix cohort identity" do
       eitherDecode (encode examplePayload) `shouldBe` Right examplePayload

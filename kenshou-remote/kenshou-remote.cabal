@@ -38,6 +38,7 @@ library
     Kenshou.Remote.Payload
     Kenshou.Remote.Store
     Kenshou.Remote.Store.File
+    Kenshou.Remote.Store.Gcs
 
   build-depends:
     aeson >=2.2 && <2.3,
@@ -47,7 +48,11 @@ library
     cryptohash-sha256,
     directory,
     filepath >=1.5 && <1.6,
+    http-client,
+    http-client-tls,
+    http-types,
     kenshou-core,
+    process,
     text >=2.1 && <2.2,
     time,
     unix,
@@ -57,6 +62,7 @@ test-suite kenshou-remote-test
   type: exitcode-stdio-1.0
   hs-source-dirs: test
   main-is: Main.hs
+  other-modules: GcsSpec
   build-depends:
     aeson,
     base >=4.21 && <4.22,
@@ -66,6 +72,7 @@ test-suite kenshou-remote-test
     hspec >=2.11 && <2.12,
     kenshou-core,
     kenshou-remote,
+    network,
     process,
     temporary,
     text,
