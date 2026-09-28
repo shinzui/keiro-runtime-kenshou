@@ -24,12 +24,15 @@ import Kenshou.Plan.Components (ComponentId (..), ComponentRef (..))
 import Kenshou.Plan.Policy (defaultPlanPolicy)
 import Kenshou.Plan.RunPlan (PlanContext (..), PlanInputs (..), PlannedRun (PlannedRun), RunPlan (..))
 import Kenshou.Plan.Selector (parseSelector)
-import Kenshou.Remote.Cell.Docs (CachePolicy (..), CellDescriptor (..), Limits (..), PgReset (..), ResetBlock (..), Submission (..))
+import Kenshou.Remote.Cell.Docs (CachePolicy (..), CellBuckets (..), CellDescriptor (..), Limits (..), PgReset (..), ResetBlock (..), Submission (..))
 import Kenshou.Remote.Cell.Lease (CellRef (..))
 import Kenshou.Remote.Cell.Prepare (Granularity (..), OtlpSink (..), PrepareOptions (..), Prepared (..), PreparedRun (..), RejectReason (..), Routed (..), Slice (..), SubmissionInputs (..), prepareForCell, routePlan, slicePlan, sliceRuns, submissionFor)
 import Kenshou.Remote.Cell.RouteJson (RouteDocuments (..), routeWorkJson)
 import Kenshou.Remote.Cell.RouteRules (CellCapabilities (..), RoutingRule (..), RuleCondition (..), defaultRoutingRules, descriptorDigest, matchingRules)
+import Kenshou.Remote.Cell.Session.Build (BuildOptions (..), BuiltSession (..), buildSession)
+import Kenshou.Remote.Cell.Session.Journal (SessionJournal (..), SliceJournal (..))
 import Kenshou.Remote.Cell.Submit (workObjectFor)
+import Kenshou.Remote.Cell.WorkJson (decodeWorkPlan, renderPreparedWork)
 import Kenshou.Remote.Payload (Bundle (..), CellPayload (..), PayloadDescriptor (..))
 import Kenshou.Remote.Store (Bucket (..))
 import Test.Hspec
@@ -139,6 +142,51 @@ spec = describe "cell run slicing" do
           _ -> expectationFailure "expected one selected run"
         _ -> expectationFailure "expected runs"
       _ -> expectationFailure "expected a routed plan"
+
+  it "renders prepared slices from the original plan with reset settings intact" do
+    (plan, descriptor, payload) <- preparationFixture
+    let input = toJSON plan
+        registry = either (error . show) id (mkRegistry [Selftest.bundle])
+        options = PrepareOptions True False [] Cold
+    decoded <- either (\problem -> expectationFailure (Text.unpack problem) >> error "unreachable") pure (decodeWorkPlan input)
+    decoded.planId `shouldBe` plan.planId
+    let selectedWork = prepareForCell registry descriptor Nothing [] (Map.singleton "default" payload) options decoded
+    case selectedWork.accepted of
+      [selected] -> do
+        rendered <- either (\problem -> expectationFailure (Text.unpack problem) >> error "unreachable") pure (renderPreparedWork input [selected])
+        case (input, rendered) of
+          (Object original, Object slice) -> do
+            KeyMap.lookup "policy" slice `shouldBe` KeyMap.lookup "policy" original
+            KeyMap.lookup "changes" slice `shouldBe` KeyMap.lookup "changes" original
+            KeyMap.lookup "runs" slice `shouldNotBe` KeyMap.lookup "runs" original
+          _ -> expectationFailure "expected a rendered slice"
+        renderPreparedWork input [selected {ordinal = 99}] `shouldSatisfy` isLeft
+      _ -> expectationFailure "expected a prepared run"
+
+  it "builds a durable session and refuses incompatible work before publication" do
+    (plan, descriptor, payload) <- preparationFixture
+    lease <- newRunId
+    let registry = either (error . show) id (mkRegistry [Selftest.bundle])
+        payloads = Map.singleton "default" payload
+        matchingDescriptor = descriptor {buckets = descriptor.buckets {control = "control"}}
+        options coerce = BuildOptions (PrepareOptions coerce False [] Cold) GranularityAuto False NullSink Nothing (24 * 1024 * 1024 * 1024) (20 * 1024 * 1024 * 1024) "0.1.0"
+        source = encode plan
+    rejected <- buildSession registry matchingDescriptor Nothing [] payloads (options False) "file:fixture" lease source
+    rejected `shouldSatisfy` isLeft
+    built <- buildSession registry matchingDescriptor Nothing [] payloads (options True) "file:fixture" lease source
+    case built of
+      Left problem -> expectationFailure (Text.unpack problem)
+      Right session -> do
+        session.journal.leaseId `shouldBe` lease
+        length session.journal.slices `shouldBe` 1
+        length session.workFiles `shouldBe` 1
+        case (session.journal.slices, session.workFiles) of
+          ([slice], [(_, bytes)]) -> do
+            slice.runIds `shouldBe` fmap (\(PlannedRun _ identifier _ _ _ _) -> identifier) plan.runs
+            case eitherDecode bytes of
+              Right (Object rendered) -> KeyMap.lookup "policy" rendered `shouldBe` case toJSON plan of Object original -> KeyMap.lookup "policy" original; _ -> Nothing
+              _ -> expectationFailure "expected a work plan"
+          _ -> expectationFailure "expected one slice and work file"
 
   it "uses cached denials and warns when a matching capability has not been probed" do
     (plan, descriptor, payload) <- preparationFixture

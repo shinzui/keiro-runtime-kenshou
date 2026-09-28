@@ -12,11 +12,11 @@ import Kenshou.Cli (runWithArgs)
 import Kenshou.Cli.Attest (FencingFacts (..), fencingFacts)
 import Kenshou.Cli.Version (appVersionWithGit)
 import Kenshou.Core.Id (renderRunId)
-import Kenshou.Remote.Cell.Docs (CellDescriptor (..))
+import Kenshou.Remote.Cell.Docs (CellBuckets (..), CellDescriptor (..))
 import Kenshou.Remote.Cell.Lease (Lease (..))
 import Kenshou.Remote.Store (Bucket (..), ObjectName (..), ObjectStore (..), Precondition (..))
 import Kenshou.Remote.Store.File (newFileStore)
-import System.Directory (doesFileExist)
+import System.Directory (doesFileExist, doesPathExist)
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
@@ -59,6 +59,7 @@ main = hspec do
       runWithArgs ["cell", "release", "--help"] `shouldReturnCode` ExitSuccess
       runWithArgs ["cell", "watch", "--help"] `shouldReturnCode` ExitSuccess
       runWithArgs ["cell", "route", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["cell", "submit", "--help"] `shouldReturnCode` ExitSuccess
 
     it "rejects malformed cell result identifiers and URIs" do
       runWithArgs ["cell", "fetch", "--results-bucket", "test-results", "not-a-run-id", "--out", "test-output"] `shouldReturnCode` ExitFailure 2
@@ -110,6 +111,27 @@ main = hspec do
           runWithArgs (common <> ["--out", outDir, "--coerce-durable"]) `shouldReturnCode` ExitFailure 2
           runWithArgs (common <> ["--out", root </> "refused"]) `shouldReturnCode` ExitFailure 2
           doesFileExist (root </> "refused" </> "unroutable.json") `shouldReturn` True
+
+    it "prepares a dry-run submission under an existing file-backed lease" $
+      withSystemTempDirectory "kenshou-cell-submit" \root -> do
+        store <- newFileStore root
+        descriptorBytes <- LazyByteString.readFile "../kenshou-remote/test/golden/cell/cell.descriptor.v1.json"
+        observed <- either fail pure (Aeson.eitherDecode descriptorBytes :: Either String CellDescriptor)
+        let control = Bucket "control"
+            descriptor = observed {buckets = observed.buckets {control = "control"}}
+            location = ["--cell", "alpha", "--control-bucket", "control"]
+            outDir = root </> "session"
+        _ <- store.putObject control (ObjectName "cells/alpha/descriptor.json") "application/json" DoesNotExist (Aeson.encode descriptor)
+        withCellStore root do
+          runWithArgs (["cell", "lease"] <> location <> ["--purpose", "submit-test"]) `shouldReturnCode` ExitSuccess
+          stored <- store.getObject control (ObjectName "cells/alpha/lease.json")
+          lease <- case stored of
+            Just (bytes, _) -> either fail pure (Aeson.eitherDecode bytes :: Either String Lease)
+            Nothing -> expectationFailure "lease was not published" >> error "unreachable"
+          let common = ["cell", "submit"] <> location <> ["--lease-id", Text.unpack (renderRunId lease.leaseId), "--payload", "../kenshou-remote/test/golden/payload.json", "--plan", "../kenshou-core/test/golden/run-plan.minimal.json", "--out", outDir, "--dry-run"]
+          runWithArgs (common <> ["--coerce-durable"]) `shouldReturnCode` ExitSuccess
+          doesPathExist outDir `shouldReturn` False
+          runWithArgs common `shouldReturnCode` ExitFailure 2
 
     it "reads scenario history from a bundle" do
       runWithArgs ["history", "--bundle", "../docs/verification", "--scenario", "selftest/kernel/correctness/always-pass", "--json"] `shouldReturnCode` ExitSuccess

@@ -17,15 +17,19 @@ import Data.Time (diffUTCTime, getCurrentTime)
 import Kenshou.Core.Cli (CliCommand (..), CliEnv (..), CliGroup (..))
 import Kenshou.Core.Id (RunId, parseRunId, renderRunId)
 import Kenshou.Remote.Cell.Control (CellSnapshot (..), readCellSnapshot)
-import Kenshou.Remote.Cell.Docs (CachePolicy (..), CellDescriptor (..), CellManifest (..), CellOutcome (..), CellStatus (..), Rejected (..))
+import Kenshou.Remote.Cell.Docs (CachePolicy (..), CellBuckets (..), CellDescriptor (..), CellManifest (..), CellOutcome (..), CellStatus (..), Rejected (..))
 import Kenshou.Remote.Cell.Exec (cellExec)
 import Kenshou.Remote.Cell.Fetch (FetchError (..), fetchCellRun, verifyCellRun)
 import Kenshou.Remote.Cell.Index (deriveCellRunIndex, writeCellRunIndex)
 import Kenshou.Remote.Cell.Lease (AcquireOutcome (..), CellRef (..), Lease (..), LeaseRequest (..), Quarantine (..), acquireLease, leaseSnapshot, reattachLease, releaseLease, validCellName, withHeartbeat)
-import Kenshou.Remote.Cell.Prepare (PrepareOptions (..))
+import Kenshou.Remote.Cell.Prepare (Granularity (..), OtlpSink (..), PrepareOptions (..))
 import Kenshou.Remote.Cell.RouteJson (RouteDocuments (..), routeWorkJson)
 import Kenshou.Remote.Cell.RouteRules (defaultRoutingRules)
+import Kenshou.Remote.Cell.Session.Build (BuildOptions (..), BuiltSession (..), buildSession)
+import Kenshou.Remote.Cell.Session.Journal (SessionJournal (..), SliceJournal (..), SliceState (..))
+import Kenshou.Remote.Cell.Session.Runner (runPlannedSlices)
 import Kenshou.Remote.Cell.Watch (WatchEvent (..), WatchTerminal (..), watchCellRun)
+import Kenshou.Remote.Payload (PayloadDescriptor)
 import Kenshou.Remote.Store (Bucket (..), ObjectStore)
 import Kenshou.Remote.Store.File (newFileStore)
 import Kenshou.Remote.Store.Gcs (newGcsStore, newTokenProvider)
@@ -33,7 +37,7 @@ import Options.Applicative
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesPathExist)
 import System.Environment (lookupEnv)
 import System.Exit (ExitCode (..))
-import System.FilePath ((</>))
+import System.FilePath (takeDirectory, (</>))
 import System.IO (hFlush, stderr, stdout)
 import System.IO.Temp (withSystemTempDirectory)
 
@@ -43,6 +47,8 @@ data LeaseCli = LeaseCli !CellLocation !Text !(Maybe Text) !Int !Int !Bool !Bool
 
 data RouteCli = RouteCli ![Text] !(Maybe Text) !FilePath !(Maybe FilePath) !(Maybe FilePath) !FilePath !Bool !Bool
 
+data SubmitCli = SubmitCli !CellLocation !Text ![String] !FilePath !FilePath !Granularity !CachePolicy ![Text] !Bool !Bool !Bool !(Maybe FilePath) !OtlpSink !(Maybe Text) !Bool
+
 data CellAction
   = Fetch !Text !Text !FilePath
   | Verify !FilePath
@@ -51,6 +57,7 @@ data CellAction
   | Release !CellLocation !Text
   | Watch !CellLocation !Text
   | Route !RouteCli
+  | Submit !SubmitCli
   | Exec !FilePath !FilePath
 
 cellCommand :: CliCommand
@@ -66,6 +73,7 @@ cellParser =
       <> command "release" (info (releaseParser <**> helper) (progDesc "Release an owned cell lease"))
       <> command "watch" (info (watchParser <**> helper) (progDesc "Follow a cell run to its terminal status"))
       <> command "route" (info (routeParser <**> helper) (progDesc "Split a plan across compatible cells"))
+      <> command "submit" (info (submitParser <**> helper) (progDesc "Submit a prepared plan under an existing lease"))
       <> (command "exec" (info (cellExecParser <**> helper) (progDesc "Execute prepared work on a cell driver")) <> internal)
 
 cellLocationParser :: Parser CellLocation
@@ -109,6 +117,43 @@ routeParser =
             <*> switch (long "coerce-durable" <> help "Use durable PostgreSQL when the scenario supports it")
             <*> switch (long "ephemeral-on-driver" <> help "Keep server-control correctness work on the cell driver")
         )
+
+submitParser :: Parser CellAction
+submitParser =
+  Submit
+    <$> ( SubmitCli
+            <$> cellLocationParser
+            <*> strOption (long "lease-id" <> metavar "UUID" <> help "Active lease identifier")
+            <*> some (strOption (long "payload" <> metavar "[LABEL=]FILE" <> help "Payload descriptor; repeat for trial arms"))
+            <*> strOption (long "plan" <> metavar "FILE" <> help "Run plan JSON, or - for stdin")
+            <*> strOption (long "out" <> metavar "DIR" <> help "New session directory")
+            <*> option (eitherReader parseGranularity) (long "granularity" <> metavar "auto|plan|run" <> value GranularityAuto <> showDefaultWith (const "auto") <> help "Submission slice boundary")
+            <*> option (eitherReader parseCachePolicy) (long "cache-policy" <> metavar "cold|warm" <> value Cold <> showDefaultWith (const "cold") <> help "Cell cache reset policy")
+            <*> many (strOption (long "pg-setting" <> metavar "KEY=VALUE" <> help "PostgreSQL reset setting; repeat as needed"))
+            <*> switch (long "skip-incompatible" <> help "Record incompatible runs and submit compatible ones")
+            <*> switch (long "coerce-durable" <> help "Use durable PostgreSQL when the scenario supports it")
+            <*> switch (long "ephemeral-on-driver" <> help "Keep server-control correctness work on the cell driver")
+            <*> optional (strOption (long "routing-rules" <> metavar "FILE" <> help "Replace the built-in routing policy JSON"))
+            <*> option (eitherReader parseOtlpSink) (long "otlp-sink" <> metavar "null|file" <> value NullSink <> showDefaultWith (const "null") <> help "Cell OTLP sink")
+            <*> optional (strOption (long "rts" <> metavar "OPTS" <> help "Runtime system options passed to the payload"))
+            <*> switch (long "dry-run" <> help "Print a planned session without writing or submitting")
+        )
+
+parseGranularity :: String -> Either String Granularity
+parseGranularity "auto" = Right GranularityAuto
+parseGranularity "plan" = Right GranularityPlan
+parseGranularity "run" = Right GranularityRun
+parseGranularity _ = Left "expected auto, plan or run"
+
+parseCachePolicy :: String -> Either String CachePolicy
+parseCachePolicy "cold" = Right Cold
+parseCachePolicy "warm" = Right Warm
+parseCachePolicy _ = Left "expected cold or warm"
+
+parseOtlpSink :: String -> Either String OtlpSink
+parseOtlpSink "null" = Right NullSink
+parseOtlpSink "file" = Right FileSink
+parseOtlpSink _ = Left "expected null or file"
 
 cellExecParser :: Parser CellAction
 cellExecParser = Exec <$> strArgument (metavar "WORK_FILE") <*> strArgument (metavar "OUT_DIR")
@@ -242,7 +287,84 @@ runCell selected cli = case selected of
                           LazyByteString.writeFile (outDir </> "unroutable.json") (encode documents.report)
                           TextIO.hPutStrLn stderr ("routed plans: " <> Text.pack (show (Map.size documents.perCell)) <> "; see " <> Text.pack (outDir </> "unroutable.json"))
                           pure (if documents.routeComplete then ExitSuccess else ExitFailure 2)
+  Submit (SubmitCli location leaseText payloadFiles planFile outDir granularity cache settingTexts skip coerce ephemeral rulesFile sink rts dryRun)
+    | planFile == "-" && rulesFile == Just "-" -> usage "only one JSON document may be read from stdin"
+    | otherwise -> case (parseRunId leaseText, traverse parsePgSetting settingTexts) of
+        (Left problem, _) -> usage problem
+        (_, Left problem) -> usage problem
+        (Right leaseId, Right settings) -> withControl location \store ref observed -> do
+          handle <- reattachLease store ref leaseId
+          case handle of
+            Nothing -> unavailable "cell has no matching lease"
+            Just active -> do
+              payloadResult <- loadPayloads payloadFiles
+              rulesResult <- maybe (pure (Right defaultRoutingRules)) readJsonDocument rulesFile
+              case (payloadResult, rulesResult) of
+                (Left problem, _) -> usage problem
+                (_, Left failure) -> usage (Text.pack failure)
+                (Right payloads, Right rules) -> do
+                  bytes <- if planFile == "-" then LazyByteString.getContents else LazyByteString.readFile planFile
+                  selectedStore <- lookupEnv "KENSHOU_CELL_STORE"
+                  let options = BuildOptions (PrepareOptions coerce ephemeral settings cache) granularity skip sink rts (24 * 1024 * 1024 * 1024) (20 * 1024 * 1024 * 1024) "0.1.0"
+                      storeLabel = Text.pack (fromMaybe "gs://" selectedStore)
+                  built <- buildSession cli.registry observed.descriptor Nothing rules payloads options storeLabel leaseId bytes
+                  case built of
+                    Left problem -> usage problem
+                    Right session
+                      | dryRun -> LazyByteString.putStrLn (encode session.journal) >> pure ExitSuccess
+                      | otherwise -> guardIO do
+                          exists <- doesPathExist outDir
+                          if exists
+                            then usage "session output path already exists; choose a new directory"
+                            else do
+                              traverse_
+                                ( \(relative, content) -> do
+                                    let destination = outDir </> relative
+                                    createDirectoryIfMissing True (takeDirectory destination)
+                                    LazyByteString.writeFile destination content
+                                )
+                                session.workFiles
+                              result <- runPlannedSlices store ref (Bucket observed.descriptor.buckets.results) active (outDir </> "session.json") session.journal emitWatchEvent
+                              case result of
+                                Left failure -> unavailable (Text.pack (show failure))
+                                Right finished -> do
+                                  TextIO.hPutStrLn stderr ("session " <> renderRunId finished.sessionId <> " verified; journal " <> Text.pack (outDir </> "session.json"))
+                                  pure (sessionExitCode finished)
   Exec workFile outDir -> cellExec cli.registry workFile outDir
+
+sessionExitCode :: SessionJournal -> ExitCode
+sessionExitCode journal
+  | any ((/= SliceVerified) . (.state)) journal.slices = ExitFailure 4
+  | any ((/= Just Completed) . (.cellOutcome)) journal.slices = ExitFailure 4
+  | any ((== Just 4) . (.entryExitCode)) journal.slices = ExitFailure 4
+  | any ((== Just 3) . (.entryExitCode)) journal.slices = ExitFailure 3
+  | any ((== Just 1) . (.entryExitCode)) journal.slices = ExitFailure 1
+  | all ((== Just 0) . (.entryExitCode)) journal.slices = ExitSuccess
+  | otherwise = ExitFailure 4
+
+parsePgSetting :: Text -> Either Text (Text, Text)
+parsePgSetting setting = case Text.breakOn "=" setting of
+  (name, assignment) | not (Text.null name) && Text.length assignment > 1 -> Right (name, Text.drop 1 assignment)
+  _ -> Left "--pg-setting must be KEY=VALUE"
+
+loadPayloads :: [String] -> IO (Either Text (Map.Map Text PayloadDescriptor))
+loadPayloads paths = do
+  loaded <- traverse load paths
+  pure do
+    entries <- sequence loaded
+    let labels = fmap fst entries
+    if length (nub labels) == length labels
+      then Right (Map.fromList entries)
+      else Left "payload labels must be unique"
+  where
+    load input = case break (== '=') input of
+      (label, '=' : path) | not (null label) && not (null path) && path /= "-" -> readPayload (Text.pack label) path
+      (_, '=' : _) -> pure (Left "--payload must be [LABEL=]FILE with a nonempty file path")
+      (_, _) | input == "-" -> pure (Left "payload must name a file")
+      _ -> readPayload "default" input
+    readPayload label path = do
+      result <- eitherDecodeFileStrict' path
+      pure (either (Left . Text.pack) (\descriptor -> Right (label, descriptor)) result)
 
 readJsonDocument :: (FromJSON value) => FilePath -> IO (Either String value)
 readJsonDocument "-" = eitherDecode <$> LazyByteString.getContents
