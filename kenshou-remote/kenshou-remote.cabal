@@ -37,6 +37,7 @@ library
   exposed-modules:
     Kenshou.Remote.Cell.Control
     Kenshou.Remote.Cell.Docs
+    Kenshou.Remote.Cell.Exec
     Kenshou.Remote.Cell.Fetch
     Kenshou.Remote.Cell.Index
     Kenshou.Remote.Cell.Lease
@@ -79,6 +80,7 @@ test-suite kenshou-remote-test
   main-is: Main.hs
   other-modules:
     DocsSpec
+    ExecSpec
     FetchSpec
     GcsSpec
     LeaseSpec
