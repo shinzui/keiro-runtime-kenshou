@@ -152,7 +152,7 @@ websocketFlagGatesUpgrades =
       knownDefect =
         Just $
           KnownDefect
-            { reference = "mori://shinzui/shibuya/okf/reviews/concepts/REV-9",
+            { reference = "mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-10",
               summary = "REV-9-F2",
               expectedFailures = ["REV-9-F2"],
               appliesTo = OnlyWhen (ResolvedFromHackage "shibuya-metrics" :| [VersionBelow "shibuya-metrics" "0.10.0.0"])
@@ -175,7 +175,7 @@ websocketUnsubscribeAll =
       knownDefect =
         Just $
           KnownDefect
-            { reference = "mori://shinzui/shibuya/okf/reviews/concepts/REV-9",
+            { reference = "mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-11",
               summary = "REV-9-F3",
               expectedFailures = ["REV-9-F3"],
               appliesTo = OnlyWhen (ResolvedFromHackage "shibuya-metrics" :| [VersionBelow "shibuya-metrics" "0.10.0.0"])
@@ -198,7 +198,7 @@ websocketSlotAccounting =
       knownDefect =
         Just $
           KnownDefect
-            { reference = "mori://shinzui/shibuya/okf/reviews/concepts/REV-9",
+            { reference = "mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-9",
               summary = "REV-9-F1",
               expectedFailures = ["REV-9-F1", "websocket-thread-baseline", "websocket-os-thread-baseline", "websocket-fd-baseline"],
               appliesTo = OnlyWhen (ResolvedFromHackage "shibuya-metrics" :| [VersionBelow "shibuya-metrics" "0.10.0.0"])

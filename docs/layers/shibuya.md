@@ -132,7 +132,10 @@ The released core is Shibuya 0.9.0.3. The pinned remediation line carries lifecy
 | Nonpositive concurrency removes the handler bound | Reproduced on core 0.9.0.3 | Rejected on 0.10.0.0 | `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-3` |
 | Stale activity makes progressing work look stuck | Reproduced on core/metrics 0.9.0.3 | Current 0.10.0.0 case passes | `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-7` |
 | Health ignores failed worker or stopped master | Reproduced on metrics 0.9.0.3 | Current 0.10.0.0 cases pass | `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-8` |
-| WebSocket contracts and transient-exception readiness | Scoped failures reproduced on metrics 0.9.0.3 | The 0.10.0.0 default CLI smoke sweep passed the WebSocket contracts; transient-exception readiness still reproduces IR-7 | `mori://shinzui/shibuya/okf/reviews/concepts/REV-9`, `mori://shinzui/shibuya/okf/improvement-requests/concepts/IR-7` |
+| WebSocket connection slots leak on disconnect | Reproduced on metrics 0.9.0.3 | Current 0.10.0.0 case passes | `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-9` |
+| Disabled WebSocket endpoint accepts upgrades | Reproduced on metrics 0.9.0.3 | Current 0.10.0.0 case passes | `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-10` |
+| WebSocket unsubscribe still delivers updates | Reproduced on metrics 0.9.0.3 | Current 0.10.0.0 case passes | `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-11` |
+| Transient-exception readiness | Reproduced on metrics 0.9.0.3 and current 0.10.0.0 | Owner improvement remains open | `mori://shinzui/shibuya/okf/improvement-requests/concepts/IR-7` |
 | Long-poll acknowledgement stalls with a two-connection pool | Reproduced on PGMQ adapter 0.16.0.0 | Reproduced on 0.16.1.0; fixed-version acceptance remains open | `mori://shinzui/shibuya-pgmq-adapter/okf/bug-reports/concepts/BUG-1` |
 | Partial Kiroku group acquisition leaks members and replaces the primary exception | Reproduced on adapter 0.5.1.2 | Passes on 0.5.1.3 on PostgreSQL 17 and 18 | `mori://shinzui/shibuya/okf/reviews/concepts/REV-13` |
 | Forced stop returns while handlers can finalize later | Reproduced on core 0.9.0.3 | Reproduced on Hackage 0.10.0.0; owner fix pending | `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-1` |
