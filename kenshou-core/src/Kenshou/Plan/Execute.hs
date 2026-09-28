@@ -24,7 +24,7 @@ import Kenshou.Core.RunSpec (EnvironmentSpec, RunSpec)
 import Kenshou.Core.RunSpec qualified as RunSpec
 import Kenshou.Plan.Summary
 import System.Directory
-import System.Environment (getExecutablePath)
+import System.Environment (getExecutablePath, lookupEnv)
 import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
 import System.Posix.Process (getProcessID)
@@ -172,8 +172,10 @@ replaceEnvironment spec environment =
 spawnRun :: ExecuteOptions -> ExecutableRun -> RunId -> IO ExitCode
 spawnRun options run runId = do
   executable <- getExecutablePath
+  cellFingerprint <- lookupEnv "KENSHOU_CELL_FINGERPRINT"
   let specPath = options.outDir </> "specs" </> pad run.ordinal <> ".json"
-  (_, _, _, processHandle) <- createProcess (proc executable ["run", "--spec", specPath, "--out", options.outDir, "--run-id", Text.unpack (renderRunId runId)])
+      arguments = ["run", "--spec", specPath, "--out", options.outDir, "--run-id", Text.unpack (renderRunId runId)] <> maybe [] (\path -> ["--cell-fingerprint", path]) cellFingerprint
+  (_, _, _, processHandle) <- createProcess (proc executable arguments)
   case options.timeoutFactor of
     Nothing -> waitForProcess processHandle
     Just factor -> do

@@ -10,10 +10,11 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.IO qualified as TextIO
 import Data.Time (diffUTCTime, getCurrentTime)
-import Kenshou.Core.Cli (CliCommand (..), CliEnv, CliGroup (..))
+import Kenshou.Core.Cli (CliCommand (..), CliEnv (..), CliGroup (..))
 import Kenshou.Core.Id (RunId, parseRunId, renderRunId)
 import Kenshou.Remote.Cell.Control (CellSnapshot (..), readCellSnapshot)
 import Kenshou.Remote.Cell.Docs (CellDescriptor (..), CellManifest (..), CellOutcome (..), CellStatus (..), Rejected (..))
+import Kenshou.Remote.Cell.Exec (cellExec)
 import Kenshou.Remote.Cell.Fetch (FetchError (..), fetchCellRun, verifyCellRun)
 import Kenshou.Remote.Cell.Index (deriveCellRunIndex, writeCellRunIndex)
 import Kenshou.Remote.Cell.Lease (AcquireOutcome (..), CellRef (..), Lease (..), LeaseRequest (..), Quarantine (..), acquireLease, leaseSnapshot, reattachLease, releaseLease, validCellName, withHeartbeat)
@@ -40,6 +41,7 @@ data CellAction
   | LeaseCell !LeaseCli
   | Release !CellLocation !Text
   | Watch !CellLocation !Text
+  | Exec !FilePath !FilePath
 
 cellCommand :: CliCommand
 cellCommand = CliCommand "cell" "Run and inspect leased verification cells" Execution False (runCell <$> cellParser)
@@ -53,6 +55,7 @@ cellParser =
       <> command "lease" (info (leaseParser <**> helper) (progDesc "Acquire a cell lease"))
       <> command "release" (info (releaseParser <**> helper) (progDesc "Release an owned cell lease"))
       <> command "watch" (info (watchParser <**> helper) (progDesc "Follow a cell run to its terminal status"))
+      <> (command "exec" (info (cellExecParser <**> helper) (progDesc "Execute prepared work on a cell driver")) <> internal)
 
 cellLocationParser :: Parser CellLocation
 cellLocationParser =
@@ -82,6 +85,9 @@ releaseParser = Release <$> cellLocationParser <*> strOption (long "lease-id" <>
 watchParser :: Parser CellAction
 watchParser = Watch <$> cellLocationParser <*> strArgument (metavar "CELL_RUN_ID")
 
+cellExecParser :: Parser CellAction
+cellExecParser = Exec <$> strArgument (metavar "WORK_FILE") <*> strArgument (metavar "OUT_DIR")
+
 fetchParser :: Parser CellAction
 fetchParser =
   Fetch
@@ -93,7 +99,7 @@ verifyParser :: Parser CellAction
 verifyParser = Verify <$> strArgument (metavar "DIR_OR_GS_URI")
 
 runCell :: CellAction -> CliEnv -> IO ExitCode
-runCell selected _ = case selected of
+runCell selected cli = case selected of
   Fetch bucket identifier outDir -> case (validateBucket bucket, parseRunId identifier) of
     (Left problem, _) -> usage problem
     (_, Left problem) -> usage problem
@@ -178,6 +184,7 @@ runCell selected _ = case selected of
         RunSealed status -> do
           TextIO.hPutStrLn stderr ("sealed: " <> Text.pack (show status.outcome))
           pure (if status.outcome == Just Completed then ExitSuccess else ExitFailure 4)
+  Exec workFile outDir -> cellExec cli.registry workFile outDir
 
 withControl :: CellLocation -> (ObjectStore -> CellRef -> CellSnapshot -> IO ExitCode) -> IO ExitCode
 withControl (CellLocation name selectedBucket) operation = do

@@ -1,20 +1,35 @@
-module Kenshou.Remote.Cell.Exec (resolveOnCell) where
+module Kenshou.Remote.Cell.Exec (resolveOnCell, resolveWorkJson, cellExec) where
 
-import Data.Aeson (object, (.=))
+import Control.Exception (SomeAsyncException, SomeException, displayException, finally, fromException, throwIO, try)
+import Control.Monad (when)
+import Data.Aeson (Value (..), encode, object, (.=))
+import Data.Aeson qualified as Aeson
+import Data.Aeson.KeyMap qualified as KeyMap
+import Data.ByteString.Lazy qualified as LazyByteString
+import Data.Foldable (toList)
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Data.Text.IO qualified as TextIO
 import Kenshou.Core.Bundle (Registry, lookupScenario)
 import Kenshou.Core.Dimension (Dimensions (..), PgDurability (..), PgVersion (..), TracingArm (..), resolveDimensions)
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..))
-import Kenshou.Core.Id (Kind (..), ScenarioId (..), renderScenarioId)
+import Kenshou.Core.Id (Kind (..), RunId, ScenarioId (..), parseRunId, renderScenarioId)
 import Kenshou.Core.Knob (KnobSpec (..), RawKnob (..), mkKnobName)
 import Kenshou.Core.RunSpec (ConnectionSource (..), EnvironmentSpec (..), PostgresSpec (..), RunSpec (..), SpecPlacement (..))
 import Kenshou.Core.Scenario (Placement (..), Scenario (..))
+import Kenshou.Plan.Execute (ExecuteOptions (..), executePlan)
 import Kenshou.Plan.RunPlan (PlannedRun (..), RunPlan (..))
+import Kenshou.Plan.Summary (summaryExitCode)
 import Kenshou.Remote.Cell.Docs (CellBroker (..), CellEnvironment (..), CellPostgres (..), OtlpEndpoint (..), OtlpSinks (..))
 import Kenshou.Remote.Cell.Prepare (OtlpSink (..))
+import System.Directory (Permissions (..), createDirectoryIfMissing, doesFileExist, getPermissions)
+import System.Environment (lookupEnv, setEnv, unsetEnv)
+import System.Exit (ExitCode (..))
+import System.FilePath ((</>))
+import System.IO (stderr)
+import System.Process (readProcessWithExitCode)
 
 -- Bind the generic environment in a prepared work plan to endpoints available
 -- on this cell. Run IDs and plan metadata are preserved; no run is silently
@@ -25,22 +40,58 @@ resolveOnCell registry environment sink plan = do
   pure (RunPlan plan.planId plan.createdAt plan.context plan.policy runs plan.skipped plan.estimateMinutes)
   where
     resolveRun entry = do
-      scenario <- maybe (Left ("unknown cell scenario: " <> renderScenarioId entry.spec.scenario)) Right (lookupScenario registry entry.spec.scenario)
-      if scenario.placement == PlaceLocal
-        then Left ("scenario is local-only: " <> renderScenarioId scenario.id)
-        else pure ()
-      dimensions <- either (Left . Text.intercalate "; " . NonEmpty.toList) Right (resolveDimensions scenario.dimensions entry.spec.dimensions)
-      postgres <- bindPostgres scenario entry.spec dimensions
-      extras <- bindExtras scenario entry.spec postgres
-      kafka <- bindKafka scenario
-      knobs <- bindOtlp scenario entry.spec dimensions
-      let prior = entry.spec.environment
-          cellEnvironment = EnvironmentSpec RunOnCell prior.machineProfile postgres extras kafka prior.telemetry
-          spec = entry.spec
-          resolved = RunSpec spec.runId spec.scenario spec.scenarioRevision knobs spec.dimensions spec.seed spec.phases spec.timeoutSeconds cellEnvironment spec.cohortExpectation spec.comparison spec.labels
+      resolved <- resolveSpec registry environment sink entry.spec
       pure (PlannedRun entry.ordinal entry.runId entry.estimateMinutes entry.reasons entry.trial resolved)
 
-    bindPostgres scenario spec dimensions = case scenario.requires.postgres of
+-- The executor accepts a narrow run-plan JSON document rather than decoding
+-- every planning provenance type. Rewrite just the spec member of each entry.
+resolveWorkJson :: Registry -> CellEnvironment -> OtlpSink -> Value -> Either Text Value
+resolveWorkJson registry environment sink work = fst <$> resolveWorkDocument registry environment sink work
+
+resolveWorkDocument :: Registry -> CellEnvironment -> OtlpSink -> Value -> Either Text (Value, [RunSpec])
+resolveWorkDocument registry environment sink work = case work of
+  Object fields -> case (KeyMap.lookup "schema" fields, KeyMap.lookup "runs" fields) of
+    (Just (String "kenshou.run-plan/v1"), Just (Array runs)) -> do
+      resolved <- traverse resolveEntry runs
+      pure (Object (KeyMap.insert "runs" (Array (fmap fst resolved)) fields), toList (fmap snd resolved))
+    _ -> Left "cell work is not a kenshou.run-plan/v1 document"
+  _ -> Left "cell work is not a JSON object"
+  where
+    resolveEntry (Object entry) = do
+      identifier <- case KeyMap.lookup "runId" entry of
+        Just value -> (decodeValue "planned run ID" value :: Either Text RunId)
+        Nothing -> Left "cell work entry has no run ID"
+      spec <- case KeyMap.lookup "spec" entry of
+        Just value -> (decodeValue "planned run spec" value :: Either Text RunSpec)
+        Nothing -> Left "cell work entry has no run spec"
+      if maybe True (== identifier) spec.runId
+        then pure ()
+        else Left "cell work entry and spec have different run IDs"
+      resolved <- resolveSpec registry environment sink spec
+      pure (Object (KeyMap.insert "spec" (Aeson.toJSON resolved) entry), resolved)
+    resolveEntry _ = Left "cell work run is not an object"
+
+    decodeValue :: (Aeson.FromJSON document) => Text -> Value -> Either Text document
+    decodeValue label value = case Aeson.fromJSON value of
+      Aeson.Error failure -> Left (label <> ": " <> Text.pack failure)
+      Aeson.Success document -> Right document
+
+resolveSpec :: Registry -> CellEnvironment -> OtlpSink -> RunSpec -> Either Text RunSpec
+resolveSpec registry environment sink spec = do
+  scenario <- maybe (Left ("unknown cell scenario: " <> renderScenarioId spec.scenario)) Right (lookupScenario registry spec.scenario)
+  if scenario.placement == PlaceLocal
+    then Left ("scenario is local-only: " <> renderScenarioId scenario.id)
+    else pure ()
+  dimensions <- either (Left . Text.intercalate "; " . NonEmpty.toList) Right (resolveDimensions scenario.dimensions spec.dimensions)
+  postgres <- bindPostgres scenario dimensions
+  extras <- bindExtras scenario postgres
+  kafka <- bindKafka scenario
+  knobs <- bindOtlp scenario dimensions
+  let prior = spec.environment
+      cellEnvironment = EnvironmentSpec RunOnCell prior.machineProfile postgres extras kafka prior.telemetry
+  pure (RunSpec spec.runId spec.scenario spec.scenarioRevision knobs spec.dimensions spec.seed spec.phases spec.timeoutSeconds cellEnvironment spec.cohortExpectation spec.comparison spec.labels)
+  where
+    bindPostgres scenario dimensions = case scenario.requires.postgres of
       Nothing -> pure spec.environment.postgres
       Just requirement
         | requirement.needsServerControl ->
@@ -58,7 +109,7 @@ resolveOnCell registry environment sink plan = do
               then Left ("cell PostgreSQL major differs from pg.version for " <> renderScenarioId scenario.id)
               else pure (Just (PostgresExternal (ConnFromEnv "KENSHOU_CELL_PG_URL")))
 
-    bindExtras scenario spec primary =
+    bindExtras scenario primary =
       if case primary of Just (PostgresEphemeral _) -> True; _ -> False
         then Map.fromList <$> traverse driverExtra scenario.requires.extraPostgres
         else do
@@ -86,7 +137,7 @@ resolveOnCell registry environment sink plan = do
                   then Left "cell broker has no bootstrap servers"
                   else pure (Just (object ["backend" .= ("external" :: Text), "brokers" .= addresses, "lanes" .= (0 :: Int)]))
 
-    bindOtlp scenario spec dimensions
+    bindOtlp scenario dimensions
       | dimensions.tracing /= Just TracingSdkOtlp = pure spec.knobs
       | otherwise = do
           name <- mkKnobName "otel.endpoint"
@@ -105,3 +156,155 @@ variableName = Text.map (\character -> if character == '-' then '_' else charact
 unique :: (Eq value) => [value] -> [value]
 unique [] = []
 unique (first : rest) = first : unique (filter (/= first) rest)
+
+-- The generic cell agent invokes this command on the first driver with the
+-- submitted work and an environment document. Every child run receives the
+-- resolved plan, the cell context and the same payload identity variables.
+cellExec :: Registry -> FilePath -> FilePath -> IO ExitCode
+cellExec registry workFile outDir = do
+  result <- try (executeOnDriver registry workFile outDir) :: IO (Either SomeException ExitCode)
+  case result of
+    Left failure | Just async <- (fromException failure :: Maybe SomeAsyncException) -> throwIO async
+    Left failure -> adapterFailure outDir (Text.pack (displayException failure))
+    Right code -> pure code
+
+executeOnDriver :: Registry -> FilePath -> FilePath -> IO ExitCode
+executeOnDriver registry workFile outDir = do
+  driverIndex <- integerEnv "CELL_DRIVER_INDEX" 0
+  driverCount <- integerEnv "CELL_DRIVER_COUNT" 1
+  when (driverIndex >= driverCount) (ioError (userError "CELL_DRIVER_INDEX exceeds CELL_DRIVER_COUNT"))
+  let cellDirectory = outDir </> "kenshou-cell"
+  createDirectoryIfMissing True cellDirectory
+  if driverIndex /= 0
+    then do
+      LazyByteString.writeFile (outDir </> "idle-driver.json") (encode (object ["schema" .= ("kenshou.cell-idle-driver/v1" :: Text), "index" .= driverIndex, "count" .= driverCount]))
+      pure ExitSuccess
+    else do
+      environmentPath <- requiredEnv "CELL_ENV_FILE"
+      environment <- Aeson.eitherDecodeFileStrict' environmentPath >>= either (ioError . userError . ("invalid CELL_ENV_FILE: " <>)) pure
+      cellRun <- requiredEnv "CELL_RUN_ID" >>= either (ioError . userError . Text.unpack) pure . parseRunId . Text.pack
+      when (cellRun /= environment.runId) (ioError (userError "CELL_RUN_ID differs from the cell environment"))
+      scratch <- requiredEnv "CELL_SCRATCH_DIR"
+      sink <-
+        requiredEnv "KENSHOU_OTLP_SINK" >>= \case
+          "null" -> pure NullSink
+          "file" -> pure FileSink
+          _ -> ioError (userError "KENSHOU_OTLP_SINK must be null or file")
+      identity <- requiredEnv "KENSHOU_COHORT_IDENTITY"
+      present <- doesFileExist identity
+      when (not present) (ioError (userError "payload cohort identity file is missing"))
+      payload <- requiredPayloadIdentity
+      work <- Aeson.eitherDecodeFileStrict' workFile >>= either (ioError . userError . ("invalid cell work: " <>)) pure
+      (resolved, specs) <- either (ioError . userError . Text.unpack) pure (resolveWorkDocument registry environment sink work)
+      let planPath = cellDirectory </> "plan.resolved.json"
+          contextPath = cellDirectory </> "context.json"
+          noticePath = cellDirectory </> "health-notices.jsonl"
+          cachePath = scratch </> "cache"
+          tempPath = scratch </> "tmp"
+      createDirectoryIfMissing True cachePath
+      createDirectoryIfMissing True tempPath
+      LazyByteString.writeFile planPath (encode resolved)
+      LazyByteString.writeFile noticePath ""
+      setEnv "KENSHOU_CELL_PG_URL" (Text.unpack environment.postgres.connectionString)
+      mapM_ (setExtraPostgres environment.postgres.connectionString) specs
+      setEnv "KENSHOU_CELL_FINGERPRINT" contextPath
+      setEnv "KENSHOU_HEALTH_NOTICES" noticePath
+      setEnv "XDG_CACHE_HOME" cachePath
+      setEnv "TMPDIR" tempPath
+      faultEnabled <- case environment.faultHook of
+        Nothing -> unsetEnv "KENSHOU_CELL_FAULT_HOOK" >> pure False
+        Just hook -> do
+          available <- doesFileExist (Text.unpack hook)
+          executableHook <- if available then (.executable) <$> getPermissions (Text.unpack hook) else pure False
+          if executableHook then setEnv "KENSHOU_CELL_FAULT_HOOK" (Text.unpack hook) else unsetEnv "KENSHOU_CELL_FAULT_HOOK"
+          pure executableHook
+      LazyByteString.writeFile contextPath (encode (cellContext environment driverIndex driverCount sink faultEnabled payload))
+      if driverCount > 1
+        then setEnv "KENSHOU_CLOCK_SKEW_BOUND_MICROS" (show (maybe 50000 id environment.clockSkewBoundMicros))
+        else unsetEnv "KENSHOU_CLOCK_SKEW_BOUND_MICROS"
+      let runPlan = executePlan (ExecuteOptions planPath outDir False False Nothing Nothing)
+      summary <- if faultEnabled then healAll environment.faultHook >> runPlan `finally` healAll environment.faultHook else runPlan
+      pure (summaryExitCode summary)
+
+healAll :: Maybe Text -> IO ()
+healAll Nothing = pure ()
+healAll (Just hook) = do
+  (code, _, errors) <- readProcessWithExitCode (Text.unpack hook) ["heal-all"] ""
+  when (code /= ExitSuccess) (ioError (userError ("cell fault hook heal-all failed: " <> errors)))
+
+setExtraPostgres :: Text -> RunSpec -> IO ()
+setExtraPostgres connection spec = mapM_ setOne (Map.elems spec.environment.extraPostgres)
+  where
+    setOne (PostgresExternal (ConnFromEnv name)) | "KENSHOU_CELL_PG_URL_" `Text.isPrefixOf` name = setEnv (Text.unpack name) (Text.unpack connection)
+    setOne _ = pure ()
+
+cellContext :: CellEnvironment -> Int -> Int -> OtlpSink -> Bool -> Map.Map Text Text -> Value
+cellContext environment driverIndex driverCount sink faultEnabled payload =
+  object
+    [ "schema" .= ("kenshou.cell-context/v1" :: Text),
+      "cell" .= environment.cell,
+      "cellRun" .= environment.runId,
+      "leaseId" .= environment.leaseId,
+      "driver" .= object ["index" .= driverIndex, "count" .= driverCount],
+      "postgres" .= object ["major" .= environment.postgres.major, "host" .= environment.postgres.host, "port" .= environment.postgres.port, "placement" .= ("cell-server" :: Text), "extraPostgres" .= ("shared-server" :: Text)],
+      "broker" .= environment.broker,
+      "otlpSink" .= (case sink of NullSink -> "null" :: Text; FileSink -> "file"),
+      "faultHook" .= faultEnabled,
+      "clock" .= object ["skewBoundMicros" .= environment.clockSkewBoundMicros],
+      "payload"
+        .= object
+          [ "bundleSha256" .= field "KENSHOU_PAYLOAD_BUNDLE_SHA256",
+            "storePath" .= field "KENSHOU_PAYLOAD_STORE_PATH",
+            "narHash" .= field "KENSHOU_PAYLOAD_NAR_HASH",
+            "cohort" .= field "KENSHOU_PAYLOAD_COHORT",
+            "harness" .= object ["revision" .= field "KENSHOU_HARNESS_REVISION", "dirty" .= (field "KENSHOU_HARNESS_DIRTY" == "true")]
+          ]
+    ]
+  where
+    field name = Map.findWithDefault "" name payload
+
+requiredPayloadIdentity :: IO (Map.Map Text Text)
+requiredPayloadIdentity = do
+  values <- Map.fromList <$> traverse load (filter (/= "KENSHOU_COHORT_IDENTITY") payloadIdentityNames)
+  when (Map.lookup "KENSHOU_HARNESS_DIRTY" values `notElem` [Just "true", Just "false"]) (ioError (userError "KENSHOU_HARNESS_DIRTY must be true or false"))
+  pure values
+  where
+    load name = (name,) . Text.pack <$> requiredEnv (Text.unpack name)
+
+requiredEnv :: String -> IO String
+requiredEnv name =
+  lookupEnv name >>= \case
+    Just value | not (null value) -> pure value
+    _ -> ioError (userError (name <> " is required by the cell payload"))
+
+integerEnv :: String -> Int -> IO Int
+integerEnv name fallback =
+  lookupEnv name >>= \case
+    Nothing -> pure fallback
+    Just raw -> case reads raw of
+      [(value, "")] | value >= 0 -> pure value
+      _ -> ioError (userError (name <> " must be a non-negative integer"))
+
+adapterFailure :: FilePath -> Text -> IO ExitCode
+adapterFailure outDir detail = do
+  let directory = outDir </> "kenshou-cell"
+      reason :: Text
+      reason
+        | "CELL_ENV_FILE" `Text.isInfixOf` detail = "cell-environment-missing"
+        | any (`Text.isInfixOf` detail) payloadIdentityNames = "payload-identity-missing"
+        | otherwise = "cell-exec-failed"
+  createDirectoryIfMissing True directory
+  LazyByteString.writeFile (directory </> "adapter-error.json") (encode (object ["schema" .= ("kenshou.cell-adapter-error/v1" :: Text), "reason" .= reason, "detail" .= detail]))
+  TextIO.hPutStrLn stderr ("kenshou cell exec: " <> detail)
+  pure (ExitFailure 4)
+
+payloadIdentityNames :: [Text]
+payloadIdentityNames =
+  [ "KENSHOU_COHORT_IDENTITY",
+    "KENSHOU_HARNESS_REVISION",
+    "KENSHOU_HARNESS_DIRTY",
+    "KENSHOU_PAYLOAD_BUNDLE_SHA256",
+    "KENSHOU_PAYLOAD_STORE_PATH",
+    "KENSHOU_PAYLOAD_NAR_HASH",
+    "KENSHOU_PAYLOAD_COHORT"
+  ]

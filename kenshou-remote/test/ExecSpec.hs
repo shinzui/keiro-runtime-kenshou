@@ -1,6 +1,9 @@
 module ExecSpec (execSpec) where
 
+import Control.Exception (bracket)
 import Data.Aeson (Value (..), eitherDecodeFileStrict', object, (.=))
+import Data.Aeson qualified as Aeson
+import Data.Aeson.KeyMap qualified as KeyMap
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -8,7 +11,7 @@ import Data.Time (getCurrentTime)
 import Kenshou.Core.Bundle (LayerBundle (..), Registry, lookupScenario, mkRegistry)
 import Kenshou.Core.Dimension (allTelemetryArms)
 import Kenshou.Core.Env (EnvRequirements (..))
-import Kenshou.Core.Id (Layer (..), mkSeed, newRunId, parseScenarioId)
+import Kenshou.Core.Id (Layer (..), mkSeed, newRunId, parseScenarioId, renderRunId)
 import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), RawKnob (..), mkKnobName)
 import Kenshou.Core.RunSpec (ConnectionSource (..), EnvironmentSpec (..), PostgresSpec (..), RunSpec (..), SpecPlacement (..), minimalRunSpec)
 import Kenshou.Core.Scenario (Scenario (..))
@@ -19,8 +22,12 @@ import Kenshou.Plan.Policy (defaultPlanPolicy)
 import Kenshou.Plan.RunPlan (PlanContext (..), PlanInputs (..), PlannedRun (..), RunPlan (..))
 import Kenshou.Plan.Selector (parseSelector)
 import Kenshou.Remote.Cell.Docs (CellBroker (..), CellEnvironment (..), CellPostgres (..), OtlpEndpoint (..), OtlpSinks (..))
-import Kenshou.Remote.Cell.Exec (resolveOnCell)
+import Kenshou.Remote.Cell.Exec (cellExec, resolveOnCell, resolveWorkJson)
 import Kenshou.Remote.Cell.Prepare (OtlpSink (..))
+import System.Environment (lookupEnv, setEnv, unsetEnv)
+import System.Exit (ExitCode (..))
+import System.FilePath ((</>))
+import System.IO.Temp (withSystemTempDirectory)
 import Test.Hspec
 
 execSpec :: Spec
@@ -33,6 +40,7 @@ execSpec = describe "cell-side run-plan resolution" do
       Right resolved -> do
         resolved.planId `shouldBe` durable.planId
         fmap (.runId) resolved.runs `shouldBe` fmap (.runId) durable.runs
+        resolveWorkJson registry environment NullSink (Aeson.toJSON durable) `shouldBe` Right (Aeson.toJSON resolved)
         case resolved.runs of
           [run] -> do
             run.spec.environment.placement `shouldBe` RunOnCell
@@ -64,6 +72,42 @@ execSpec = describe "cell-side run-plan resolution" do
         _ -> expectationFailure "expected one tracing run"
     resolveOnCell tracingRegistry environment FileSink tracing `shouldSatisfy` isLeft
     resolveOnCell tracingRegistry (withEndpoints environment (Just broker) Nothing) FileSink tracing `shouldSatisfy` isLeft
+
+  it "leaves a secondary driver idle without requiring the work or environment" $
+    withSystemTempDirectory "kenshou-cell-exec" \root ->
+      withEnv "CELL_DRIVER_INDEX" (Just "1") $
+        withEnv "CELL_DRIVER_COUNT" (Just "2") do
+          let out = root </> "output"
+          cellExec registry (root </> "missing-work.json") out `shouldReturn` ExitSuccess
+          idle <- eitherDecodeFileStrict' (out </> "idle-driver.json")
+          idle `shouldBe` Right (object ["schema" .= ("kenshou.cell-idle-driver/v1" :: Text), "index" .= (1 :: Int), "count" .= (2 :: Int)])
+
+  it "records a cell adapter failure when the owner environment is missing" $
+    withSystemTempDirectory "kenshou-cell-exec" \root ->
+      withEnv "CELL_DRIVER_INDEX" (Just "0") $
+        withEnv "CELL_DRIVER_COUNT" (Just "1") $
+          withEnv "CELL_ENV_FILE" Nothing do
+            let out = root </> "output"
+            cellExec registry (root </> "missing-work.json") out `shouldReturn` ExitFailure 4
+            failure <- eitherDecodeFileStrict' (out </> "kenshou-cell" </> "adapter-error.json")
+            failure `shouldBe` Right (object ["schema" .= ("kenshou.cell-adapter-error/v1" :: Text), "reason" .= ("cell-environment-missing" :: Text), "detail" .= ("user error (CELL_ENV_FILE is required by the cell payload)" :: Text)])
+
+  it "reports missing wrapper identity before reading cell work" $
+    withSystemTempDirectory "kenshou-cell-exec" \root -> do
+      (_, environment) <- fixtures
+      withEnv "CELL_DRIVER_INDEX" (Just "0") $
+        withEnv "CELL_DRIVER_COUNT" (Just "1") $
+          withEnv "CELL_ENV_FILE" (Just "test/golden/cell/cell.environment.v1.json") $
+            withEnv "CELL_RUN_ID" (Just (Text.unpack (renderRunId environment.runId))) $
+              withEnv "CELL_SCRATCH_DIR" (Just (root </> "scratch")) $
+                withEnv "KENSHOU_OTLP_SINK" (Just "null") $
+                  withEnv "KENSHOU_COHORT_IDENTITY" Nothing do
+                    let out = root </> "output"
+                    cellExec registry (root </> "missing-work.json") out `shouldReturn` ExitFailure 4
+                    failure <- eitherDecodeFileStrict' (out </> "kenshou-cell" </> "adapter-error.json")
+                    case (failure :: Either String Value) of
+                      Right (Object fields) -> KeyMap.lookup "reason" fields `shouldBe` Just (String "payload-identity-missing")
+                      _ -> expectationFailure (show failure)
 
 fixtures :: IO (RunPlan, CellEnvironment)
 fixtures = do
@@ -112,3 +156,10 @@ withDimensions dimensions plan =
 isLeft :: Either left right -> Bool
 isLeft (Left _) = True
 isLeft _ = False
+
+withEnv :: String -> Maybe String -> IO result -> IO result
+withEnv name value operation = bracket (lookupEnv name) (restore name) (const (apply name value >> operation))
+  where
+    apply key Nothing = unsetEnv key
+    apply key (Just setting) = setEnv key setting
+    restore key prior = apply key prior
