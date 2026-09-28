@@ -73,6 +73,11 @@ descriptorSpec = describe "cohort identity" do
     case identityFromPlan descriptor "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" plan of
       Left err -> expectationFailure (show err)
       Right identity -> toJSON identity `shouldBe` (golden :: Value)
+  it "round-trips a Nix resolver while old Cabal records omit it" do
+    let cabalIdentity = identityWith []
+        nixIdentity = cabalIdentity {identityResolver = Just "nix"}
+    eitherDecode (encode cabalIdentity) `shouldBe` Right cabalIdentity
+    eitherDecode (encode nixIdentity) `shouldBe` Right nixIdentity
 
 hashSpec :: Spec
 hashSpec = describe "planHash" do
@@ -362,6 +367,7 @@ identityWith packages =
     (PlanHash "sha256:fixture")
     "fixture"
     [ResolvedComponent (ComponentId "foo") "mori://example/foo" packages]
+    Nothing
 
 hashFixture :: FilePath -> IO PlanHash
 hashFixture name = do

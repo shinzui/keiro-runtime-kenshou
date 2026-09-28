@@ -141,7 +141,8 @@ data CohortIdentity = CohortIdentity
     identityIndexState :: Maybe Text,
     identityPlanHash :: PlanHash,
     identityDescriptorSha256 :: Text,
-    identityComponents :: [ResolvedComponent]
+    identityComponents :: [ResolvedComponent],
+    identityResolver :: Maybe Text
   }
   deriving stock (Eq, Show)
 
@@ -310,26 +311,34 @@ instance FromJSON ResolvedComponent where
     ResolvedComponent <$> value .: "id" <*> value .: "moriUri" <*> value .: "packages"
 
 instance ToJSON CohortIdentity where
-  toJSON CohortIdentity {identityCohort, identityCompiler, identityCabalVersion, identityOs, identityArch, identityIndexState, identityPlanHash, identityDescriptorSha256, identityComponents} =
+  toJSON CohortIdentity {identityCohort, identityCompiler, identityCabalVersion, identityOs, identityArch, identityIndexState, identityPlanHash, identityDescriptorSha256, identityComponents, identityResolver} =
     object
-      [ "schema" .= ("kenshou.cohort-identity/v1" :: Text),
-        "cohort" .= identityCohort,
-        "compiler" .= identityCompiler,
-        "cabalVersion" .= identityCabalVersion,
-        "os" .= identityOs,
-        "arch" .= identityArch,
-        "indexState" .= identityIndexState,
-        "planHash" .= identityPlanHash,
-        "descriptorSha256" .= identityDescriptorSha256,
-        "components" .= identityComponents
-      ]
+      ( [ "schema" .= ("kenshou.cohort-identity/v1" :: Text),
+          "cohort" .= identityCohort,
+          "compiler" .= identityCompiler,
+          "cabalVersion" .= identityCabalVersion,
+          "os" .= identityOs,
+          "arch" .= identityArch,
+          "indexState" .= identityIndexState,
+          "planHash" .= identityPlanHash,
+          "descriptorSha256" .= identityDescriptorSha256,
+          "components" .= identityComponents
+        ]
+          <> maybe [] (\resolver -> ["resolver" .= resolver]) identityResolver
+      )
 
 instance FromJSON CohortIdentity where
   parseJSON = withObject "CohortIdentity" \value -> do
     schema <- value .: "schema"
     if schema /= ("kenshou.cohort-identity/v1" :: Text)
       then fail ("unsupported cohort identity schema: " <> Text.unpack schema)
-      else
+      else do
+        resolver <- value .:? "resolver"
+        case (resolver :: Maybe Text) of
+          Just "cabal" -> pure ()
+          Just "nix" -> pure ()
+          Nothing -> pure ()
+          Just other -> fail ("unsupported cohort resolver: " <> Text.unpack other)
         CohortIdentity
           <$> value .: "cohort"
           <*> value .: "compiler"
@@ -340,6 +349,7 @@ instance FromJSON CohortIdentity where
           <*> value .: "planHash"
           <*> value .: "descriptorSha256"
           <*> value .: "components"
+          <*> pure resolver
 
 loadCohortDescriptor :: FilePath -> IO (Either CohortError CohortDescriptor)
 loadCohortDescriptor path = do
@@ -402,7 +412,8 @@ identityFromPlan descriptor descriptorSha value = do
         identityIndexState = Just (descriptorIndexState descriptor),
         identityPlanHash,
         identityDescriptorSha256 = descriptorSha,
-        identityComponents
+        identityComponents,
+        identityResolver = Nothing
       }
   where
     preferRuntimeUnit left right
@@ -451,7 +462,7 @@ renderCohortIdentity :: CohortIdentity -> Text
 renderCohortIdentity identity =
   Text.unlines
     ( [ "cohort     " <> unCohortName (identityCohort identity),
-        "compiler   " <> identityCompiler identity <> "   cabal " <> identityCabalVersion identity <> "   " <> identityOs identity <> "/" <> identityArch identity,
+        "compiler   " <> identityCompiler identity <> "   " <> fromMaybe "cabal" (identityResolver identity) <> " " <> identityCabalVersion identity <> "   " <> identityOs identity <> "/" <> identityArch identity,
         "index      " <> fromMaybe "-" (identityIndexState identity),
         "plan       " <> unPlanHash (identityPlanHash identity)
       ]

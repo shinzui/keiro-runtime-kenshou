@@ -7,6 +7,7 @@
   "required": ["schema", "cohort", "compiler", "cabalVersion", "os", "arch", "indexState", "planHash", "descriptorSha256", "components"],
   "properties": {
     "schema": { "const": "kenshou.cohort-identity/v1" },
+    "resolver": { "enum": ["cabal", "nix"] },
     "cohort": { "type": "string", "minLength": 1 }, "compiler": { "type": "string", "minLength": 1 },
     "cabalVersion": { "type": "string", "minLength": 1 }, "os": { "type": "string", "minLength": 1 }, "arch": { "type": "string", "minLength": 1 },
     "indexState": { "type": ["string", "null"] }, "planHash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
