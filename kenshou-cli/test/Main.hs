@@ -17,9 +17,9 @@ import Kenshou.Cli.Version (appVersionWithGit)
 import Kenshou.Core.Id (renderRunId)
 import Kenshou.Core.Manifest (Manifest (..), ManifestFile (..))
 import Kenshou.Core.Outcome qualified as Outcome
-import Kenshou.Remote.Cell.Docs (Artifact (..), CellBuckets (..), CellDescriptor (..), CellManifest (..), CellOutcome (..), CellPhase (..), CellRunResult (..), CellStatus (..), LogChunks (..), ManifestPayload (..), Rejected (..), Submission (..), WorkObject (..))
+import Kenshou.Remote.Cell.Docs (Artifact (..), CellBuckets (..), CellDescriptor (..), CellManifest (..), CellOutcome (..), CellPhase (..), CellRunResult (..), CellStatus (..), Limits (..), LogChunks (..), ManifestPayload (..), Rejected (..), Submission (..), WorkObject (..))
 import Kenshou.Remote.Cell.Lease (Lease (..))
-import Kenshou.Remote.Cell.Session.Journal (SessionJournal (..), SliceJournal (..), SliceState (..), readSessionJournal, writeSessionJournal)
+import Kenshou.Remote.Cell.Session.Journal (LeaseMode (..), SessionJournal (..), SliceJournal (..), SliceState (..), readSessionJournal, writeSessionJournal)
 import Kenshou.Remote.Cell.Submit (workObjectFor)
 import Kenshou.Remote.Payload (Bundle (..), CellPayload (..))
 import Kenshou.Remote.Store (Bucket (..), ObjectName (..), ObjectStore (..), Precondition (..))
@@ -266,6 +266,42 @@ main = hspec do
               _ -> expectationFailure "expected one verified cell slice"
           )
           `finally` killThread worker
+
+    it "leaves a detached single-slice lease alive and collects its rejection later" $
+      withSystemTempDirectory "kenshou-cell-run-detached" \root -> do
+        store <- newFileStore root
+        descriptorBytes <- LazyByteString.readFile "../kenshou-remote/test/golden/cell/cell.descriptor.v1.json"
+        observed <- either fail pure (Aeson.eitherDecode descriptorBytes :: Either String CellDescriptor)
+        let control = Bucket "control"
+            descriptor = observed {buckets = observed.buckets {control = "control"}}
+            outDir = root </> "run-session"
+            leaseObject = ObjectName "cells/alpha/lease.json"
+            command = ["cell", "run", "--cell", "alpha", "--control-bucket", "control", "--payload", "../kenshou-remote/test/golden/payload.json", "--plan", "../kenshou-core/test/golden/run-plan.minimal.json", "--out", outDir, "--coerce-durable", "--detach"]
+        _ <- store.putObject control (ObjectName "cells/alpha/descriptor.json") "application/json" DoesNotExist (Aeson.encode descriptor)
+        withCellStore root do
+          runWithArgs command `shouldReturnCode` ExitSuccess
+          journal <- readSessionJournal (outDir </> "session.json") >>= either (fail . Text.unpack) pure
+          journal.leaseMode `shouldBe` Detached
+          fmap (.state) journal.slices `shouldBe` [SliceSubmitted]
+          leaseStored <- store.getObject control leaseObject
+          lease <- case leaseStored of
+            Just (bytes, _) -> either fail pure (Aeson.eitherDecode bytes :: Either String Lease)
+            Nothing -> expectationFailure "detached lease was released" >> error "unreachable"
+          slice <- case journal.slices of
+            [entry] -> pure entry
+            _ -> expectationFailure "expected one detached slice" >> error "unreachable"
+          lease.ttlSeconds `shouldSatisfy` (>= fromIntegral slice.submission.limits.wallClockSeconds + 600)
+          runWithArgs ["cell", "resume", "--session", outDir] `shouldReturnCode` ExitFailure 4
+          store.statObject control leaseObject >>= (`shouldSatisfy` (maybe False (const True)))
+          now <- getCurrentTime
+          let rejectedObject = ObjectName ("cells/alpha/submissions/" <> renderRunId slice.cellRun <> "/rejected.json")
+          _ <- store.putObject control rejectedObject "application/json" DoesNotExist (Aeson.encode (Rejected slice.cellRun "fixture-rejected" now))
+          runWithArgs ["cell", "resume", "--session", outDir] `shouldReturnCode` ExitFailure 4
+          store.statObject control leaseObject `shouldReturn` Nothing
+          finished <- readSessionJournal (outDir </> "session.json") >>= either (fail . Text.unpack) pure
+          fmap (.state) finished.slices `shouldBe` [SliceRejected]
+          runWithArgs command `shouldReturnCode` ExitFailure 2
+          store.statObject control leaseObject `shouldReturn` Nothing
 
     it "reads scenario history from a bundle" do
       runWithArgs ["history", "--bundle", "../docs/verification", "--scenario", "selftest/kernel/correctness/always-pass", "--json"] `shouldReturnCode` ExitSuccess

@@ -10,7 +10,7 @@ import Data.Maybe (isJust)
 import Data.Time (addUTCTime, getCurrentTime)
 import Kenshou.Core.Id (newRunId)
 import Kenshou.Remote.Cell.Control (CellSnapshot (..), readCellSnapshot)
-import Kenshou.Remote.Cell.Lease (AcquireOutcome (..), CellRef (..), Lease (..), LeaseHandle, LeaseRequest (..), Quarantine (..), acquireLease, leaseHeld, leaseSnapshot, reattachLease, releaseLease, renewLease, requestCancel, withHeartbeat)
+import Kenshou.Remote.Cell.Lease (AcquireOutcome (..), CellRef (..), Lease (..), LeaseHandle, LeaseRequest (..), Quarantine (..), acquireLease, leaseHeld, leaseSnapshot, reattachLease, releaseLease, renewLease, requestCancel, resizeLease, withHeartbeat)
 import Kenshou.Remote.Store (Bucket (..), ObjectName (..), ObjectStore (..), Precondition (..))
 import Kenshou.Remote.Store.File (newFileStore)
 import System.IO.Temp (withSystemTempDirectory)
@@ -47,6 +47,21 @@ spec = describe "cell lease protocol" do
     leaseHeld replacement `shouldReturn` True
     renewLease store cellRef old `shouldReturn` False
     releaseLease later cellRef replacement `shouldReturn` True
+
+  it "fences a detached TTL extension against a stale lease generation" $ withSystemTempDirectory "kenshou-lease" \root -> do
+    store <- newFileStore root
+    handle <- acquireLease store cellRef request >>= expectAcquired
+    resizeLease store cellRef handle 900 `shouldReturn` True
+    snapshot <- leaseSnapshot handle
+    snapshot.ttlSeconds `shouldBe` 900
+    stale <- reattachLease store cellRef snapshot.leaseId
+    case stale of
+      Nothing -> expectationFailure "extended lease disappeared"
+      Just old -> do
+        renewLease store cellRef handle `shouldReturn` True
+        resizeLease store cellRef old 1200 `shouldReturn` False
+        leaseHeld old `shouldReturn` False
+    releaseLease store cellRef handle `shouldReturn` True
 
   it "releases a newly won lease when quarantine exists" $ withSystemTempDirectory "kenshou-lease" \root -> do
     store <- newFileStore root

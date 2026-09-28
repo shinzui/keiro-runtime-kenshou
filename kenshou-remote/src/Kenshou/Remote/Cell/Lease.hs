@@ -8,6 +8,7 @@ module Kenshou.Remote.Cell.Lease
     AcquireOutcome (..),
     acquireLease,
     renewLease,
+    resizeLease,
     releaseLease,
     reattachLease,
     requestCancel,
@@ -162,6 +163,23 @@ renewLease store ref handle = modifyMVar handle.state \(lease, generation, held)
       case result of
         Written meta -> pure ((renewed, meta.generation, True), True)
         PreconditionFailed -> pure ((lease, generation, False), False)
+
+-- A detached submission needs a lease that outlives its wall-clock budget.
+-- Fence the TTL change before publishing its marker.
+resizeLease :: ObjectStore -> CellRef -> LeaseHandle -> Int -> IO Bool
+resizeLease store ref handle ttl = do
+  unless (ttl > 0) (ioError (userError "lease TTL must be positive"))
+  modifyMVar handle.state \(lease, generation, held) ->
+    if not held || lease.cancelRequested
+      then pure ((lease, generation, False), False)
+      else do
+        unless (lease.cell == ref.cellName) (ioError (userError "lease handle names another cell"))
+        now <- store.serverTime
+        let resized = lease {ttlSeconds = ttl, heartbeatAt = now}
+        result <- store.putObject ref.controlBucket (leaseName ref) "application/json" (GenerationIs generation) (encode resized)
+        case result of
+          Written meta -> pure ((resized, meta.generation, True), True)
+          PreconditionFailed -> pure ((lease, generation, False), False)
 
 releaseLease :: ObjectStore -> CellRef -> LeaseHandle -> IO Bool
 releaseLease store ref handle = modifyMVar handle.state \(lease, generation, held) ->

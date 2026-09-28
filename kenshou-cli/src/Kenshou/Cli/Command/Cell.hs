@@ -9,7 +9,7 @@ import Data.List (nub)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map.Strict qualified as Map
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isNothing)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.IO qualified as TextIO
@@ -17,21 +17,23 @@ import Data.Time (diffUTCTime, getCurrentTime)
 import Kenshou.Core.Cli (CliCommand (..), CliEnv (..), CliGroup (..))
 import Kenshou.Core.Id (RunId, parseRunId, renderRunId)
 import Kenshou.Remote.Cell.Control (CellSnapshot (..), readCellSnapshot)
-import Kenshou.Remote.Cell.Docs (CachePolicy (..), CellBuckets (..), CellDescriptor (..), CellManifest (..), CellOutcome (..), CellStatus (..), Rejected (..))
+import Kenshou.Remote.Cell.Docs (CachePolicy (..), CellBuckets (..), CellDescriptor (..), CellManifest (..), CellOutcome (..), CellStatus (..), Limits (..), Rejected (..), Submission (..))
 import Kenshou.Remote.Cell.Exec (cellExec)
 import Kenshou.Remote.Cell.Fetch (FetchError (..), fetchCellRun, verifyCellRun)
 import Kenshou.Remote.Cell.Index (deriveCellRunIndex, writeCellRunIndex)
-import Kenshou.Remote.Cell.Lease (AcquireOutcome (..), CellRef (..), Lease (..), LeaseHandle, LeaseRequest (..), Quarantine (..), acquireLease, leaseSnapshot, reattachLease, releaseLease, validCellName, withHeartbeat)
+import Kenshou.Remote.Cell.Lease (AcquireOutcome (..), CellRef (..), Lease (..), LeaseHandle, LeaseRequest (..), Quarantine (..), acquireLease, leaseSnapshot, reattachLease, releaseLease, resizeLease, validCellName, withHeartbeat)
 import Kenshou.Remote.Cell.Prepare (Granularity (..), OtlpSink (..), PrepareOptions (..))
 import Kenshou.Remote.Cell.RouteJson (RouteDocuments (..), routeWorkJson)
 import Kenshou.Remote.Cell.RouteRules (defaultRoutingRules)
+import Kenshou.Remote.Cell.Session (SessionTransition (..))
 import Kenshou.Remote.Cell.Session.Build (BuildOptions (..), BuiltSession (..), buildSession)
-import Kenshou.Remote.Cell.Session.Journal (SessionJournal (..), SliceJournal (..), SliceState (..), readSessionJournal)
-import Kenshou.Remote.Cell.Session.Resume (resumeHeldSession)
+import Kenshou.Remote.Cell.Session.Journal (LeaseMode (..), SessionJournal (..), SliceJournal (..), SliceState (..), applyTransition, readSessionJournal, writeSessionJournal)
+import Kenshou.Remote.Cell.Session.Resume (resumeHeldSession, resumeObservedSlices)
 import Kenshou.Remote.Cell.Session.Runner (runPlannedSlices)
+import Kenshou.Remote.Cell.Submit (PublishOutcome (Submitted), publishSubmission)
 import Kenshou.Remote.Cell.Watch (WatchEvent (..), WatchTerminal (..), watchCellRun)
 import Kenshou.Remote.Payload (PayloadDescriptor)
-import Kenshou.Remote.Store (Bucket (..), ObjectStore)
+import Kenshou.Remote.Store (Bucket (..), ObjectName (..), ObjectStore (..))
 import Kenshou.Remote.Store.File (newFileStore)
 import Kenshou.Remote.Store.Gcs (newGcsStore, newTokenProvider)
 import Options.Applicative
@@ -50,9 +52,9 @@ data RouteCli = RouteCli ![Text] !(Maybe Text) !FilePath !(Maybe FilePath) !(May
 
 data SubmitSettings = SubmitSettings ![String] !FilePath !FilePath !Granularity !CachePolicy ![Text] !Bool !Bool !Bool !(Maybe FilePath) !OtlpSink !(Maybe Text) !Bool
 
-data SubmitCli = SubmitCli !CellLocation !Text !SubmitSettings
+data SubmitCli = SubmitCli !CellLocation !Text !SubmitSettings !Bool
 
-data RunCli = RunCli !CellLocation !SubmitSettings !Int !Int
+data RunCli = RunCli !CellLocation !SubmitSettings !Int !Int !Bool
 
 data CellAction
   = Fetch !Text !Text !FilePath
@@ -134,6 +136,7 @@ submitParser =
             <$> cellLocationParser
             <*> strOption (long "lease-id" <> metavar "UUID" <> help "Active lease identifier")
             <*> submitSettingsParser (switch (long "dry-run" <> help "Print a planned session without writing or submitting"))
+            <*> pure False
         )
 
 runParser :: Parser CellAction
@@ -144,6 +147,7 @@ runParser =
             <*> submitSettingsParser (pure False)
             <*> option auto (long "ttl" <> metavar "SECONDS" <> value 120 <> showDefault <> help "Held lease lifetime between renewals")
             <*> option auto (long "wait" <> metavar "SECONDS" <> value 0 <> showDefault <> help "Wait for a busy cell")
+            <*> switch (long "detach" <> help "Submit one slice and leave its budgeted lease to run after this process exits")
         )
 
 submitSettingsParser :: Parser Bool -> Parser SubmitSettings
@@ -317,7 +321,7 @@ runCell selected cli = case selected of
                           LazyByteString.writeFile (outDir </> "unroutable.json") (encode documents.report)
                           TextIO.hPutStrLn stderr ("routed plans: " <> Text.pack (show (Map.size documents.perCell)) <> "; see " <> Text.pack (outDir </> "unroutable.json"))
                           pure (if documents.routeComplete then ExitSuccess else ExitFailure 2)
-  Submit (SubmitCli location leaseText (SubmitSettings payloadFiles planFile outDir granularity cache settingTexts skip coerce ephemeral rulesFile sink rts dryRun))
+  Submit (SubmitCli location leaseText (SubmitSettings payloadFiles planFile outDir granularity cache settingTexts skip coerce ephemeral rulesFile sink rts dryRun) detached)
     | planFile == "-" && rulesFile == Just "-" -> usage "only one JSON document may be read from stdin"
     | otherwise -> case (parseRunId leaseText, traverse parsePgSetting settingTexts) of
         (Left problem, _) -> usage problem
@@ -342,11 +346,23 @@ runCell selected cli = case selected of
                     Left problem -> usage problem
                     Right session
                       | dryRun -> LazyByteString.putStrLn (encode session.journal) >> pure ExitSuccess
+                      | detached && length session.journal.slices /= 1 -> usage "detached sessions require exactly one slice; use --granularity plan for a compatible plan"
                       | otherwise -> guardIO do
                           exists <- doesPathExist outDir
                           if exists
                             then usage "session output path already exists; choose a new directory"
                             else do
+                              if detached
+                                then do
+                                  slice <- singleSlice session.journal
+                                  let budget = toInteger slice.submission.limits.wallClockSeconds + 600
+                                  if budget > toInteger (maxBound :: Int)
+                                    then ioError (userError "detached lease budget exceeds supported TTL")
+                                    else do
+                                      lease <- leaseSnapshot active
+                                      enlarged <- resizeLease store ref active (max lease.ttlSeconds (fromInteger budget))
+                                      if enlarged then pure () else ioError (userError "cell lease changed before detached submission")
+                                else pure ()
                               traverse_
                                 ( \(relative, content) -> do
                                     let destination = outDir </> relative
@@ -354,13 +370,30 @@ runCell selected cli = case selected of
                                     LazyByteString.writeFile destination content
                                 )
                                 session.workFiles
-                              result <- runPlannedSlices store ref (Bucket observed.descriptor.buckets.results) active (outDir </> "session.json") session.journal emitWatchEvent
-                              case result of
-                                Left failure -> unavailable (Text.pack (show failure))
-                                Right finished -> do
-                                  TextIO.hPutStrLn stderr ("session " <> renderRunId finished.sessionId <> " verified; journal " <> Text.pack (outDir </> "session.json"))
-                                  pure (sessionExitCode finished)
-  Run (RunCli location settings ttl waitSeconds)
+                              if detached
+                                then do
+                                  slice <- singleSlice session.journal
+                                  let journal = session.journal {leaseMode = Detached}
+                                      journalPath = outDir </> "session.json"
+                                  writeSessionJournal journalPath journal
+                                  work <- LazyByteString.readFile (outDir </> slice.workPath)
+                                  published <- publishSubmission store ref active slice.submission work
+                                  case published of
+                                    Submitted -> do
+                                      now <- getCurrentTime
+                                      checkpoint <- either (ioError . userError . Text.unpack) pure (applyTransition now slice.cellRun SubmissionPublished journal)
+                                      writeSessionJournal journalPath checkpoint
+                                      TextIO.hPutStrLn stderr ("detached session " <> renderRunId checkpoint.sessionId <> " submitted; collect with cell resume --session " <> Text.pack outDir)
+                                      pure ExitSuccess
+                                    other -> unavailable ("detached submission failed: " <> Text.pack (show other))
+                                else do
+                                  result <- runPlannedSlices store ref (Bucket observed.descriptor.buckets.results) active (outDir </> "session.json") session.journal emitWatchEvent
+                                  case result of
+                                    Left failure -> unavailable (Text.pack (show failure))
+                                    Right finished -> do
+                                      TextIO.hPutStrLn stderr ("session " <> renderRunId finished.sessionId <> " verified; journal " <> Text.pack (outDir </> "session.json"))
+                                      pure (sessionExitCode finished)
+  Run (RunCli location settings ttl waitSeconds detached)
     | ttl <= 0 || waitSeconds < 0 -> usage "lease TTL must be positive and wait cannot be negative"
     | otherwise -> withControl location \store ref _ -> do
         defaultOwner <- Text.pack . fromMaybe "kenshou" <$> lookupEnv "USER"
@@ -371,11 +404,25 @@ runCell selected cli = case selected of
               case outcome of
                 Acquired handle -> do
                   lease <- leaseSnapshot handle
-                  let execute = runCell (Submit (SubmitCli location (renderRunId lease.leaseId) settings)) cli
+                  let execute = runCell (Submit (SubmitCli location (renderRunId lease.leaseId) settings detached)) cli
                       releaseCurrent = do
                         current <- reattachLease store ref lease.leaseId
                         traverse_ (\active -> do _ <- releaseLease store ref active; pure ()) current
-                  execute `finally` releaseCurrent
+                      releaseUnlessPublished = do
+                        let SubmitSettings _ _ outDir _ _ _ _ _ _ _ _ _ _ = settings
+                            journalPath = outDir </> "session.json"
+                        present <- doesPathExist journalPath
+                        if not present
+                          then releaseCurrent
+                          else do
+                            decoded <- readSessionJournal journalPath
+                            case decoded of
+                              Left _ -> pure ()
+                              Right journal | journal.leaseId /= lease.leaseId || journal.cell /= ref.cellName -> releaseCurrent
+                              Right journal -> do
+                                markers <- traverse (\slice -> store.statObject ref.controlBucket (ObjectName ("cells/" <> ref.cellName <> "/submissions/" <> renderRunId slice.cellRun <> "/submission.json"))) journal.slices
+                                if all isNothing markers then releaseCurrent else pure ()
+                  execute `finally` (if detached then releaseUnlessPublished else releaseCurrent)
                 Busy current -> do
                   now <- getCurrentTime
                   if diffUTCTime now start < fromIntegral waitSeconds
@@ -405,8 +452,10 @@ runCell selected cli = case selected of
                       let expected = fromMaybe journal.leaseId requested
                       existing <- reattachLease store ref expected
                       case existing of
+                        Just _ | journal.leaseMode == Detached -> continueDetached store ref journalPath journal
                         Just handle -> continueSession store ref journalPath journal handle
                         Nothing | requested /= Nothing -> unavailable "cell has no matching selected lease"
+                        Nothing | journal.leaseMode == Detached -> continueDetached store ref journalPath journal
                         Nothing -> do
                           owner <- Text.pack . fromMaybe "kenshou" <$> lookupEnv "USER"
                           acquired <- acquireLease store ref (LeaseRequest owner ("resume " <> renderRunId journal.sessionId) 120)
@@ -424,6 +473,25 @@ continueSession store ref journalPath journal handle = do
     Right finished -> do
       TextIO.hPutStrLn stderr ("session " <> renderRunId finished.sessionId <> " verified; journal " <> Text.pack journalPath)
       pure (sessionExitCode finished)
+
+continueDetached :: ObjectStore -> CellRef -> FilePath -> SessionJournal -> IO ExitCode
+continueDetached store ref journalPath journal = do
+  observed <- resumeObservedSlices store ref (Bucket journal.resultsBucket) journalPath emitWatchEvent
+  case observed of
+    Left failure -> unavailable (Text.pack (show failure))
+    Right finished ->
+      if not (null finished.slices) && all (\slice -> slice.state `elem` [SliceRejected, SliceVerified]) finished.slices
+        then do
+          current <- reattachLease store ref journal.leaseId
+          traverse_ (\active -> do _ <- releaseLease store ref active; pure ()) current
+          TextIO.hPutStrLn stderr ("detached session " <> renderRunId finished.sessionId <> " collected; journal " <> Text.pack journalPath)
+          pure (sessionExitCode finished)
+        else unavailable "detached session has not reached a terminal cell status; resume later"
+
+singleSlice :: SessionJournal -> IO SliceJournal
+singleSlice journal = case journal.slices of
+  [slice] -> pure slice
+  _ -> ioError (userError "detached session must contain exactly one slice")
 
 sessionExitCode :: SessionJournal -> ExitCode
 sessionExitCode journal
