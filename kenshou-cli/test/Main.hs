@@ -38,6 +38,17 @@ main = hspec do
       runWithArgs ["attest", "--help"] `shouldReturnCode` ExitSuccess
       runWithArgs ["history", "--help"] `shouldReturnCode` ExitSuccess
       runWithArgs ["run", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["cell", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["cell", "fetch", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["cell", "verify", "--help"] `shouldReturnCode` ExitSuccess
+
+    it "rejects malformed cell result identifiers and URIs" do
+      runWithArgs ["cell", "fetch", "--results-bucket", "test-results", "not-a-run-id", "--out", "test-output"] `shouldReturnCode` ExitFailure 2
+      runWithArgs ["cell", "verify", "gs://test-results/runs/not-a-run-id"] `shouldReturnCode` ExitFailure 2
+
+    it "distinguishes an unavailable cell tree from invalid evidence" do
+      runWithArgs ["cell", "verify", "test/fixtures/does-not-exist"] `shouldReturnCode` ExitFailure 4
+      runWithArgs ["cell", "verify", leakingRun] `shouldReturnCode` ExitFailure 1
 
     it "reads scenario history from a bundle" do
       runWithArgs ["history", "--bundle", "../docs/verification", "--scenario", "selftest/kernel/correctness/always-pass", "--json"] `shouldReturnCode` ExitSuccess

@@ -45,6 +45,10 @@
         haskellPackages.callCabal2nix "kenshou-evidence" (inputs.self + "/kenshou-evidence") {
           inherit kenshou-core;
         };
+      kenshou-remote =
+        haskellPackages.callCabal2nix "kenshou-remote" (inputs.self + "/kenshou-remote") {
+          inherit kenshou-core;
+        };
       kenshou-pgmq =
         haskellPackages.callCabal2nix "kenshou-pgmq" (inputs.self + "/kenshou-pgmq") {
           inherit kenshou-check kenshou-core kenshou-diagnose kenshou-measure kenshou-telemetry;
@@ -72,7 +76,7 @@
           ];
         })
         (haskellPackages.callCabal2nix "kenshou-cli" (inputs.self + "/kenshou-cli") {
-          inherit kenshou-check kenshou-core kenshou-diagnose kenshou-evidence kenshou-kafka kenshou-keiro kenshou-kiroku kenshou-measure kenshou-pgmq kenshou-shibuya kenshou-telemetry;
+          inherit kenshou-check kenshou-core kenshou-diagnose kenshou-evidence kenshou-kafka kenshou-keiro kenshou-kiroku kenshou-measure kenshou-pgmq kenshou-remote kenshou-shibuya kenshou-telemetry;
         });
     in
     {
@@ -83,6 +87,7 @@
       treefmt.programs.fourmolu.package = pkgs.haskell.packages.ghc9124.fourmolu;
 
       packages.kenshou-core = kenshou-core;
+      packages.kenshou-remote = kenshou-remote;
       packages.kenshou-cli = kenshou-cli;
       packages.default = kenshou-cli;
     };

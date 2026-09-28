@@ -38,6 +38,7 @@ library
     Kenshou.Cli
     Kenshou.Cli.Attest
     Kenshou.Cli.Cohort
+    Kenshou.Cli.Command.Cell
     Kenshou.Cli.Command.Cohort
     Kenshou.Cli.Command.Execute
     Kenshou.Cli.Command.List
@@ -75,6 +76,7 @@ library
     kenshou-kiroku,
     kenshou-measure,
     kenshou-pgmq,
+    kenshou-remote,
     kenshou-shibuya,
     kenshou-telemetry,
     optparse-applicative >=0.19 && <0.20,

@@ -40,6 +40,14 @@ in  Schema.Project::{
             "Operator interface and aggregate runtime verification executable"
         }
       , Schema.Package::{
+        , name = "kenshou-remote"
+        , type = Schema.PackageType.Library
+        , language = Schema.Language.Haskell
+        , path = Some "./kenshou-remote"
+        , description = Some
+            "Leased verification cell client and immutable result verification"
+        }
+      , Schema.Package::{
         , name = "kenshou-evidence"
         , type = Schema.PackageType.Library
         , language = Schema.Language.Haskell
