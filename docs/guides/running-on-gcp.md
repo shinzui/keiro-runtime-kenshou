@@ -156,7 +156,8 @@ regression. The current client accepts one benchmark configuration per pair
 invocation. Request at least the policy's minimum number of pairs (five in
 the default policy); fewer valid pairs are inconclusive. The owner image
 allows 64 PostgreSQL starts in its rate-limit window so repeated cold
-resets can complete under one lease.
+resets can complete under one lease. Alpha's five-pair released A/A control
+passed with ten verified cold resets and five metrics inside policy limits.
 
 For telemetry arms, run the overhead planner's slots as separate submissions
 under one lease:
