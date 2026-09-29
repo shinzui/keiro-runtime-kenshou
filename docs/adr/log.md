@@ -1,5 +1,9 @@
 # Bundle Update Log
 
+## 2026-09-29
+* **Decision**: ADR-21 addresses cell evidence by submission and nested run, preserving sealed results and effective outcomes.
+* **Decision**: ADR-20 accepts descriptor-pinned Nix payloads only after the resolved cohort identity passes its check.
+
 ## 2026-09-27
 * **Update**: ADR-14: record grouped owner defects with cohort-scoped label coverage and preserve every reference.
 * **Update**: ADR-18: name the published verification evidence contract in okf-profiles v0.19.0 and the pinned local vocabulary overlay.
