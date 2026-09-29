@@ -201,6 +201,11 @@ provenance:
       at: 2026-09-29T04:25:00Z
       mode: "implement"
       note: "Recorded live per-run sealed trace acceptance and the PostgreSQL role's rolling submission compatibility repair."
+    - model: "gpt-6"
+      harness: "codex"
+      at: 2026-09-29T05:13:00Z
+      mode: "implement"
+      note: "Recorded exact 100-span OTLP fixture acceptance and repaired idempotent GCS resumable publication."
 ---
 
 # Build an extensive verification suite for the keiro runtime
@@ -533,6 +538,8 @@ EP-16's upgrade script now holds an exclusive lease through image apply and desc
 The SIGKILL recovery tree was fetched and verified again after all cell VMs were stopped, with the same four artifacts and manifest digest. A one-byte change to a separate fetched copy made verification exit 1 naming `submission/work`, and a sealed run-ID resubmission exited 4 with `run-id-already-used`. The agent-credential overwrite attempt and later lifecycle checks remain open.
 
 EP-16 and EP-17 now have live per-run collector trace evidence on `cell-alpha`. The owner registered and deployed new driver and monitoring images, then repaired a PostgreSQL role that rejected the new optional `collect` member in stored submissions during reset. A fresh three-slice SDK OTLP file-sink session under one lease sealed three completed, verified cell runs with 13,810, 13,793 and 13,886 spans in their respective manifest-listed trace files. All span starts fall within their own recorded windows and trace IDs have no pairwise overlap. Their exact-window metrics exports have 4,149, 4,117 and 2,820 samples, none outside their windows, and each shows an increasing file-receiver accepted-span counter. Owner commits `mori://shinzui/load-testing-infra` revisions `a678aa2` through `cb82fb2` cover registration, deployment and the tested reset compatibility fix. Trace rotation beyond the collector's current file, health gates, the broker, multi-driver coordination and the wider cell acceptance matrix remain open.
+
+EP-16 also passed the exact OTLP fixture gate: a fresh, verified cell run sealed one named primer and 100 measured spans, with all measured IDs in the trace artifact and all timestamps inside its window. The run's own metrics export contains 6,587 in-window samples and shows the file receiver accepted-span counter move from 1 to 101. The owner fixture and its protocol note are in `mori://shinzui/load-testing-infra` through revision `077a663`. During fixture publication, a repeated content-addressed upload exposed a final-PUT GCS 412 that the owner client had not classified as an existing-object race; revision `ddc37a2` now verifies and reuses that object, with a live repeat and local regression test passing.
 
 EP-18 completed its first milestone: `docs/verification` validates as an OKF v0.2 bundle with three versioned computation definitions, 20 negative profile probes and a missing-reference control. Mori and the repository recipes recognize the bundle. [ADR-18](../adr/0018-keep-verification-records-immutable-and-derive-baselines.md) fixes immutable digest-linked records and derived baselines; [ADR-19](../adr/0019-relax-the-evidence-profile-after-records-are-committed.md) fixes compatibility of the historical profile. The `record`, `attest`, `history` and seeded-corpus milestones remain open. The first definition records the runner's actual scenario-report outcome path, so the future attester must establish an explicit replayable oracle before claiming to recompute an arbitrary scenario verdict.
 
