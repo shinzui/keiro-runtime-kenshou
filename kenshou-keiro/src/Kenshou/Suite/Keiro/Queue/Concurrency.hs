@@ -635,8 +635,8 @@ workersSurviveTransientPollingError :: Scenario
 workersSurviveTransientPollingError =
   Scenario
     { id = either (error . show) id (parseScenarioId "keiro/queue/concurrency/workers-survive-transient-polling-error"),
-      revision = 1,
-      summary = "Checks the continuous job worker resumes after repeated PostgreSQL backend terminations.",
+      revision = 2,
+      summary = "Checks the continuous job worker resumes after its blocked PGMQ read backend is terminated.",
       tier = TierStandard,
       placement = PlaceEither,
       knobs = [],
@@ -664,11 +664,13 @@ runWorkersSurviveTransientPollingError context =
           queue = sourceName context "polling"
           job = Job "queue-poll-probe" (queueRef queue) (aesonJobCodec @Text) Unordered defaultRetryPolicy
           readCounts = Pool.use runtime.runtimePool (Session.statement () effectCountsStatement) >>= either (fail . show) pure
-          waitBackend = do
+          lockTable = "q_" <> queueNameToText job.jobQueue.physicalName
+          lockFault = holdLock postgres (TableLock "pgmq" lockTable)
+          waitBlockedRead = do
             backends <- listBackends postgres
-            case [backend.pid | backend <- backends, "queue-worker-0" `Text.isInfixOf` backend.applicationName] of
+            case [backend.pid | backend <- backends, "queue-worker-0" `Text.isInfixOf` backend.applicationName, backend.waitEventType == Just "Lock", "pgmq.read" `Text.isInfixOf` backend.query] of
               pid : _ -> pure (Just pid)
-              [] -> threadDelay 100000 >> waitBackend
+              [] -> threadDelay 100000 >> waitBlockedRead
       Pool.use runtime.runtimePool (Session.script "CREATE SCHEMA IF NOT EXISTS kenshou_fx; CREATE TABLE IF NOT EXISTS kenshou_fx.queue_effects (payload text NOT NULL)") >>= either (fail . show) pure
       setup <- runJobEff runtime (ensureJobQueue job)
       _ <- either (fail . show) pure setup
@@ -693,12 +695,14 @@ runWorkersSurviveTransientPollingError context =
             if not completed
               then pure [(False, False)]
               else do
-                victim <- maybe Nothing id <$> timeout 10000000 waitBackend
-                case victim of
-                  Nothing -> pure [(True, False)]
-                  Just pid -> do
-                    _ <- (terminateOneBackend postgres (ByPid pid)).inject
-                    ((True, True) :) <$> runBatches rest
+                faulted <- bracket lockFault.inject (.heal) \_ -> do
+                  victim <- maybe Nothing id <$> timeout 10000000 waitBlockedRead
+                  case victim of
+                    Nothing -> pure False
+                    Just pid -> do
+                      _ <- (terminateOneBackend postgres (ByPid pid)).inject
+                      pure True
+                if faulted then ((True, True) :) <$> runBatches rest else pure [(True, False)]
       faultResults <- runBatches [0 .. 4 :: Int]
       final <- if length faultResults == 5 then maybe False id <$> timeout 30000000 (waitDistinct 100) else pure False
       (total, distinct) <- readCounts
@@ -716,4 +720,4 @@ runWorkersSurviveTransientPollingError context =
               ("no-loss", distinct == enqueued && depth == 0),
               ("bounded-duplicates", total >= distinct && total <= enqueued + injectedFaults)
             ]
-      recordMessagingCells context (Map.fromList [("enqueued", enqueued), ("effects", total), ("distinctEffects", distinct), ("faults", injectedFaults)]) (object ["faultResults" .= faultResults, "workerStopped" .= Map.member "stopped" snapshot.marks]) cells
+      recordMessagingCells context (Map.fromList [("enqueued", enqueued), ("effects", total), ("distinctEffects", distinct), ("faults", injectedFaults)]) (object ["faultResults" .= faultResults, "faultSchedule" .= ("blocked-pgmq-read" :: Text), "workerStopped" .= Map.member "stopped" snapshot.marks]) cells
