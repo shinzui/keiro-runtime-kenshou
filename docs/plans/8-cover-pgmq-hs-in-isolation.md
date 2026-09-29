@@ -81,6 +81,7 @@ After this plan, a maintainer can run `kenshou list --layer pgmq` and see about 
 - [ ] Rerun the seven noisy A/A controls on a quiet leased cell; local p99 noise remains inconclusive under the checked-in policy.
 - [x] (2026-09-29) Corrected the read/ack benchmark to preload a finite queue, drain it with the selected plain or pop read, execute all four acknowledgement modes, use `pgmq.consumers` for closed-loop workers, and report message rather than call throughput. Versioned only this scenario to revision 3. A local PostgreSQL 18 batch-archive smoke passed with zero operation failures; a deliberately undersized preload exhausted as expected.
 - [x] (2026-09-29) Published clean Linux released payload `265f35b` for revision 3 and ran a three-pair A/A control on alpha: all six slices passed and verified, but p50, p99, and message-throughput intervals were inconclusive. A five-pair rerun passed every policy metric with ten completed, verified cold-reset slices under one lease. The other six benchmark A/A controls remain open.
+- [x] (2026-09-29) Repeated the layer-ladder A/A after the cell client's GCS token-refresh repair. All ten cold-reset slices completed and verified under one lease, with passing benchmark-grade nested runs and zero operation failures. Five valid pairs passed p50, message throughput and allocation but remained inconclusive for p99; the policy is unchanged. The comparison was emitted while a documentation edit was uncommitted, so it is diagnostic pending clean-worktree replay of the sealed runs.
 - [x] (2026-09-29) Ran an exploratory revision-3 slow-handler sensitivity check on local PostgreSQL 18. Five matched pairs changed only `pgmq.handler-ms` from zero to five; all ten runs passed with benchmark grade and zero operation failures, and the policy classified p50 latency as a regression. The host was concurrently busy with unrelated work, so its ratios are excluded from the baseline.
 - [ ] Repeat the slow-handler sensitivity comparison on an isolated leased cell before accepting quantitative detection evidence.
 - [x] (2026-09-24) Obtained stable twenty-minute reduced-soak leak verdicts at 100 cycles/s with tracing off and OTLP, using post-major-collection heap samples.
@@ -106,13 +107,12 @@ inconclusive, then its five-pair A/A passed without changing the policy.
   few samples. The planned batch-size-one variant with 100,000 preloaded
   messages and matched 2/10/2-second phases yielded ten passing runs of
   benchmark grade across five pairs. With `pgmq.handler-ms=5` as the only varied
-  knob, the comparison classified p50 latency as a regression, with a 13.42×
-  ratio (95% interval 11.30–15.95×). P99 and message throughput showed large
-  ratios but were still inconclusive because their intervals exceeded the
-  policy's width bound; the overall regression also included allocation.
-  The local host was under unrelated load during this work. Preserve these
-  values as diagnostic output only; they are not baseline-eligible or an
-  accepted quantitative detector control until repeated on a leased cell.
+  knob, the comparison classified p50 latency as a regression. P99 and
+  message throughput were inconclusive under the policy's interval-width
+  bound; the overall regression also included allocation. The local host was
+  under unrelated load during this work. Keep the raw report for diagnosis,
+  but do not carry its ratios into the baseline or accept it as a quantitative
+  detector control until repeated on a leased cell.
   Evidence: `.dev/pgmq-sensitivity/comparison-b1-5.json` (comparison
   `01a0ee85-e90e-75c9-8bd2-5269b64fbc9d`, ignored local artifacts).
 
@@ -134,6 +134,19 @@ inconclusive, then its five-pair A/A passed without changing the policy.
   `gs://tan-nb-exp-cells-control/payloads/sha256/4ca53122391a91f2d9db324a4e2e0b9467a700f198cb4b61774eeb4bb6fe4344.nar.zst`
   has 60,489,713 bytes and schema-valid descriptor
   `payloads/released-bench-r3.json` (ignored locally).
+
+- Observation: a fresh layer-ladder cell A/A after the token fix completed ten
+  verified slices on one lease with no operation failures. Five valid pairs
+  passed p50, message throughput and allocation, but p99 was inconclusive:
+  the ratio interval was 0.882–1.668 and two candidate tail samples were
+  higher than their paired baselines. This is measurement uncertainty, not an
+  upstream regression. The comparison document records `harnessDirty=true`
+  because an unrelated documentation edit was uncommitted; replay the same
+  immutable run trees from a clean worktree before using the diagnostic result
+  in the baseline. Evidence: ignored local comparison
+  `.dev/pair-aa-pgmq-layer-ladder-r2-5-refresh/comparison.json`
+  (`01a0eeb4-f65a-721f-a290-8dc95f9a7a4b`) and session
+  `01a0eea8-735c-7754-9d3a-88b4e426db1a`.
 
 - Observation: the registered read/ack benchmark did not execute the workload
   specified here. Its timed operation sent one message before each one-message

@@ -14,7 +14,9 @@ The corrected PGMQ read/ack benchmark has a passing five-pair leased-cell A/A co
 
 A separate local sensitivity check, comparison `01a0ee85-e90e-75c9-8bd2-5269b64fbc9d`, changed only the simulated per-message handler time from zero to five milliseconds at batch size one. Ten PostgreSQL 18 runs passed with benchmark grade and zero operation failures, and the policy classified p50 latency as a regression. Because the shared host was busy with unrelated work, its numerical ratios are diagnostic only and excluded from this baseline. A matched sensitivity comparison on a leased cell is still required.
 
-The five-pair layer-ladder cell control under `.dev/pair-aa-pgmq-layer-ladder-r2-5/` was interrupted by GCS HTTP 401 after seven verified slices. Journal resume verified all ten, but the interrupted eighth slice sealed `cancelled` and the resume used a new lease. It is excluded from A/A acceptance and all numerical baseline claims. [Finding 39](../findings/39-kenshou-gcs-token-cache-survives-expiry.md) tracks the harness token-refresh defect; a fresh single-lease control is required after repair.
+The five-pair layer-ladder cell control under `.dev/pair-aa-pgmq-layer-ladder-r2-5/` was interrupted by GCS HTTP 401 after seven verified slices. Journal resume verified all ten, but the interrupted eighth slice sealed `cancelled` and the resume used a new lease. It is excluded from A/A acceptance and all numerical baseline claims. [Finding 39](../findings/39-kenshou-gcs-token-cache-survives-expiry.md) tracks the harness token-refresh defect; the post-repair control is described below.
+
+That fresh control, session `01a0eea8-735c-7754-9d3a-88b4e426db1a`, completed ten verified, benchmark-grade slices under one lease. Five valid pairs passed p50, message throughput and allocation, while p99 remained inconclusive under the unchanged policy. Comparison `01a0eeb4-f65a-721f-a290-8dc95f9a7a4b` was emitted while a documentation edit was uncommitted and is diagnostic only; the same sealed run trees will be replayed from a clean worktree. No layer-ladder performance number is promoted to the baseline.
 
 ## Priority for owner projects
 
