@@ -79,7 +79,8 @@ After this plan, a maintainer can run `kenshou list --layer pgmq` and see about 
 - [x] (2026-09-24) Extended backend termination to twelve fault rounds over two minutes on each PostgreSQL major. Every round confirmed, delivered and acknowledged 200 messages with the same pool, and only BUG-1's classifier label failed. Continuous producer and consumer traffic during each fault remains part of the wider outage work.
 - [x] (2026-09-25) Completed continuous producer and consumer traffic during twelve backend faults on PostgreSQL 17 and 18. Both two-minute runs preserved and acknowledged over 5,500 confirmed sends, confined errors and duplicate deliveries to the fault windows, drained their queues, and reproduced only BUG-1's classifier label.
 - [ ] Rerun the seven noisy A/A controls on a quiet leased cell; local p99 noise remains inconclusive under the checked-in policy.
-- [x] (2026-09-29) Corrected the read/ack benchmark to preload a finite queue, drain it with the selected plain or pop read, execute all four acknowledgement modes, use `pgmq.consumers` for closed-loop workers, and report message rather than call throughput. Versioned only this scenario to revision 3. A local PostgreSQL 18 batch-archive smoke passed with zero operation failures; a deliberately undersized preload exhausted as expected. The cell A/A and slowed-arm gates remain open.
+- [x] (2026-09-29) Corrected the read/ack benchmark to preload a finite queue, drain it with the selected plain or pop read, execute all four acknowledgement modes, use `pgmq.consumers` for closed-loop workers, and report message rather than call throughput. Versioned only this scenario to revision 3. A local PostgreSQL 18 batch-archive smoke passed with zero operation failures; a deliberately undersized preload exhausted as expected.
+- [x] (2026-09-29) Published clean Linux released payload `265f35b` for revision 3 and ran a three-pair A/A control on alpha: all six slices passed and verified, but p50, p99, and message-throughput intervals were inconclusive. A five-pair rerun passed every policy metric with ten completed, verified cold-reset slices under one lease. The other benchmark A/A controls and corrected slow-handler regression check remain open.
 - [x] (2026-09-24) Obtained stable twenty-minute reduced-soak leak verdicts at 100 cycles/s with tracing off and OTLP, using post-major-collection heap samples.
 - [x] (2026-09-24) Ran both twenty-minute reduced-soak controls at the registered 500 cycles/s default rate, with tracing off and OTLP. Retained the lower-rate pair as a controlled comparison.
 
@@ -92,9 +93,29 @@ that the old implementation sent a message inside every timed read/ack cycle,
 so those comparisons also do not qualify as evidence for the planned
 preloaded-drain workload. Benchmark revision 2 widened the phase window to
 five seconds of warm-up, thirty steady seconds, and five seconds of drain.
-Read/ack revision 3 corrects the workload; its cell A/A gate remains open.
+Read/ack revision 3 corrects the workload. Its three-pair cell A/A was
+inconclusive, then its five-pair A/A passed without changing the policy.
 
 ## Surprises & Discoveries
+
+- Observation: longer observation and five paired cold resets made the
+  corrected read/ack workload comparable on alpha. The three-pair revision-3
+  control was inconclusive despite six passing benchmark-grade slices. The
+  five-pair control used the same clean released payload in both arms, one
+  lease, ten cold resets, ten completed and verified slices, and ten passing
+  benchmark-grade nested runs with no failed operations. The ratio intervals
+  passed for p50 (0.961–1.012), p99 (0.833–1.040), message throughput
+  (0.962–1.005), and allocation (0.997–1.001). This is an A/A measurement
+  control, not a released-versus-fixed performance comparison.
+  Evidence: ignored local reports
+  `.dev/pair-aa-pgmq-read-ack-r3-3/comparison.json` (comparison
+  `01a0ee67-81e4-779b-aa6c-3982457a48c1`) and
+  `.dev/pair-aa-pgmq-read-ack-r3-5/comparison.json` (comparison
+  `01a0ee74-7d36-7596-8be9-61eca999e592`); the five-pair session journal
+  names lease `01a0ee67-f06c-7231-ba79-2a64ae2aa0da`. Published bundle
+  `gs://tan-nb-exp-cells-control/payloads/sha256/4ca53122391a91f2d9db324a4e2e0b9467a700f198cb4b61774eeb4bb6fe4344.nar.zst`
+  has 60,489,713 bytes and schema-valid descriptor
+  `payloads/released-bench-r3.json` (ignored locally).
 
 - Observation: the registered read/ack benchmark did not execute the workload
   specified here. Its timed operation sent one message before each one-message
@@ -784,4 +805,4 @@ What other plans consume from this one. Nothing imports `kenshou-pgmq` except `k
 
 Revision note (2026-09-23): Added a completion gate to audit reproduced PGMQ failures against published behavior and existing owner records, file versioned OKF bug reports where warranted, and track each canonical bug concept URI in Kenshou.
 
-Revision note (2026-09-29): Recorded two verified but inconclusive leased-cell read/ack A/A controls, versioned the benchmark phase window, and corrected the read/ack workload at scenario revision 3 after finding that those controls timed sends.
+Revision note (2026-09-29): Recorded two verified but inconclusive leased-cell read/ack A/A controls, versioned the benchmark phase window, and corrected the read/ack workload at scenario revision 3 after finding that those controls timed sends. The corrected five-pair alpha A/A control passed after an inconclusive three-pair attempt.

@@ -418,7 +418,11 @@ and throughput under the unchanged policy. They also timed a send inside each
 read/ack cycle, so they do not establish the planned preloaded-drain workload.
 Benchmark revision 2 widens the three-second steady window; read/ack revision
 3 corrects the operation and passed short local PostgreSQL 18 batch-archive
-and pop probes. A clean Linux payload and new cell comparison remain open.
+and pop probes. Clean Linux released payload `265f35b` then passed a five-pair
+read/ack A/A control on alpha: ten completed, verified cold-reset slices under
+one lease, all nested runs benchmark-grade with zero operation failures, and
+p50, p99, message throughput, and allocation inside policy limits. A three-pair
+control had been inconclusive. The other PGMQ benchmark controls remain open.
 
 EP-17 has checked Nix identities for both cohorts, a visible payload
 publisher, and a capability cache consumed by cell routing and submission.
@@ -883,4 +887,4 @@ Revision note (2026-09-27): Recorded clean Kafka rebalance and stability-soak ba
 
 Revision note (2026-09-27): Resolved finding 16's owner-report gap with Kiroku IR-17, dependent on the existing lifetime member-guard request IR-15, and updated the distinct-issue register.
 
-Revision note (2026-09-29): Added a dated technical baseline report and reconciled the issue register with five existing Keiro owner reports, the Kiroku publisher-leak duplicate disposition, and later Shibuya and adapter filings. Restored EP-13's soaks to the initial baseline scope. Recorded inconclusive leased-cell PGMQ controls, then excluded the old read/ack workload from baseline eligibility after correcting its timed operation in scenario revision 3.
+Revision note (2026-09-29): Added a dated technical baseline report and reconciled the issue register with five existing Keiro owner reports, the Kiroku publisher-leak duplicate disposition, and later Shibuya and adapter filings. Restored EP-13's soaks to the initial baseline scope. Excluded old PGMQ read/ack controls from baseline eligibility after correcting the timed operation in scenario revision 3; the new five-pair alpha A/A control passed.
