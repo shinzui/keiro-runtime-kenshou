@@ -1,0 +1,7 @@
+# Keiro write-side soak uses the default diagnosis window after a shorter duration override
+
+Status: reproduced in the local Kenshou scenario and repaired in source; a clean shortened cell replay is pending. Owner is this repository. No Keiro runtime bug report follows from this run.
+
+The clean released-cohort alpha cell run `01a0ef11-a09f-75f6-a554-1c1e93be41e5` executed nested run `01a0ef11-50b8-7113-8e21-19926af2ea98` with `soak.duration-minutes=5`. The workload ran for five minutes, but its leak diagnosis retained the reduced scenario's static 20-minute steady window, from second 5 to second 1205. It therefore reported `insufficient-data` after collecting only about 299 seconds of points. The same run failed three business checks, which cannot be attributed to a runtime defect from this shortened, mismatched configuration alone.
+
+`Kenshou.Suite.Keiro.Command.SteadyState` derived the measurement duration from the knob while the registered `PhasePlan` and `RunContext.steadyWindow` kept the default 1200-second duration. The scenario accepts overrides down to one minute. `Kenshou.Diagnose.Leak.judgeLeaksWithWindow` now accepts the effective measurement window, and both Keiro write-side soak variants use it. The diagnosis and Keiro package tests pass. The five-minute historical result remains excluded; the planned 20-minute reduced cell run supplies the default-duration control, while the override repair still needs a clean rerun.

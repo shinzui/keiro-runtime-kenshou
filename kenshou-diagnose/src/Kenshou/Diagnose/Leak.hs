@@ -9,6 +9,7 @@ module Kenshou.Diagnose.Leak
     defaultLeakSpec,
     loadLeakPolicy,
     judgeLeaks,
+    judgeLeaksWithWindow,
     analyseRunDirectory,
     analyseSeriesDirectory,
     majorGcSamples,
@@ -134,7 +135,14 @@ loadLeakPolicy path = do
 
 judgeLeaks :: Core.RunContext -> LeakSpec -> IO LeakReport
 judgeLeaks context spec = do
-  report <- analyse (Context.runDirectory context) spec (Context.runSeed context) (Context.steadyWindow context)
+  window <- Context.steadyWindow context
+  judgeLeaksWithWindow context window spec
+
+-- | Use the effective measurement window when a scenario overrides its
+-- registered phase duration at run time.
+judgeLeaksWithWindow :: Core.RunContext -> Maybe (Double, Double) -> LeakSpec -> IO LeakReport
+judgeLeaksWithWindow context window spec = do
+  report <- analyse (Context.runDirectory context) spec (Context.runSeed context) (pure window)
   generatedAt <- getCurrentTime
   let (runId, scenario) = Context.runIdentity context
       document = Diagnosis LeakDiagnosis runId scenario generatedAt generator (toJSON report)

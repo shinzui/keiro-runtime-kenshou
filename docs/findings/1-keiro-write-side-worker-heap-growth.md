@@ -55,3 +55,12 @@ growing Kiroku publisher position thunk. An isolated Kiroku append control
 and a version-locked command soak reduced growth after forcing that scalar
 position; the owner report records the evidence and published fix. The next
 Kenshou check is a comparable full worker soak against the fixed cohort.
+
+A clean twenty-minute reduced soak on alpha, verified cell run
+`01a0ef29-112a-7170-8e14-1e586ac1cb81` and [digest-linked nested
+run](../verification/runs/keiro/2026/09/01a0ef1a-d6e9-77d1-aefb-d43eb6460645.md),
+also suspected post-major heap growth in the process-manager and router
+children on the released cohort. Its default-rate business checks did not
+quiesce within the fixed drain budget; [finding 44](44-keiro-write-side-default-soak-does-not-quiesce.md)
+tracks that separate, unattributed observation. This cell run strengthens
+the released-cohort leak baseline without serving as a post-fix check.

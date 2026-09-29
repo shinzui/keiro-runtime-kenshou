@@ -16,7 +16,7 @@ import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), 
 import Kenshou.Core.Outcome (Outcome (..), worstOutcome)
 import Kenshou.Core.Phase (PhasePlan (..))
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport (..), Tier (..), failedWith)
-import Kenshou.Diagnose.Leak (LeakReport (..), LeakSpec (..), ProbeSpec (..), defaultLeakSpec, judgeLeaks, leakOutcome)
+import Kenshou.Diagnose.Leak (LeakReport (..), LeakSpec (..), ProbeSpec (..), defaultLeakSpec, judgeLeaksWithWindow, leakOutcome)
 import Kenshou.Diagnose.Leak.MajorGcProbe (withMajorGcProbe)
 import Kenshou.Diagnose.Series (SeriesBinding (..))
 import Kenshou.Measure.Knobs (LoadDefaults (..), defaultLoadDefaults, loadKnobs, loadModelFromKnobs, measureKnobs)
@@ -42,7 +42,7 @@ seedBacklog :: Bool -> Scenario
 seedBacklog reduced =
   Scenario
     { id = either (error . show) id (parseScenarioId (if reduced then "keiro/snapshot/soak/seed-verification-backlog-reduced" else "keiro/snapshot/soak/seed-verification-backlog")),
-      revision = 1,
+      revision = 2,
       summary = "Sustains commands against a long snapshotted stream and judges thread and connection growth.",
       tier = if reduced then TierExtended else TierSoak,
       placement = if reduced then PlaceEither else PlaceCell,
@@ -137,7 +137,7 @@ runSeedBacklog context =
                   minPoints = 10,
                   envelopeWindowSeconds = max 2 (min 30 (duration / 40))
                 }
-        leak <- judgeLeaks context leakSpec
+        leak <- judgeLeaksWithWindow context (Just (5, 5 + duration)) leakSpec
         putSummary context Measurements "seed-backlog" (object ["streamLength" .= lengthBefore, "sampleRate" .= rate, "completed" .= completed, "failed" .= failures, "majorGcIntervalMs" .= majorGcMs, "leakVerdict" .= show leak.verdict])
         base <- recordCells context [("stream-prepared", accepted opened && seeded), ("commands-completed", completed > 0 && failures == 0), ("snapshot-boundary", snapshotOkay), ("durable-ledger", ledgerOkay && Oracle.logWellFormed rows)]
         let healthResult = measuredOutcome report base.outcome

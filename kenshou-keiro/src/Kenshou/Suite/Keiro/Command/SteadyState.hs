@@ -36,7 +36,7 @@ import Kenshou.Core.Outcome (Outcome (..), worstOutcome)
 import Kenshou.Core.Phase (PhasePlan (..))
 import Kenshou.Core.Role (ControlMessage (..), WorkerMessage (..))
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport (..), Tier (..), failedWith)
-import Kenshou.Diagnose.Leak (LeakReport (..), LeakSpec (..), ProbeReport (..), ProbeSpec (..), analyseSeriesDirectory, defaultLeakSpec, judgeLeaks, leakOutcome)
+import Kenshou.Diagnose.Leak (LeakReport (..), LeakSpec (..), ProbeReport (..), ProbeSpec (..), analyseSeriesDirectory, defaultLeakSpec, judgeLeaksWithWindow, leakOutcome)
 import Kenshou.Diagnose.Series (SeriesBinding (..), readBinding)
 import Kenshou.Measure.Knobs (measureKnobs)
 import Kenshou.Measure.Load (ClosedConfig (..), LoadModel (..), Operation (..), runLoad)
@@ -63,7 +63,7 @@ steadyState :: Bool -> Scenario
 steadyState reduced =
   Scenario
     { id = either (error . show) id (parseScenarioId (if reduced then "keiro/command/soak/write-side-steady-state-reduced" else "keiro/command/soak/write-side-steady-state")),
-      revision = 1,
+      revision = 2,
       summary = "Runs two command writers with durable saga, router, and projection workers, then checks quiescent effects.",
       tier = if reduced then TierExtended else TierSoak,
       placement = if reduced then PlaceEither else PlaceCell,
@@ -206,7 +206,7 @@ runSteadyState context = case measureConfigFromKnobs context (phasePlanFromCore 
             noWriterError = all (\snapshot -> case snapshot.lastMessage of Just (WrkError _) -> False; _ -> True) writerStates
             duration = fromIntegral minutes * 60 :: Double
             leakSpec = defaultLeakSpec {warmupCutSeconds = 0, minDurationSeconds = max 30 (duration * 0.7), minPoints = 10, envelopeWindowSeconds = max 2 (min 30 (duration / 40))}
-        leak <- judgeLeaks context leakSpec
+        leak <- judgeLeaksWithWindow context (Just (5, 5 + duration)) leakSpec
         childLeaks <- forM [("keiro/command-writer", 0 :: Int), ("keiro/command-writer", 1), ("keiro/pm-worker", 0), ("keiro/router-worker", 0), ("keiro/projection-worker", 0)] \(role, index) -> do
           let label = Text.unpack (Text.replace "/" "-" role) <> "-" <> show index
               appName = "kenshou-" <> Text.take 8 (renderRunId context.runId) <> "-" <> role <> "-" <> Text.pack (show index)
@@ -219,7 +219,7 @@ runSteadyState context = case measureConfigFromKnobs context (phasePlanFromCore 
           LazyByteString.writeFile path (encode named)
           Core.declareMediaType context relative "application/json"
           pure (label, named)
-        putSummary context Measurements "write-side-steady" (object ["accounts" .= accounts, "fanout" .= fanout, "workerKills" .= killCount, "transfers" .= transfers, "bonuses" .= bonuses, "accountEvents" .= length accountRows, "prunedDedupRowsFinal" .= pruned, "oldDedupRows" .= oldDedup, "dedupRows" .= dedupCount, "commandLatency" .= object ["firstDecileP99Ns" .= earlyP99, "lastDecileP99Ns" .= lateP99, "firstDecileSamples" .= earlyCount, "lastDecileSamples" .= lateCount, "verdict" .= show latencyVerdict], "leakVerdict" .= show leak.verdict, "childLeakVerdicts" .= [(label, show report.verdict) | (label, report) <- childLeaks], "coverageStatus" .= ("partial: full telemetry arms pending" :: Text.Text)])
+        putSummary context Measurements "write-side-steady" (object ["accounts" .= accounts, "fanout" .= fanout, "workerKills" .= killCount, "transfers" .= transfers, "transferAnnounced" .= count "TransferAnnounced" accountRows, "transferCredited" .= count "TransferCredited" accountRows, "transferConfirmed" .= count "TransferConfirmed" accountRows, "bonuses" .= bonuses, "bonusCredited" .= count "BonusCredited" accountRows, "sagaEvents" .= length sagaRows, "accountEvents" .= length accountRows, "activityApplied" .= sum [applied | (applied, _) <- Map.elems activity], "quiescentWithinTimeout" .= (quiescent == Just True), "inlineBalancesMatch" .= modelMatches, "asyncActivityMatches" .= activityMatches, "prunedDedupRowsFinal" .= pruned, "oldDedupRows" .= oldDedup, "dedupRows" .= dedupCount, "commandLatency" .= object ["firstDecileP99Ns" .= earlyP99, "lastDecileP99Ns" .= lateP99, "firstDecileSamples" .= earlyCount, "lastDecileSamples" .= lateCount, "verdict" .= show latencyVerdict], "leakVerdict" .= show leak.verdict, "childLeakVerdicts" .= [(label, show report.verdict) | (label, report) <- childLeaks], "coverageStatus" .= ("partial: full telemetry arms pending" :: Text.Text)])
         base <-
           recordCells
             context

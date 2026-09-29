@@ -229,6 +229,14 @@ def main():
         external_result = validate(external_uri)
         if external_result.returncode:
             raise SystemExit(f"shared profile should accept an absolute URI:\n{external_result.stdout}")
+        empty_knob_bundle = Path(scratch) / "valid-empty-knob"
+        shutil.copytree(BUNDLE, empty_knob_bundle)
+        empty_knob_run = run_record()
+        empty_knob_run["knobs"] = [{"name": "otel.endpoint", "value": ""}]
+        write_concept(empty_knob_bundle, RUN_PATH, empty_knob_run)
+        empty_knob_result = validate(empty_knob_bundle)
+        if empty_knob_result.returncode:
+            raise SystemExit(f"empty string is a valid explicit knob value:\n{empty_knob_result.stdout}")
         for case in cases:
             bundle = Path(scratch) / case["name"]
             shutil.copytree(BUNDLE, bundle)
