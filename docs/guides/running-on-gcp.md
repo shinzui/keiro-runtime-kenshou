@@ -50,8 +50,11 @@ change:
 
 ```bash
 kenshou cell status --cell alpha
-kenshou cell probe --cell alpha --payload payloads/released.json
+kenshou cell probe --cell alpha --payload payloads/head.json
 ```
+
+The probe payload must contain the `cell-environment` scenario; an older
+published payload may not include it.
 
 The passing probe writes `.dev/cells/alpha.capabilities.json`, keyed to the
 descriptor digest. Route and submit ignore an older cache. The probe records

@@ -19,7 +19,7 @@ Probe a cell after publishing a payload that contains the environment
 scenario:
 
 ```bash
-kenshou cell probe --cell alpha --payload payloads/released.json
+kenshou cell probe --cell alpha --payload payloads/head.json
 ```
 
 The probe runs under a lease, verifies the sealed result, and writes

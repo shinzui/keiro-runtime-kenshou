@@ -425,7 +425,11 @@ profiled Linux payload was built and published from the x86 builder, and an
 alpha run with `GHCRTS=-p` sealed both GHC `.prof` files with verified manifest
 digests and a passing nested cell-environment result. The first run immediately
 after starting the monitoring VM failed only OTLP reachability; its warm repeat
-passed, and the owner driver is gaining a bounded service-readiness check.
+passed. The owner driver now waits under the lease for the PostgreSQL reset
+port and collector endpoints. The role-ready image passed a fresh alpha run
+with both role VMs initially stopped: the PostgreSQL reset, all seven nested
+environment checks including OTLP, and both sealed profiles verified. A
+head-payload probe then refreshed alpha's descriptor-keyed capability cache.
 The broader diagnostic and live acceptance matrix and remaining owner cell
 health work remain open.
 
