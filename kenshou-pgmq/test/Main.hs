@@ -53,6 +53,14 @@ main = hspec do
       readAck.revision `shouldBe` 3
       CoreKnob.knobInt resolved (knob "pgmq.message-count") `shouldBe` 500_000
 
+    it "preloads grouped heads for the declared group and strategy controls" do
+      let grouped = maybe (error "grouped-read benchmark is not registered") id (find ((== "pgmq/fifo/benchmark/grouped-read-cost") . renderScenarioId . (.id)) bundle.scenarios)
+          resolved = resolvedOrFail (CoreKnob.resolveKnobs grouped.knobs [])
+      grouped.revision `shouldBe` 3
+      CoreKnob.knobInt resolved (knob "pgmq.message-count") `shouldBe` 500_000
+      CoreKnob.knobInt resolved (knob "pgmq.groups") `shouldBe` 5
+      CoreKnob.knobText resolved (knob "pgmq.read-strategy") `shouldBe` "grouped-head"
+
   describe "lease oracle" do
     it "accepts consecutive leases after visibility expiry" do
       checkLeaseIntervals [lease 1 1 at0 at2, lease 1 2 at2 at4] `shouldBe` []

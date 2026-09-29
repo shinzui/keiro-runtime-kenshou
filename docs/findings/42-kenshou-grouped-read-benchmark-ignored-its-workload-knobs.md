@@ -1,0 +1,9 @@
+# The grouped-read benchmark ignored its declared workload controls
+
+Status: reproduced on alpha and repaired in this repository's PGMQ scenario. This is a local benchmark-validity defect; no pgmq-hs runtime-owner report is warranted.
+
+The revision-2 `pgmq/fifo/benchmark/grouped-read-cost` five-pair A/A attempt, cell session `01a0eeef-269e-7449-8ac3-1a13c2e88725`, produced three completed and verified slices before it was stopped. Each nested run reached benchmark measurement grade but failed on `empty-grouped-read-after-send`; the run IDs are `01a0eeac-36ea-732d-a69c-e8411b98a4f8`, `01a0eeac-36ea-732d-ae47-96e825cc7bdd`, and `01a0eeac-36ea-732d-affe-28c91d86b2a5`. No valid A/A comparison or runtime performance result follows from them.
+
+Source inspection showed that each timed operation sent one message, immediately read one grouped head, and treated an empty read as a failure. Concurrent workers can take one another's sends; the operation did not guarantee a visible head for each worker. It also hard-coded 64 group labels and the grouped-head function, while ignoring the declared `pgmq.groups`, `pgmq.read-strategy`, `pgmq.batch-size`, `pgmq.message-count`, and `pgmq.fifo-index` controls. The old workload could not answer the plan's question about grouped strategies, group count, or the FIFO index.
+
+Scenario revision 3 preloads a finite queue with the selected number of groups before measurement, creates the optional FIFO index, selects the requested grouped read function and batch size, drains and acknowledges messages, and reports message units rather than send/read/delete calls. The benchmark default preload is 500,000 messages. The package test checks the revised catalog defaults. A fresh clean released payload and leased-cell A/A are required before grouped-read numbers can enter the baseline.

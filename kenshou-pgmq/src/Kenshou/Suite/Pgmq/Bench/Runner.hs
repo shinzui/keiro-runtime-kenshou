@@ -3,7 +3,7 @@ module Kenshou.Suite.Pgmq.Bench.Runner (runBenchmark) where
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (async, wait)
 import Control.Exception (SomeException, try)
-import Control.Monad (forM_)
+import Control.Monad (forM_, when)
 import Data.Aeson (object, (.=))
 import Data.Int (Int32)
 import Data.List (sort)
@@ -28,6 +28,7 @@ import Kenshou.Suite.Pgmq.Knobs (AckMode (..), PgmqKnobs (..), ReadStrategy (..)
 import Kenshou.Suite.Pgmq.Listener (awaitNotifications, withListener)
 import Kenshou.Telemetry (TelemetryHandles (..))
 import Pgmq.Effectful qualified as Pgmq
+import Pgmq.Effectful.Effect qualified as PgmqEffect
 import Pgmq.Hasql.Sessions qualified as Sessions
 import Pgmq.Hasql.Statements.Types qualified as Types
 import Pgmq.Types qualified as PgmqTypes
@@ -57,7 +58,7 @@ runMeasured identifier context = case (loadModelFromKnobs context.knobs, measure
   (_, _, Left message) -> pure (failedWith ["invalid-client-layer"] message)
   (Right loadModel, Right measureConfig, Right selectedLayer) ->
     withPgmqRun context \runtime ->
-      case readAckConfiguration identifier context runtime.knobs loadModel of
+      case benchmarkLoadConfiguration identifier context runtime.knobs loadModel of
         Left message -> pure (failedWith ["invalid-read-ack-configuration"] message)
         Right effectiveLoadModel ->
           withScenarioQueue runtime.pool context runtime.knobs "benchmark" \queue -> do
@@ -77,11 +78,27 @@ runMeasured identifier context = case (loadModelFromKnobs context.knobs, measure
                         "consumers" .= knobInt context.knobs (knobName "pgmq.consumers")
                       ]
                     else []
-            putSummary context Verdicts "pgmq-benchmark" (object (["identifier" .= identifier, "layer" .= show layer, "wake" .= knobText context.knobs (knobName "pgmq.wake"), "failedOperations" .= failures] <> readAckFields))
+                groupedFields =
+                  if identifier == "pgmq/fifo/benchmark/grouped-read-cost"
+                    then
+                      [ "preloadedMessages" .= knobInt context.knobs (knobName "pgmq.message-count"),
+                        "groups" .= knobInt context.knobs (knobName "pgmq.groups"),
+                        "readStrategy" .= show runtime.knobs.readStrategy,
+                        "batchSize" .= runtime.knobs.batchSize,
+                        "fifoIndex" .= knobBool context.knobs (knobName "pgmq.fifo-index")
+                      ]
+                    else []
+            putSummary context Verdicts "pgmq-benchmark" (object (["identifier" .= identifier, "layer" .= show layer, "wake" .= knobText context.knobs (knobName "pgmq.wake"), "failedOperations" .= failures] <> readAckFields <> groupedFields))
             pure (base {outcome = measuredOutcome report base.outcome})
 
-readAckConfiguration :: Text -> RunContext -> PgmqKnobs -> LoadModel -> Either Text LoadModel
-readAckConfiguration identifier context knobs loadModel
+benchmarkLoadConfiguration :: Text -> RunContext -> PgmqKnobs -> LoadModel -> Either Text LoadModel
+benchmarkLoadConfiguration identifier context knobs loadModel
+  | identifier == "pgmq/fifo/benchmark/grouped-read-cost" =
+      if knobs.readStrategy `notElem` [Grouped, GroupedRoundRobin, GroupedHead]
+        then Left "grouped-read-cost requires a grouped read strategy"
+        else case loadModel of
+          ClosedLoop _ -> Right loadModel
+          OpenLoop _ -> Left "grouped-read-cost requires load.model=closed"
   | identifier /= "pgmq/read/benchmark/read-ack-throughput" = Right loadModel
   | knobs.readStrategy `notElem` [Plain, Pop] = Left "read-ack-throughput supports only plain and pop reads"
   | knobs.readStrategy == Pop && knobs.ackMode /= AckDelete = Left "pop removes messages itself; use pgmq.ack-mode=delete"
@@ -103,6 +120,14 @@ operationName identifier layer
 
 prepare :: Text -> PgmqRun -> Pgmq.QueueName -> IO ()
 prepare identifier runtime queue
+  | "grouped-read-cost" `Text.isInfixOf` identifier = do
+      when (knobBool runtime.ctx.knobs (knobName "pgmq.fifo-index")) (effect runtime (PgmqEffect.createFifoIndex queue))
+      let count = fromIntegral (knobInt runtime.ctx.knobs (knobName "pgmq.message-count"))
+          groups = fromIntegral (knobInt runtime.ctx.knobs (knobName "pgmq.groups"))
+      forM_ (chunksOf 1000 [1 .. count]) \chunk -> do
+        let headers = [Pgmq.MessageHeaders (object ["x-pgmq-group" .= ("g" <> Text.pack (show ((index - 1) `mod` groups)))]) | index <- chunk]
+        _ <- effect runtime (Pgmq.batchSendMessageWithHeaders (Types.BatchSendMessageWithHeaders queue (fmap payload chunk) headers Nothing))
+        pure ()
   | "read-ack-throughput" `Text.isInfixOf` identifier = do
       let count = fromIntegral (knobInt runtime.ctx.knobs (knobName "pgmq.message-count"))
       forM_ (chunksOf 1000 [1 .. count]) \chunk -> do
@@ -138,7 +163,7 @@ runOperation identifier runtime client queue _ sequenceNumber = do
       | "send-throughput" `Text.isInfixOf` identifier = sendOperation client queue sequenceNumber runtime.knobs.batchSize (knobText runtime.ctx.knobs (knobName "pgmq.op"))
       | "read-ack-throughput" `Text.isInfixOf` identifier = readAckCycle runtime client queue
       | "produce-consume" `Text.isInfixOf` identifier = wakeCycle runtime client queue sequenceNumber
-      | "grouped-read" `Text.isInfixOf` identifier = groupedCycle runtime queue sequenceNumber
+      | "grouped-read" `Text.isInfixOf` identifier = groupedDrain runtime queue
       | "interpreter-tracing-overhead" `Text.isInfixOf` identifier && knobBool runtime.ctx.knobs (knobName "pgmq.trace.propagate") = propagatedCycle runtime queue sequenceNumber
       | otherwise = fullCycle client queue sequenceNumber
 
@@ -186,16 +211,20 @@ readAvailable attempts action = do
     then threadDelay 1000 >> readAvailable (attempts - 1) action
     else pure values
 
-groupedCycle :: PgmqRun -> Pgmq.QueueName -> Word64 -> IO OpResult
-groupedCycle runtime queue sequenceNumber = do
-  let group = "g" <> Text.pack (show (sequenceNumber `mod` 64))
-  _ <- effect runtime (Pgmq.sendMessageWithHeaders (Types.SendMessageWithHeaders queue (payload (fromIntegral sequenceNumber)) (Pgmq.MessageHeaders (object ["x-pgmq-group" .= group])) Nothing))
-  messages <- effect runtime (Pgmq.readGroupedHead (Types.ReadGrouped queue 30 1))
-  case Vector.toList messages of
-    [] -> pure (OpFailed (ErrorCause "empty-grouped-read-after-send"))
-    message : _ -> do
-      acknowledged <- effect runtime (Pgmq.deleteMessage (Types.MessageQuery queue message.messageId))
-      pure (if acknowledged then OpOk 3 else OpFailed (ErrorCause "grouped-delete-returned-false"))
+groupedDrain :: PgmqRun -> Pgmq.QueueName -> IO OpResult
+groupedDrain runtime queue = do
+  let request = Types.ReadGrouped queue runtime.knobs.visibilityTimeoutSeconds runtime.knobs.batchSize
+      readGrouped = case runtime.knobs.readStrategy of
+        Grouped -> Pgmq.readGrouped request
+        GroupedRoundRobin -> Pgmq.readGroupedRoundRobin request
+        _ -> Pgmq.readGroupedHead request
+  messages <- effect runtime readGrouped
+  let values = Vector.toList messages
+  if null values
+    then pure (OpFailed (ErrorCause "preloaded-grouped-queue-exhausted"))
+    else do
+      acknowledged <- and <$> traverse (\message -> effect runtime (Pgmq.deleteMessage (Types.MessageQuery queue message.messageId))) values
+      pure (if acknowledged then OpOk (length values) else OpFailed (ErrorCause "grouped-delete-returned-false"))
 
 propagatedCycle :: PgmqRun -> Pgmq.QueueName -> Word64 -> IO OpResult
 propagatedCycle runtime queue sequenceNumber = case runtime.telemetry.tracerProvider of

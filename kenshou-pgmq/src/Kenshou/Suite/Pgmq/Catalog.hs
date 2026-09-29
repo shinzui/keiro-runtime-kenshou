@@ -95,6 +95,7 @@ pgmqScenario definition =
 scenarioRevision :: Text -> Int
 scenarioRevision identifier
   | identifier == "pgmq/read/benchmark/read-ack-throughput" = 3
+  | identifier == "pgmq/fifo/benchmark/grouped-read-cost" = 3
   | "/benchmark/" `Text.isInfixOf` identifier = 2
   | identifier == "pgmq/effectful/concurrency/backend-termination-recovery" = 2
   | otherwise = 1
@@ -102,11 +103,16 @@ scenarioRevision identifier
 scenarioCommonKnobs :: Text -> [KnobSpec]
 scenarioCommonKnobs identifier
   | identifier == "pgmq/read/benchmark/read-ack-throughput" = fmap readAckDefault commonKnobs
+  | identifier == "pgmq/fifo/benchmark/grouped-read-cost" = fmap groupedDefault commonKnobs
   | otherwise = commonKnobs
   where
     readAckDefault :: KnobSpec -> KnobSpec
     readAckDefault spec
       | spec.name == knobName "pgmq.message-count" = spec {CoreKnob.def = VInt 500_000}
+      | otherwise = spec
+    groupedDefault spec
+      | spec.name == knobName "pgmq.message-count" = spec {CoreKnob.def = VInt 500_000}
+      | spec.name == knobName "pgmq.read-strategy" = spec {CoreKnob.def = VText "grouped-head"}
       | otherwise = spec
 
 workloadKnobs :: Text -> [KnobSpec]
