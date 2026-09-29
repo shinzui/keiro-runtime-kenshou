@@ -79,6 +79,7 @@ After this plan, a maintainer can run `kenshou list --layer pgmq` and see about 
 - [x] (2026-09-24) Extended backend termination to twelve fault rounds over two minutes on each PostgreSQL major. Every round confirmed, delivered and acknowledged 200 messages with the same pool, and only BUG-1's classifier label failed. Continuous producer and consumer traffic during each fault remains part of the wider outage work.
 - [x] (2026-09-25) Completed continuous producer and consumer traffic during twelve backend faults on PostgreSQL 17 and 18. Both two-minute runs preserved and acknowledged over 5,500 confirmed sends, confined errors and duplicate deliveries to the fault windows, drained their queues, and reproduced only BUG-1's classifier label.
 - [ ] Rerun the seven noisy A/A controls on a quiet leased cell; local p99 noise remains inconclusive under the checked-in policy.
+- [x] (2026-09-29) Corrected the read/ack benchmark to preload a finite queue, drain it with the selected plain or pop read, execute all four acknowledgement modes, use `pgmq.consumers` for closed-loop workers, and report message rather than call throughput. Versioned only this scenario to revision 3. A local PostgreSQL 18 batch-archive smoke passed with zero operation failures; a deliberately undersized preload exhausted as expected. The cell A/A and slowed-arm gates remain open.
 - [x] (2026-09-24) Obtained stable twenty-minute reduced-soak leak verdicts at 100 cycles/s with tracing off and OTLP, using post-major-collection heap samples.
 - [x] (2026-09-24) Ran both twenty-minute reduced-soak controls at the registered 500 cycles/s default rate, with tracing off and OTLP. Retained the lower-rate pair as a controlled comparison.
 
@@ -86,12 +87,30 @@ The first quiet-cell read/ack A/A controls sealed all six and ten slices under
 one lease per trial. Comparison `01a0ee2d-b8de-7014-bd9b-1516116a551a`
 (three pairs) and `01a0ee35-b190-73de-afc7-f56c09a4954f` (five pairs) were
 both inconclusive under `policies/pgmq.json`: p50 and allocation passed, while
-p99 and throughput confidence intervals were too wide. The version-1
-benchmark measured only three steady seconds. Benchmark revision 2 now uses
-five seconds of warm-up, thirty steady seconds, and five seconds of drain;
-the cell A/A gate remains open until the new payload is run and judged.
+p99 and throughput confidence intervals were too wide. Inspection then showed
+that the old implementation sent a message inside every timed read/ack cycle,
+so those comparisons also do not qualify as evidence for the planned
+preloaded-drain workload. Benchmark revision 2 widened the phase window to
+five seconds of warm-up, thirty steady seconds, and five seconds of drain.
+Read/ack revision 3 corrects the workload; its cell A/A gate remains open.
 
 ## Surprises & Discoveries
+
+- Observation: the registered read/ack benchmark did not execute the workload
+  specified here. Its timed operation sent one message before each one-message
+  read and delete, never preloaded the queue, and ignored read strategy, batch
+  size, acknowledgement mode, and consumer count. The old A/A runs are valid
+  measurements of that old implementation, but cannot establish read/ack
+  performance. Revision 3 preloads `pgmq.message-count` (default 500,000),
+  drains batches, and treats exhaustion as a failed operation. A 10,000-row
+  local probe exhausted during its two-second window, while a 50,000-row
+  PostgreSQL 18 batch-archive probe with a one-second steady window passed
+  with zero operation failures; the corresponding pop probe also passed.
+  These short local probes validate the harness,
+  not the cell comparison or a throughput baseline.
+  Evidence: `runs/01a0ee4a-07b5-724e-a92f-273e75de59cd/` and
+  `runs/01a0ee4c-5381-75cf-896a-c1bb8105aff5/` and
+  `runs/01a0ee4c-a268-7196-bb32-4f5c97027c52/` (ignored local artifacts).
 
 - Observation: a resettable leased cell alone did not make the three-second
   PGMQ read/ack benchmark comparable. In the five-pair A/A trial, baseline
@@ -248,6 +267,18 @@ the cell A/A gate remains open until the new payload is run and judged.
 
 
 ## Decision Log
+
+- Decision: Keep the preloaded read/ack workload at scenario revision 3, with
+  default `pgmq.message-count=500000`; count successful message units and fail
+  when the queue exhausts during measurement. Plain reads use the selected
+  acknowledgement operation, while pop has no second acknowledgement. The
+  PGMQ comparison policy selects `op.*.units-throughput` so batching is judged
+  in messages per second instead of database calls per second.
+  Rationale: Revision 1 and 2 timed a send inside every read/ack operation and
+  ignored the planned strategy, batch, acknowledgement, and consumer knobs.
+  A new revision prevents those old series from being treated as compatible
+  baselines. Exhaustion means the requested timed workload was not supplied.
+  Date: 2026-09-29
 
 - Decision: Version all PGMQ benchmarks at scenario revision 2 with a
   five-second warm-up, thirty-second steady measurement, and five-second drain
@@ -753,4 +784,4 @@ What other plans consume from this one. Nothing imports `kenshou-pgmq` except `k
 
 Revision note (2026-09-23): Added a completion gate to audit reproduced PGMQ failures against published behavior and existing owner records, file versioned OKF bug reports where warranted, and track each canonical bug concept URI in Kenshou.
 
-Revision note (2026-09-29): Recorded two verified but inconclusive leased-cell read/ack A/A controls and versioned the benchmark phase window for a comparable rerun.
+Revision note (2026-09-29): Recorded two verified but inconclusive leased-cell read/ack A/A controls, versioned the benchmark phase window, and corrected the read/ack workload at scenario revision 3 after finding that those controls timed sends.

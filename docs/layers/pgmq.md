@@ -53,7 +53,7 @@ The shared knobs directly name their pgmq-hs or workload setting. Important defa
 
 - `pgmq/effectful/benchmark/layer-ladder` — raw SQL versus pgmq-hasql versus pgmq-effectful.
 - `pgmq/send/benchmark/send-throughput` — send throughput, latency, batching, and WAL cost.
-- `pgmq/read/benchmark/read-ack-throughput` — read and acknowledgement throughput.
+- `pgmq/read/benchmark/read-ack-throughput` — drains a queue preloaded with `pgmq.message-count` (500,000 by default). `pgmq.consumers` controls closed-loop workers; plain reads use `pgmq.batch-size` and the selected delete/archive acknowledgement, while pop removes messages in its read. Exhaustion fails the run. This workload is scenario revision 3, and the comparison policy uses messages per second (`units-throughput`).
 - `pgmq/read/benchmark/produce-consume-latency` — intended-start latency across polling, long polling, and notifications.
 - `pgmq/read/benchmark/invisible-backlog-read-cost` — read cost behind invisible lower identifiers.
 - `pgmq/fifo/benchmark/grouped-read-cost` — grouped strategy and FIFO-index costs.
@@ -63,7 +63,7 @@ The shared knobs directly name their pgmq-hs or workload setting. Important defa
 - `pgmq/queue/soak/steady-state` — four-hour cell soak with process, queue, index, and archive verdicts.
 - `pgmq/queue/soak/steady-state-reduced` — twenty-minute local form of the same soak.
 
-Every benchmark writes native latency histograms, load series, runtime/process series, and PostgreSQL activity, WAL, database, relation, and statement evidence. Scenario revision 2 uses five seconds of warm-up, thirty seconds of steady measurement, and five seconds of drain. The earlier three-second steady window gave inconclusive p99 and throughput A/A results even on a leased cell. `policies/pgmq.json` is the controlled-comparison policy. The overhead command uses the telemetry policy; the first tracing study found `sdk-inmemory` above that policy while `noop` and `sdk-otlp` passed, and the first metrics-collection study passed.
+Every benchmark writes native latency histograms, load series, runtime/process series, and PostgreSQL activity, WAL, database, relation, and statement evidence. Benchmark scenario revision 2 uses five seconds of warm-up, thirty seconds of steady measurement, and five seconds of drain; read/ack revision 3 also corrects its preloaded-drain workload. The earlier three-second steady window gave inconclusive p99 and throughput A/A results even on a leased cell, and those old read/ack runs timed a send inside each cycle. `policies/pgmq.json` is the controlled-comparison policy. The overhead command uses the telemetry policy; the first tracing study found `sdk-inmemory` above that policy while `noop` and `sdk-otlp` passed, and the first metrics-collection study passed.
 
 The soak uses the same constructor for its four-hour and twenty-minute registrations. It mixes deletion, archiving, and deliberate one-second nacks, drains expired work before judging convergence, watches both queue and archive relations, publishes a bloat verdict, and runs the leak detector over independent sampler series. `pgmq.soak.major-gc-interval-ms` defaults to 30000 and samples live bytes immediately after a forced major collection; set it to zero to disable that diagnostic probe. Forced collections can perturb latency, so these soak samples are diagnostic evidence and never benchmark evidence.
 

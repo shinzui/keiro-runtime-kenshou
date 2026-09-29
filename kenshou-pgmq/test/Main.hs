@@ -47,6 +47,12 @@ main = hspec do
       CoreKnob.knobInt resolved (knob "measure.interval-histogram-seconds") `shouldBe` 86_400
       CoreKnob.knobInt resolved (knob "pgmq.soak.major-gc-interval-ms") `shouldBe` 30_000
 
+    it "preloads the planned read/ack benchmark volume by default" do
+      let readAck = maybe (error "read/ack benchmark is not registered") id (find ((== "pgmq/read/benchmark/read-ack-throughput") . renderScenarioId . (.id)) bundle.scenarios)
+          resolved = resolvedOrFail (CoreKnob.resolveKnobs readAck.knobs [])
+      readAck.revision `shouldBe` 3
+      CoreKnob.knobInt resolved (knob "pgmq.message-count") `shouldBe` 500_000
+
   describe "lease oracle" do
     it "accepts consecutive leases after visibility expiry" do
       checkLeaseIntervals [lease 1 1 at0 at2, lease 1 2 at2 at4] `shouldBe` []

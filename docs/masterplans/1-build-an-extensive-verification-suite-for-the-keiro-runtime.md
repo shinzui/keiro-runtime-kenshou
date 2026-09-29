@@ -414,8 +414,11 @@ publisher leak fixed in `kiroku-store` 0.9.0.1; whole-worker verification of
 that release remains a later comparison. EP-13's planned soaks are part of
 this initial baseline pass. EP-8's first three- and five-pair PGMQ read/ack
 A/A controls sealed every leased-cell slice but returned inconclusive for p99
-and throughput under the unchanged policy. The benchmark's three-second
-steady window is being extended and versioned before another cell control.
+and throughput under the unchanged policy. They also timed a send inside each
+read/ack cycle, so they do not establish the planned preloaded-drain workload.
+Benchmark revision 2 widens the three-second steady window; read/ack revision
+3 corrects the operation and passed short local PostgreSQL 18 batch-archive
+and pop probes. A clean Linux payload and new cell comparison remain open.
 
 EP-17 has checked Nix identities for both cohorts, a visible payload
 publisher, and a capability cache consumed by cell routing and submission.
@@ -880,4 +883,4 @@ Revision note (2026-09-27): Recorded clean Kafka rebalance and stability-soak ba
 
 Revision note (2026-09-27): Resolved finding 16's owner-report gap with Kiroku IR-17, dependent on the existing lifetime member-guard request IR-15, and updated the distinct-issue register.
 
-Revision note (2026-09-29): Added a dated technical baseline report and reconciled the issue register with five existing Keiro owner reports, the Kiroku publisher-leak duplicate disposition, and later Shibuya and adapter filings. Restored EP-13's soaks to the initial baseline scope and recorded inconclusive leased-cell PGMQ controls.
+Revision note (2026-09-29): Added a dated technical baseline report and reconciled the issue register with five existing Keiro owner reports, the Kiroku publisher-leak duplicate disposition, and later Shibuya and adapter filings. Restored EP-13's soaks to the initial baseline scope. Recorded inconclusive leased-cell PGMQ controls, then excluded the old read/ack workload from baseline eligibility after correcting its timed operation in scenario revision 3.

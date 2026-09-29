@@ -21,7 +21,8 @@ import Kenshou.Core.Context (RunContext, SummarySection (..), putSummary)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
 import Kenshou.Core.Id (Kind (Benchmark, Soak), parseScenarioId)
-import Kenshou.Core.Knob (KnobSpec)
+import Kenshou.Core.Knob (KnobSpec (..), KnobValue (..))
+import Kenshou.Core.Knob qualified as CoreKnob
 import Kenshou.Core.Phase (PhasePlan (..), zeroPhases)
 import Kenshou.Core.Scenario
 import Kenshou.Measure.Knobs (LoadDefaults (..), defaultLoadDefaults, loadKnobs, measureKnobs)
@@ -29,7 +30,7 @@ import Kenshou.Suite.Pgmq.Bench.Runner (runBenchmark)
 import Kenshou.Suite.Pgmq.Concurrency.Runner (runConcurrency)
 import Kenshou.Suite.Pgmq.Correctness.Runner (runCorrectness)
 import Kenshou.Suite.Pgmq.Harness
-import Kenshou.Suite.Pgmq.Knobs (PgmqKnobs (..), commonKnobs, soakKnobs)
+import Kenshou.Suite.Pgmq.Knobs (PgmqKnobs (..), commonKnobs, knobName, soakKnobs)
 import Kenshou.Suite.Pgmq.Soak.Runner (runSoak)
 import Kenshou.Telemetry (telemetryKnobs)
 import Pgmq.Effectful
@@ -83,7 +84,7 @@ pgmqScenario definition =
       summary = definition.description,
       tier = definition.tier,
       placement = definition.placement,
-      knobs = commonKnobs <> telemetryKnobs <> workloadKnobs definition.identifier,
+      knobs = scenarioCommonKnobs definition.identifier <> telemetryKnobs <> workloadKnobs definition.identifier,
       dimensions = supportFor definition.identifier,
       phases = phasePlan definition.identifier definition.tier,
       requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaPgmq] (postgresSettings definition.identifier) (needsControl definition.identifier))},
@@ -93,9 +94,20 @@ pgmqScenario definition =
 
 scenarioRevision :: Text -> Int
 scenarioRevision identifier
+  | identifier == "pgmq/read/benchmark/read-ack-throughput" = 3
   | "/benchmark/" `Text.isInfixOf` identifier = 2
   | identifier == "pgmq/effectful/concurrency/backend-termination-recovery" = 2
   | otherwise = 1
+
+scenarioCommonKnobs :: Text -> [KnobSpec]
+scenarioCommonKnobs identifier
+  | identifier == "pgmq/read/benchmark/read-ack-throughput" = fmap readAckDefault commonKnobs
+  | otherwise = commonKnobs
+  where
+    readAckDefault :: KnobSpec -> KnobSpec
+    readAckDefault spec
+      | spec.name == knobName "pgmq.message-count" = spec {CoreKnob.def = VInt 500_000}
+      | otherwise = spec
 
 workloadKnobs :: Text -> [KnobSpec]
 workloadKnobs identifier

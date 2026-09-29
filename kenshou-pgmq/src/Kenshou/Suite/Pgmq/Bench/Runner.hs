@@ -6,6 +6,7 @@ import Control.Exception (SomeException, try)
 import Control.Monad (forM_)
 import Data.Aeson (object, (.=))
 import Data.Int (Int32)
+import Data.List (sort)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Vector qualified as Vector
@@ -18,12 +19,12 @@ import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Knob (knobBool, knobInt, knobText)
 import Kenshou.Core.Scenario (ScenarioReport (..), failedWith, passed)
 import Kenshou.Measure.Knobs (loadModelFromKnobs)
-import Kenshou.Measure.Load (LoadReport (..), Operation (..), runLoad)
+import Kenshou.Measure.Load (ClosedConfig (..), LoadModel (..), LoadReport (..), Operation (..), runLoad)
 import Kenshou.Measure.Recorder (ErrorCause (..), OpName (..), OpResult (..))
 import Kenshou.Measure.Session (MeasurementReport (..), measureConfigFromKnobs, measuredOutcome, phasePlanFromCore, withMeasurement)
 import Kenshou.Suite.Pgmq.Client
 import Kenshou.Suite.Pgmq.Harness
-import Kenshou.Suite.Pgmq.Knobs (PgmqKnobs (..), knobName)
+import Kenshou.Suite.Pgmq.Knobs (AckMode (..), PgmqKnobs (..), ReadStrategy (..), knobName)
 import Kenshou.Suite.Pgmq.Listener (awaitNotifications, withListener)
 import Kenshou.Telemetry (TelemetryHandles (..))
 import Pgmq.Effectful qualified as Pgmq
@@ -56,16 +57,37 @@ runMeasured identifier context = case (loadModelFromKnobs context.knobs, measure
   (_, _, Left message) -> pure (failedWith ["invalid-client-layer"] message)
   (Right loadModel, Right measureConfig, Right selectedLayer) ->
     withPgmqRun context \runtime ->
-      withScenarioQueue runtime.pool context runtime.knobs "benchmark" \queue -> do
-        prepare identifier runtime queue
-        let layer = if "layer-ladder" `Text.isInfixOf` identifier then selectedLayer else EffectfulLayer
-            client = mkClient layer runtime.tracer runtime.pool
-            operation = Operation (OpName (operationName identifier layer)) (runOperation identifier runtime client queue)
-        (_, report) <- withMeasurement context measureConfig (\measurement -> runLoad measurement loadModel operation)
-        let failures = sum [load.failed | load <- report.loads]
-            base = if failures == 0 then passed else failedWith ["operation-errors"] ("failed operations=" <> Text.pack (show failures))
-        putSummary context Verdicts "pgmq-benchmark" (object ["identifier" .= identifier, "layer" .= show layer, "wake" .= knobText context.knobs (knobName "pgmq.wake"), "failedOperations" .= failures])
-        pure (base {outcome = measuredOutcome report base.outcome})
+      case readAckConfiguration identifier context runtime.knobs loadModel of
+        Left message -> pure (failedWith ["invalid-read-ack-configuration"] message)
+        Right effectiveLoadModel ->
+          withScenarioQueue runtime.pool context runtime.knobs "benchmark" \queue -> do
+            prepare identifier runtime queue
+            let layer = if "layer-ladder" `Text.isInfixOf` identifier then selectedLayer else EffectfulLayer
+                client = mkClient layer runtime.tracer runtime.pool
+                operation = Operation (OpName (operationName identifier layer)) (runOperation identifier runtime client queue)
+            (_, report) <- withMeasurement context measureConfig (\measurement -> runLoad measurement effectiveLoadModel operation)
+            let failures = sum [load.failed | load <- report.loads]
+                base = if failures == 0 then passed else failedWith ["operation-errors"] ("failed operations=" <> Text.pack (show failures))
+                readAckFields =
+                  if identifier == "pgmq/read/benchmark/read-ack-throughput"
+                    then
+                      [ "readStrategy" .= show runtime.knobs.readStrategy,
+                        "ackMode" .= show runtime.knobs.ackMode,
+                        "preloadedMessages" .= knobInt context.knobs (knobName "pgmq.message-count"),
+                        "consumers" .= knobInt context.knobs (knobName "pgmq.consumers")
+                      ]
+                    else []
+            putSummary context Verdicts "pgmq-benchmark" (object (["identifier" .= identifier, "layer" .= show layer, "wake" .= knobText context.knobs (knobName "pgmq.wake"), "failedOperations" .= failures] <> readAckFields))
+            pure (base {outcome = measuredOutcome report base.outcome})
+
+readAckConfiguration :: Text -> RunContext -> PgmqKnobs -> LoadModel -> Either Text LoadModel
+readAckConfiguration identifier context knobs loadModel
+  | identifier /= "pgmq/read/benchmark/read-ack-throughput" = Right loadModel
+  | knobs.readStrategy `notElem` [Plain, Pop] = Left "read-ack-throughput supports only plain and pop reads"
+  | knobs.readStrategy == Pop && knobs.ackMode /= AckDelete = Left "pop removes messages itself; use pgmq.ack-mode=delete"
+  | otherwise = case loadModel of
+      ClosedLoop config -> Right (ClosedLoop config {workers = fromIntegral (knobInt context.knobs (knobName "pgmq.consumers"))})
+      OpenLoop _ -> Left "read-ack-throughput requires load.model=closed"
 
 operationName :: Text -> Layer -> Text
 operationName identifier layer
@@ -81,6 +103,11 @@ operationName identifier layer
 
 prepare :: Text -> PgmqRun -> Pgmq.QueueName -> IO ()
 prepare identifier runtime queue
+  | "read-ack-throughput" `Text.isInfixOf` identifier = do
+      let count = fromIntegral (knobInt runtime.ctx.knobs (knobName "pgmq.message-count"))
+      forM_ (chunksOf 1000 [1 .. count]) \chunk -> do
+        _ <- effect runtime (Pgmq.batchSendMessage (Types.BatchSendMessage queue (fmap payload chunk) Nothing))
+        pure ()
   | "invisible-backlog" `Text.isInfixOf` identifier = do
       let count = fromIntegral (knobInt runtime.ctx.knobs (knobName "pgmq.invisible-backlog"))
       forM_ (chunksOf 1000 [1 .. count]) \chunk -> do
@@ -109,7 +136,7 @@ runOperation identifier runtime client queue _ sequenceNumber = do
           outcome <- Pool.use runtime.pool (Sessions.queueMetrics queue)
           either (ioError . userError . show) (const (pure (OpOk 1))) outcome
       | "send-throughput" `Text.isInfixOf` identifier = sendOperation client queue sequenceNumber runtime.knobs.batchSize (knobText runtime.ctx.knobs (knobName "pgmq.op"))
-      | "read-ack-throughput" `Text.isInfixOf` identifier = readAckCycle runtime client queue sequenceNumber
+      | "read-ack-throughput" `Text.isInfixOf` identifier = readAckCycle runtime client queue
       | "produce-consume" `Text.isInfixOf` identifier = wakeCycle runtime client queue sequenceNumber
       | "grouped-read" `Text.isInfixOf` identifier = groupedCycle runtime queue sequenceNumber
       | "interpreter-tracing-overhead" `Text.isInfixOf` identifier && knobBool runtime.ctx.knobs (knobName "pgmq.trace.propagate") = propagatedCycle runtime queue sequenceNumber
@@ -130,16 +157,27 @@ fullCycle client queue sequenceNumber = do
       acknowledged <- client.delete queue message.messageId
       pure (if acknowledged then OpOk 3 else OpFailed (ErrorCause "delete-returned-false"))
 
-readAckCycle :: PgmqRun -> PgmqClient -> Pgmq.QueueName -> Word64 -> IO OpResult
-readAckCycle runtime client queue sequenceNumber = do
-  _ <- client.send queue (payload (fromIntegral sequenceNumber))
-  messages <- readAvailable 10 (client.readBatch queue 30 1)
-  case Vector.toList messages of
-    [] -> pure (OpFailed (ErrorCause "empty-read-after-send"))
-    message : _ -> do
-      threadDelay (fromIntegral (knobInt runtime.ctx.knobs (knobName "pgmq.handler-ms")) * 1000)
-      acknowledged <- client.delete queue message.messageId
-      pure (if acknowledged then OpOk 3 else OpFailed (ErrorCause "delete-returned-false"))
+readAckCycle :: PgmqRun -> PgmqClient -> Pgmq.QueueName -> IO OpResult
+readAckCycle runtime client queue = do
+  messages <- readAvailable 10 $ case runtime.knobs.readStrategy of
+    Pop -> client.popBatch queue runtime.knobs.batchSize
+    _ -> client.readBatch queue runtime.knobs.visibilityTimeoutSeconds runtime.knobs.batchSize
+  let values = Vector.toList messages
+      identifiers = fmap (.messageId) values
+  if null values
+    then pure (OpFailed (ErrorCause "preloaded-queue-exhausted"))
+    else do
+      threadDelay (fromIntegral (knobInt runtime.ctx.knobs (knobName "pgmq.handler-ms")) * length values * 1000)
+      acknowledged <- case runtime.knobs.readStrategy of
+        Pop -> pure True
+        _ -> case runtime.knobs.ackMode of
+          AckDelete -> and <$> traverse (client.delete queue) identifiers
+          AckArchive -> and <$> traverse (\messageId -> effect runtime (Pgmq.archiveMessage (Types.MessageQuery queue messageId))) identifiers
+          AckBatchDelete -> matching identifiers <$> effect runtime (Pgmq.batchDeleteMessages (Types.BatchMessageQuery queue identifiers))
+          AckBatchArchive -> matching identifiers <$> effect runtime (Pgmq.batchArchiveMessages (Types.BatchMessageQuery queue identifiers))
+      pure (if acknowledged then OpOk (length values) else OpFailed (ErrorCause "acknowledgement-incomplete"))
+  where
+    matching expected actual = sort expected == sort actual
 
 readAvailable :: Int -> IO (Vector.Vector value) -> IO (Vector.Vector value)
 readAvailable attempts action = do
