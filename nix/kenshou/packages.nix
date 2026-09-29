@@ -35,6 +35,13 @@ let
       ];
     });
   };
+  yamlOutput = _: hsuper: lib.optionalAttrs (variant == "info-table") {
+    # The mapped info tables make yaml's separate executable and library
+    # outputs reference each other. Keep both in one output for this variant.
+    yaml = pkgs.haskell.lib.compose.overrideCabal
+      (_: { enableSeparateBinOutput = false; })
+      hsuper.yaml;
+  };
   localNames = lib.filter
     (name: lib.hasPrefix "kenshou-" name && builtins.pathExists (../.. + "/${name}/${name}.cabal"))
     (builtins.attrNames (builtins.readDir ../..));
@@ -64,6 +71,7 @@ let
     overrides = lib.composeManyExtensions [
       infoTables
       (channel pkgs.haskell.lib.compose pkgs)
+      yamlOutput
       requiredPackages
       (import ./cohort-overlay.nix { inherit pkgs lock; })
       local
