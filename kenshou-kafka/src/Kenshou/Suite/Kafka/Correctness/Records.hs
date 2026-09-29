@@ -25,7 +25,7 @@ import Keiro.Integration.Event (IntegrationContentType (..), IntegrationEvent (.
 import Keiro.Outbox.Kafka (KafkaProducerRecord (..), integrationEventToKafkaRecord)
 import Kenshou.Core.Context (RunContext (..))
 import Kenshou.Core.Dimension (allTelemetryArms, noDimensions)
-import Kenshou.Core.Env (noEnvironment)
+import Kenshou.Core.Env (kafkaEnvironment)
 import Kenshou.Core.Id (parseScenarioId, unSeed)
 import Kenshou.Core.Knob (knobInt, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
@@ -45,7 +45,7 @@ scenarios =
         knobs = [intKnob "kafka.messages" "Integration events" 200 2 5000],
         dimensions = allTelemetryArms noDimensions,
         phases = zeroPhases,
-        requires = noEnvironment,
+        requires = kafkaEnvironment,
         knownDefect = Nothing,
         run = runRecords
       }

@@ -10,7 +10,7 @@ import Kenshou.Check.Process (awaitMark, awaitReady, killChild, readChildMessage
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Core.Context (RunContext (..))
 import Kenshou.Core.Dimension (allTelemetryArms, noDimensions)
-import Kenshou.Core.Env (noEnvironment)
+import Kenshou.Core.Env (kafkaEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (knobInt, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
@@ -30,7 +30,7 @@ scenarios =
         knobs = [intKnob "kafka.prop.message.timeout.ms" "Producer delivery timeout" 3000 1000 30000],
         dimensions = allTelemetryArms noDimensions,
         phases = zeroPhases,
-        requires = noEnvironment,
+        requires = kafkaEnvironment,
         knownDefect =
           Just
             KnownDefect

@@ -19,7 +19,7 @@ import Kenshou.Check.Process (Child, Supervisor, awaitReady, readChildMessages, 
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension (allTelemetryArms, noDimensions)
-import Kenshou.Core.Env (noEnvironment)
+import Kenshou.Core.Env (kafkaEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobText, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
@@ -40,7 +40,7 @@ scenarios =
         knobs = [KnobSpec (key "kafka.rebalance-handler") "Install the adapter's rebalance callback" KnobText (VText "installed") (OneOf (VText "installed" :| [VText "absent"])) []],
         dimensions = allTelemetryArms noDimensions,
         phases = zeroPhases,
-        requires = noEnvironment,
+        requires = kafkaEnvironment,
         knownDefect = Nothing,
         run = runStaleBarrier
       }

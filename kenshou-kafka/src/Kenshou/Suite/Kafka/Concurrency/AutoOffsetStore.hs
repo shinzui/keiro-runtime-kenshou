@@ -12,7 +12,7 @@ import Kenshou.Check.Process (awaitMark, awaitReady, killChild, roleProcess, sen
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension (allTelemetryArms, noDimensions)
-import Kenshou.Core.Env (noEnvironment)
+import Kenshou.Core.Env (kafkaEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (knobInt, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
@@ -32,7 +32,7 @@ scenarios =
         knobs = [intKnob "kafka.prop.auto.commit.interval.ms" "Auto-commit interval in milliseconds" 1000 100 10000],
         dimensions = allTelemetryArms noDimensions,
         phases = zeroPhases,
-        requires = noEnvironment,
+        requires = kafkaEnvironment,
         knownDefect =
           Just
             KnownDefect

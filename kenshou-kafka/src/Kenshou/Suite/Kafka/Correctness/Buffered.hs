@@ -11,7 +11,7 @@ import Kafka.Effectful.Consumer qualified as C
 import Kafka.Types (BatchSize (..), KafkaError, TopicName)
 import Kenshou.Core.Context (RunContext (..))
 import Kenshou.Core.Dimension (allTelemetryArms, noDimensions)
-import Kenshou.Core.Env (noEnvironment)
+import Kenshou.Core.Env (kafkaEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), knobInt, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
@@ -39,7 +39,7 @@ scenarios =
         knobs = [KnobSpec (either (error . Text.unpack) id (mkKnobName "kafka.batch-size")) "Adapter poll batch size" KnobInt (VInt 100) (OneOf (VInt 1 :| [VInt 10, VInt 100, VInt 1000])) []],
         dimensions = allTelemetryArms noDimensions,
         phases = zeroPhases,
-        requires = noEnvironment,
+        requires = kafkaEnvironment,
         knownDefect =
           Just
             KnownDefect

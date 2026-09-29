@@ -28,7 +28,7 @@ import Kenshou.Check.Process (Child, Supervisor, awaitReady, readChildMessages, 
 import Kenshou.Check.Scenario (CheckEnv, withCheck)
 import Kenshou.Core.Context (ArtifactDir (..), RunContext (..), SummarySection (..), artifactPath, declareMediaType, putSummary)
 import Kenshou.Core.Dimension (noDimensions)
-import Kenshou.Core.Env (noEnvironment)
+import Kenshou.Core.Env (kafkaEnvironment)
 import Kenshou.Core.Id (parseScenarioId, unSeed)
 import Kenshou.Core.Knob (knobInt, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
@@ -65,7 +65,7 @@ scenario mode profile =
         ],
       dimensions = noDimensions,
       phases = zeroPhases,
-      requires = noEnvironment,
+      requires = kafkaEnvironment,
       knownDefect =
         if mode == Churn
           then

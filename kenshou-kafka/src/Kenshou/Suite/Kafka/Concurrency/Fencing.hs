@@ -10,7 +10,7 @@ import Kenshou.Check.Process (Child, awaitMark, awaitReady, readChildMessages, r
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension (allTelemetryArms, noDimensions)
-import Kenshou.Core.Env (noEnvironment)
+import Kenshou.Core.Env (kafkaEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (knobInt, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
@@ -31,7 +31,7 @@ scenarios =
         knobs = [intKnob "kafka.prop.session.timeout.ms" "Static member session timeout in milliseconds" 6000 6000 30000],
         dimensions = allTelemetryArms noDimensions,
         phases = zeroPhases,
-        requires = noEnvironment,
+        requires = kafkaEnvironment,
         knownDefect =
           Just
             KnownDefect

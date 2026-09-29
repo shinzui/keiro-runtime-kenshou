@@ -211,6 +211,11 @@ provenance:
       at: 2026-09-29T17:33:26Z
       mode: "implement"
       note: "Reconciled owner findings and added the dated baseline priority report."
+    - model: "gpt-6"
+      harness: "codex"
+      at: 2026-09-29T20:33:50Z
+      mode: "implement"
+      note: "Recorded clean cell controls, outbox reproduction, and Kafka broker-routing finding."
 ---
 
 # Build an extensive verification suite for the keiro runtime
@@ -683,9 +688,9 @@ Numbered finding coverage is tracked separately from distinct owner records:
 |---|---:|
 | Owner bug report linked (including two Keiro reports now marked duplicate) | 31 |
 | Owner improvement request linked as the primary disposition | 6 |
-| Local harness findings (finding 3 pending; finding 39 owned here) | 2 |
+| Local harness findings (finding 3 pending; findings 39–40 owned here) | 3 |
 | Owner improvement request URI not recorded | 0 |
-| **Numbered findings** | **39** |
+| **Numbered findings** | **40** |
 
 Of the 32 linked bug records, 16 are reported, 14 are marked fixed by their
 owners, and two Keiro reports are marked duplicates of
@@ -704,7 +709,8 @@ disposition changes.
 - EP-12 write-side worker heap-growth finding: [local finding](../findings/1-keiro-write-side-worker-heap-growth.md); owner `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-1` is a duplicate of `mori://shinzui/kiroku/okf/bug-reports/concepts/BUG-3`, fixed in `kiroku-store` 0.9.0.1. Whole-worker verification on that published version remains open.
 - EP-12 seed-backlog heap-growth finding: [local finding](../findings/2-keiro-seed-backlog-heap-growth.md); owner `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-2` is a duplicate of the same Kiroku BUG-3. A source-only control reduced growth; comparable published-cohort verification remains open.
 - EP-12 steady-restart harness thread-growth finding: [local finding](../findings/3-keiro-steady-restart-harness-threads.md); owner remains this repository pending a focused harness investigation. No upstream runtime bug concept should be inferred from the current evidence.
-- EP-17 GCS token-cache finding: [local finding](../findings/39-kenshou-gcs-token-cache-survives-expiry.md); owner is this repository. HTTP 401 interrupted a five-pair cell A/A after seven verified slices; journal resume verified all ten but one slice sealed cancelled under a second lease, so the comparison is excluded. The client repair refreshes a cached CLI token once on 401; a fresh single-lease control is required.
+- EP-17 GCS token-cache finding: [local finding](../findings/39-kenshou-gcs-token-cache-survives-expiry.md); owner is this repository. HTTP 401 interrupted a five-pair cell A/A after seven verified slices; journal resume verified all ten but one slice sealed cancelled under a second lease, so the comparison is excluded. The client repair refreshes a cached CLI token once on 401; the fresh single-lease control completed without an authorization error, though its p99 A/A verdict is inconclusive.
+- EP-11 Kafka broker-requirement finding: [local finding](../findings/40-kenshou-kafka-scenarios-omit-broker-requirement.md); owner is this repository. Broker-backed scenarios were cataloged without their Kafka environment requirement, allowing route preparation to accept a brokerless cell. The resulting Kafka barrier run errored before the defect probe and is excluded; the catalog and package test now require a broker for every live Kafka scenario.
 - EP-13 polling-backend worker exit: [local finding](../findings/34-keiro-job-worker-exits-after-polling-backend-termination.md); owner `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-3`. A continuous worker exits after a backend termination and leaves later durable jobs queued.
 - EP-13 long-poll retry accounting: [local finding](../findings/35-keiro-long-poll-consumes-read-attempt-without-handler.md); owner `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-4`. A long poll can consume a read attempt without a matching handler delivery; ordinary polling controls pass.
 - EP-13 stale outbox claim finalization: [local finding](../findings/36-keiro-stale-outbox-publisher-finalizes-new-claim.md); owner `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-5`. A resumed old publisher can mark a newer successful claim failed or dead.
@@ -896,3 +902,5 @@ Revision note (2026-09-29): Added a dated technical baseline report and reconcil
 Revision note (2026-09-29): Excluded the busy-host slow-handler ratios from the quantitative baseline pending a leased-cell sensitivity run. Added local harness finding 39 for a stale GCS CLI token that interrupted a layer-ladder cell A/A; journal recovery retained the evidence, but its cancelled slice and second lease make the comparison ineligible. Recorded the one-time token refresh repair and fresh single-lease rerun gate in EP-17.
 
 Revision note (2026-09-29): The post-repair layer-ladder cell A/A completed all ten verified slices on one lease, but its five-pair p99 confidence interval remains inconclusive. Its initial comparison was produced from a documentation-dirty worktree, so the report awaits clean replay of those sealed runs; no policy limit was relaxed.
+
+Revision note (2026-09-29): Clean replay of the layer-ladder run trees preserved the inconclusive p99 verdict. A separate five-pair invisible-backlog alpha A/A passed all four metrics. Clean cell execution reproduced Keiro's stale-outbox-claim BUG-5. A brokerless alpha Kafka run exposed local catalog finding 40 and is excluded from owner-defect evidence. The baseline report also marks 17 findings whose cited local runs are dirty-harness only; they need clean selection before immutable baseline recording.

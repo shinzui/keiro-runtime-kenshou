@@ -52,6 +52,11 @@ provenance:
       at: 2026-09-29T17:33:27Z
       mode: "implement"
       note: "Recorded leased-cell A/A uncertainty and lengthened benchmark revision two."
+    - model: "gpt-6"
+      harness: "codex"
+      at: 2026-09-29T20:33:51Z
+      mode: "implement"
+      note: "Recorded clean replay of layer-ladder and passing invisible-backlog cell A/A."
 ---
 
 # Cover pgmq-hs in isolation
@@ -78,10 +83,11 @@ After this plan, a maintainer can run `kenshou list --layer pgmq` and see about 
 - [x] (2026-09-24) Separated the blackhole duration expectation from its contract checks. A fresh PostgreSQL 18 run passed baseline, recovery, durability, and conservation while reproducing only the five-second known bound failure.
 - [x] (2026-09-24) Extended backend termination to twelve fault rounds over two minutes on each PostgreSQL major. Every round confirmed, delivered and acknowledged 200 messages with the same pool, and only BUG-1's classifier label failed. Continuous producer and consumer traffic during each fault remains part of the wider outage work.
 - [x] (2026-09-25) Completed continuous producer and consumer traffic during twelve backend faults on PostgreSQL 17 and 18. Both two-minute runs preserved and acknowledged over 5,500 confirmed sends, confined errors and duplicate deliveries to the fault windows, drained their queues, and reproduced only BUG-1's classifier label.
-- [ ] Rerun the seven noisy A/A controls on a quiet leased cell; local p99 noise remains inconclusive under the checked-in policy.
+- [ ] Finish the seven noisy A/A controls on a quiet leased cell. Read/ack and invisible-backlog pass; layer-ladder remains inconclusive on p99 under the checked-in policy, and the other controls remain open.
 - [x] (2026-09-29) Corrected the read/ack benchmark to preload a finite queue, drain it with the selected plain or pop read, execute all four acknowledgement modes, use `pgmq.consumers` for closed-loop workers, and report message rather than call throughput. Versioned only this scenario to revision 3. A local PostgreSQL 18 batch-archive smoke passed with zero operation failures; a deliberately undersized preload exhausted as expected.
-- [x] (2026-09-29) Published clean Linux released payload `265f35b` for revision 3 and ran a three-pair A/A control on alpha: all six slices passed and verified, but p50, p99, and message-throughput intervals were inconclusive. A five-pair rerun passed every policy metric with ten completed, verified cold-reset slices under one lease. The other six benchmark A/A controls remain open.
-- [x] (2026-09-29) Repeated the layer-ladder A/A after the cell client's GCS token-refresh repair. All ten cold-reset slices completed and verified under one lease, with passing benchmark-grade nested runs and zero operation failures. Five valid pairs passed p50, message throughput and allocation but remained inconclusive for p99; the policy is unchanged. The comparison was emitted while a documentation edit was uncommitted, so it is diagnostic pending clean-worktree replay of the sealed runs.
+- [x] (2026-09-29) Published clean Linux released payload `265f35b` for revision 3 and ran a three-pair A/A control on alpha: all six slices passed and verified, but p50, p99, and message-throughput intervals were inconclusive. A five-pair rerun passed every policy metric with ten completed, verified cold-reset slices under one lease.
+- [x] (2026-09-29) Repeated the layer-ladder A/A after the cell client's GCS token-refresh repair. All ten cold-reset slices completed and verified under one lease, with passing benchmark-grade nested runs and zero operation failures. Five valid pairs passed p50, message throughput and allocation but remained inconclusive for p99; the policy is unchanged. Clean replay of the same sealed trees produced `01a0eeb8-8fbd-74b7-9dbe-25c1d41b64ae` with `harnessDirty=false` and the same inconclusive verdict.
+- [x] (2026-09-29) Passed a five-pair invisible-backlog A/A on alpha. Session `01a0eebd-eee2-7542-869e-d51224b4fa6d` completed ten verified benchmark-grade slices under one lease with zero operation failures. Clean comparison `01a0eec9-b954-7637-a4ff-419acf5efd5c` passed p50, p99, unit throughput and allocation under the unchanged policy; the earlier three-pair attempt was inconclusive.
 - [x] (2026-09-29) Ran an exploratory revision-3 slow-handler sensitivity check on local PostgreSQL 18. Five matched pairs changed only `pgmq.handler-ms` from zero to five; all ten runs passed with benchmark grade and zero operation failures, and the policy classified p50 latency as a regression. The host was concurrently busy with unrelated work, so its ratios are excluded from the baseline.
 - [ ] Repeat the slow-handler sensitivity comparison on an isolated leased cell before accepting quantitative detection evidence.
 - [x] (2026-09-24) Obtained stable twenty-minute reduced-soak leak verdicts at 100 cycles/s with tracing off and OTLP, using post-major-collection heap samples.

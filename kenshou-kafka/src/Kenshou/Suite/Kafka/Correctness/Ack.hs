@@ -12,7 +12,7 @@ import Kafka.Effectful.Consumer qualified as C
 import Kafka.Types (KafkaError, Timeout (..), TopicName)
 import Kenshou.Core.Context (RunContext (..))
 import Kenshou.Core.Dimension (allTelemetryArms, noDimensions)
-import Kenshou.Core.Env (noEnvironment)
+import Kenshou.Core.Env (kafkaEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (knobInt, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
@@ -39,7 +39,7 @@ scenarios =
         knobs = [intKnob "kafka.partitions" "Topic partitions" 4 1 64, intKnob "kafka.messages" "Acknowledged records" 500 1 50000],
         dimensions = allTelemetryArms noDimensions,
         phases = zeroPhases,
-        requires = noEnvironment,
+        requires = kafkaEnvironment,
         knownDefect = Nothing,
         run = runAckOk
       }

@@ -27,6 +27,11 @@ provenance:
       at: 2026-09-27T16:35:06Z
       mode: "implement"
       note: "Grouped independent Kafka rebalance defects and refined duplicate classification."
+    - model: "gpt-6"
+      harness: "codex"
+      at: 2026-09-29T20:33:51Z
+      mode: "implement"
+      note: "Repaired broker requirements for the live Kafka catalog and excluded a brokerless cell attempt."
 ---
 
 # Cover the Kafka transport edge with a disposable broker
@@ -62,6 +67,7 @@ cabal run kenshou -- run kafka/adapter/concurrency/sigkill-redelivery-window --o
 - [x] (2026-09-27) [Clean released fencing baseline](../verification/runs/kafka/2026/09/01a0e402-0b02-7309-b378-3686b0e953a6.md) `01a0e402-0b02-7309-b378-3686b0e953a6` reproduced only `fenced-member-still-alive-and-idle`: the replacement handled its record, but the original surfaced no fatal error and did not exit. The known-defect scope made this nonblocking. [Its first clean-tree attestation](../verification/attestations/2026/09/01a0e407-c65b-7105-8bd4-969d57731706.md) passed five checks but remained incomplete without VC-1. After adding the fencing oracle, [reattestation 01a0e418](../verification/attestations/2026/09/01a0e418-738b-7155-bc34-ae772f3e3ca5.md) passed all six checks; the baseline is machine-confirmed. The clean head repetition and its independent attestation are recorded below.
 - [x] (2026-09-27) [Clean head fencing baseline](../verification/runs/kafka/2026/09/01a0e41c-947d-76df-80cf-11a7078016ad.md) `01a0e41c-947d-76df-80cf-11a7078016ad` passed with the replacement record handled, `RdKafkaRespErrFatal` surfaced, and the original member exited. Its resolved identity pins `hw-kafka-client` at `6caed636898a78e9f6e5a9c93eeb5562cbb2580a` and `hw-kafka-streamly` at `42163022038be4734cff64e96b83360be9c78318`; the harness tree was clean. [Attestation 01a0e41f](../verification/attestations/2026/09/01a0e41f-4f2a-747e-9bd6-625fd4317c00.md) passed all six checks, including VC-1 replay from worker logs. Both fencing cohort records are machine-confirmed. Other Kafka scenario repetitions and full-rate churn remain acceptance work.
 - [x] (2026-09-27) Completed three consecutive, different-seed, clean-tree fencing runs on each cohort. Released seeds 41, 42, and 43 reproduced only `fenced-member-still-alive-and-idle`; each replacement handled its record while the original reported no fatal error and stayed alive. Head seeds 51, 52, and 53 passed with the replacement record handled, fatal error observed, and original member exited. All six runs had `blocking=false`; the head results resolved the pinned `hw-kafka-client` and `hw-kafka-streamly` Git commits above. The prior digest-linked baselines remain the machine-confirmed evidence records; these six local run directories are not separately attested. Other Kafka scenario repetitions remain open.
+- [x] (2026-09-29) [Finding 40](../findings/40-kenshou-kafka-scenarios-omit-broker-requirement.md) records a cell attempt for the seek-barrier defect that errored before its probe because broker-backed scenarios were cataloged with no broker requirement. All live Kafka scenarios now declare that requirement; the pure model stays brokerless. Six Kafka package examples pass, and the same alpha route now rejects the plan with `NeedsBrokerButCellHasNone`. The errored run is excluded from owner-defect evidence; a broker-capable cell or clean controlled local run remains open for BUG-5.
 
   | Cohort | Seed | Run ID | Result |
   | --- | ---: | --- | --- |

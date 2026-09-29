@@ -12,7 +12,7 @@ import Kafka.Effectful.Producer qualified as P
 import Kafka.Types (KafkaError, TopicName)
 import Kenshou.Core.Context (RunContext)
 import Kenshou.Core.Dimension (allTelemetryArms, noDimensions)
-import Kenshou.Core.Env (noEnvironment)
+import Kenshou.Core.Env (kafkaEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
@@ -30,7 +30,7 @@ scenarios =
         knobs = [],
         dimensions = allTelemetryArms noDimensions,
         phases = zeroPhases,
-        requires = noEnvironment,
+        requires = kafkaEnvironment,
         knownDefect = Nothing,
         run = runModes
       }

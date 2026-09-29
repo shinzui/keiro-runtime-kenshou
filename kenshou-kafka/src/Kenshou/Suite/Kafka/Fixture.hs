@@ -15,7 +15,7 @@ import Kafka.Effectful.Producer qualified as P
 import Kafka.Types (BrokerAddress (..), KafkaError, Timeout (..), TopicName (..))
 import Kenshou.Core.Context (RunContext (..))
 import Kenshou.Core.Dimension (allTelemetryArms, noDimensions)
-import Kenshou.Core.Env (noEnvironment)
+import Kenshou.Core.Env (kafkaEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), knobInt, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
@@ -43,7 +43,7 @@ fixtureScenario identifier summary tier knobs run =
       knobs,
       dimensions = allTelemetryArms noDimensions,
       phases = zeroPhases,
-      requires = noEnvironment,
+      requires = kafkaEnvironment,
       knownDefect = Nothing,
       run
     }

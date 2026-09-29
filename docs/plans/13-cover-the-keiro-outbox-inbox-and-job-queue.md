@@ -37,6 +37,11 @@ provenance:
       at: 2026-09-29T17:33:27Z
       mode: "implement"
       note: "Linked five Keiro reports locally and restored baseline soak scope."
+    - model: "gpt-6"
+      harness: "codex"
+      at: 2026-09-29T20:33:51Z
+      mode: "implement"
+      note: "Recorded a clean leased-cell reproduction of the stale outbox publisher defect."
 ---
 
 # Cover the keiro outbox, inbox and job queue
@@ -63,6 +68,7 @@ The non-soak baseline is in place. The remaining work is to deepen specific scen
 - [x] (2026-09-24) Inbox baseline: envelope, effectively-once matrix, poison accounting, batch intake, process race, and GC race scenarios have durable evidence. The GC race reproduces the documented retention-window failure under a realised schedule.
 - [x] (2026-09-24) Queue baseline: eleven scenarios are registered and passed the default durable sweep, including the 1,600-job FIFO ordering case. The known polling, DLQ, redrive, and pool-isolation defects are scoped and linked upstream.
 - [x] (2026-09-24) Measurement baseline: all seven benchmark identifiers produce durable measurement artifacts and no-loss or effect oracles; representative longer runs reached benchmark grade. One paired comparison was inconclusive under the three-pair policy, and both three-block overhead matrices completed with no failed child runs. Outbox and queue telemetry contracts passed with tracing and metrics enabled and disabled.
+- [x] (2026-09-29) Reproduced owner BUG-5 on alpha with a clean released-cohort payload and durable PostgreSQL 18. Verified cell run `01a0eed0-4d26-7365-afb3-8a03d234d014` contains nested run `01a0eec4-bd55-7786-804f-bda62c6ac388`: P2 appended its broker record, then stale P1 left the row failed. Only the two scoped finalization checks failed; the historical bundle record and attestation remain open.
 - [ ] Finish the remaining non-soak acceptance work listed below, then rerun the affected scenarios and package tests.
 - [ ] Run the three full and reduced soaks and evaluate leak and table-growth verdicts for the initial baseline.
 

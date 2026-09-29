@@ -3,6 +3,7 @@ module Kenshou.Core.Env
     PostgresRequirement (..),
     EnvRequirements (..),
     noEnvironment,
+    kafkaEnvironment,
   )
 where
 
@@ -26,3 +27,6 @@ data EnvRequirements = EnvRequirements
 
 noEnvironment :: EnvRequirements
 noEnvironment = EnvRequirements Nothing [] False
+
+kafkaEnvironment :: EnvRequirements
+kafkaEnvironment = noEnvironment {kafka = True}

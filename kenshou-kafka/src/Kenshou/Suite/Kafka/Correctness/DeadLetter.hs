@@ -11,7 +11,7 @@ import Kafka.Effectful.Consumer qualified as C
 import Kafka.Types (BrokerAddress (..), KafkaError, Timeout (..), TopicName (..))
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension (allTelemetryArms, noDimensions)
-import Kenshou.Core.Env (noEnvironment)
+import Kenshou.Core.Env (kafkaEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (knobInt, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
@@ -34,7 +34,7 @@ scenarios =
         knobs = [intKnob "kafka.poison-count" "Dead-lettered messages" 5 1 50],
         dimensions = allTelemetryArms noDimensions,
         phases = zeroPhases,
-        requires = noEnvironment,
+        requires = kafkaEnvironment,
         knownDefect = Nothing,
         run = runDeadLetter
       }

@@ -18,7 +18,7 @@ import Kafka.Effectful.Producer qualified as P
 import Kafka.Types (BatchSize (..), KafkaError, Timeout (..), TopicName)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension (DimensionSupport (..), MetricsArm (..), Support (..), Supported (..), TracingArm (..))
-import Kenshou.Core.Env (noEnvironment)
+import Kenshou.Core.Env (kafkaEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), knobText, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
@@ -60,7 +60,7 @@ scenarios =
               pgVersion = NotApplicable
             },
         phases = zeroPhases,
-        requires = noEnvironment,
+        requires = kafkaEnvironment,
         knownDefect = Nothing,
         run = runIsolation
       },
@@ -79,7 +79,7 @@ scenarios =
               pgVersion = NotApplicable
             },
         phases = zeroPhases,
-        requires = noEnvironment,
+        requires = kafkaEnvironment,
         knownDefect = Nothing,
         run = runContinuity
       }

@@ -3,12 +3,24 @@ module Main (main) where
 import Data.Aeson (object, (.=))
 import Data.Map.Strict qualified as Map
 import Kafka.Types (BrokerAddress (..))
+import Kenshou.Core.Bundle (LayerBundle (..))
+import Kenshou.Core.Env (EnvRequirements (..))
+import Kenshou.Core.Scenario (Scenario (..))
 import Kenshou.Env.Kafka.Spec
+import Kenshou.Suite.Kafka qualified as Kafka
+import Kenshou.Suite.Kafka.Model qualified as Model
 import Kenshou.Suite.Kafka.Model.Simulator (Decision (..), Event (..), Schedule (..), Trace (..), propFirstSuccessInOrder, propNoCommitPastUnacked, propTerminates)
 import Test.Hspec
 
 main :: IO ()
 main = hspec do
+  describe "Kafka scenario requirements" do
+    it "requires a broker for every broker-backed scenario" do
+      let modelIds = fmap (.id) Model.scenarios
+          brokerBacked = filter (\scenario -> scenario.id `notElem` modelIds) Kafka.bundle.scenarios
+      map (.id) brokerBacked `shouldSatisfy` (not . null)
+      map (\scenario -> scenario.requires.kafka) brokerBacked `shouldSatisfy` and
+      map (\scenario -> scenario.requires.kafka) Model.scenarios `shouldSatisfy` (all not)
   describe "Kafka broker specification" do
     it "rejects every spelling of the shared broker" do
       mapM_

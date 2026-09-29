@@ -122,5 +122,6 @@ test-suite kenshou-kafka-test
     containers,
     hspec,
     hw-kafka-client,
+    kenshou-core,
     kenshou-kafka,
     text,
