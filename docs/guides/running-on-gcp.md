@@ -183,6 +183,10 @@ discards exported spans, while `file` requests a fresh per-run collector trace
 artifact at `traces/otlp.jsonl`. A
 scenario's `sdk-otlp` arm receives the cell collector endpoint when its
 scenario declares the endpoint knob.
+With the `profiled` variant, `--rts=-p` requests cost-centre profiling; the
+cell seals the resulting `.prof` files under `tree/output/profiles/` alongside
+the ordinary nested run. RTS heap or event-log options also request their
+matching profiler files. The driver limits their combined size to 128 MiB.
 
 ## Fetch and record evidence
 

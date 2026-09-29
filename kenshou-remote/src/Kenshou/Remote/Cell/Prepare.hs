@@ -333,10 +333,15 @@ submissionFor ref inputs descriptor slice work = do
             ("slice", Text.pack (show slice.index)),
             ("payload", slice.payloadLabel)
           ]
-      submission = Submission inputs.cellRun inputs.leaseId descriptor.cell work env slice.reset (Limits (fromIntegral slice.wallClockSeconds) inputs.memoryMaxBytes inputs.outputMaxBytes) (Requirements inputs.minAgentVersion inputs.requiredCapabilities) (case inputs.otlpSink of NullSink -> Nothing; FileSink -> Just (CollectOptions True)) labels
+      profileCollection = maybe False (any profileFlag . Text.words) inputs.rtsOptions
+      traceCollection = inputs.otlpSink == FileSink
+      collection = if profileCollection || traceCollection then Just (CollectOptions traceCollection profileCollection) else Nothing
+      submission = Submission inputs.cellRun inputs.leaseId descriptor.cell work env slice.reset (Limits (fromIntegral slice.wallClockSeconds) inputs.memoryMaxBytes inputs.outputMaxBytes) (Requirements inputs.minAgentVersion inputs.requiredCapabilities) collection labels
   case eitherDecode (encode submission) :: Either String Submission of
     Left failure -> Left ("invalid cell submission: " <> Text.pack failure)
     Right _ -> Right submission
+  where
+    profileFlag flag = any (`Text.isPrefixOf` flag) ["-p", "-h", "-l"]
 
 autoGroups :: [PreparedRun] -> [NonEmpty PreparedRun]
 autoGroups [] = []

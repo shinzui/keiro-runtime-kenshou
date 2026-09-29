@@ -126,3 +126,7 @@ forward until interrupted; while it runs, the collector metrics endpoint is
 at `http://127.0.0.1:18888/metrics`. Keep a lease held during a longer debug
 session so the cell does not idle off. The command locates the owner checkout
 with Mori, or uses `KENSHOU_LTI_DIR` when set.
+
+For profiling, publish a `profiled` payload and pass `--rts=-p` to `cell run`.
+The cell includes the generated `.prof` files under `tree/output/profiles/` in
+the sealed result, subject to its 128 MiB profile collection limit.

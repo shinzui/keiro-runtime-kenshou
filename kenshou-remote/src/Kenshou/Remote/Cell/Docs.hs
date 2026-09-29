@@ -32,7 +32,7 @@ module Kenshou.Remote.Cell.Docs
 where
 
 import Control.Monad (unless)
-import Data.Aeson (FromJSON (..), Object, ToJSON (..), Value (..), object, withObject, withText, (.:), (.:?), (.=))
+import Data.Aeson (FromJSON (..), Object, ToJSON (..), Value (..), object, withObject, withText, (.!=), (.:), (.:?), (.=))
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Aeson.Types (Parser)
 import Data.Int (Int64)
@@ -185,7 +185,8 @@ data Requirements = Requirements
   deriving stock (Eq, Show)
 
 data CollectOptions = CollectOptions
-  { traces :: !Bool
+  { traces :: !Bool,
+    profiles :: !Bool
   }
   deriving stock (Eq, Show)
 
@@ -524,7 +525,7 @@ instance ToJSON Submission where
           "requires" .= submission.requires,
           "labels" .= submission.labels
         ]
-          <> maybe [] (\options -> ["collect" .= object ["traces" .= options.traces]]) submission.collect
+          <> maybe [] (\options -> ["collect" .= object (["traces" .= options.traces] <> ["profiles" .= True | options.profiles])]) submission.collect
       )
 
 instance FromJSON Submission where
@@ -534,7 +535,7 @@ instance FromJSON Submission where
     unless (validStringMap submission.env && validStringMap submission.labels) (fail "invalid cell submission map keys")
     pure submission
     where
-      parseCollect = withObject "cell collection options" \options -> CollectOptions <$> options .: "traces"
+      parseCollect = withObject "cell collection options" \options -> CollectOptions <$> options .: "traces" <*> (options .:? "profiles" .!= False)
 
 instance ToJSON LogChunks where
   toJSON chunks = object ["stdout" .= chunks.stdout, "stderr" .= chunks.stderr]

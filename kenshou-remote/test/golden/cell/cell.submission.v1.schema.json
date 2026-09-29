@@ -73,7 +73,7 @@
     "collect": {
       "type": "object", "additionalProperties": false,
       "required": ["traces"],
-      "properties": {"traces": {"type": "boolean"}}
+      "properties": {"traces": {"type": "boolean"}, "profiles": {"type": "boolean"}}
     },
     "labels": {"$ref": "#/$defs/stringMap"}
   },
