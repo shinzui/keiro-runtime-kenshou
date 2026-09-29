@@ -27,7 +27,7 @@ import Kenshou.Core.RunSpec (EnvironmentSpec (..), RunSpec (..), SpecPlacement (
 import Kenshou.Core.Scenario (Scenario (..))
 import Kenshou.Diagnose.Leak (analyseRunDirectory, defaultLeakSpec)
 import Kenshou.Measure.Compare (CompareError (..), Comparison (..), compareRuns, verdictExitCode)
-import Kenshou.Measure.Compare.Compatibility (VaryingAxis (..))
+import Kenshou.Measure.Compare.Compatibility (VaryingAxis (..), compatibilityInputs, varyingValue)
 import Kenshou.Measure.Compare.Ordering (Arm (..), PairedOrdering (..))
 import Kenshou.Measure.Compare.Policy (Policy (..), decodePolicy)
 import Kenshou.Plan.Change (Change (..), ChangeSource (..), Reason (..))
@@ -887,9 +887,36 @@ runCellOverhead cli (OverheadCli location payloadFile sink settingTexts startIns
 
 overheadHooks :: OverheadPlan -> (RunSpec -> FilePath -> IO ExitCode) -> OverheadHooks
 overheadHooks plan runChild =
-  OverheadHooks runChild compareRuns (Just leakCheck)
+  OverheadHooks runChild compareCellOverhead (Just leakCheck)
   where
     leakCheck directory = fmap (either (const Nothing) (Just . Aeson.toJSON)) (analyseRunDirectory directory defaultLeakSpec plan.seed)
+
+-- On a cell, the resolver binds the chosen collector address only for an
+-- sdk-otlp tracing arm. That address is a consequence of the declared tracing
+-- change, so name its knob when the two arms actually have different values.
+compareCellOverhead :: Policy -> NonEmpty VaryingAxis -> [FilePath] -> [FilePath] -> IO (Either CompareError Comparison)
+compareCellOverhead policy axes baselines candidates = do
+  derivedEndpoint <- case (baselines, candidates) of
+    (baseline : _, candidate : _)
+      | VaryDimension "telemetry.tracing" `elem` NonEmpty.toList axes -> do
+          left <- readInputs baseline
+          right <- readInputs candidate
+          pure case (left, right) of
+            (Just a, Just b) ->
+              case (tracing a, tracing b, endpoint a, endpoint b) of
+                (Just (String "sdk-otlp"), Just _, Just leftEndpoint, Just rightEndpoint) -> leftEndpoint /= rightEndpoint
+                (Just _, Just (String "sdk-otlp"), Just leftEndpoint, Just rightEndpoint) -> leftEndpoint /= rightEndpoint
+                _ -> False
+            _ -> False
+    _ -> pure False
+  let selectedAxes = if derivedEndpoint then axes <> (VaryKnob "otel.endpoint" :| []) else axes
+  compareRuns policy selectedAxes baselines candidates
+  where
+    tracing = varyingValue (VaryDimension "telemetry.tracing")
+    endpoint = varyingValue (VaryKnob "otel.endpoint")
+    readInputs directory = do
+      decoded <- eitherDecodeFileStrict' (directory </> "run-result.json") :: IO (Either String Value)
+      pure (either (const Nothing) compatibilityInputs decoded)
 
 analyseOverheadResult :: Bool -> FilePath -> OverheadPlan -> OverheadState -> OverheadPolicy -> OverheadHooks -> IO ExitCode
 analyseOverheadResult asJson directory plan state policy hooks = do
