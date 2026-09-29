@@ -63,6 +63,24 @@ spec = describe "cell run slicing" do
     fmap snd (prepareForCell registry (descriptor {postgresMajor = 17}) Nothing [] payloads (options {coerceDurable = True}) plan).rejected `shouldBe` [PgVersionMismatch 18 17]
     fmap snd (prepareForCell registry descriptor Nothing [] payloads (options {coerceDurable = True, pgSettings = [("fsync", "off")]}) plan).rejected `shouldBe` [ConflictingPostgresSetting "fsync"]
 
+  it "keeps image-owned preloaded libraries out of PostgreSQL reset settings" do
+    (plan, descriptor, payload) <- preparationFixture
+    let originalRegistry = either (error . show) id (mkRegistry [Selftest.bundle])
+        scenarioId = case plan.runs of
+          [PlannedRun _ _ _ _ _ runSpec] -> runSpec.scenario
+          _ -> error "expected one planned run"
+        original = maybe (error "missing selftest") id (lookupScenario originalRegistry scenarioId)
+        requirement = maybe (error "missing PostgreSQL requirement") id original.requires.postgres
+        required = PostgresRequirement requirement.schemas [("shared_preload_libraries", "'pg_stat_statements'")] requirement.needsServerControl
+        withPreload = Scenario original.id original.revision original.summary original.tier original.placement original.knobs original.dimensions original.phases (EnvRequirements (Just required) original.requires.extraPostgres original.requires.kafka) original.knownDefect original.run
+        registry = either (error . show) id (mkRegistry [LayerBundle Selftest [withPreload] []])
+        prepared = prepareForCell registry descriptor Nothing [] (Map.singleton "default" payload) (PrepareOptions True False [] Cold) plan
+    case prepared.accepted of
+      [run] -> case run.reset.postgres of
+        Just reset -> Map.member "shared_preload_libraries" reset.settings `shouldBe` False
+        Nothing -> expectationFailure "expected PostgreSQL reset"
+      _ -> expectationFailure "expected one prepared run"
+
   it "keeps the owner PostgreSQL reset path for a worker with no database requirement" do
     (plan, descriptor, payload) <- preparationFixture
     worker <- either (\problem -> expectationFailure (Text.unpack problem) >> error "unreachable") pure (parseScenarioId "selftest/kernel/concurrency/worker-echo")

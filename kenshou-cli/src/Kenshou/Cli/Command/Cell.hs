@@ -6,9 +6,10 @@ import Data.Aeson (FromJSON, Value (..), eitherDecode, eitherDecodeFileStrict', 
 import Data.Aeson qualified as Aeson
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
+import Data.ByteString qualified as ByteString
 import Data.ByteString.Lazy.Char8 qualified as LazyByteString
 import Data.Foldable (traverse_)
-import Data.List (nub)
+import Data.List (find, nub, sort)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map.Strict qualified as Map
@@ -18,9 +19,16 @@ import Data.Text qualified as Text
 import Data.Text.IO qualified as TextIO
 import Data.Time (diffUTCTime, getCurrentTime)
 import Kenshou.Core.Cli (CliCommand (..), CliEnv (..), CliGroup (..))
-import Kenshou.Core.Id (RunId, newRunId, parseRunId, renderRunId)
+import Kenshou.Core.Cohort (CohortIdentity (..))
+import Kenshou.Core.Id (RunId, newRunId, parseRunId, renderRunId, unSeed)
+import Kenshou.Measure.Compare (CompareError (..), Comparison (..), compareRuns, verdictExitCode)
+import Kenshou.Measure.Compare.Compatibility (VaryingAxis (..))
+import Kenshou.Measure.Compare.Ordering (Arm (..), PairedOrdering (..))
+import Kenshou.Measure.Compare.Policy (Policy (..), decodePolicy)
+import Kenshou.Plan.Policy (PlanPolicy (..))
+import Kenshou.Plan.RunPlan (PlannedRun (..), RunPlan (..), TrialInfo (..))
 import Kenshou.Remote.Cell.Control (CellSnapshot (..), readCellSnapshot)
-import Kenshou.Remote.Cell.Docs (CachePolicy (..), CellBuckets (..), CellDescriptor (..), CellManifest (..), CellOutcome (..), CellStatus (..), Limits (..), Rejected (..), Submission (..))
+import Kenshou.Remote.Cell.Docs (CachePolicy (..), CellBuckets (..), CellDescriptor (..), CellManifest (..), CellNodes (..), CellOutcome (..), CellStatus (..), Limits (..), Rejected (..), Submission (..))
 import Kenshou.Remote.Cell.Exec (cellExec)
 import Kenshou.Remote.Cell.Fetch (FetchError (..), fetchCellRun, verifyCellRun)
 import Kenshou.Remote.Cell.Index (deriveCellRunIndex, writeCellRunIndex)
@@ -36,6 +44,8 @@ import Kenshou.Remote.Cell.Session.Resume (resumeHeldSession, resumeObservedSlic
 import Kenshou.Remote.Cell.Session.Runner (runPlannedSlices)
 import Kenshou.Remote.Cell.Submit (PublishOutcome (Submitted), publishSubmission)
 import Kenshou.Remote.Cell.Watch (WatchEvent (..), WatchTerminal (..), watchCellRun)
+import Kenshou.Remote.Cell.WorkJson (decodeWorkPlan)
+import Kenshou.Remote.Pair (PairRequest (..), PairState (..), SliceResult (..), judgePairs, pairPlan)
 import Kenshou.Remote.Payload (Bundle (..), CellPayload (..), PayloadDescriptor (..))
 import Kenshou.Remote.Payload.Publisher (PublishError (..), PublishOptions (..), publishPayload)
 import Kenshou.Remote.Store (Bucket (..), ObjectMeta (..), ObjectName (..), ObjectStore (..))
@@ -52,7 +62,7 @@ import System.Process (readProcessWithExitCode)
 
 data CellLocation = CellLocation !Text !(Maybe Text)
 
-data LeaseCli = LeaseCli !CellLocation !Text !(Maybe Text) !Int !Int !Bool !Bool
+data LeaseCli = LeaseCli !CellLocation !Text !(Maybe Text) !Int !Int !Bool !Bool !Bool
 
 data RouteCli = RouteCli ![Text] !(Maybe Text) !FilePath !(Maybe FilePath) !(Maybe FilePath) !FilePath !Bool !Bool
 
@@ -60,9 +70,13 @@ data SubmitSettings = SubmitSettings ![String] !FilePath !FilePath !Granularity 
 
 data SubmitCli = SubmitCli !CellLocation !Text !SubmitSettings !Bool
 
-data RunCli = RunCli !CellLocation !SubmitSettings !Int !Int !Bool
+data RunCli = RunCli !CellLocation !SubmitSettings !Int !Int !Bool !Bool
 
 data ProbeCli = ProbeCli !CellLocation !FilePath !(Maybe FilePath)
+
+data PairCli = PairCli !CellLocation !FilePath !FilePath !FilePath !(Maybe Int) !PairedOrdering !FilePath ![Text] !Int !Bool !FilePath
+
+data PairObservation = PairObservation !PlannedRun !FilePath !Bool
 
 data PayloadPublishCli = PayloadPublishCli !Text !Text !(Maybe Text) !FilePath !FilePath !Bool
 
@@ -78,6 +92,7 @@ data CellAction
   | Submit !SubmitCli
   | Run !RunCli
   | Probe !ProbeCli
+  | Pair !PairCli
   | Resume !FilePath !(Maybe Text)
   | PublishPayload !PayloadPublishCli
   | ShowPayload !FilePath
@@ -100,6 +115,7 @@ cellParser =
       <> command "submit" (info (submitParser <**> helper) (progDesc "Submit a prepared plan under an existing lease"))
       <> command "run" (info (runParser <**> helper) (progDesc "Lease, submit, verify and release a cell session"))
       <> command "probe" (info (probeParser <**> helper) (progDesc "Run a cell environment probe and cache capabilities"))
+      <> command "pair" (info (pairParser <**> helper) (progDesc "Measure interleaved payload arms under one cell lease"))
       <> command "resume" (info (resumeParser <**> helper) (progDesc "Continue a saved cell session"))
       <> command "payload" (info (payloadParser <**> helper) (progDesc "Build and publish a checked cell payload"))
       <> (command "exec" (info (cellExecParser <**> helper) (progDesc "Execute prepared work on a cell driver")) <> internal)
@@ -140,6 +156,7 @@ leaseParser =
             <*> optional (strOption (long "owner" <> metavar "TEXT" <> help "Lease owner; defaults to USER"))
             <*> option auto (long "ttl" <> metavar "SECONDS" <> value 120 <> showDefault <> help "Lease lifetime between renewals")
             <*> option auto (long "wait" <> metavar "SECONDS" <> value 0 <> showDefault <> help "Wait for a busy lease")
+            <*> switch (long "start" <> help "Start stopped cell instances before acquiring a lease")
             <*> switch (long "hold" <> help "Renew in the foreground until interrupted")
             <*> switch (long "json" <> help "Print the lease document as JSON")
         )
@@ -182,6 +199,7 @@ runParser =
             <*> submitSettingsParser (pure False)
             <*> option auto (long "ttl" <> metavar "SECONDS" <> value 120 <> showDefault <> help "Held lease lifetime between renewals")
             <*> option auto (long "wait" <> metavar "SECONDS" <> value 0 <> showDefault <> help "Wait for a busy cell")
+            <*> switch (long "start" <> help "Start stopped cell instances before acquiring a lease")
             <*> switch (long "detach" <> help "Submit one slice and leave its budgeted lease to run after this process exits")
         )
 
@@ -193,6 +211,28 @@ probeParser =
             <*> strOption (long "payload" <> metavar "FILE" <> help "Published payload descriptor with the cell-environment scenario")
             <*> optional (strOption (long "out" <> metavar "FILE" <> help "Capability cache JSON; defaults to the configured cache directory"))
         )
+
+pairParser :: Parser CellAction
+pairParser =
+  Pair
+    <$> ( PairCli
+            <$> cellLocationParser
+            <*> strOption (long "candidate" <> metavar "FILE" <> help "Candidate payload descriptor")
+            <*> strOption (long "baseline" <> metavar "FILE" <> help "Baseline payload descriptor")
+            <*> strOption (long "plan" <> metavar "FILE" <> help "Benchmark run plan JSON")
+            <*> optional (option auto (long "pairs" <> metavar "N" <> help "Requested valid pairs; defaults to the policy minimum"))
+            <*> option (eitherReader parsePairOrdering) (long "ordering" <> metavar "abba|baab" <> value ABBA <> showDefaultWith (const "abba") <> help "Order baseline and candidate in adjacent pairs")
+            <*> strOption (long "policy" <> metavar "FILE" <> value "policies/default.json" <> showDefault <> help "Comparison policy JSON")
+            <*> many (strOption (long "pg-setting" <> metavar "KEY=VALUE" <> help "PostgreSQL reset setting; repeat as needed"))
+            <*> option auto (long "max-replacements" <> metavar "N" <> value (-1) <> help "Additional pairs after invalid trials; defaults to requested pairs")
+            <*> switch (long "start" <> help "Start stopped cell instances before acquiring a lease")
+            <*> strOption (long "out" <> metavar "DIR" <> help "New directory for paired cell sessions and comparison")
+        )
+
+parsePairOrdering :: String -> Either String PairedOrdering
+parsePairOrdering "abba" = Right ABBA
+parsePairOrdering "baab" = Right BAAB
+parsePairOrdering _ = Left "expected abba or baab"
 
 submitSettingsParser :: Parser Bool -> Parser SubmitSettings
 submitSettingsParser dryFlag =
@@ -335,9 +375,10 @@ runCell selected cli = case selected of
         TextIO.putStrLn ("lease " <> maybe "none" (renderRunId . (.leaseId)) snapshot.lease)
         TextIO.putStrLn ("quarantine " <> maybe "none" (.reason) snapshot.quarantine)
     pure ExitSuccess
-  LeaseCell (LeaseCli location purpose owner ttl waitSeconds hold asJson)
+  LeaseCell (LeaseCli location purpose owner ttl waitSeconds startInstances hold asJson)
     | ttl <= 0 || waitSeconds < 0 || Text.null purpose || maybe False Text.null owner -> usage "lease purpose and TTL must be positive; wait cannot be negative"
-    | otherwise -> withControl location \store ref _ -> do
+    | otherwise -> withControl location \store ref observed -> do
+        if startInstances then startCellInstances observed.descriptor else pure ()
         defaultOwner <- Text.pack . fromMaybe "kenshou" <$> lookupEnv "USER"
         let request = LeaseRequest (fromMaybe defaultOwner owner) purpose ttl
         start <- getCurrentTime
@@ -486,16 +527,17 @@ runCell selected cli = case selected of
                                           pure ExitSuccess
                                         other -> unavailable ("detached submission failed: " <> Text.pack (show other))
                                     else do
-                                      result <- runPlannedSlices store ref (Bucket observed.descriptor.buckets.results) active (outDir </> "session.json") session.journal emitWatchEvent
+                                      result <- withHeartbeat store ref active \_ -> runPlannedSlices store ref (Bucket observed.descriptor.buckets.results) active (outDir </> "session.json") session.journal emitWatchEvent
                                       case result of
                                         Left failure -> unavailable (Text.pack (show failure))
                                         Right finished -> do
                                           TextIO.hPutStrLn stderr ("session " <> renderRunId finished.sessionId <> " verified; journal " <> Text.pack (outDir </> "session.json"))
                                           pure (sessionExitCode finished)
                     Right _ -> unavailable "cell capability cache count differs from descriptor count"
-  Run (RunCli location settings ttl waitSeconds detached)
+  Run (RunCli location settings ttl waitSeconds startInstances detached)
     | ttl <= 0 || waitSeconds < 0 -> usage "lease TTL must be positive and wait cannot be negative"
-    | otherwise -> withControl location \store ref _ -> do
+    | otherwise -> withControl location \store ref observed -> do
+        if startInstances then startCellInstances observed.descriptor else pure ()
         defaultOwner <- Text.pack . fromMaybe "kenshou" <$> lookupEnv "USER"
         start <- getCurrentTime
         let request = LeaseRequest defaultOwner "kenshou cell run" ttl
@@ -531,6 +573,7 @@ runCell selected cli = case selected of
                 Quarantined record -> unavailable ("cell is quarantined: " <> record.reason)
         acquire
   Probe request -> runProbe cli request
+  Pair request -> runPair cli request
   Resume sessionDir selectedLease -> guardIO do
     let journalPath = sessionDir </> "session.json"
     present <- doesPathExist journalPath
@@ -568,7 +611,7 @@ runCell selected cli = case selected of
 
 continueSession :: ObjectStore -> CellRef -> FilePath -> SessionJournal -> LeaseHandle -> IO ExitCode
 continueSession store ref journalPath journal handle = do
-  resumed <- resumeHeldSession store ref (Bucket journal.resultsBucket) handle journalPath emitWatchEvent
+  resumed <- withHeartbeat store ref handle \_ -> resumeHeldSession store ref (Bucket journal.resultsBucket) handle journalPath emitWatchEvent
   case resumed of
     Left failure -> unavailable (Text.pack (show failure))
     Right finished -> do
@@ -634,7 +677,7 @@ runProbe cli (ProbeCli location payload output) = withControl location \_ _ obse
   if planned /= ExitSuccess
     then usage ("cell probe could not plan its environment scenario: " <> Text.pack planErrors)
     else do
-      result <- runCell (Run (RunCli location settings 120 0 False)) cli
+      result <- runCell (Run (RunCli location settings 120 0 False False)) cli
       if result /= ExitSuccess
         then pure result
         else do
@@ -689,6 +732,129 @@ extractProbeCapabilities expectedCellRun (Object root) = do
     asObject label _ = Left (label <> " is not an object")
 extractProbeCapabilities _ _ = Left "run result is not an object"
 
+runPair :: CliEnv -> PairCli -> IO ExitCode
+runPair cli (PairCli location candidateFile baselineFile planFile selectedPairs ordering policyFile settingTexts replacementOption startInstances outDir) = guardIO do
+  settings <- case traverse parsePgSetting settingTexts of
+    Left problem -> pure (Left problem)
+    Right parsed -> pure (Right parsed)
+  policyBytes <- ByteString.readFile policyFile
+  sourceDocument <- eitherDecodeFileStrict' planFile :: IO (Either String Value)
+  payloadResult <- loadPayloads ["baseline=" <> baselineFile, "candidate=" <> candidateFile]
+  case (settings, decodePolicy policyBytes, sourceDocument >>= either (Left . Text.unpack) Right . decodeWorkPlan, payloadResult) of
+    (Left problem, _, _, _) -> usage problem
+    (_, Left problem, _, _) -> usage problem
+    (_, _, Left problem, _) -> usage (Text.pack problem)
+    (_, _, _, Left problem) -> usage problem
+    (Right selectedPgSettings, Right policy, Right source, Right payloads) -> do
+      let requested = fromMaybe policy.minimumPairs selectedPairs
+          replacements = if replacementOption < 0 then requested else replacementOption
+          request = PairRequest "candidate" "baseline" requested ordering (unSeed source.policy.seed) replacements
+          pgSettings = selectedPgSettings <> [(name, assigned) | (name, assigned) <- [("checkpoint_timeout", "30min"), ("max_wal_size", "16GB")], name `notElem` fmap fst selectedPgSettings]
+      case pairPlan request source of
+        Left problem -> usage problem
+        Right schedule -> do
+          let groups = nub [trial.group | entry <- schedule.runs, Just trial <- [entry.trial]]
+          if length groups /= 1
+            then usage "cell pair currently requires one benchmark configuration per plan"
+            else withControl location \store ref observed -> do
+              exists <- doesPathExist outDir
+              if exists
+                then usage "pair output path already exists; choose a new directory"
+                else do
+                  if startInstances then startCellInstances observed.descriptor else pure ()
+                  defaultOwner <- Text.pack . fromMaybe "kenshou" <$> lookupEnv "USER"
+                  acquired <- acquireLease store ref (LeaseRequest defaultOwner "kenshou cell pair" 120)
+                  case acquired of
+                    Busy lease -> unavailable ("cell is busy under lease " <> renderRunId lease.leaseId)
+                    Quarantined record -> unavailable ("cell is quarantined: " <> record.reason)
+                    Acquired handle -> do
+                      lease <- leaseSnapshot handle
+                      let releaseCurrent = do
+                            current <- reattachLease store ref lease.leaseId
+                            traverse_ (\active -> do _ <- releaseLease store ref active; pure ()) current
+                      pairUnderLease cli location lease.leaseId baselineFile candidateFile request schedule policy payloads pgSettings outDir `finally` releaseCurrent
+
+pairUnderLease :: CliEnv -> CellLocation -> RunId -> FilePath -> FilePath -> PairRequest -> RunPlan -> Policy -> Map.Map Text PayloadDescriptor -> [(Text, Text)] -> FilePath -> IO ExitCode
+pairUnderLease cli location leaseId baselineFile candidateFile request schedule policy payloads pgSettings outDir = do
+  createDirectoryIfMissing True outDir
+  LazyByteString.writeFile (outDir </> "pair-plan.json") (encode schedule)
+  let requested = request.pairs
+      limit = requested + request.maxReplacements
+      batchFor predicate = filter (\entry -> maybe False predicate entry.trial) schedule.runs
+      initial = batchFor (\trial -> trial.index < requested)
+      runRound :: Int -> [PlannedRun] -> IO (Either Text [PairObservation])
+      runRound roundNumber entries = do
+        let planPath = outDir </> ("round-" <> show roundNumber <> ".plan.json")
+            sessionDir = outDir </> ("round-" <> show roundNumber)
+            plan = schedule {runs = entries, estimateMinutes = sum (fmap (.estimateMinutes) entries)}
+            settings = SubmitSettings ["baseline=" <> baselineFile, "candidate=" <> candidateFile] planPath sessionDir GranularityRun Cold (fmap (\(name, assigned) -> name <> "=" <> assigned) pgSettings) False False False Nothing NullSink Nothing False
+        LazyByteString.writeFile planPath (encode plan)
+        result <- runCell (Submit (SubmitCli location (renderRunId leaseId) settings False)) cli
+        journal <- readSessionJournal (sessionDir </> "session.json")
+        case journal of
+          Left problem -> pure (Left ("pair submission did not produce a readable journal (" <> Text.pack (show result) <> "): " <> problem))
+          Right verified -> case find ((== SliceRejected) . (.state)) verified.slices of
+            Just rejected -> pure (Left ("pair submission rejected: " <> fromMaybe "unknown reason" rejected.rejectionReason))
+            Nothing -> case find ((/= SliceVerified) . (.state)) verified.slices of
+              Just incomplete -> pure (Left ("pair submission is incomplete at " <> renderRunId incomplete.cellRun <> "; resume " <> Text.pack sessionDir))
+              Nothing -> pure (collectPairObservations outDir entries verified)
+      continue roundNumber nextIndex observed = do
+        let valid = validPairIndexes observed
+        if length valid >= request.pairs || nextIndex >= limit
+          then finishPair policy payloads outDir request observed valid
+          else do
+            let entries = batchFor (\trial -> trial.index == nextIndex)
+            next <- runRound roundNumber entries
+            case next of
+              Left problem -> unavailable problem
+              Right results -> continue (roundNumber + 1) (nextIndex + 1) (observed <> results)
+  initialResult <- runRound 0 initial
+  case initialResult of
+    Left problem -> unavailable problem
+    Right observed -> continue 1 requested observed
+
+collectPairObservations :: FilePath -> [PlannedRun] -> SessionJournal -> Either Text [PairObservation]
+collectPairObservations outDir entries journal = traverse collect entries
+  where
+    collect entry = case find (elem entry.runId . (.runIds)) journal.slices of
+      Nothing -> Left ("pair journal omits planned run " <> renderRunId entry.runId)
+      Just slice ->
+        let path = outDir </> Text.unpack (renderRunId slice.cellRun) </> "tree" </> "output" </> Text.unpack (renderRunId entry.runId)
+            passed = slice.state == SliceVerified && slice.cellOutcome == Just Completed && slice.entryExitCode == Just 0
+         in Right (PairObservation entry path passed)
+
+validPairIndexes :: [PairObservation] -> [Int]
+validPairIndexes observations = sort [index | ((_, index), PairValid) <- judgePairs (fmap asSlice observations)]
+  where
+    asSlice (PairObservation entry _ passed) = case entry.trial of
+      Just trial -> SliceResult trial.group trial.index (if trial.arm == "baseline" then Baseline else Candidate) passed
+      Nothing -> error "paired plan lost trial membership"
+
+finishPair :: Policy -> Map.Map Text PayloadDescriptor -> FilePath -> PairRequest -> [PairObservation] -> [Int] -> IO ExitCode
+finishPair policy payloads outDir request observations valid =
+  if null valid
+    then unavailable "all paired trials failed; no comparison can be computed"
+    else do
+      let chosen = take request.pairs valid
+          pathFor index arm = case find (matches index arm) observations of
+            Just (PairObservation _ path _) -> path
+            Nothing -> error "valid pair has no run path"
+          matches index arm (PairObservation entry _ _) = case entry.trial of
+            Just trial -> trial.index == index && trial.arm == arm
+            Nothing -> False
+          baselines = fmap (`pathFor` "baseline") chosen
+          candidates = fmap (`pathFor` "candidate") chosen
+          varying = case (Map.lookup "baseline" payloads, Map.lookup "candidate" payloads) of
+            (Just baseline, Just candidate) | baseline.cohortIdentity.identityPlanHash /= candidate.cohortIdentity.identityPlanHash -> VaryCohort
+            _ -> VaryControl
+      compared <- compareRuns policy (varying :| []) baselines candidates
+      case compared of
+        Left (CompareError problem) -> usage ("cell pair comparison failed: " <> problem)
+        Right comparison -> do
+          LazyByteString.writeFile (outDir </> "comparison.json") (encode comparison <> "\n")
+          TextIO.putStrLn ("comparison " <> Text.pack (show comparison.verdict) <> "; valid pairs " <> Text.pack (show (length chosen)) <> "/" <> Text.pack (show request.pairs))
+          pure case verdictExitCode comparison.verdict of 0 -> ExitSuccess; code -> ExitFailure code
+
 parsePgSetting :: Text -> Either Text (Text, Text)
 parsePgSetting setting = case Text.breakOn "=" setting of
   (name, assignment) | not (Text.null name) && Text.length assignment > 1 -> Right (name, Text.drop 1 assignment)
@@ -738,6 +904,31 @@ withControl (CellLocation name selectedBucket) operation = do
           case snapshot of
             Left problem -> unavailable problem
             Right observed -> operation store ref observed
+
+startCellInstances :: CellDescriptor -> IO ()
+startCellInstances descriptor = do
+  let names = descriptor.instances.postgres : descriptor.instances.drivers <> [descriptor.instances.monitoring]
+      location = ["--project=" <> Text.unpack descriptor.project, "--zone=" <> Text.unpack descriptor.zone]
+  states <-
+    traverse
+      ( \name -> do
+          (code, output, failure) <- readProcessWithExitCode "gcloud" (["compute", "instances", "describe", Text.unpack name] <> location <> ["--format=value(status)"]) ""
+          if code == ExitSuccess
+            then pure (name, Text.strip (Text.pack output))
+            else ioError (userError ("cannot inspect cell instance " <> Text.unpack name <> ": " <> failure))
+      )
+      names
+  case [(name, state) | (name, state) <- states, state `notElem` ["RUNNING", "TERMINATED"]] of
+    (name, state) : _ -> ioError (userError ("cell instance " <> Text.unpack name <> " is " <> Text.unpack state))
+    [] -> do
+      let stopped = [Text.unpack name | (name, "TERMINATED") <- states]
+      if null stopped
+        then pure ()
+        else do
+          (code, _, failure) <- readProcessWithExitCode "gcloud" (["compute", "instances", "start"] <> stopped <> location <> ["--quiet"]) ""
+          if code == ExitSuccess
+            then TextIO.hPutStrLn stderr ("started " <> Text.pack (show (length stopped)) <> " instances for cell " <> descriptor.name)
+            else ioError (userError ("could not start cell " <> Text.unpack descriptor.name <> ": " <> failure))
 
 holdLease :: IO Bool -> IO ExitCode
 holdLease stillHeld = do

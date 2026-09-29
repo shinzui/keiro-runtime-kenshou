@@ -84,6 +84,7 @@ main = hspec do
       runWithArgs ["cell", "submit", "--help"] `shouldReturnCode` ExitSuccess
       runWithArgs ["cell", "run", "--help"] `shouldReturnCode` ExitSuccess
       runWithArgs ["cell", "probe", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["cell", "pair", "--help"] `shouldReturnCode` ExitSuccess
       runWithArgs ["cell", "resume", "--help"] `shouldReturnCode` ExitSuccess
       runWithArgs ["cell", "payload", "publish", "--help"] `shouldReturnCode` ExitSuccess
       runWithArgs ["cell", "payload", "show", "--help"] `shouldReturnCode` ExitSuccess

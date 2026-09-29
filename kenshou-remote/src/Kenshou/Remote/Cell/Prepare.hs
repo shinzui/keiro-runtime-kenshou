@@ -210,7 +210,9 @@ prepareWithPayload registry descriptor cachedCapabilities routingRules payloads 
 
     combinedSettings scenario spec = foldl add (Right Map.empty) sources
       where
-        required = maybe [] (.settings) scenario.requires.postgres <> concatMap ((.settings) . snd) scenario.requires.extraPostgres
+        -- The cell image owns preloaded libraries. The external PostgreSQL
+        -- adapter verifies required libraries against the running server.
+        required = filter ((/= "shared_preload_libraries") . fst) (maybe [] (.settings) scenario.requires.postgres <> concatMap ((.settings) . snd) scenario.requires.extraPostgres)
         primary = case spec.environment.postgres of Just (PostgresEphemeral values) -> values; _ -> []
         extras = concatMap (\value -> case value of PostgresEphemeral values -> values; _ -> []) (Map.elems spec.environment.extraPostgres)
         sources = [("fsync", "on"), ("synchronous_commit", "on"), ("full_page_writes", "on")] <> required <> primary <> extras <> options.pgSettings

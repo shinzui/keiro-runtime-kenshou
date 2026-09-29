@@ -389,9 +389,13 @@ that exactly matches the fetched fingerprint, including available
 PostgreSQL setup/reset race in `mori://shinzui/load-testing-infra` at
 `2d3ada5`, deployed image `cell-image-postgres18-3vfib0hzp0m7` at
 `effe38a`, and the fresh worker run sealed `completed` with a verified
-reset. The head and diagnostic payload variants, paired comparisons,
-the operator guide and the remaining live acceptance
-matrix remain open.
+reset. The paired cell command now interleaves same-seed trials within one
+lease, replaces failed pairs, and returns the measurement toolkit's verdict.
+A live ten-slice A/A attempt kept consecutive lease sequences and correctly
+returned inconclusive after the owner's PostgreSQL unit hit its five-starts-
+per-ten-minutes limit on the sixth reset. A passing A/A control, the head and
+diagnostic payload variants, overhead, the operator guide and the remaining
+live acceptance matrix remain open.
 
 EP-11 now preserves both owner references for the Kafka rebalance scenario:
 BUG-4 covers premature adapter exits and BUG-6 covers within-assignment
@@ -518,6 +522,7 @@ EP-18 completed its first milestone: `docs/verification` validates as an OKF v0.
 ## Surprises & Discoveries
 
 - EP-17's database-free worker scenario still needed the PostgreSQL reset block required by EP-16's current driver. A live run then exposed a race between `postgresql.service` restart and `postgresql-setup.service` database creation: the setup unit recreated `benchmark` while reset verification was reading the database list. EP-16 now waits for setup completion in the role executor; the next live worker run passed and its local/cell parity report has zero unexpected fields. The owner code is in `mori://shinzui/load-testing-infra` at project-relative path `nixos/pkgs/cell-agent/src/src/reset/postgres.rs` (artifact-level URI pending).
+- EP-17's paired control exposed the owner image's PostgreSQL systemd start limit: five starts in ten minutes and five seconds. The first five cold resets passed; subsequent resets sealed `reset-failed` with `start-limit-hit`. This affects paired comparisons and overhead, including database-free work while the owner requires a PostgreSQL role reset. The proposed owner unit change is pending explicit approval after automatic review rejected it. The unit is in `mori://shinzui/load-testing-infra` at project-relative path `nixos/modules/cell-postgres.nix` (artifact-level URI pending).
 
 - EP-10's adapter finding audit filed `mori://shinzui/shibuya-pgmq-adapter/okf/bug-reports/concepts/BUG-2` for the historical exhausted-acknowledgement hook, `mori://shinzui/shibuya-pgmq-adapter/okf/bug-reports/concepts/BUG-3` for duplicate direct-DLQ copies, and `mori://shinzui/kiroku/okf/bug-reports/concepts/BUG-4` for partial group-acquisition cleanup. Published-current adapter controls passed on PostgreSQL 17 and 18. Clean released PostgreSQL 18 runs at `9297d59` reproduced the exact hook and group-cleanup findings (`01a0e55b-52c2-75d3-aa5b-680edeff9115`, `01a0e55d-02ea-77e4-909c-f9163be0cdb5`). Two 10,000-message atomic-move reruns (`01a0e55c-0eb5-737c-9336-220939cbcd0f`, `01a0e55c-9391-73b5-a2da-b49cfa472ca3`) passed without triggering the timing-dependent duplicate; earlier pinned historical runs reproduced two and nine copies. All four new result schemas and both owner OKF bundles validated; the 34-example Shibuya package suite passed. Remaining EP-10 acceptance work stays open.
 

@@ -177,6 +177,15 @@ spec = do
           (configs, skipped) = expandScenario policy selected
       skipped `shouldBe` []
       fmap (Map.lookup "pg.durability" . (.dimensions)) configs `shouldSatisfy` all (== Just "durable")
+    it "admits a benchmark without PostgreSQL without inventing a durability dimension" do
+      selected <- matrixSelected Benchmark Nothing
+      seed <- expectRight (mkSeed 42)
+      let scenario = (selected.scenario :: ScenarioInfo) {dimensions = noDimensions}
+          policy = (defaultPlanPolicy seed :: PlanPolicy) {Policy.placement = RunOnCell}
+          (configs, skipped) = expandScenario policy (selected {scenario = scenario})
+      skipped `shouldBe` []
+      configs `shouldSatisfy` (not . null)
+      fmap (Map.lookup "pg.durability" . (.dimensions)) configs `shouldSatisfy` all (== Nothing)
 
   describe "Kenshou.Plan.RunPlan" do
     it "keeps benchmark trial groups whole under a budget" do

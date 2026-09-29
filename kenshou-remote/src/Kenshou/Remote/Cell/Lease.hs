@@ -155,14 +155,25 @@ renewLease :: ObjectStore -> CellRef -> LeaseHandle -> IO Bool
 renewLease store ref handle = modifyMVar handle.state \(lease, generation, held) ->
   if not held || lease.cancelRequested
     then pure ((lease, generation, False), False)
-    else do
+    else renewCurrent lease generation (0 :: Int)
+  where
+    renewCurrent lease generation attempts = do
       unless (lease.cell == ref.cellName) (ioError (userError "lease handle names another cell"))
       now <- store.serverTime
       let renewed = lease {heartbeatAt = now}
       result <- store.putObject ref.controlBucket (leaseName ref) "application/json" (GenerationIs generation) (encode renewed)
       case result of
         Written meta -> pure ((renewed, meta.generation, True), True)
-        PreconditionFailed -> pure ((lease, generation, False), False)
+        PreconditionFailed -> do
+          current <- readCurrent store ref
+          case current of
+            Just (observed, meta)
+              | attempts + 1 < maxCasAttempts,
+                observed.leaseId == lease.leaseId,
+                not observed.cancelRequested,
+                addUTCTime (fromIntegral observed.ttlSeconds + 30) meta.updated >= now ->
+                  renewCurrent observed meta.generation (attempts + 1)
+            _ -> pure ((lease, generation, False), False)
 
 -- A detached submission needs a lease that outlives its wall-clock budget.
 -- Fence the TTL change before publishing its marker.

@@ -63,6 +63,22 @@ differences. The command exits 1 if a scenario input or verdict differs. Use
 `--volatile result.summaries.verdicts.FIELD` only for a known path inside a
 verdict summary.
 
+Measure a benchmark with interleaved baseline and candidate trials on one
+leased cell:
+
+```bash
+kenshou cell pair --cell alpha --start --baseline payloads/released.json \
+  --candidate payloads/head.json --plan benchmark.plan.json \
+  --policy policies/default.json --out cell-pairs/run-1
+```
+
+Each trial is a separate cell submission with a fresh reset. The command
+keeps one lease across the schedule, replaces invalid pairs within its budget,
+and writes `comparison.json`. Use the same payload for both arms as an A/A
+control before comparing different cohorts.
+`--start` starts stopped instances named by the verified cell descriptor; it is
+also available on `cell lease` and `cell run`.
+
 Route a plan across cells with different PostgreSQL majors:
 
 ```bash

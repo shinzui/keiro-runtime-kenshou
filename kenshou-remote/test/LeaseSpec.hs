@@ -11,7 +11,7 @@ import Data.Time (addUTCTime, getCurrentTime)
 import Kenshou.Core.Id (newRunId)
 import Kenshou.Remote.Cell.Control (CellSnapshot (..), readCellSnapshot)
 import Kenshou.Remote.Cell.Lease (AcquireOutcome (..), CellRef (..), Lease (..), LeaseHandle, LeaseRequest (..), Quarantine (..), acquireLease, leaseHeld, leaseSnapshot, reattachLease, releaseLease, renewLease, requestCancel, resizeLease, withHeartbeat)
-import Kenshou.Remote.Store (Bucket (..), ObjectName (..), ObjectStore (..), Precondition (..))
+import Kenshou.Remote.Store (Bucket (..), ObjectMeta (..), ObjectName (..), ObjectStore (..), Precondition (..), PutOutcome (..))
 import Kenshou.Remote.Store.File (newFileStore)
 import System.IO.Temp (withSystemTempDirectory)
 import Test.Hspec
@@ -38,6 +38,19 @@ spec = describe "cell lease protocol" do
     releaseLease store cellRef handle `shouldReturn` True
     leaseHeld handle `shouldReturn` False
     store.statObject cellRef.controlBucket (ObjectName "cells/alpha/lease.json") `shouldReturn` Nothing
+
+  it "retains the lease when the cell agent advances runsStarted" $ withSystemTempDirectory "kenshou-lease" \root -> do
+    store <- newFileStore root
+    handle <- acquireLease store cellRef request >>= expectAcquired
+    lease <- leaseSnapshot handle
+    let objectName = ObjectName "cells/alpha/lease.json"
+    meta <- store.statObject cellRef.controlBucket objectName >>= maybe (expectationFailure "missing lease" >> error "unreachable") pure
+    updated <- store.putObject cellRef.controlBucket objectName "application/json" (GenerationIs meta.generation) (encode (lease {runsStarted = 1}))
+    updated `shouldSatisfy` \case Written _ -> True; _ -> False
+    renewLease store cellRef handle `shouldReturn` True
+    refreshed <- leaseSnapshot handle
+    refreshed.runsStarted `shouldBe` 1
+    releaseLease store cellRef handle `shouldReturn` True
 
   it "takes over only after server time exceeds updated plus TTL and grace" $ withSystemTempDirectory "kenshou-lease" \root -> do
     store <- newFileStore root

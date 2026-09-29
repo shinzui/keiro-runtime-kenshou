@@ -15,7 +15,7 @@ import Kenshou.Core.Cohort
 import Kenshou.Core.Compat (comparisonKey, compatInputs, seriesKey)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (PostgresRequirement (..), SchemaComponent (..))
-import Kenshou.Core.Env.Postgres (PgSettingsSnapshot (..), PostgresEnv (..), ServerControl (..), StopMode (..), withPostgresEnv)
+import Kenshou.Core.Env.Postgres (EnvError (..), PgSettingsSnapshot (..), PostgresEnv (..), ServerControl (..), StopMode (..), withPostgresEnv)
 import Kenshou.Core.Id
 import Kenshou.Core.Knob
 import Kenshou.Core.Log (nullLogger)
@@ -320,9 +320,11 @@ postgresEnvironmentSpec = describe "PostgreSQL environments" do
     runId <- expectRight (parseRunId "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e55")
     let dimensions = Dimensions Nothing Nothing (Just PgFsyncOff) (Just Pg18)
         outerRequirement = PostgresRequirement [] [] False
-        externalRequirement = PostgresRequirement [SchemaPgmq] [] False
-    outer <- withPostgresEnv nullLogger directory runId outerRequirement (PostgresEphemeral []) dimensions \server -> do
+        externalRequirement = PostgresRequirement [SchemaPgmq] [("shared_preload_libraries", "'pg_stat_statements'")] False
+    outer <- withPostgresEnv nullLogger directory runId outerRequirement (PostgresEphemeral [("shared_preload_libraries", "'pg_stat_statements'")]) dimensions \server -> do
       inner <- withPostgresEnv nullLogger directory runId externalRequirement (PostgresExternal (ConnLiteral server.adminConnectionString)) dimensions (\environment -> psqlTest environment.connectionString "select to_regnamespace('pgmq') is not null")
+      missing <- withPostgresEnv nullLogger directory runId (PostgresRequirement [] [("shared_preload_libraries", "'missing_extension'")] False) (PostgresExternal (ConnLiteral server.adminConnectionString)) dimensions (const (pure ()))
+      missing `shouldBe` Left (EnvError "external PostgreSQL is missing required preloaded libraries: missing_extension")
       remaining <- psqlTest server.adminConnectionString "select count(*) from pg_database where datname like 'kenshou_01997f3a5b7c7%'"
       pure (inner, remaining)
     outer `shouldBe` Right (Right (Right "t"), Right "0")

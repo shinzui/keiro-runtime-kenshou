@@ -74,7 +74,7 @@ expandDimensions policy pins scenario
     supported = supportRows scenario.dimensions
     durableSupported = case scenario.dimensions.pgDurability of
       Supported support -> PgDurable `elem` support.values
-      NotApplicable -> False
+      NotApplicable -> True
     validatePin (name, value) = case lookup name [(rowName, values) | (rowName, values, _) <- supported] of
       Nothing -> Left (MatrixSkip "unsupported-dimension" (name <> " is not applicable"))
       Just values | value `elem` values -> Right (name, value)

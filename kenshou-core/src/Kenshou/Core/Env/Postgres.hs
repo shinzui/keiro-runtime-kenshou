@@ -101,10 +101,10 @@ withPostgresEnvKeeping keepEnvironment logger runDirectory runId requirement pos
       Left err -> pure (Left err)
       Right maintenanceConnection -> do
         initialSnapshot <- snapshotDatabase maintenanceConnection
-        case initialSnapshot >>= validateExternal dimensions of
+        case initialSnapshot >>= \snapshot -> validateExternal dimensions snapshot *> validatePreloadedLibraries requirement snapshot of
           Left err -> pure (Left err)
           Right () -> do
-            unless (null requirement.settings) $ logAt logger Warning "external PostgreSQL settings cannot be applied" []
+            unless (null (filter ((/= "shared_preload_libraries") . fst) requirement.settings)) $ logAt logger Warning "external PostgreSQL settings cannot be applied" []
             withExternalDatabases keepEnvironment maintenanceConnection runId requirement action
   where
     setup databaseRef database = do
@@ -244,11 +244,22 @@ validateExternal dimensions snapshot = do
     Just Pg17 | snapshot.serverVersionNum < 170000 || snapshot.serverVersionNum >= 180000 -> Left (EnvError "external PostgreSQL does not match pg.version=17")
     Just Pg18 | snapshot.serverVersionNum < 180000 || snapshot.serverVersionNum >= 190000 -> Left (EnvError "external PostgreSQL does not match pg.version=18")
     _ -> Right ()
+
   let actual name = Text.toCaseFold <$> Map.lookup name snapshot.settings
   case dimensions.pgDurability of
     Just PgFsyncOff | actual "fsync" /= Just "off" || actual "synchronous_commit" /= Just "off" -> Left (EnvError "external PostgreSQL does not match pg.durability=fsync-off")
     Just PgDurable | actual "fsync" /= Just "on" || actual "synchronous_commit" == Just "off" -> Left (EnvError "external PostgreSQL does not match pg.durability=durable")
     _ -> Right ()
+
+validatePreloadedLibraries :: PostgresRequirement -> PgSettingsSnapshot -> Either EnvError ()
+validatePreloadedLibraries requirement snapshot =
+  case filter (`notElem` available) requested of
+    [] -> Right ()
+    missing -> Left (EnvError ("external PostgreSQL is missing required preloaded libraries: " <> Text.intercalate ", " missing))
+  where
+    requested = concatMap (libraries . snd) (filter ((== "shared_preload_libraries") . fst) requirement.settings)
+    available = libraries (Map.findWithDefault "" "shared_preload_libraries" snapshot.settings)
+    libraries = filter (not . Text.null) . fmap (Text.toCaseFold . Text.strip) . Text.splitOn "," . Text.dropAround (== '\'') . Text.strip
 
 psql :: Text -> Text -> IO (Either EnvError Text)
 psql connection query = do

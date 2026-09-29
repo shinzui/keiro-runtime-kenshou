@@ -55,6 +55,7 @@ library
     Kenshou.Remote.Cell.Submit
     Kenshou.Remote.Cell.Watch
     Kenshou.Remote.Cell.WorkJson
+    Kenshou.Remote.Pair
     Kenshou.Remote.Payload
     Kenshou.Remote.Payload.Nix
     Kenshou.Remote.Payload.Publish
@@ -77,6 +78,7 @@ library
     http-client-tls,
     http-types,
     kenshou-core,
+    kenshou-measure,
     network,
     process,
     text >=2.1 && <2.2,
@@ -95,6 +97,7 @@ test-suite kenshou-remote-test
     GcsSpec
     HealthSpec
     LeaseSpec
+    PairSpec
     ParitySpec
     PayloadSpec
     PrepareSpec
@@ -111,6 +114,7 @@ test-suite kenshou-remote-test
     filepath,
     hspec >=2.11 && <2.12,
     kenshou-core,
+    kenshou-measure,
     kenshou-remote,
     network,
     process,
