@@ -413,9 +413,16 @@ reset. The paired cell command now interleaves same-seed trials within one
 lease, replaces failed pairs, and returns the measurement toolkit's verdict.
 A live ten-slice A/A attempt kept consecutive lease sequences and correctly
 returned inconclusive after the owner's PostgreSQL unit hit its five-starts-
-per-ten-minutes limit on the sixth reset. A passing A/A control, the head and
-diagnostic payload variants, overhead, the operator guide and the remaining
-live acceptance matrix remain open.
+per-ten-minutes limit on the sixth reset. The owner image now permits bounded
+repeated resets; a fresh ten-slice, five-pair A/A control passed under one
+lease. The clean head and head info-table Linux payloads were published, and
+the latter passed a sealed alpha run with `GHCRTS=-s`. A six-slot SDK OTLP
+overhead trial passed, and three verified post-upgrade collector slices
+contained per-run traces and metrics within their recorded windows. The
+operator guide covers the lifecycle and `kenshou cell debug`; its live SSH,
+journal, and SSH-forwarded tunnel checks passed on alpha. The profiled Linux
+payload, broader diagnostic and live acceptance matrix, and remaining owner
+cell health work remain open.
 
 EP-11 now preserves both owner references for the Kafka rebalance scenario:
 BUG-4 covers premature adapter exits and BUG-6 covers within-assignment

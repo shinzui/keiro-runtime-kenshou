@@ -112,3 +112,17 @@ explicitly unavailable capability prevents admission.
 The control bucket defaults to `tan-nb-exp-cells-control`; pass
 `--control-bucket` to select another. The client accepts only cells in the
 projects named by `KENSHOU_GCP_ALLOWED_PROJECTS` (default `tan-nb-exp`).
+
+For a running cell, use the owner IAP script through the verified descriptor:
+
+```bash
+kenshou cell debug --cell alpha ssh monitoring -- systemctl is-active opentelemetry-collector.service
+kenshou cell debug --cell alpha journal
+kenshou cell debug --cell alpha tunnel monitoring 8888 18888
+```
+
+`journal` reads the last 100 driver agent lines. `tunnel` holds an SSH port
+forward until interrupted; while it runs, the collector metrics endpoint is
+at `http://127.0.0.1:18888/metrics`. Keep a lease held during a longer debug
+session so the cell does not idle off. The command locates the owner checkout
+with Mori, or uses `KENSHOU_LTI_DIR` when set.

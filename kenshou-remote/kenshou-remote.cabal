@@ -36,6 +36,7 @@ library
   hs-source-dirs: src
   exposed-modules:
     Kenshou.Remote.Cell.Control
+    Kenshou.Remote.Cell.Debug
     Kenshou.Remote.Cell.Docs
     Kenshou.Remote.Cell.Exec
     Kenshou.Remote.Cell.Fetch
@@ -91,6 +92,7 @@ test-suite kenshou-remote-test
   hs-source-dirs: test
   main-is: Main.hs
   other-modules:
+    DebugSpec
     DocsSpec
     ExecSpec
     FetchSpec

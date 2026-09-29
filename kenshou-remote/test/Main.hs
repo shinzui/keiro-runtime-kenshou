@@ -8,6 +8,7 @@ import Data.ByteString.Lazy.Char8 qualified as LazyByteString
 import Data.Either (isLeft)
 import Data.Text qualified as Text
 import Data.Time (UTCTime (..), fromGregorian, secondsToDiffTime)
+import DebugSpec qualified
 import DocsSpec qualified
 import ExecSpec qualified
 import FetchSpec qualified
@@ -46,6 +47,7 @@ main =
 
 tests :: Spec
 tests = do
+  DebugSpec.spec
   DocsSpec.spec
   ExecSpec.execSpec
   FetchSpec.spec

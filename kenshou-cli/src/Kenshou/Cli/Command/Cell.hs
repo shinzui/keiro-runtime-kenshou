@@ -36,6 +36,7 @@ import Kenshou.Plan.Policy (PlanPolicy (..), defaultPlanPolicy)
 import Kenshou.Plan.RunPlan (PlanContext (..), PlanInputs (PlanInputs), PlannedRun (..), RunPlan (..), TrialInfo (..))
 import Kenshou.Plan.Selector (parseSelector)
 import Kenshou.Remote.Cell.Control (CellSnapshot (..), readCellSnapshot)
+import Kenshou.Remote.Cell.Debug (DebugCommand (..), runCellDebug)
 import Kenshou.Remote.Cell.Docs (CachePolicy (..), CellBuckets (..), CellDescriptor (..), CellManifest (..), CellNodes (..), CellOutcome (..), CellStatus (..), Limits (..), Rejected (..), Submission (..))
 import Kenshou.Remote.Cell.Exec (cellExec)
 import Kenshou.Remote.Cell.Fetch (FetchError (..), fetchCellRun, verifyCellRun)
@@ -100,6 +101,7 @@ data CellAction
   | LeaseCell !LeaseCli
   | Release !CellLocation !Text
   | Watch !CellLocation !Text
+  | Debug !CellLocation !DebugCommand
   | Route !RouteCli
   | Submit !SubmitCli
   | Run !RunCli
@@ -124,6 +126,7 @@ cellParser =
       <> command "lease" (info (leaseParser <**> helper) (progDesc "Acquire a cell lease"))
       <> command "release" (info (releaseParser <**> helper) (progDesc "Release an owned cell lease"))
       <> command "watch" (info (watchParser <**> helper) (progDesc "Follow a cell run to its terminal status"))
+      <> command "debug" (info (debugParser <**> helper) (progDesc "Inspect a cell role through the owner IAP script"))
       <> command "route" (info (routeParser <**> helper) (progDesc "Split a plan across compatible cells"))
       <> command "submit" (info (submitParser <**> helper) (progDesc "Submit a prepared plan under an existing lease"))
       <> command "run" (info (runParser <**> helper) (progDesc "Lease, submit, verify and release a cell session"))
@@ -180,6 +183,16 @@ releaseParser = Release <$> cellLocationParser <*> strOption (long "lease-id" <>
 
 watchParser :: Parser CellAction
 watchParser = Watch <$> cellLocationParser <*> strArgument (metavar "CELL_RUN_ID")
+
+debugParser :: Parser CellAction
+debugParser =
+  Debug
+    <$> cellLocationParser
+    <*> hsubparser
+      ( command "ssh" (info (DebugSsh <$> strArgument (metavar "ROLE") <*> many (strArgument (metavar "COMMAND")) <**> helper) (progDesc "Open a role shell or run a remote command"))
+          <> command "journal" (info (pure DebugJournal <**> helper) (progDesc "Read the driver agent journal"))
+          <> command "tunnel" (info (DebugTunnel <$> strArgument (metavar "ROLE") <*> argument auto (metavar "REMOTE_PORT") <*> argument auto (metavar "LOCAL_PORT") <**> helper) (progDesc "Forward a local port through IAP SSH until interrupted"))
+      )
 
 routeParser :: Parser CellAction
 routeParser =
@@ -401,6 +414,9 @@ runCell selected cli = case selected of
         TextIO.putStrLn ("lease " <> maybe "none" (renderRunId . (.leaseId)) snapshot.lease)
         TextIO.putStrLn ("quarantine " <> maybe "none" (.reason) snapshot.quarantine)
     pure ExitSuccess
+  Debug location debugCommand -> withControl location \_ _ snapshot -> do
+    result <- runCellDebug snapshot.descriptor debugCommand
+    either unavailable pure result
   LeaseCell (LeaseCli location purpose owner ttl waitSeconds startInstances hold asJson)
     | ttl <= 0 || waitSeconds < 0 || Text.null purpose || maybe False Text.null owner -> usage "lease purpose and TTL must be positive; wait cannot be negative"
     | otherwise -> withControl location \store ref observed -> do

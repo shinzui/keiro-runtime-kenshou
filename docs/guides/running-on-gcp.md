@@ -249,3 +249,16 @@ and cannot be recorded. On agent restart the owner attempts to seal the
 surviving prefix as infrastructure-failure with `agent-restarted` evidence.
 Use cell status, watch, reset evidence, and the owner agent journal to
 identify whether a failure came from the lease, reset, payload, or scenario.
+For a running cell, use the debug verbs through the verified descriptor:
+
+```bash
+kenshou cell debug --cell alpha journal
+kenshou cell debug --cell alpha ssh monitoring -- systemctl is-active opentelemetry-collector.service
+kenshou cell debug --cell alpha tunnel monitoring 8888 18888
+```
+
+`journal` reads the last 100 driver agent lines. `tunnel` holds an SSH
+forward until interrupted; query `http://127.0.0.1:18888/metrics` while it
+runs. Hold a cell lease for a longer debug session so the idle timer does not
+stop the instances. The client finds the owner script through Mori or
+`KENSHOU_LTI_DIR`.
