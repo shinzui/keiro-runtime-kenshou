@@ -420,9 +420,14 @@ the latter passed a sealed alpha run with `GHCRTS=-s`. A six-slot SDK OTLP
 overhead trial passed, and three verified post-upgrade collector slices
 contained per-run traces and metrics within their recorded windows. The
 operator guide covers the lifecycle and `kenshou cell debug`; its live SSH,
-journal, and SSH-forwarded tunnel checks passed on alpha. The profiled Linux
-payload, broader diagnostic and live acceptance matrix, and remaining owner
-cell health work remain open.
+journal, and SSH-forwarded tunnel checks passed on alpha. The clean head
+profiled Linux payload was built and published from the x86 builder, and an
+alpha run with `GHCRTS=-p` sealed both GHC `.prof` files with verified manifest
+digests and a passing nested cell-environment result. The first run immediately
+after starting the monitoring VM failed only OTLP reachability; its warm repeat
+passed, and the owner driver is gaining a bounded service-readiness check.
+The broader diagnostic and live acceptance matrix and remaining owner cell
+health work remain open.
 
 EP-11 now preserves both owner references for the Kafka rebalance scenario:
 BUG-4 covers premature adapter exits and BUG-6 covers within-assignment
