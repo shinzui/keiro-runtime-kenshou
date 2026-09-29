@@ -430,6 +430,12 @@ port and collector endpoints. The role-ready image passed a fresh alpha run
 with both role VMs initially stopped: the PostgreSQL reset, all seven nested
 environment checks including OTLP, and both sealed profiles verified. A
 head-payload probe then refreshed alpha's descriptor-keyed capability cache.
+Four generic owner fixture runs then passed under one lease with sequences
+1–4: warm and cold contamination followed by opposite-policy probes. Both
+probes found only declared databases, no user relations or fixture files, and
+the requested PostgreSQL setting from the configuration file. All four reset
+records and immutable manifests verified. This closes the tested reset-isolation
+slice and same-lease sequence check in EP-16.
 The broader diagnostic and live acceptance matrix and remaining owner cell
 health work remain open.
 
