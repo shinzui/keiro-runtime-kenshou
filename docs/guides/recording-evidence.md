@@ -21,6 +21,16 @@ cabal run -v0 kenshou -- attest RUN-ID --project tan-nb-exp
 cabal run -v0 kenshou -- history --scenario LAYER/COMPONENT/KIND/NAME --json
 ```
 
+For a fetched cell run, use the existing sealed results prefix for that exact
+cell run. The recorder links and verifies the outer cell manifest as well as
+the nested run; it does not copy the cell tree into the generic evidence bucket.
+
+```bash
+cabal run -v0 kenshou -- record .dev/CELL-RUN-ID/tree/output/RUN-ID \
+  --data-base-uri gs://tan-nb-exp-cells-results/runs/CELL-RUN-ID/output \
+  --project tan-nb-exp --purpose baseline --verify-only
+```
+
 For a comparison, first record its baseline and candidate runs, then use
 `record --comparison out/comparison.json` with the same durable URI prefix,
 project, and an explicit purpose. `attest` accepts either a run ID or the

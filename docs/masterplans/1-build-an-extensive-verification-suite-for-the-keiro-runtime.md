@@ -688,9 +688,9 @@ Numbered finding coverage is tracked separately from distinct owner records:
 |---|---:|
 | Owner bug report linked (including two Keiro reports now marked duplicate) | 31 |
 | Owner improvement request linked as the primary disposition | 6 |
-| Local harness findings (finding 3 pending; findings 39–40 owned here) | 3 |
+| Local harness findings (finding 3 pending; findings 39–41 owned here) | 4 |
 | Owner improvement request URI not recorded | 0 |
-| **Numbered findings** | **40** |
+| **Numbered findings** | **41** |
 
 Of the 32 linked bug records, 16 are reported, 14 are marked fixed by their
 owners, and two Keiro reports are marked duplicates of
@@ -711,6 +711,7 @@ disposition changes.
 - EP-12 steady-restart harness thread-growth finding: [local finding](../findings/3-keiro-steady-restart-harness-threads.md); owner remains this repository pending a focused harness investigation. No upstream runtime bug concept should be inferred from the current evidence.
 - EP-17 GCS token-cache finding: [local finding](../findings/39-kenshou-gcs-token-cache-survives-expiry.md); owner is this repository. HTTP 401 interrupted a five-pair cell A/A after seven verified slices; journal resume verified all ten but one slice sealed cancelled under a second lease, so the comparison is excluded. The client repair refreshes a cached CLI token once on 401; the fresh single-lease control completed without an authorization error, though its p99 A/A verdict is inconclusive.
 - EP-11 Kafka broker-requirement finding: [local finding](../findings/40-kenshou-kafka-scenarios-omit-broker-requirement.md); owner is this repository. Broker-backed scenarios were cataloged without their Kafka environment requirement, allowing route preparation to accept a brokerless cell. The resulting Kafka barrier run errored before the defect probe and is excluded; the catalog and package test now require a broker for every live Kafka scenario.
+- EP-18 cell evidence destination finding: [local finding](../findings/41-kenshou-cell-evidence-base-uri-check-runs-after-uploads.md); owner is this repository. The recorder rejected a generic GCS prefix for cell evidence only after uploading nested files there. Cell-specific destination validation now precedes all object writes; the guide shows the existing sealed cell prefix and verify-only command.
 - EP-13 polling-backend worker exit: [local finding](../findings/34-keiro-job-worker-exits-after-polling-backend-termination.md); owner `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-3`. A continuous worker exits after a backend termination and leaves later durable jobs queued.
 - EP-13 long-poll retry accounting: [local finding](../findings/35-keiro-long-poll-consumes-read-attempt-without-handler.md); owner `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-4`. A long poll can consume a read attempt without a matching handler delivery; ordinary polling controls pass.
 - EP-13 stale outbox claim finalization: [local finding](../findings/36-keiro-stale-outbox-publisher-finalizes-new-claim.md); owner `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-5`. A resumed old publisher can mark a newer successful claim failed or dead.
@@ -904,3 +905,5 @@ Revision note (2026-09-29): Excluded the busy-host slow-handler ratios from the 
 Revision note (2026-09-29): The post-repair layer-ladder cell A/A completed all ten verified slices on one lease, but its five-pair p99 confidence interval remains inconclusive. Its initial comparison was produced from a documentation-dirty worktree, so the report awaits clean replay of those sealed runs; no policy limit was relaxed.
 
 Revision note (2026-09-29): Clean replay of the layer-ladder run trees preserved the inconclusive p99 verdict. A separate five-pair invisible-backlog alpha A/A passed all four metrics. Clean cell execution reproduced Keiro's stale-outbox-claim BUG-5. A brokerless alpha Kafka run exposed local catalog finding 40 and is excluded from owner-defect evidence. The baseline report also marks 17 findings whose cited local runs are dirty-harness only; they need clean selection before immutable baseline recording.
+
+Revision note (2026-09-29): Recorded the clean Keiro outbox cell run in the immutable OKF bundle. Its attestation passes five integrity and provenance checks but remains incomplete without a Keiro VC-1 oracle. Added local recorder finding 41 after cell base-URI rejection occurred after unrelated uploads; moved that validation ahead of writes and corrected the operator guide.

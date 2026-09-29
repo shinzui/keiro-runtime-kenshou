@@ -47,7 +47,7 @@ data PublishError
 -- | Publish every file covered by the verified manifest, even if only a
 -- subset will be linked directly. The manifest link pins the rest transitively.
 publishRunData :: ObjectStore -> PublishOptions -> FilePath -> RunSource -> IO (Either PublishError [DataLink])
-publishRunData store options root source = case cleanBase options.baseUri of
+publishRunData store options root source = case validateRunBase source options.baseUri of
   Left err -> pure (Left err)
   Right base -> do
     completed <-
@@ -70,8 +70,6 @@ publishRunData store options root source = case cleanBase options.baseUri of
             cellLinks <- case source.cellEvidence of
               Nothing -> pure []
               Just cell -> do
-                let expectedSuffix = "/runs/" <> renderRunId cell.cellManifest.runId <> "/output"
-                unless (expectedSuffix `Text.isSuffixOf` base) (throwE (InvalidBaseUri options.baseUri))
                 let uri = Text.dropEnd (Text.length "/output") base <> "/manifest.json"
                     file = cell.cellManifestFile
                 publishOne store (options {uploadMode = VerifyOnly}) cell.cellManifestPath uri "application/json" file.digest file.bytes
@@ -100,6 +98,16 @@ cleanBase raw = do
   case validateObjectUri (base <> "/probe") of
     Left _ -> Left (InvalidBaseUri raw)
     Right () -> Right base
+
+validateRunBase :: RunSource -> Text -> Either PublishError Text
+validateRunBase source raw = do
+  base <- cleanBase raw
+  case source.cellEvidence of
+    Nothing -> pure ()
+    Just cell -> do
+      let expectedSuffix = "/runs/" <> renderRunId cell.cellManifest.runId <> "/output"
+      unless (expectedSuffix `Text.isSuffixOf` base) (Left (InvalidBaseUri raw))
+  pure base
 
 publishOne :: ObjectStore -> PublishOptions -> FilePath -> Text -> Text -> Sha256 -> Natural -> ExceptT PublishError IO ()
 publishOne store options source uri mediaType expectedDigest expectedSize = do

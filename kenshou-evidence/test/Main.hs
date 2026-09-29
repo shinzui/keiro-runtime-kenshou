@@ -254,6 +254,9 @@ main = hspec do
         source <- loadRunSource runDirectory >>= either (fail . show) pure
         store <- memoryStore
         store.putObjectIfAbsent outerPath outerUri "application/json" >>= (`shouldSatisfy` isRight)
+        publishRunData store (PublishOptions "gs://bucket/runs" UploadMissing False False) runDirectory source
+          `shouldReturn` Left (InvalidBaseUri "gs://bucket/runs")
+        store.statObject ("gs://bucket/runs/" <> nestedId <> "/run-result.json") `shouldReturn` Right Nothing
         links <- publishRunData store (PublishOptions baseUri UploadMissing True False) runDirectory source >>= either (fail . show) pure
         record <- either (fail . show) pure (buildRunRecord (RecordInput Investigation (UTCTime (fromGregorian 2026 9 26) 0) False Nothing [] Nothing) source links)
         record.outcome `shouldBe` InfrastructureFailure
