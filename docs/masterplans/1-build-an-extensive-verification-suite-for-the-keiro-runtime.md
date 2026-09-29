@@ -206,6 +206,11 @@ provenance:
       at: 2026-09-29T05:13:00Z
       mode: "implement"
       note: "Recorded exact 100-span OTLP fixture acceptance and repaired idempotent GCS resumable publication."
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-29T17:33:26Z
+      mode: "implement"
+      note: "Reconciled owner findings and added the dated baseline priority report."
 ---
 
 # Build an extensive verification suite for the keiro runtime
@@ -233,6 +238,10 @@ Kenshou can pin the fixed cohort and rerun the relevant scenarios under
 comparable conditions and the change-aware affected selection. The original
 run set remains intact for that later comparison. Here “initial baseline” means
 the as-is run set, not a mutable `baseline` flag on an evidence record.
+A dated technical baseline report summarizes the run set, owner dispositions,
+coverage gaps, and priority for owner projects; its working checkpoint is
+[the 2026-09-29 report](../reports/2026-09-29-runtime-baseline.md). It is
+updated as this pass reaches the remaining acceptance gates.
 
 The executable is also a durable operator and automation interface, not merely a collection of parsers. Its human-facing discovery surface follows the current patterns in `mori://shinzui/haskell-jitsurei`: commands and options are grouped by user intent, long-form topics are embedded in the binary and wrap to a terminal-aware width without changing piped bytes, Bash/Zsh/Fish completions are derived from the actual `optparse-applicative` parser tree, and `--version` includes the build's Git revision. Document-valued inputs accept `-` explicitly for standard input, while machine-readable modes reserve standard output for the requested document and send diagnostics to standard error. Repeated operator defaults are resolved with `mori://shinzui/settei` from an explicit, inspectable source order; scenario knobs, dimensions, run specifications and run plans remain versioned evidence inputs rather than ambient configuration. These rules let a person discover a large command tree and let `kotei` call the same binary without scraping presentation text.
 
@@ -394,6 +403,19 @@ The following cross-plan decisions should become ADRs in `docs/adr/` when the ow
 
 
 ## Progress
+
+The [2026-09-29 baseline report](../reports/2026-09-29-runtime-baseline.md)
+now captures the pinned released cohort, current evidence quality, prioritized
+owner issues, and remaining gates. The issue register is reconciled to 38 local
+findings, 32 distinct owner bug records and ten improvement requests. Five
+existing Keiro owner reports from EP-13 now have local finding records. The
+owner marked the first two Keiro heap reports duplicates of the Kiroku
+publisher leak fixed in `kiroku-store` 0.9.0.1; whole-worker verification of
+that release remains a later comparison. EP-13's planned soaks are part of
+this initial baseline pass. EP-8's first three- and five-pair PGMQ read/ack
+A/A controls sealed every leased-cell slice but returned inconclusive for p99
+and throughput under the unchanged policy. The benchmark's three-second
+steady window is being extended and versioned before another cell control.
 
 EP-17 has checked Nix identities for both cohorts, a visible payload
 publisher, and a capability cache consumed by cell routing and submission.
@@ -630,34 +652,38 @@ Drafting the child plans against real source corrected the research in ways that
 
 ### Upstream issue register
 
-Tracking snapshot (2026-09-27). Count each distinct canonical owner issue URI
+Tracking snapshot (2026-09-29). Count each distinct canonical owner issue URI
 once, even when multiple scenarios or local findings cite it. These are owner
 records linked or reused for runtime findings, not a count of fixes. Contextual
 requests for this initiative's tooling and infrastructure are excluded.
 
 | Owning project | Bug reports linked | Improvement requests linked |
 |---|---:|---:|
-| `mori://shinzui/keiro` | 2 | 0 |
+| `mori://shinzui/keiro` | 7 | 0 |
 | `mori://shinzui/pgmq-hs` | 3 | 3 |
 | `mori://shinzui/shibuya-kafka-adapter` | 6 | 0 |
-| `mori://shinzui/shibuya-pgmq-adapter` | 1 | 0 |
-| `mori://shinzui/kiroku` | 0 | 3 |
-| `mori://shinzui/shibuya` | 0 | 2 |
-| **Distinct owner records** | **12** | **8** |
+| `mori://shinzui/shibuya-pgmq-adapter` | 3 | 0 |
+| `mori://shinzui/kiroku` | 2 | 4 |
+| `mori://shinzui/shibuya` | 11 | 3 |
+| **Distinct owner records** | **32** | **10** |
 
 Numbered finding coverage is tracked separately from distinct owner records:
 
 | Finding disposition | Count |
 |---|---:|
-| Primary owner issue linked (12 bug reports, 3 improvement requests) | 15 |
+| Owner bug report linked (including two Keiro reports now marked duplicate) | 31 |
+| Owner improvement request linked as the primary disposition | 6 |
 | Local harness investigation, owner classification pending (finding 3) | 1 |
 | Owner improvement request URI not recorded | 0 |
-| **Numbered findings** | **16** |
+| **Numbered findings** | **38** |
 
-Finding 16 now links a dependent adapter request after the existing store-guard
-request. Update this snapshot, the matching local finding, and the register
-when a link or disposition changes. Record owner fixes and any later Kenshou
-re-verification separately from filing counts.
+Of the 32 linked bug records, 16 are reported, 14 are marked fixed by their
+owners, and two Keiro reports are marked duplicates of
+`mori://shinzui/kiroku/okf/bug-reports/concepts/BUG-3`. The
+owner's fixed status is not a Kenshou post-fix verification. Finding 16 links
+a dependent adapter request after the existing store-guard request. Update
+this snapshot, the matching local finding, and the register when a link or
+disposition changes.
 
 - EP-11 Kafka rebalance ordering finding: [local finding](../findings/9-kafka-rebalance-replays-committed-offsets-out-of-order.md); upstream `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-6`. In two private-broker runs, one serial consumer handled a lower, already committed partition offset after a higher offset within the same assignment; the integrated adapter/runner source path remains to be isolated.
 - EP-11 Kafka seek-barrier overwrite finding: [local finding](../findings/8-kafka-later-retry-overwrites-earlier-barrier.md); upstream `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-5`. A real broker redelivered offsets 4–9 after dual retries at 3 and 4, then committed 10 without a successful decision for offset 3.
@@ -665,9 +691,14 @@ re-verification separately from filing counts.
 - EP-11 Kafka broker-restart finding: [local finding](../findings/6-kafka-broker-restart-ends-adapter-consumers.md); upstream `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-3`. Two released adapter workers exit after a broker restart with acknowledged records still unhandled; the proxy-blackhole control passes.
 - EP-11 Kafka buffered-successor ordering finding: [local finding](../findings/5-kafka-buffered-successors-run-before-retry.md); upstream `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-2`. A serial released adapter executes offsets 4–9 before the retried offset 3 succeeds.
 - EP-11 Kafka buffered-retry finding: [local finding](../findings/4-kafka-buffered-retry-leaves-successors-uncommitted.md); upstream `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-1`. The released adapter can leave successful buffered successors uncommitted after a retry; a batch-size-one control passes.
-- EP-12 write-side worker heap-growth finding: [local finding](../findings/1-keiro-write-side-worker-heap-growth.md); upstream `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-1` (filed by the concurrent session; check final validation and ownership evidence).
-- EP-12 seed-backlog heap-growth finding: [local finding](../findings/2-keiro-seed-backlog-heap-growth.md); upstream `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-2` (filed by the concurrent session; check final validation and ownership evidence).
+- EP-12 write-side worker heap-growth finding: [local finding](../findings/1-keiro-write-side-worker-heap-growth.md); owner `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-1` is a duplicate of `mori://shinzui/kiroku/okf/bug-reports/concepts/BUG-3`, fixed in `kiroku-store` 0.9.0.1. Whole-worker verification on that published version remains open.
+- EP-12 seed-backlog heap-growth finding: [local finding](../findings/2-keiro-seed-backlog-heap-growth.md); owner `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-2` is a duplicate of the same Kiroku BUG-3. A source-only control reduced growth; comparable published-cohort verification remains open.
 - EP-12 steady-restart harness thread-growth finding: [local finding](../findings/3-keiro-steady-restart-harness-threads.md); owner remains this repository pending a focused harness investigation. No upstream runtime bug concept should be inferred from the current evidence.
+- EP-13 polling-backend worker exit: [local finding](../findings/34-keiro-job-worker-exits-after-polling-backend-termination.md); owner `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-3`. A continuous worker exits after a backend termination and leaves later durable jobs queued.
+- EP-13 long-poll retry accounting: [local finding](../findings/35-keiro-long-poll-consumes-read-attempt-without-handler.md); owner `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-4`. A long poll can consume a read attempt without a matching handler delivery; ordinary polling controls pass.
+- EP-13 stale outbox claim finalization: [local finding](../findings/36-keiro-stale-outbox-publisher-finalizes-new-claim.md); owner `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-5`. A resumed old publisher can mark a newer successful claim failed or dead.
+- EP-13 long-poll pool starvation: [local finding](../findings/37-keiro-long-poll-processors-starve-runtime-pool.md); owner `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-6`. Six processors on a three-connection pool left a job queued until a smaller replacement worker ran.
+- EP-13 pre-handler telemetry gap: [local finding](../findings/38-keiro-pre-handler-dead-letter-lacks-process-span.md); owner `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-7`. The DLQ row is durable, but a pre-handler dead letter emits no promised process span.
 - EP-8 disconnect-classification finding: [local finding](../findings/10-pgmq-disconnects-are-classified-as-permanent.md); upstream `mori://shinzui/pgmq-hs/okf/bug-reports/concepts/BUG-1`, with complementary diagnostic request `mori://shinzui/pgmq-hs/okf/improvement-requests/concepts/IR-4`. Fresh PostgreSQL 17/18 restarts preserved 200 confirmed keys and recovered the same pool while the released classifier marked the interruption permanent. Backend termination and TCP reset reproduced the same classification boundary on PostgreSQL 18.
 - EP-8 concurrent-reconciliation finding: [local finding](../findings/11-pgmq-concurrent-reconciliation-misreports-creators.md); upstream `mori://shinzui/pgmq-hs/okf/bug-reports/concepts/BUG-2`. Eight workers could each report creating a resource that only one physical queue holds; the FIFO index race is an existing documented concurrent-startup limitation under `mori://shinzui/pgmq-hs/okf/improvement-requests/concepts/IR-5`.
 - EP-8 partitioned-notification finding: [local finding](../findings/12-pgmq-partitioned-notifications-bypass-throttle.md); upstream `mori://shinzui/pgmq-hs/okf/bug-reports/concepts/BUG-3`. PostgreSQL 17/18 each emitted 1,000 leaf-channel notifications over five seconds where the configured throttle allowed at most 21. The fix is planned at `mori://shinzui/pgmq-hs/plans/23-gate-the-notification-fail-open-on-a-real-queue-row-and-state-the-partitioned-queue-contract`.
@@ -696,6 +727,16 @@ re-verification separately from filing counts.
 - EP-10 Kiroku partial-group acquisition finding: [local finding](../findings/33-shibuya-kiroku-partial-group-acquisition-leaks.md); owner `mori://shinzui/kiroku/okf/bug-reports/concepts/BUG-4`. Historical 0.5.1.2 strands acquired members and replaces the primary exception; published 0.5.1.3 passes on PostgreSQL 17 and 18.
 
 ## Decision Log
+
+- Decision: Maintain a dated technical baseline report during the initial
+  released-cohort pass, with a final handoff only after child acceptance and
+  selected evidence publication. Include the planned soaks, owner issue
+  status, uncertainty, and priority without changing immutable run records.
+  Rationale: The platform owner needs the as-is issue inventory to prioritize
+  repairs now and a comparable reference set for a later fixed-cohort rerun.
+  A working report must expose incomplete coverage and attestations rather
+  than imply that this checkpoint is the final baseline.
+  Date: 2026-09-29
 
 - Decision: A scenario with independent confirmed owner defects may declare a group of scoped known defects, while a failure label outside every applicable entry remains blocking.
   Rationale: Kafka rebalance runs can reproduce both BUG-4's worker exit and BUG-6's ordering regression. The single-reference contract could not preserve both owners without misattribution; the grouped result and evidence record now do so. ADR-14 records the durable classification rule.
@@ -838,3 +879,5 @@ Revision note (2026-09-27): Extended the shared known-defect seam to preserve in
 Revision note (2026-09-27): Recorded clean Kafka rebalance and stability-soak baselines, preserved their incomplete attestations, and narrowed VC-2 references to runs with a replayable measurement summary.
 
 Revision note (2026-09-27): Resolved finding 16's owner-report gap with Kiroku IR-17, dependent on the existing lifetime member-guard request IR-15, and updated the distinct-issue register.
+
+Revision note (2026-09-29): Added a dated technical baseline report and reconciled the issue register with five existing Keiro owner reports, the Kiroku publisher-leak duplicate disposition, and later Shibuya and adapter filings. Restored EP-13's soaks to the initial baseline scope and recorded inconclusive leased-cell PGMQ controls.

@@ -79,7 +79,7 @@ pgmqScenario :: ScenarioDef -> Scenario
 pgmqScenario definition =
   Scenario
     { id = either (error . show) id (parseScenarioId definition.identifier),
-      revision = if definition.identifier == "pgmq/effectful/concurrency/backend-termination-recovery" then 2 else 1,
+      revision = scenarioRevision definition.identifier,
       summary = definition.description,
       tier = definition.tier,
       placement = definition.placement,
@@ -90,6 +90,12 @@ pgmqScenario definition =
       knownDefect = definition.defect,
       run = \context -> maybe (runProbe definition context) id (runCorrectness definition.identifier context <|> runConcurrency definition.identifier context <|> runBenchmark definition.identifier context <|> runSoak definition.identifier context)
     }
+
+scenarioRevision :: Text -> Int
+scenarioRevision identifier
+  | "/benchmark/" `Text.isInfixOf` identifier = 2
+  | identifier == "pgmq/effectful/concurrency/backend-termination-recovery" = 2
+  | otherwise = 1
 
 workloadKnobs :: Text -> [KnobSpec]
 workloadKnobs identifier
@@ -124,7 +130,7 @@ supportFor identifier =
 
 phasePlan :: Text -> Tier -> PhasePlan
 phasePlan identifier tier
-  | "/benchmark/" `Text.isInfixOf` identifier = PhasePlan 1 3 1
+  | "/benchmark/" `Text.isInfixOf` identifier = PhasePlan 5 30 5
   | "/soak/" `Text.isInfixOf` identifier = PhasePlan 1 (if tier == TierSoak then 14400 else 1200) 1
   | otherwise = zeroPhases
 

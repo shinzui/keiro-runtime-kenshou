@@ -47,6 +47,11 @@ provenance:
       at: 2026-09-25T18:42:09Z
       mode: "implement"
       note: "Added continuous PGMQ producer and consumer traffic to the backend termination oracle."
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-29T17:33:27Z
+      mode: "implement"
+      note: "Recorded leased-cell A/A uncertainty and lengthened benchmark revision two."
 ---
 
 # Cover pgmq-hs in isolation
@@ -77,7 +82,25 @@ After this plan, a maintainer can run `kenshou list --layer pgmq` and see about 
 - [x] (2026-09-24) Obtained stable twenty-minute reduced-soak leak verdicts at 100 cycles/s with tracing off and OTLP, using post-major-collection heap samples.
 - [x] (2026-09-24) Ran both twenty-minute reduced-soak controls at the registered 500 cycles/s default rate, with tracing off and OTLP. Retained the lower-rate pair as a controlled comparison.
 
+The first quiet-cell read/ack A/A controls sealed all six and ten slices under
+one lease per trial. Comparison `01a0ee2d-b8de-7014-bd9b-1516116a551a`
+(three pairs) and `01a0ee35-b190-73de-afc7-f56c09a4954f` (five pairs) were
+both inconclusive under `policies/pgmq.json`: p50 and allocation passed, while
+p99 and throughput confidence intervals were too wide. The version-1
+benchmark measured only three steady seconds. Benchmark revision 2 now uses
+five seconds of warm-up, thirty steady seconds, and five seconds of drain;
+the cell A/A gate remains open until the new payload is run and judged.
+
 ## Surprises & Discoveries
+
+- Observation: a resettable leased cell alone did not make the three-second
+  PGMQ read/ack benchmark comparable. In the five-pair A/A trial, baseline
+  p99 values ranged from 3.64 to 19.76 ms while candidate values stayed near
+  3.55–3.76 ms; the p99 ratio's 95% interval was 0.21–1.51. Throughput also
+  crossed its five-percent policy limit. Every slice sealed and verified, so
+  the result is measurement uncertainty, not a cell execution failure.
+  Evidence: `.dev/pair-aa-pgmq-read-ack/comparison.json` and
+  `.dev/pair-aa-pgmq-read-ack-5/comparison.json` (local run artifacts).
 
 - Observation: the earlier twelve-round probe sent and drained finite control batches around each kill. Keeping separate producer and consumer loops active for the full window exposed additional interrupted sends, reads, and acknowledgements without losing confirmed work. The pool sometimes returned a connection error at the next round boundary, so that control batch now retries recovery through the same pool rather than aborting before its oracle runs. PostgreSQL 17 and 18 both reproduced only the already scoped transient-classification defect.
   Evidence: sealed PostgreSQL 18 run `01a0d9da-d536-7046-80d2-e0c0a8b3f054` recorded 5,569 confirmed, delivered, and acknowledged traffic IDs over twelve faults, six duplicate deliveries associated with fault windows, zero errors outside them, and an empty queue. Sealed PostgreSQL 17 run `01a0d9dd-3cf9-70ca-a813-a933fe5f01ae` recorded 5,572 of each, eight fault-associated duplicates, zero outside-window errors, and an empty queue. Both retained `blocking=false` with the sole `transient-error` failure under `mori://shinzui/pgmq-hs/okf/bug-reports/concepts/BUG-1`. `nix develop --command cabal test kenshou-pgmq-test` passed 13 examples after the change.
@@ -225,6 +248,15 @@ After this plan, a maintainer can run `kenshou list --layer pgmq` and see about 
 
 
 ## Decision Log
+
+- Decision: Version all PGMQ benchmarks at scenario revision 2 with a
+  five-second warm-up, thirty-second steady measurement, and five-second drain
+  before retrying leased-cell A/A acceptance.
+  Rationale: The three-second steady window produced inconclusive p99 and
+  throughput comparisons even with verified cold resets and five valid pairs.
+  Keeping the comparison policy unchanged tests whether longer observation
+  reduces uncertainty without concealing a regression.
+  Date: 2026-09-29
 
 - Decision: Reconcile each reproduced PGMQ failure against the producer's published contract and OKF bug reports before closing this plan, and store the canonical bug concept URI in the local finding, MasterPlan register and precise scenario reference when a bug is confirmed.
   Rationale: Existing improvement requests describe intended corrections, while a bug report records the affected version and replayable broken behavior. The response-blackhole deadline and documented limitations require a contract check before bug classification.
@@ -720,3 +752,5 @@ At the end of Milestone 1 these exist: `Kenshou.Suite.Pgmq (bundle :: LayerBundl
 What other plans consume from this one. Nothing imports `kenshou-pgmq` except `kenshou-cli`. `docs/plans/3-plan-and-select-runs-from-what-changed.md` selects `pgmq/**` when any pgmq-hs package or the PostgreSQL version changes, and can narrow to `pgmq/config/**` or `pgmq/effectful/**` using the component mapping given in Context and Orientation. `docs/plans/10-cover-shibuya-core-and-its-pgmq-and-kiroku-adapters.md` and `docs/plans/13-cover-the-keiro-outbox-inbox-and-job-queue.md` build on the facts established here — lease accounting on the database clock, `read_ct` as a delivery count, the pool-pinning of long polls, the FIFO boundary — and may copy the lease-interval rule, but they must not import this package. The services this plan needs at run time are PostgreSQL 17 and 18 from the dev shell or a cell, with pg_partman compiled in for the partitioned-queue scenarios, and, for `telemetry.tracing=sdk-otlp`, the OTLP sink the telemetry plan provides.
 
 Revision note (2026-09-23): Added a completion gate to audit reproduced PGMQ failures against published behavior and existing owner records, file versioned OKF bug reports where warranted, and track each canonical bug concept URI in Kenshou.
+
+Revision note (2026-09-29): Recorded two verified but inconclusive leased-cell read/ack A/A controls and versioned the benchmark phase window for a comparable rerun.

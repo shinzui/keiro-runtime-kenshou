@@ -32,6 +32,11 @@ provenance:
       at: 2026-09-24T19:22:49Z
       mode: "implement"
       note: "Verified disjoint outbox publisher ownership from callback intervals"
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-29T17:33:27Z
+      mode: "implement"
+      note: "Linked five Keiro reports locally and restored baseline soak scope."
 ---
 
 # Cover the keiro outbox, inbox and job queue
@@ -52,14 +57,16 @@ To see it working after implementation, run `cabal run kenshou -- list 'keiro/ou
 
 ## Progress
 
-The non-soak baseline is in place. The remaining work is to deepen specific scenario arms, finish component telemetry serving, and close the documentation and acceptance gaps. Soaks are deferred by the current user instruction. These entries track deliverables rather than individual runs; detailed historical steps remain in git history and the run artifacts.
+The non-soak baseline is in place. The remaining work is to deepen specific scenario arms, finish component telemetry serving, run the planned soaks, and close the documentation and acceptance gaps. The current baseline pass includes the soaks; their outcomes remain open. These entries track deliverables rather than individual runs; detailed historical steps remain in git history and the run artifacts.
 
 - [x] (2026-09-24) Outbox baseline: eleven correctness/concurrency/crash scenarios are registered and passed the default durable sweep, with the documented inline-order limitation and BUG-5 recorded as scoped expected failures. Publisher, enqueuer, maintenance, subscription replay, and synthetic broker roles are wired.
 - [x] (2026-09-24) Inbox baseline: envelope, effectively-once matrix, poison accounting, batch intake, process race, and GC race scenarios have durable evidence. The GC race reproduces the documented retention-window failure under a realised schedule.
 - [x] (2026-09-24) Queue baseline: eleven scenarios are registered and passed the default durable sweep, including the 1,600-job FIFO ordering case. The known polling, DLQ, redrive, and pool-isolation defects are scoped and linked upstream.
 - [x] (2026-09-24) Measurement baseline: all seven benchmark identifiers produce durable measurement artifacts and no-loss or effect oracles; representative longer runs reached benchmark grade. One paired comparison was inconclusive under the three-pair policy, and both three-block overhead matrices completed with no failed child runs. Outbox and queue telemetry contracts passed with tracing and metrics enabled and disabled.
 - [ ] Finish the remaining non-soak acceptance work listed below, then rerun the affected scenarios and package tests.
-- [ ] Run the three full and reduced soaks and evaluate leak and table-growth verdicts when soak work is authorized.
+- [ ] Run the three full and reduced soaks and evaluate leak and table-growth verdicts for the initial baseline.
+
+The five Keiro owner reports for worker exits, read-attempt accounting, stale outbox claims, pool starvation, and missing process spans now have local finding records [34](../findings/34-keiro-job-worker-exits-after-polling-backend-termination.md), [35](../findings/35-keiro-long-poll-consumes-read-attempt-without-handler.md), [36](../findings/36-keiro-stale-outbox-publisher-finalizes-new-claim.md), [37](../findings/37-keiro-long-poll-processors-starve-runtime-pool.md), and [38](../findings/38-keiro-pre-handler-dead-letter-lacks-process-span.md). Each finding has its canonical owner URI; the MasterPlan register counts those records separately from the scenarios that cite them.
 
 ### Remaining non-soak work
 
@@ -68,7 +75,7 @@ The non-soak baseline is in place. The remaining work is to deepen specific scen
 3. Complete queue worker-path outcomes, fault modes, ordering controls, and richer DLQ/acknowledgement oracles. Add `shibuya-metrics` for the queue metrics-serving arm.
 4. Finish component-specific telemetry adaptation and metrics-serving endpoint checks for outbox, inbox, and queue. The inbox `InboxInProgress` case now has a passing durable contract run; the queue pre-handler DLQ case observed zero process spans and is recorded as `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-7`.
 5. Add the planned continuous-worker and polling shapes to queue throughput. The current throughput benchmark uses bounded drainers; the separate idle-poll benchmark covers polling cost.
-6. Refresh `docs/layers/keiro.md`, resolve whether any local ADRs are actually required, validate the bundle, and record final non-soak outcomes. Full plan acceptance still depends on the deferred soaks.
+6. Refresh `docs/layers/keiro.md`, resolve whether any local ADRs are actually required, validate the bundle, and record final non-soak outcomes. Full plan acceptance also depends on the planned soaks.
 
 ### Evidence at a glance
 
@@ -214,7 +221,7 @@ The non-soak baseline is in place. The remaining work is to deepen specific scen
 
 The durable baseline now exercises the outbox, inbox, and queue through correctness, process-failure, concurrency, telemetry, and benchmark scenarios. All seven planned benchmark identifiers are registered. The package suite passes 37 examples. Known defects remain visible as scoped expected failures rather than silent passes: BUG-3 through BUG-7 in the upstream Keiro bug-report bundle, plus the documented inline ordering, inbox GC, and DLQ/redrive windows.
 
-The plan is still in progress. The concrete non-soak gaps are listed in Progress. Full acceptance remains pending the three deferred soaks and their leak and table-growth verdicts. The comparison evidence is inconclusive under its three-pair policy, and the overhead reports are local evidence rather than a release performance claim.
+The plan is still in progress. The concrete non-soak gaps are listed in Progress. Full acceptance remains pending the three planned soaks and their leak and table-growth verdicts. The comparison evidence is inconclusive under its three-pair policy, and the overhead reports are local evidence rather than a release performance claim.
 
 
 ## Context and Orientation

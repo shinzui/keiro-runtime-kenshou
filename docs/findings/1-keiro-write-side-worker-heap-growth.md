@@ -1,8 +1,11 @@
 # Keiro write-side worker heap growth during a five-minute soak
 
-Status: investigating; filed for upstream triage as
-`mori://shinzui/keiro/okf/bug-reports/concepts/BUG-1`. The observation is a leak signal,
-not yet an isolated runtime defect.
+Status: reproduced on the released cohort. The owner marked
+`mori://shinzui/keiro/okf/bug-reports/concepts/BUG-1` a duplicate of
+`mori://shinzui/kiroku/okf/bug-reports/concepts/BUG-3`, fixed in
+`kiroku-store` 0.9.0.1. The full live-worker soak against that published
+version remains to be rerun; this released-cohort observation stays in the
+baseline.
 
 The reduced `keiro/command/soak/write-side-steady-state-reduced` run
 `01a0d0e6-050d-7746-aaf2-bf0c11368618` used sixteen accounts, four router
@@ -47,7 +50,8 @@ cabal run kenshou -- run keiro/command/soak/write-side-steady-state-reduced \
   --dim pg.durability=durable --out runs
 ```
 
-Next, compare a longer run and an isolated subscription workload with the
-same event rate. If live bytes keep rising after the category size and
-throughput stabilize, capture heap profiles for the two child processes and
-identify the owning component and update the upstream investigation.
+Subsequent exact released-cohort profiles of both workers identified the same
+growing Kiroku publisher position thunk. An isolated Kiroku append control
+and a version-locked command soak reduced growth after forcing that scalar
+position; the owner report records the evidence and published fix. The next
+Kenshou check is a comparable full worker soak against the fixed cohort.

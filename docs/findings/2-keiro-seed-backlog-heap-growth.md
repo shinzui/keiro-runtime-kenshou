@@ -1,9 +1,10 @@
 # Keiro seed-backlog heap growth with verification disabled
 
-Status: investigating; filed for upstream triage as
-`mori://shinzui/keiro/okf/bug-reports/concepts/BUG-2`. The run establishes retained heap
-growth in this combined command, store, and measurement workload; it does
-not identify the retaining component.
+Status: reproduced on the released cohort. The owner marked
+`mori://shinzui/keiro/okf/bug-reports/concepts/BUG-2` a duplicate of
+`mori://shinzui/kiroku/okf/bug-reports/concepts/BUG-3`, fixed in
+`kiroku-store` 0.9.0.1. The original run established growth in a combined
+workload; subsequent isolation identified Kiroku's publisher position thunk.
 
 Reduced `keiro/snapshot/soak/seed-verification-backlog-reduced` run
 `01a0d0f6-822c-7427-a4c9-0a84cd11329c` began with 10,000 account events
@@ -50,7 +51,8 @@ to sampled seed verification at this offered rate. The much smaller second-half
 slopes may indicate a warming cache, but two minutes cannot establish a
 plateau.
 
-Next, run a longer controlled pair and isolate the Keiro command runner from
-Kiroku's store and the Kenshou measurement recorder. Heap profiles or a
-retaining-object census are needed before assigning the defect to
-`mori://shinzui/keiro` or `mori://shinzui/kiroku`.
+Subsequent matching source-only controls reduced the three-minute soak's
+post-major growth from 93.13 MB to 1.63 MB when Kiroku forced the scalar
+publisher position. The owner marked the Keiro report duplicate and released
+the Kiroku fix. A comparable Kenshou soak on the published fixed cohort is
+still needed before claiming whole-runtime verification.
