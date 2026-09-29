@@ -80,7 +80,8 @@ After this plan, a maintainer can run `kenshou list --layer pgmq` and see about 
 - [x] (2026-09-25) Completed continuous producer and consumer traffic during twelve backend faults on PostgreSQL 17 and 18. Both two-minute runs preserved and acknowledged over 5,500 confirmed sends, confined errors and duplicate deliveries to the fault windows, drained their queues, and reproduced only BUG-1's classifier label.
 - [ ] Rerun the seven noisy A/A controls on a quiet leased cell; local p99 noise remains inconclusive under the checked-in policy.
 - [x] (2026-09-29) Corrected the read/ack benchmark to preload a finite queue, drain it with the selected plain or pop read, execute all four acknowledgement modes, use `pgmq.consumers` for closed-loop workers, and report message rather than call throughput. Versioned only this scenario to revision 3. A local PostgreSQL 18 batch-archive smoke passed with zero operation failures; a deliberately undersized preload exhausted as expected.
-- [x] (2026-09-29) Published clean Linux released payload `265f35b` for revision 3 and ran a three-pair A/A control on alpha: all six slices passed and verified, but p50, p99, and message-throughput intervals were inconclusive. A five-pair rerun passed every policy metric with ten completed, verified cold-reset slices under one lease. The other benchmark A/A controls and corrected slow-handler regression check remain open.
+- [x] (2026-09-29) Published clean Linux released payload `265f35b` for revision 3 and ran a three-pair A/A control on alpha: all six slices passed and verified, but p50, p99, and message-throughput intervals were inconclusive. A five-pair rerun passed every policy metric with ten completed, verified cold-reset slices under one lease. The other six benchmark A/A controls remain open.
+- [x] (2026-09-29) Confirmed revision 3 detects an introduced slow handler. Five matched local PostgreSQL 18 pairs with batch size one, 100,000 preloaded messages, and a 2/10/2-second phase plan changed only `pgmq.handler-ms` from zero to five. All ten clean runs passed with benchmark grade and zero operation failures; the policy classified p50 latency as a regression (13.42× estimate, 11.30–15.95× interval). P99 and message-throughput comparisons remained inconclusive under the same policy, so the sensitivity result is specifically a p50 detection.
 - [x] (2026-09-24) Obtained stable twenty-minute reduced-soak leak verdicts at 100 cycles/s with tracing off and OTLP, using post-major-collection heap samples.
 - [x] (2026-09-24) Ran both twenty-minute reduced-soak controls at the registered 500 cycles/s default rate, with tracing off and OTLP. Retained the lower-rate pair as a controlled comparison.
 
@@ -97,6 +98,21 @@ Read/ack revision 3 corrects the workload. Its three-pair cell A/A was
 inconclusive, then its five-pair A/A passed without changing the policy.
 
 ## Surprises & Discoveries
+
+- Observation: the corrected slow-handler check needed enough completed
+  operations to retain benchmark grade. A 100,000-message, thirty-second local
+  baseline exhausted its queue, and a ten-second batch-of-ten slow arm had too
+  few samples. The planned batch-size-one variant with 100,000 preloaded
+  messages and matched 2/10/2-second phases yielded ten passing runs of
+  benchmark grade across five pairs. With `pgmq.handler-ms=5` as the only varied
+  knob, the comparison classified p50 latency as a regression, with a 13.42×
+  ratio (95% interval 11.30–15.95×). P99 and message throughput showed large
+  ratios but were still inconclusive because their intervals exceeded the
+  policy's width bound; the overall regression also included allocation.
+  This local sensitivity check establishes detector behavior, not a cell
+  throughput baseline.
+  Evidence: `.dev/pgmq-sensitivity/comparison-b1-5.json` (comparison
+  `01a0ee85-e90e-75c9-8bd2-5269b64fbc9d`, ignored local artifacts).
 
 - Observation: longer observation and five paired cold resets made the
   corrected read/ack workload comparable on alpha. The three-pair revision-3
@@ -805,4 +821,4 @@ What other plans consume from this one. Nothing imports `kenshou-pgmq` except `k
 
 Revision note (2026-09-23): Added a completion gate to audit reproduced PGMQ failures against published behavior and existing owner records, file versioned OKF bug reports where warranted, and track each canonical bug concept URI in Kenshou.
 
-Revision note (2026-09-29): Recorded two verified but inconclusive leased-cell read/ack A/A controls, versioned the benchmark phase window, and corrected the read/ack workload at scenario revision 3 after finding that those controls timed sends. The corrected five-pair alpha A/A control passed after an inconclusive three-pair attempt.
+Revision note (2026-09-29): Recorded two verified but inconclusive leased-cell read/ack A/A controls, versioned the benchmark phase window, and corrected the read/ack workload at scenario revision 3 after finding that those controls timed sends. The corrected five-pair alpha A/A control passed after an inconclusive three-pair attempt, and a five-pair local slow-handler check classified p50 latency as a regression.

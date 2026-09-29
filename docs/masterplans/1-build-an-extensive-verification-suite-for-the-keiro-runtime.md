@@ -422,7 +422,10 @@ and pop probes. Clean Linux released payload `265f35b` then passed a five-pair
 read/ack A/A control on alpha: ten completed, verified cold-reset slices under
 one lease, all nested runs benchmark-grade with zero operation failures, and
 p50, p99, message throughput, and allocation inside policy limits. A three-pair
-control had been inconclusive. The other PGMQ benchmark controls remain open.
+control had been inconclusive. A separate five-pair local sensitivity check
+varied only `pgmq.handler-ms` from zero to five at batch size one; all ten runs
+passed with benchmark grade, and the policy classified p50 latency as a
+regression. The other six PGMQ benchmark A/A controls remain open.
 
 EP-17 has checked Nix identities for both cohorts, a visible payload
 publisher, and a capability cache consumed by cell routing and submission.
@@ -887,4 +890,4 @@ Revision note (2026-09-27): Recorded clean Kafka rebalance and stability-soak ba
 
 Revision note (2026-09-27): Resolved finding 16's owner-report gap with Kiroku IR-17, dependent on the existing lifetime member-guard request IR-15, and updated the distinct-issue register.
 
-Revision note (2026-09-29): Added a dated technical baseline report and reconciled the issue register with five existing Keiro owner reports, the Kiroku publisher-leak duplicate disposition, and later Shibuya and adapter filings. Restored EP-13's soaks to the initial baseline scope. Excluded old PGMQ read/ack controls from baseline eligibility after correcting the timed operation in scenario revision 3; the new five-pair alpha A/A control passed.
+Revision note (2026-09-29): Added a dated technical baseline report and reconciled the issue register with five existing Keiro owner reports, the Kiroku publisher-leak duplicate disposition, and later Shibuya and adapter filings. Restored EP-13's soaks to the initial baseline scope. Excluded old PGMQ read/ack controls from baseline eligibility after correcting the timed operation in scenario revision 3; the new five-pair alpha A/A control passed, and the local slow-handler p50 sensitivity check reported regression.
