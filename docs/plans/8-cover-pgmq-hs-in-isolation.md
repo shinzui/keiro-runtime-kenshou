@@ -81,7 +81,8 @@ After this plan, a maintainer can run `kenshou list --layer pgmq` and see about 
 - [ ] Rerun the seven noisy A/A controls on a quiet leased cell; local p99 noise remains inconclusive under the checked-in policy.
 - [x] (2026-09-29) Corrected the read/ack benchmark to preload a finite queue, drain it with the selected plain or pop read, execute all four acknowledgement modes, use `pgmq.consumers` for closed-loop workers, and report message rather than call throughput. Versioned only this scenario to revision 3. A local PostgreSQL 18 batch-archive smoke passed with zero operation failures; a deliberately undersized preload exhausted as expected.
 - [x] (2026-09-29) Published clean Linux released payload `265f35b` for revision 3 and ran a three-pair A/A control on alpha: all six slices passed and verified, but p50, p99, and message-throughput intervals were inconclusive. A five-pair rerun passed every policy metric with ten completed, verified cold-reset slices under one lease. The other six benchmark A/A controls remain open.
-- [x] (2026-09-29) Confirmed revision 3 detects an introduced slow handler. Five matched local PostgreSQL 18 pairs with batch size one, 100,000 preloaded messages, and a 2/10/2-second phase plan changed only `pgmq.handler-ms` from zero to five. All ten clean runs passed with benchmark grade and zero operation failures; the policy classified p50 latency as a regression (13.42× estimate, 11.30–15.95× interval). P99 and message-throughput comparisons remained inconclusive under the same policy, so the sensitivity result is specifically a p50 detection.
+- [x] (2026-09-29) Ran an exploratory revision-3 slow-handler sensitivity check on local PostgreSQL 18. Five matched pairs changed only `pgmq.handler-ms` from zero to five; all ten runs passed with benchmark grade and zero operation failures, and the policy classified p50 latency as a regression. The host was concurrently busy with unrelated work, so its ratios are excluded from the baseline.
+- [ ] Repeat the slow-handler sensitivity comparison on an isolated leased cell before accepting quantitative detection evidence.
 - [x] (2026-09-24) Obtained stable twenty-minute reduced-soak leak verdicts at 100 cycles/s with tracing off and OTLP, using post-major-collection heap samples.
 - [x] (2026-09-24) Ran both twenty-minute reduced-soak controls at the registered 500 cycles/s default rate, with tracing off and OTLP. Retained the lower-rate pair as a controlled comparison.
 
@@ -109,8 +110,9 @@ inconclusive, then its five-pair A/A passed without changing the policy.
   ratio (95% interval 11.30–15.95×). P99 and message throughput showed large
   ratios but were still inconclusive because their intervals exceeded the
   policy's width bound; the overall regression also included allocation.
-  This local sensitivity check establishes detector behavior, not a cell
-  throughput baseline.
+  The local host was under unrelated load during this work. Preserve these
+  values as diagnostic output only; they are not baseline-eligible or an
+  accepted quantitative detector control until repeated on a leased cell.
   Evidence: `.dev/pgmq-sensitivity/comparison-b1-5.json` (comparison
   `01a0ee85-e90e-75c9-8bd2-5269b64fbc9d`, ignored local artifacts).
 

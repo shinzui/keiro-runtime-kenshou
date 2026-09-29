@@ -8,7 +8,7 @@ module Kenshou.Remote.Store.Gcs
 where
 
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.MVar (modifyMVar, newMVar)
+import Control.Concurrent.MVar (modifyMVar, modifyMVar_, newMVar)
 import Control.Exception (bracket, try)
 import Control.Monad (unless)
 import Data.Aeson (FromJSON (..), decode, eitherDecode, withObject, (.:), (.:?))
@@ -38,7 +38,8 @@ import Text.Read (readMaybe)
 
 data TokenProvider = TokenProvider
   { controlBucket :: !Bucket,
-    accessToken :: IO Text
+    accessToken :: IO Text,
+    invalidateToken :: IO ()
   }
 
 newTokenProvider :: Bucket -> IO TokenProvider
@@ -81,7 +82,7 @@ newTokenProviderWith bucket environment metadata cli = do
                     token <- cli
                     unless (validToken token) (ioError (userError "invalid gcloud access token"))
                     pure (Just (addUTCTime (45 * 60) now, token), token)
-  pure (TokenProvider bucket choose)
+  pure (TokenProvider bucket choose (modifyMVar_ cache (const (pure Nothing))))
 
 newtype MetadataToken = MetadataToken {tokenResponse :: Text}
 
@@ -122,17 +123,22 @@ newGcsStoreAt endpoint provider = do
   manager <- newManager tlsManagerSettings
   let base = Text.dropWhileEnd (== '/') endpoint
       runRequest verb url body headers = do
-        token <- provider.accessToken
-        unless (validToken token) (ioError (userError "invalid GCS token"))
         initial <- parseRequest (Text.unpack url)
-        retryResponse $
-          httpLbs
-            initial
-              { method = verb,
-                requestHeaders = ("Authorization", "Bearer " <> TextEncoding.encodeUtf8 token) : headers,
-                requestBody = body
-              }
-            manager
+        snd
+          <$> withAuthorizedRetry
+            provider
+            ( \token -> do
+                response <-
+                  retryResponse $
+                    httpLbs
+                      initial
+                        { method = verb,
+                          requestHeaders = ("Authorization", "Bearer " <> TextEncoding.encodeUtf8 token) : headers,
+                          requestBody = body
+                        }
+                      manager
+                pure (statusCode (responseStatus response), response)
+            )
       metadata bucket object = do
         url <- objectUrl base bucket object
         response <- runRequest "GET" url (RequestBodyBS ByteString.empty) []
@@ -163,8 +169,6 @@ newGcsStoreAt endpoint provider = do
           Nothing -> pure Nothing
           Just meta -> do
             url <- objectUrl base bucket object
-            token <- provider.accessToken
-            unless (validToken token) (ioError (userError "invalid GCS token"))
             initial <- parseRequest (Text.unpack (url <> "?alt=media&generation=" <> tshow meta.generation))
             createDirectoryIfMissing True (takeDirectory destination)
             bracket
@@ -176,11 +180,15 @@ newGcsStoreAt endpoint provider = do
                   if exists then removeFile temporary else pure ()
               )
               \(temporary, handle) -> do
-                (code, bytes) <- retryStatus $ withResponse initial {requestHeaders = [("Authorization", "Bearer " <> TextEncoding.encodeUtf8 token)]} manager \response -> do
-                  let code = statusCode (responseStatus response)
-                  if code == 200
-                    then (\count -> (code, count)) <$> copyBody (responseBody response) handle
-                    else pure (code, 0)
+                (code, bytes) <-
+                  withAuthorizedRetry
+                    provider
+                    ( \token -> retryStatus $ withResponse initial {requestHeaders = [("Authorization", "Bearer " <> TextEncoding.encodeUtf8 token)]} manager \response -> do
+                        let code = statusCode (responseStatus response)
+                        if code == 200
+                          then (\count -> (code, count)) <$> copyBody (responseBody response) handle
+                          else pure (code, 0)
+                    )
                 unless (code == 200) (badStatus "downloading GCS media" code)
                 unless (bytes == meta.size) (ioError (userError "GCS downloaded length differs from metadata"))
                 hClose handle
@@ -193,22 +201,27 @@ newGcsStoreAt endpoint provider = do
           412 -> pure PreconditionFailed
           code | code >= 200 && code < 300 -> do
             location <- maybe (ioError (userError "GCS resumable upload omitted Location")) (pure . TextEncoding.decodeUtf8) (lookup "Location" (responseHeaders response))
-            token <- provider.accessToken
-            unless (validToken token) (ioError (userError "invalid GCS token"))
             initial <- parseRequest (Text.unpack location)
-            let headers = [("Authorization", "Bearer " <> TextEncoding.encodeUtf8 token), ("Content-Type", TextEncoding.encodeUtf8 media)]
+            let sendAuthorized method range body =
+                  snd
+                    <$> withAuthorizedRetry
+                      provider
+                      ( \token -> do
+                          chunkResponse <- httpLbs initial {method, requestHeaders = [("Content-Range", range), ("Authorization", "Bearer " <> TextEncoding.encodeUtf8 token), ("Content-Type", TextEncoding.encodeUtf8 media)], requestBody = body} manager
+                          pure (statusCode (responseStatus chunkResponse), chunkResponse)
+                      )
                 sendChunk offset failures = do
                   let lengthBytes = min (8 * 1024 * 1024) (size - offset)
                       lastByte = offset + lengthBytes - 1
                       range = "bytes " <> tshow offset <> "-" <> tshow lastByte <> "/" <> tshow size
-                  result <- httpLbs initial {method = "PUT", requestHeaders = ("Content-Range", TextEncoding.encodeUtf8 range) : headers, requestBody = streamFileChunk source offset lengthBytes} manager
+                  result <- sendAuthorized "PUT" (TextEncoding.encodeUtf8 range) (streamFileChunk source offset lengthBytes)
                   case statusCode (responseStatus result) of
                     200 -> putResponse object result
                     201 -> putResponse object result
                     412 -> pure PreconditionFailed
                     308 -> continueFrom offset failures result
                     transient | transient == 429 || transient >= 500 && transient <= 599 -> do
-                      statusResult <- retryResponse $ httpLbs initial {method = "PUT", requestHeaders = ("Content-Range", "bytes */" <> ByteString.Char8.pack (show size)) : headers, requestBody = RequestBodyBS ByteString.empty} manager
+                      statusResult <- retryResponse $ sendAuthorized "PUT" ("bytes */" <> ByteString.Char8.pack (show size)) (RequestBodyBS ByteString.empty)
                       case statusCode (responseStatus statusResult) of
                         200 -> putResponse object statusResult
                         201 -> putResponse object statusResult
@@ -289,6 +302,21 @@ retryStatus action = go (0 :: Int)
       if attempts < 4 && (code == 429 || code >= 500 && code <= 599)
         then threadDelay (100000 * (2 ^ attempts)) >> go (attempts + 1)
         else pure result
+
+-- A gcloud token can already be near expiry when first returned. Refresh once
+-- on authorization failure instead of assuming a fixed lifetime in our cache.
+withAuthorizedRetry :: TokenProvider -> (Text -> IO (Int, value)) -> IO (Int, value)
+withAuthorizedRetry provider action = do
+  token <- provider.accessToken
+  unless (validToken token) (ioError (userError "invalid GCS token"))
+  result@(code, _) <- action token
+  if code == 401
+    then do
+      provider.invalidateToken
+      refreshed <- provider.accessToken
+      unless (validToken refreshed) (ioError (userError "invalid GCS token"))
+      action refreshed
+    else pure result
 
 decodeObject :: ObjectName -> LazyByteString.ByteString -> IO GcsObject
 decodeObject object body = do

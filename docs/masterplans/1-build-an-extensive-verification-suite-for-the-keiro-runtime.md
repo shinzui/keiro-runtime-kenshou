@@ -683,9 +683,9 @@ Numbered finding coverage is tracked separately from distinct owner records:
 |---|---:|
 | Owner bug report linked (including two Keiro reports now marked duplicate) | 31 |
 | Owner improvement request linked as the primary disposition | 6 |
-| Local harness investigation, owner classification pending (finding 3) | 1 |
+| Local harness findings (finding 3 pending; finding 39 owned here) | 2 |
 | Owner improvement request URI not recorded | 0 |
-| **Numbered findings** | **38** |
+| **Numbered findings** | **39** |
 
 Of the 32 linked bug records, 16 are reported, 14 are marked fixed by their
 owners, and two Keiro reports are marked duplicates of
@@ -704,6 +704,7 @@ disposition changes.
 - EP-12 write-side worker heap-growth finding: [local finding](../findings/1-keiro-write-side-worker-heap-growth.md); owner `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-1` is a duplicate of `mori://shinzui/kiroku/okf/bug-reports/concepts/BUG-3`, fixed in `kiroku-store` 0.9.0.1. Whole-worker verification on that published version remains open.
 - EP-12 seed-backlog heap-growth finding: [local finding](../findings/2-keiro-seed-backlog-heap-growth.md); owner `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-2` is a duplicate of the same Kiroku BUG-3. A source-only control reduced growth; comparable published-cohort verification remains open.
 - EP-12 steady-restart harness thread-growth finding: [local finding](../findings/3-keiro-steady-restart-harness-threads.md); owner remains this repository pending a focused harness investigation. No upstream runtime bug concept should be inferred from the current evidence.
+- EP-17 GCS token-cache finding: [local finding](../findings/39-kenshou-gcs-token-cache-survives-expiry.md); owner is this repository. HTTP 401 interrupted a five-pair cell A/A after seven verified slices; journal resume verified all ten but one slice sealed cancelled under a second lease, so the comparison is excluded. The client repair refreshes a cached CLI token once on 401; a fresh single-lease control is required.
 - EP-13 polling-backend worker exit: [local finding](../findings/34-keiro-job-worker-exits-after-polling-backend-termination.md); owner `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-3`. A continuous worker exits after a backend termination and leaves later durable jobs queued.
 - EP-13 long-poll retry accounting: [local finding](../findings/35-keiro-long-poll-consumes-read-attempt-without-handler.md); owner `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-4`. A long poll can consume a read attempt without a matching handler delivery; ordinary polling controls pass.
 - EP-13 stale outbox claim finalization: [local finding](../findings/36-keiro-stale-outbox-publisher-finalizes-new-claim.md); owner `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-5`. A resumed old publisher can mark a newer successful claim failed or dead.
@@ -891,3 +892,5 @@ Revision note (2026-09-27): Recorded clean Kafka rebalance and stability-soak ba
 Revision note (2026-09-27): Resolved finding 16's owner-report gap with Kiroku IR-17, dependent on the existing lifetime member-guard request IR-15, and updated the distinct-issue register.
 
 Revision note (2026-09-29): Added a dated technical baseline report and reconciled the issue register with five existing Keiro owner reports, the Kiroku publisher-leak duplicate disposition, and later Shibuya and adapter filings. Restored EP-13's soaks to the initial baseline scope. Excluded old PGMQ read/ack controls from baseline eligibility after correcting the timed operation in scenario revision 3; the new five-pair alpha A/A control passed, and the local slow-handler p50 sensitivity check reported regression.
+
+Revision note (2026-09-29): Excluded the busy-host slow-handler ratios from the quantitative baseline pending a leased-cell sensitivity run. Added local harness finding 39 for a stale GCS CLI token that interrupted a layer-ladder cell A/A; journal recovery retained the evidence, but its cancelled slice and second lease make the comparison ineligible. Recorded the one-time token refresh repair and fresh single-lease rerun gate in EP-17.

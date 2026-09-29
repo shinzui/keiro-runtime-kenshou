@@ -112,6 +112,27 @@ spec = describe "GCS cell object store" do
         store.statObject (Bucket "control") (ObjectName "cells/alpha/work") `shouldSatisfyIO` maybe False (const True)
     readIORef calls `shouldReturn` 2
 
+  it "refreshes a cached gcloud token after HTTP 401" do
+    calls <- newIORef (0 :: Int)
+    seen <- newIORef []
+    let cli = do
+          modifyIORef' calls (+ 1)
+          count <- readIORef calls
+          pure (if count == 1 then "stale-token" else "fresh-token")
+    withMock
+      ( \_ _ headers -> do
+          let authorization = lookup "Authorization" headers
+          modifyIORef' seen (<> [authorization])
+          pure if authorization == Just "Bearer stale-token" then MockResponse 401 [] "" else MockResponse 200 [] objectMetadata
+      )
+      \port -> do
+        provider <- newTokenProviderWith (Bucket "control") (pure Nothing) (pure Nothing) cli
+        store <- newGcsStoreAt ("http://127.0.0.1:" <> Text.pack (show port)) provider
+        store.statObject (Bucket "control") (ObjectName "cells/alpha/work") `shouldSatisfyIO` maybe False (const True)
+        store.statObject (Bucket "control") (ObjectName "cells/alpha/work") `shouldSatisfyIO` maybe False (const True)
+    readIORef calls `shouldReturn` 2
+    readIORef seen `shouldReturn` [Just "Bearer stale-token", Just "Bearer fresh-token", Just "Bearer fresh-token"]
+
   it "sends a large file in 8 MiB resumable chunks" $ withSystemTempDirectory "kenshou-gcs" \root -> do
     let source = root </> "payload.nar.zst"
         size = 8 * 1024 * 1024 + 5
@@ -163,7 +184,7 @@ spec = describe "GCS cell object store" do
     readIORef ranges `shouldReturn` [Just "bytes 0-8388607/8388609", Just "bytes */8388609", Just "bytes 0-8388607/8388609", Just "bytes 8388608-8388608/8388609"]
 
 testStore :: Int -> IO ObjectStore
-testStore port = newGcsStoreAt ("http://127.0.0.1:" <> Text.pack (show port)) (TokenProvider (Bucket "control") (pure "test-token"))
+testStore port = newGcsStoreAt ("http://127.0.0.1:" <> Text.pack (show port)) (TokenProvider (Bucket "control") (pure "test-token") (pure ()))
 
 objectMetadata :: LazyByteString.ByteString
 objectMetadata = "{\"name\":\"cells/alpha/work\",\"generation\":\"7\",\"size\":\"5\",\"updated\":\"2026-09-27T00:00:00Z\",\"contentType\":\"application/octet-stream\"}"
