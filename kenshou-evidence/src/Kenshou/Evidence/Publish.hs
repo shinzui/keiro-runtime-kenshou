@@ -119,8 +119,10 @@ publishOne store options source uri mediaType expectedDigest expectedSize = do
         VerifyOnly -> pure ()
       observed <- lift (store.statObject uri) >>= either (throwE . StoreFailure) pure
       stat <- maybe (throwE (MissingObject uri)) pure observed
-      when (stat.bytes /= expectedSize || stat.recordedSha256 /= Just expectedDigest) (throwE (ObjectMismatch uri))
-      when options.deepVerify do
+      when (stat.bytes /= expectedSize || maybe False (/= expectedDigest) stat.recordedSha256) (throwE (ObjectMismatch uri))
+      -- Cell-owned objects carry their SHA-256 in the sealed manifest, not
+      -- GCS custom metadata. Verify their bytes when metadata is absent.
+      when (options.deepVerify || stat.recordedSha256 == Nothing) do
         let target = scratch </> "downloaded"
         fetched <- lift (store.fetchObject uri target)
         either (throwE . StoreFailure) pure fetched

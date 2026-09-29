@@ -250,13 +250,19 @@ main = hspec do
         callProcess "git" ["-C", attester, "commit", "-qm", "test: create clean attester"]
         revision <- Text.strip . Text.pack <$> readProcess "git" ["-C", attester, "rev-parse", "HEAD"] ""
         callProcess "cp" ["-R", "../docs/verification/.", bundle]
-        writeCellRunFixture runDirectory outerPath cellRunId revision
+        writeCellRunFixture runDirectory outerPath cellRunId revision False
         source <- loadRunSource runDirectory >>= either (fail . show) pure
         store <- memoryStore
         store.putObjectIfAbsent outerPath outerUri "application/json" >>= (`shouldSatisfy` isRight)
         links <- publishRunData store (PublishOptions baseUri UploadMissing True False) runDirectory source >>= either (fail . show) pure
         record <- either (fail . show) pure (buildRunRecord (RecordInput Investigation (UTCTime (fromGregorian 2026 9 26) 0) False Nothing [] Nothing) source links)
         record.outcome `shouldBe` InfrastructureFailure
+        case record.environment of
+          Object fields -> do
+            KeyMap.lookup "cellRun" fields `shouldBe` Just (String cellRunId)
+            KeyMap.lookup "machineType" fields `shouldBe` Nothing
+            KeyMap.lookup "zone" fields `shouldBe` Nothing
+          _ -> expectationFailure "cell environment must be an object"
         writeRunRecord bundle record >>= (`shouldSatisfy` isRight)
         originalDirectory <- getCurrentDirectory
         bracket_ (setCurrentDirectory attester) (setCurrentDirectory originalDirectory) do
@@ -548,7 +554,7 @@ main = hspec do
             outerPath = root </> "cell-run" </> "tree" </> "manifest.json"
             baseUri = "gs://bucket/runs/" <> cellRunId <> "/output"
             outerUri = "gs://bucket/runs/" <> cellRunId <> "/manifest.json"
-        writeCellRunFixture runDirectory outerPath cellRunId (Text.replicate 40 "f")
+        writeCellRunFixture runDirectory outerPath cellRunId (Text.replicate 40 "f") True
         source <- loadRunSource runDirectory >>= either (fail . show) pure
         source.cellEvidence `shouldSatisfy` (/= Nothing)
         manifestBytes <- ByteString.readFile outerPath
@@ -570,6 +576,23 @@ main = hspec do
         links <- publishRunData store (PublishOptions baseUri UploadMissing True False) runDirectory source >>= either (fail . show) pure
         [outer] <- pure [link | link <- links, link.kind == CellManifestData]
         outer.uri `shouldBe` outerUri
+        let noMetadata =
+              store
+                { statObject = \uri -> do
+                    observed <- store.statObject uri
+                    pure (fmap (fmap (\stat -> stat {recordedSha256 = Nothing})) observed)
+                }
+        publishRunData noMetadata (PublishOptions baseUri VerifyOnly False False) runDirectory source `shouldReturn` Right links
+        let tampered =
+              noMetadata
+                { fetchObject = \uri destination -> do
+                    fetched <- store.fetchObject uri destination
+                    case fetched of
+                      Right () | uri == outerUri -> ByteString.Char8.appendFile destination "tampered"
+                      _ -> pure ()
+                    pure fetched
+                }
+        publishRunData tampered (PublishOptions baseUri VerifyOnly False False) runDirectory source >>= (`shouldSatisfy` isLeft)
         record <- either (fail . show) pure (buildRunRecord (RecordInput Investigation (UTCTime (fromGregorian 2026 9 26) 0) False Nothing [] Nothing) source links)
         record.outcome `shouldBe` InfrastructureFailure
         case record.environment of
@@ -728,8 +751,8 @@ writeRunFixtureWithRevisionAndDefect root harnessRevision knownDefect = do
   manifest <- writeManifest root parsed Map.empty
   LazyByteString.writeFile (root </> "manifest.json") (encode manifest)
 
-writeCellRunFixture :: FilePath -> FilePath -> Text -> Text -> IO ()
-writeCellRunFixture runDirectory outerPath cellRunId revision = do
+writeCellRunFixture :: FilePath -> FilePath -> Text -> Text -> Bool -> IO ()
+writeCellRunFixture runDirectory outerPath cellRunId revision includeGce = do
   createDirectoryIfMissing True runDirectory
   writeRunFixtureWithRevision runDirectory revision
   specValue <- Aeson.eitherDecodeFileStrict' (runDirectory </> "run-spec.json") >>= either fail pure
@@ -739,7 +762,7 @@ writeCellRunFixture runDirectory outerPath cellRunId revision = do
       specBytes = LazyByteString.toStrict (encode cellSpec)
   ByteString.writeFile (runDirectory </> "run-spec.json") specBytes
   resultValue <- Aeson.eitherDecodeFileStrict' (runDirectory </> "run-result.json") >>= either fail pure
-  let cellFingerprint = object ["cell" .= ("alpha" :: Text), "cellRun" .= cellRunId, "gce" .= object ["machineType" .= ("n2-standard-8" :: Text), "zone" .= ("us-west1-a" :: Text)]]
+  let cellFingerprint = object (["cell" .= ("alpha" :: Text), "cellRun" .= cellRunId] <> ["gce" .= object ["machineType" .= ("n2-standard-8" :: Text), "zone" .= ("us-west1-a" :: Text)] | includeGce])
       cellResult = case resultValue of
         Object fields -> case KeyMap.lookup "fingerprint" fields of
           Just (Object fingerprint) -> Object (KeyMap.insert "spec" (object ["sha256" .= sha256Hex specBytes]) (KeyMap.insert "fingerprint" (Object (KeyMap.insert "cell" cellFingerprint fingerprint)) fields))

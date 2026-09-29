@@ -153,10 +153,10 @@ returns the measurement toolkit's verdict code: 0 pass, 1 regression, 3
 inconclusive, 4 infrastructure failure. Use the same payload in both arms
 for an A/A control. A missing minimum pair count cannot establish a
 regression. The current client accepts one benchmark configuration per pair
-invocation. The first live A/A reached five verified slices; the owner's
-PostgreSQL service then hit its five-starts-in-ten-minutes rate limit, so
-that comparison remained inconclusive. This owner-image limit must be
-resolved before repeated cold-reset measurements can pass.
+invocation. Request at least the policy's minimum number of pairs (five in
+the default policy); fewer valid pairs are inconclusive. The owner image
+allows 64 PostgreSQL starts in its rate-limit window so repeated cold
+resets can complete under one lease.
 
 For telemetry arms, run the overhead planner's slots as separate submissions
 under one lease:
@@ -172,9 +172,8 @@ The command writes `overhead-report.json` and keeps each fetched tree below
 `cell-sessions/`; `runs/<run-id>` links to its verified nested directory.
 Use `--resume` with the same cell, payload, sink, and reset settings to
 continue an interrupted invocation. `--analyse-only` rebuilds its report
-without a cell lease. The owner service's current restart rate limit also
-affects overhead; treat a report with too few valid blocks as infrastructure
-failure, not a telemetry result.
+without a cell lease. Treat a report with too few valid blocks as
+infrastructure failure, not a telemetry result.
 
 For diagnostics, publish the `info-table` or `profiled` payload variant and
 submit it with `--rts OPTS`. Choose the variant before publication; runtime
@@ -218,7 +217,9 @@ kenshou attest RUN_ID --project tan-nb-exp
 
 The outer manifest must already be published at
 `gs://tan-nb-exp-cells-results/runs/CELL_RUN_ID/manifest.json`; the recorder
-checks its digest and size without replacing it. Attestation fetches both
+checks its digest and size without replacing it. Cell-owned GCS objects do not
+carry the recorder's SHA-256 metadata, so verify-only fetches and hashes their
+bytes. Attestation fetches both
 manifests and recomputes the nested scenario verdict separately from the
 cell's effective outcome. See
 [recording evidence](recording-evidence.md) and

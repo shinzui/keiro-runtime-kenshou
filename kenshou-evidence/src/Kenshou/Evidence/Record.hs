@@ -295,10 +295,14 @@ buildRunRecord input source dataLinks = do
       cellFingerprint <- jsonField "cell" source.result.resultFingerprint :: Either RecordError Value
       cell <- jsonField "cell" cellFingerprint :: Either RecordError Text
       cellRun <- jsonField "cellRun" cellFingerprint :: Either RecordError RunId
-      gce <- jsonField "gce" cellFingerprint :: Either RecordError Value
-      machineType <- jsonField "machineType" gce :: Either RecordError Text
-      zone <- jsonField "zone" gce :: Either RecordError Text
-      pure ["cell" .= cell, "cellRun" .= renderRunId cellRun, "machineType" .= machineType, "zone" .= zone]
+      gce <- jsonFieldOptional "gce" cellFingerprint :: Either RecordError (Maybe Value)
+      gceFields <- case gce of
+        Nothing -> Right []
+        Just details -> do
+          machineType <- jsonField "machineType" details :: Either RecordError Text
+          zone <- jsonField "zone" details :: Either RecordError Text
+          pure ["machineType" .= machineType, "zone" .= zone]
+      pure (["cell" .= cell, "cellRun" .= renderRunId cellRun] <> gceFields)
   let effectivePurpose = if harnessDirty then Investigation else input.purpose
       scenario = source.result.resultScenario
       cohortIdentity = source.result.resultCohort
@@ -384,6 +388,11 @@ jsonField name value = case value of
   Object fields -> case KeyMap.lookup (Key.fromText name) fields of
     Nothing -> Left (RecordError ("missing JSON field " <> name))
     Just raw -> decoded name raw
+  _ -> Left (RecordError "expected a JSON object")
+
+jsonFieldOptional :: (FromJSON value) => Text -> Value -> Either RecordError (Maybe value)
+jsonFieldOptional name value = case value of
+  Object fields -> traverse (decoded name) (KeyMap.lookup (Key.fromText name) fields)
   _ -> Left (RecordError "expected a JSON object")
 
 decoded :: (FromJSON value) => Text -> Value -> Either RecordError value
