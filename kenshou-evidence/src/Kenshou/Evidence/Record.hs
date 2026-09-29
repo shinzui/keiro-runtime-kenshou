@@ -28,7 +28,7 @@ import Kenshou.Core.RunSpec (EnvironmentSpec (..), RunSpec (..), SpecPlacement (
 import Kenshou.Evidence.Bundle (BundleWriteError, BundleWriteResult (..), writeComparisonRecord, writeRunRecord)
 import Kenshou.Evidence.Frontmatter (ComparisonEvidence (..), EvidenceRecord (..), recordFromDocument)
 import Kenshou.Evidence.Publish (PublishError, PublishOptions (..), UploadMode, publishComparisonData, publishRunData)
-import Kenshou.Evidence.Source (ComparisonSource (..), ComparisonView (..), RunResultView (..), RunSource (..), SourceError, loadComparisonSource, loadRunSource)
+import Kenshou.Evidence.Source (CellEvidence (..), ComparisonSource (..), ComparisonView (..), RunResultView (..), RunSource (..), SourceError, VerifiedFile (..), loadComparisonSource, loadRunSource)
 import Kenshou.Evidence.Store (ObjectStore)
 import Kenshou.Evidence.Types (ComponentRef (..), DataKind (..), DataLink (..), Purpose (..), Sha256, SubjectKind (..), mkRevision, mkSha256)
 import Kenshou.Evidence.Types qualified as EvidenceTypes
@@ -263,6 +263,22 @@ buildRunRecord :: RecordInput -> RunSource -> [DataLink] -> Either RecordError E
 buildRunRecord input source dataLinks = do
   let linkedKinds = map (.kind) dataLinks
   unless (all (`elem` linkedKinds) [ManifestData, RunSpecData, RunResultData]) (Left (RecordError "run data must link its manifest, spec and result"))
+  case source.spec.environment.placement of
+    RunLocal -> when (source.cellEvidence /= Nothing || CellManifestData `elem` linkedKinds) (Left (RecordError "local run cannot link cell evidence"))
+    RunOnCell -> do
+      unless (source.cellEvidence /= Nothing && length (filter (== CellManifestData) linkedKinds) == 1) (Left (RecordError "cell run must link one outer cell manifest"))
+      nested <- case [link.uri | link <- dataLinks, link.kind == ManifestData] of
+        [uri] -> Right uri
+        _ -> Left (RecordError "cell run must link one nested manifest")
+      outer <- case [link | link <- dataLinks, link.kind == CellManifestData] of
+        [link] -> Right link
+        _ -> Left (RecordError "cell run must link one outer manifest")
+      let suffix = "/output/" <> renderRunId source.result.resultRunId <> "/manifest.json"
+      base <- maybe (Left (RecordError "nested manifest URI does not identify this cell run")) Right (Text.stripSuffix suffix nested)
+      unless (outer.uri == base <> "/manifest.json") (Left (RecordError "outer cell manifest URI differs from nested run prefix"))
+      case source.cellEvidence of
+        Just cell -> unless (outer.digest == cell.cellManifestFile.digest && outer.bytes == cell.cellManifestFile.bytes) (Left (RecordError "outer cell manifest link differs from verified source"))
+        Nothing -> Left (RecordError "cell run has no verified outer manifest")
   unless ("mori://" `Text.isPrefixOf` maybe (defaultSubject source.result.resultScenario.layer) fst input.subjectOverride) (Left (RecordError "subject must be a canonical Mori URI"))
   unless (all (Text.isPrefixOf "mori://") input.produced) (Left (RecordError "produced artifacts must use canonical Mori URIs"))
   fingerprint <- decoded "fingerprint" source.result.resultFingerprint :: Either RecordError FingerprintFields
@@ -273,14 +289,25 @@ buildRunRecord input source dataLinks = do
   cpuModel <- maybe (Left (RecordError "CPU model is unavailable")) Right fingerprint.cpuModel
   memoryBytes <- maybe (Left (RecordError "physical memory size is unavailable")) Right fingerprint.memoryBytes
   when (fingerprint.cores < 0 || memoryBytes < 0) (Left (RecordError "invalid environment size"))
+  cellFields <- case source.cellEvidence of
+    Nothing -> Right []
+    Just _ -> do
+      cellFingerprint <- jsonField "cell" source.result.resultFingerprint :: Either RecordError Value
+      cell <- jsonField "cell" cellFingerprint :: Either RecordError Text
+      cellRun <- jsonField "cellRun" cellFingerprint :: Either RecordError RunId
+      gce <- jsonField "gce" cellFingerprint :: Either RecordError Value
+      machineType <- jsonField "machineType" gce :: Either RecordError Text
+      zone <- jsonField "zone" gce :: Either RecordError Text
+      pure ["cell" .= cell, "cellRun" .= renderRunId cellRun, "machineType" .= machineType, "zone" .= zone]
   let effectivePurpose = if harnessDirty then Investigation else input.purpose
       scenario = source.result.resultScenario
       cohortIdentity = source.result.resultCohort
       cohort = unCohortName cohortIdentity.identityCohort
       subject = maybe (defaultSubject scenario.layer) fst input.subjectOverride
       subjectKind = maybe SubjectProject snd input.subjectOverride
-      environment = object ["os" .= fingerprint.os, "arch" .= fingerprint.arch, "cpuModel" .= cpuModel, "cores" .= fingerprint.cores, "memoryBytes" .= memoryBytes, "ghc" .= fingerprint.ghc, "postgres" .= fingerprint.postgres]
-      title = renderScenarioId scenario <> " " <> renderOutcome source.result.resultOutcome <> " on " <> cohort
+      environment = object (["os" .= fingerprint.os, "arch" .= fingerprint.arch, "cpuModel" .= cpuModel, "cores" .= fingerprint.cores, "memoryBytes" .= memoryBytes, "ghc" .= fingerprint.ghc, "postgres" .= fingerprint.postgres] <> cellFields)
+      effectiveOutcome = maybe source.result.resultOutcome (.cellEffectiveOutcome) source.cellEvidence
+      title = renderScenarioId scenario <> " " <> renderOutcome effectiveOutcome <> " on " <> cohort
       description = "Recorded " <> renderScenarioId scenario <> " run against cohort " <> cohort <> " with digest-pinned data."
       computations = "VC-1" : ["VC-2" | scenario.kind `elem` [Benchmark, Soak], hasMeasurementSummary source.result.resultSummaries]
   solverPlanHash <- kernelDigest (unPlanHash cohortIdentity.identityPlanHash)
@@ -312,7 +339,7 @@ buildRunRecord input source dataLinks = do
         scenario,
         tier = source.result.resultTier,
         placement = case source.spec.environment.placement of RunLocal -> "local"; RunOnCell -> "cell",
-        outcome = source.result.resultOutcome,
+        outcome = effectiveOutcome,
         startedAt = utcText source.result.resultStartedAt,
         finishedAt = utcText source.result.resultEndedAt,
         subject,

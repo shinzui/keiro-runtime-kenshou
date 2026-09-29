@@ -2,6 +2,7 @@ module Main (main) where
 
 import Control.Exception (bracket_)
 import Data.Aeson (Value (..), encode, object, toJSON, (.=))
+import Data.Aeson qualified as Aeson
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteString.Char8
@@ -16,7 +17,7 @@ import Kenshou.Core.Canonical (sha256Hex)
 import Kenshou.Core.Cli.Config (ConfigInputs (..))
 import Kenshou.Core.Id (parseRunId, parseScenarioId)
 import Kenshou.Core.Manifest (writeManifest)
-import Kenshou.Core.Outcome (Outcome (Passed))
+import Kenshou.Core.Outcome (Outcome (InfrastructureFailure, Passed))
 import Kenshou.Evidence.Attest (AttestOptions (..), AttestResult (..), Recomputation (..), Recomputer (..), attest, coreRecomputers)
 import Kenshou.Evidence.Bundle (BundleWriteError (..), BundleWriteResult (..), runRecordPath, writeAttestationRecord, writeRunRecord, writeRunRecordWith)
 import Kenshou.Evidence.Check (CheckOptions (..), Finding (..), checkBundle, checkBundleWithStore, checkDocument)
@@ -28,12 +29,15 @@ import Kenshou.Evidence.Record (RecordInput (..), RecordOptions (..), RecordOutc
 import Kenshou.Evidence.Source (ComparisonSource (..), ComparisonView (..), RunResultView (..), RunSource (..), VerifiedFile (..), loadComparisonSource, loadRunSource)
 import Kenshou.Evidence.Store (ObjectStat (..), ObjectStore (..), PutResult (..), StoreError (..), directoryStore, gcloudStoreWith, memoryStore)
 import Kenshou.Evidence.Types (DataKind (..), DataLink (..), Purpose (..), Revision (..), Sha256 (..), SubjectKind (..), mkRevision, mkSha256, sha256Bytes)
+import Kenshou.Remote.Cell.Docs (Artifact (Artifact), CellManifest (CellManifest), ManifestPayload (ManifestPayload))
+import Kenshou.Remote.Cell.Docs qualified as Cell
+import Kenshou.Remote.Cell.Index (CellManifestLink (CellManifestLink), CellRunIndex (..), RunLink (RunLink))
 import Okf.Actor (Actor (ProcessActor))
 import Okf.Document (OKFDocument (..), Verification (..), frontmatterLookup, parseDocument, readVerified, serializeDocument, setField, setVerified)
 import Settei (ResolveResult (..))
 import Settei.Env (envSnapshot)
 import Settei.Optparse (DiagnosticMode (NoDiagnostic), cliOverride, cliSources)
-import System.Directory (Permissions (..), createDirectoryIfMissing, doesFileExist, getCurrentDirectory, getPermissions, setCurrentDirectory, setPermissions)
+import System.Directory (Permissions (..), createDirectoryIfMissing, doesFileExist, getCurrentDirectory, getPermissions, removeFile, setCurrentDirectory, setPermissions)
 import System.FilePath (takeDirectory, (</>))
 import System.IO.Temp (withSystemTempDirectory)
 import System.Process (callProcess, readProcess)
@@ -225,6 +229,41 @@ main = hspec do
         (refutedHistory.entries !! 0).trust `shouldBe` "unverified"
 
   describe "attest" do
+    it "confirms a cell infrastructure override while recomputing the sealed nested verdict" do
+      withSystemTempDirectory "kenshou-cell-attestation" $ \root -> do
+        let attester = root </> "attester"
+            bundle = root </> "bundle"
+            cellRunId = "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e66" :: Text
+            nestedId = "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e55" :: Text
+            runDirectory = root </> "cell-run" </> "tree" </> "output" </> Text.unpack nestedId
+            outerPath = root </> "cell-run" </> "tree" </> "manifest.json"
+            baseUri = "gs://bucket/runs/" <> cellRunId <> "/output"
+            outerUri = "gs://bucket/runs/" <> cellRunId <> "/manifest.json"
+            recordPath = "runs/selftest/2026/09/01997f3a-5b7c-7e21-8a44-0d6c2f9b1e55.md"
+        createDirectoryIfMissing True attester
+        createDirectoryIfMissing True bundle
+        callProcess "git" ["-C", attester, "init", "-q"]
+        callProcess "git" ["-C", attester, "config", "user.name", "Kenshou Test"]
+        callProcess "git" ["-C", attester, "config", "user.email", "kenshou@example.invalid"]
+        ByteString.Char8.writeFile (attester </> "README") "clean attester\n"
+        callProcess "git" ["-C", attester, "add", "README"]
+        callProcess "git" ["-C", attester, "commit", "-qm", "test: create clean attester"]
+        revision <- Text.strip . Text.pack <$> readProcess "git" ["-C", attester, "rev-parse", "HEAD"] ""
+        callProcess "cp" ["-R", "../docs/verification/.", bundle]
+        writeCellRunFixture runDirectory outerPath cellRunId revision
+        source <- loadRunSource runDirectory >>= either (fail . show) pure
+        store <- memoryStore
+        store.putObjectIfAbsent outerPath outerUri "application/json" >>= (`shouldSatisfy` isRight)
+        links <- publishRunData store (PublishOptions baseUri UploadMissing True False) runDirectory source >>= either (fail . show) pure
+        record <- either (fail . show) pure (buildRunRecord (RecordInput Investigation (UTCTime (fromGregorian 2026 9 26) 0) False Nothing [] Nothing) source links)
+        record.outcome `shouldBe` InfrastructureFailure
+        writeRunRecord bundle record >>= (`shouldSatisfy` isRight)
+        originalDirectory <- getCurrentDirectory
+        bracket_ (setCurrentDirectory attester) (setCurrentDirectory originalDirectory) do
+          confirmed <- attest store coreRecomputers (AttestOptions bundle True False Nothing) (Text.pack recordPath)
+          confirmed `shouldSatisfy` \case Right result -> result.verdict == "confirmed"; Left _ -> False
+          checkBundle (CheckOptions bundle Nothing False False) `shouldReturn` Right []
+
     it "confirms a clean self-test run and appends one verified entry across two attestations" do
       withSystemTempDirectory "kenshou-confirmed-attestation" $ \root -> do
         let attester = root </> "attester"
@@ -373,8 +412,8 @@ main = hspec do
         links <- publishRunData store (PublishOptions "gs://bucket/runs" UploadMissing False False) root source >>= either (fail . show) pure
         soakId <- either (fail . show) pure (parseScenarioId "kafka/pipeline/soak/consumer-memory-and-fd-stability-reduced")
         let input = RecordInput Baseline (UTCTime (fromGregorian 2026 9 26) 0) False Nothing [] Nothing
-            withoutSummary = RunSource source.manifest source.spec (source.result {resultScenario = soakId, resultSummaries = Just (object ["measurements" .= object ["kafka" .= object []]])}) source.files
-            withSummary = RunSource source.manifest source.spec (source.result {resultScenario = soakId, resultSummaries = Just (object ["measurements" .= object ["measurements" .= object []]])}) source.files
+            withoutSummary = RunSource source.manifest source.spec (source.result {resultScenario = soakId, resultSummaries = Just (object ["measurements" .= object ["kafka" .= object []]])}) source.files source.cellEvidence
+            withSummary = RunSource source.manifest source.spec (source.result {resultScenario = soakId, resultSummaries = Just (object ["measurements" .= object ["measurements" .= object []]])}) source.files source.cellEvidence
         without <- either (fail . show) pure (buildRunRecord input withoutSummary links)
         with <- either (fail . show) pure (buildRunRecord input withSummary links)
         without.computations `shouldBe` ["VC-1"]
@@ -501,6 +540,47 @@ main = hspec do
         mismatch `shouldSatisfy` isLeft
 
   describe "publishRunData" do
+    it "links a verified outer cell manifest and records the effective infrastructure outcome" do
+      withSystemTempDirectory "kenshou-cell-evidence" $ \root -> do
+        let cellRunId = "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e66" :: Text
+            nestedId = "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e55" :: Text
+            runDirectory = root </> "cell-run" </> "tree" </> "output" </> Text.unpack nestedId
+            outerPath = root </> "cell-run" </> "tree" </> "manifest.json"
+            baseUri = "gs://bucket/runs/" <> cellRunId <> "/output"
+            outerUri = "gs://bucket/runs/" <> cellRunId <> "/manifest.json"
+        writeCellRunFixture runDirectory outerPath cellRunId (Text.replicate 40 "f")
+        source <- loadRunSource runDirectory >>= either (fail . show) pure
+        source.cellEvidence `shouldSatisfy` (/= Nothing)
+        manifestBytes <- ByteString.readFile outerPath
+        nestedBytes <- ByteString.readFile (runDirectory </> "manifest.json")
+        cellId <- either (fail . show) pure (parseRunId cellRunId)
+        nestedRunId <- either (fail . show) pure (parseRunId nestedId)
+        leaseId <- either (fail . show) pure (parseRunId "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e67")
+        let runLink = RunLink nestedRunId ("output/" <> nestedId) "selftest/kernel/correctness/basic" (Text.drop 7 (sha256Hex nestedBytes)) Passed InfrastructureFailure (Just "cell health")
+            index = CellRunIndex cellId "alpha" leaseId 1 ("gs://bucket/runs/" <> cellRunId) baseUri (CellManifestLink "manifest.json" (Text.drop 7 (sha256Hex manifestBytes)) (fromIntegral (ByteString.length manifestBytes))) Cell.InfrastructureFailure ["cell health"] (Just 0) [] [runLink] (UTCTime (fromGregorian 2026 9 26) 0)
+            indexPath = root </> "cell-run" </> "cell-run.json"
+        LazyByteString.writeFile indexPath (encode index)
+        loadRunSource runDirectory >>= (`shouldSatisfy` isRight)
+        let inconsistent = RunLink nestedRunId ("output/" <> nestedId) "selftest/kernel/correctness/basic" (Text.drop 7 (sha256Hex nestedBytes)) Passed Passed (Just "cell health")
+        LazyByteString.writeFile indexPath (encode index {runs = [inconsistent]})
+        loadRunSource runDirectory >>= (`shouldSatisfy` isLeft)
+        LazyByteString.writeFile indexPath (encode index)
+        store <- memoryStore
+        store.putObjectIfAbsent outerPath outerUri "application/json" >>= (`shouldSatisfy` isRight)
+        links <- publishRunData store (PublishOptions baseUri UploadMissing True False) runDirectory source >>= either (fail . show) pure
+        [outer] <- pure [link | link <- links, link.kind == CellManifestData]
+        outer.uri `shouldBe` outerUri
+        record <- either (fail . show) pure (buildRunRecord (RecordInput Investigation (UTCTime (fromGregorian 2026 9 26) 0) False Nothing [] Nothing) source links)
+        record.outcome `shouldBe` InfrastructureFailure
+        case record.environment of
+          Object fields -> do
+            KeyMap.lookup "cell" fields `shouldBe` Just (String "alpha")
+            KeyMap.lookup "cellRun" fields `shouldBe` Just (String cellRunId)
+            KeyMap.lookup "zone" fields `shouldBe` Just (String "us-west1-a")
+          _ -> expectationFailure "cell environment must be an object"
+        removeFile outerPath
+        loadRunSource runDirectory >>= (`shouldSatisfy` isLeft)
+
     it "publishes all verified run files and links the required ones" do
       withSystemTempDirectory "kenshou-publish" $ \root -> do
         writeRunFixture root
@@ -647,3 +727,39 @@ writeRunFixtureWithRevisionAndDefect root harnessRevision knownDefect = do
   parsed <- either (fail . show) pure (parseRunId runId)
   manifest <- writeManifest root parsed Map.empty
   LazyByteString.writeFile (root </> "manifest.json") (encode manifest)
+
+writeCellRunFixture :: FilePath -> FilePath -> Text -> Text -> IO ()
+writeCellRunFixture runDirectory outerPath cellRunId revision = do
+  createDirectoryIfMissing True runDirectory
+  writeRunFixtureWithRevision runDirectory revision
+  specValue <- Aeson.eitherDecodeFileStrict' (runDirectory </> "run-spec.json") >>= either fail pure
+  let cellSpec = case specValue of
+        Object fields -> Object (KeyMap.insert "environment" (object ["placement" .= ("cell" :: Text)]) fields)
+        _ -> error "run fixture spec is not an object"
+      specBytes = LazyByteString.toStrict (encode cellSpec)
+  ByteString.writeFile (runDirectory </> "run-spec.json") specBytes
+  resultValue <- Aeson.eitherDecodeFileStrict' (runDirectory </> "run-result.json") >>= either fail pure
+  let cellFingerprint = object ["cell" .= ("alpha" :: Text), "cellRun" .= cellRunId, "gce" .= object ["machineType" .= ("n2-standard-8" :: Text), "zone" .= ("us-west1-a" :: Text)]]
+      cellResult = case resultValue of
+        Object fields -> case KeyMap.lookup "fingerprint" fields of
+          Just (Object fingerprint) -> Object (KeyMap.insert "spec" (object ["sha256" .= sha256Hex specBytes]) (KeyMap.insert "fingerprint" (Object (KeyMap.insert "cell" cellFingerprint fingerprint)) fields))
+          _ -> error "run fixture has no fingerprint"
+        _ -> error "run fixture result is not an object"
+  LazyByteString.writeFile (runDirectory </> "run-result.json") (encode cellResult)
+  removeFile (runDirectory </> "manifest.json")
+  nestedId <- either (fail . show) pure (parseRunId "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e55")
+  nested <- writeManifest runDirectory nestedId Map.empty
+  LazyByteString.writeFile (runDirectory </> "manifest.json") (encode nested)
+  cellId <- either (fail . show) pure (parseRunId cellRunId)
+  leaseId <- either (fail . show) pure (parseRunId "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e67")
+  let names = ["run-spec.json", "run-result.json", "manifest.json"]
+      timestamp = UTCTime (fromGregorian 2026 9 26) 0
+  artifacts <-
+    traverse
+      ( \name -> do
+          bytes <- ByteString.readFile (runDirectory </> name)
+          pure (Artifact ("output/" <> "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e55/" <> Text.pack name) (Text.drop 7 (sha256Hex bytes)) (fromIntegral (ByteString.length bytes)) "application/json")
+      )
+      names
+  let outer = CellManifest cellId "alpha" leaseId 1 timestamp "0.1.0" (ManifestPayload (Text.replicate 64 "a") ("/nix/store/" <> Text.replicate 32 "a" <> "-fixture")) Cell.InfrastructureFailure 3600 artifacts
+  LazyByteString.writeFile outerPath (encode outer)

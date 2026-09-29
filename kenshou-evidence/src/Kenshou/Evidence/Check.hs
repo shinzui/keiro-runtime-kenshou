@@ -295,6 +295,7 @@ checkDocument path document =
             )
             (entries "components")
           <> [issue "data-completeness" "run must link manifest, run-spec and run-result" | field "recordKind" == Just (String "run"), not (all (`elem` mapMaybe (entryText "kind") (entries "data")) ["manifest", "run-spec", "run-result"])]
+          <> [issue "data-completeness" "cell run must link exactly one outer cell manifest" | field "recordKind" == Just (String "run"), field "placement" == Just (String "cell"), length (filter (== Just "cell-manifest") (map (entryText "kind") (entries "data"))) /= 1]
           <> [ issue "cell-fields" "cell placement requires environment.cell, cellRun, machineType and zone"
              | field "placement" == Just (String "cell"),
                not

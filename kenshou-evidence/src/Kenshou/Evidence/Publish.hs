@@ -18,9 +18,10 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Kenshou.Core.Id (renderRunId)
 import Kenshou.Core.Outcome (Outcome (..))
-import Kenshou.Evidence.Source (ComparisonSource (..), ComparisonView (..), RunResultView (..), RunSource (..), VerifiedFile (..))
+import Kenshou.Evidence.Source (CellEvidence (..), ComparisonSource (..), ComparisonView (..), RunResultView (..), RunSource (..), VerifiedFile (..))
 import Kenshou.Evidence.Store (ObjectStat (..), ObjectStore (..), StoreError, validateObjectUri)
 import Kenshou.Evidence.Types (DataKind (..), DataLink (..), Sha256, sha256Bytes)
+import Kenshou.Remote.Cell.Docs (CellManifest (..))
 import Numeric.Natural (Natural)
 import System.FilePath ((</>))
 import System.IO.Temp (withSystemTempDirectory)
@@ -66,9 +67,18 @@ publishRunData store options root source = case cleanBase options.baseUri of
                 manifestDigest = sha256Bytes manifestBytes
                 manifestSize = fromIntegral (ByteString.length manifestBytes)
             publishOne store options (root </> "manifest.json") manifestUri "application/json" manifestDigest manifestSize
+            cellLinks <- case source.cellEvidence of
+              Nothing -> pure []
+              Just cell -> do
+                let expectedSuffix = "/runs/" <> renderRunId cell.cellManifest.runId <> "/output"
+                unless (expectedSuffix `Text.isSuffixOf` base) (throwE (InvalidBaseUri options.baseUri))
+                let uri = Text.dropEnd (Text.length "/output") base <> "/manifest.json"
+                    file = cell.cellManifestFile
+                publishOne store (options {uploadMode = VerifyOnly}) cell.cellManifestPath uri "application/json" file.digest file.bytes
+                pure [DataLink {kind = CellManifestData, uri, digest = file.digest, mediaType = "application/json", bytes = file.bytes}]
             pure $
               sortOn (\link -> (link.kind, link.uri)) $
-                DataLink {kind = ManifestData, uri = manifestUri, digest = manifestDigest, mediaType = "application/json", bytes = manifestSize} : catMaybes linked
+                DataLink {kind = ManifestData, uri = manifestUri, digest = manifestDigest, mediaType = "application/json", bytes = manifestSize} : cellLinks <> catMaybes linked
         ) ::
         IO (Either IOException (Either PublishError [DataLink]))
     pure $ either (Left . PublishIo . Text.pack . show) id completed

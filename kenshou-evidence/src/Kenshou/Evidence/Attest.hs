@@ -455,7 +455,7 @@ verifyData store linkedOnly root record = do
                     Right source -> pure (check "digests-match" "passed" "linked objects and manifest files match their SHA-256 and size", allDigests, Just source)
 
 fetchLink :: ObjectStore -> FilePath -> Text -> DataLink -> IO (Either Text Sha256)
-fetchLink store root runId link = case relativeObjectPath runId link.uri of
+fetchLink store root runId link = case targetPath of
   Nothing -> pure (Left ("unsafe data URI: " <> link.uri))
   Just relative -> do
     let path = root </> relative
@@ -469,6 +469,8 @@ fetchLink store root runId link = case relativeObjectPath runId link.uri of
           if actual == link.digest && fromIntegral (ByteString.length contents) == link.bytes
             then Right actual
             else Left ("object differs from recorded digest or size: " <> link.uri)
+  where
+    targetPath = if link.kind == CellManifestData then Just "cell-manifest.json" else relativeObjectPath runId link.uri
 
 fetchManifestFile :: ObjectStore -> FilePath -> Text -> [DataLink] -> ManifestFile -> IO (Either Text (Maybe Sha256))
 fetchManifestFile store root runId links file
@@ -592,9 +594,9 @@ checkEnvironment _ _ Nothing = check "environment-captured" "skipped" "source do
 checkEnvironment now record (Just source) = case buildRunRecord (RecordInput record.purpose now True (Just (record.subject, record.subjectKind)) record.produced record.previousRun) source record.dataLinks of
   Left err -> check "environment-captured" "failed" (Text.pack (show err))
   Right expected ->
-    if record.environment == expected.environment && record.placement == expected.placement
-      then check "environment-captured" "passed" "recorded environment matches the run result"
-      else check "environment-captured" "failed" "recorded environment differs from the run result"
+    if record.environment == expected.environment && record.placement == expected.placement && record.outcome == expected.outcome
+      then check "environment-captured" "passed" "recorded environment and effective outcome match the source evidence"
+      else check "environment-captured" "failed" "recorded environment, placement or effective outcome differs from the source evidence"
 
 checkClean :: EvidenceRecord -> Maybe RunSource -> Bool -> AttestationCheck
 checkClean record source attesterDirty =
@@ -615,7 +617,7 @@ checkClean record source attesterDirty =
 
 checkRecomputation :: FilePath -> [Recomputer] -> FilePath -> EvidenceRecord -> Maybe RunSource -> IO AttestationCheck
 checkRecomputation _ _ _ _ Nothing = pure (check "verdict-recomputed" "skipped" "source documents are unavailable")
-checkRecomputation bundle recomputers root record _ = do
+checkRecomputation bundle recomputers root record (Just source) = do
   definitions <- computationDefinitions bundle
   let configured =
         [ (handle, lookup handle definitions >>= \(name, version) -> find (\candidate -> candidate.algorithm == name && candidate.algorithmVersion == version) recomputers)
@@ -628,7 +630,7 @@ checkRecomputation bundle recomputers root record _ = do
   let contradictions =
         [ handle
         | (handle, Right result) <- results,
-          not result.agreesWithDocuments || maybe False (/= record.outcome) result.outcome
+          not result.agreesWithDocuments || maybe False (/= source.result.resultOutcome) result.outcome
         ]
       unavailable = missing <> [handle | (handle, Left _) <- results]
   pure $

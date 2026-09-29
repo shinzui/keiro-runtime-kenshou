@@ -183,7 +183,7 @@ discards exported spans, while `file` retains a collector export. A
 scenario's `sdk-otlp` arm receives the cell collector endpoint when its
 scenario declares the endpoint knob.
 
-## Fetch and record old evidence
+## Fetch and record evidence
 
 Fetch by cell run ID even after its VMs have stopped:
 
@@ -203,9 +203,11 @@ to verify directly from storage. For diagnosis of an unpublished work
 directory, use the owner project's IAP access; diagnostic copies are not
 sealed evidence.
 
-Record a passing, verified nested run only after checking its effective
-outcome in `cell-run.json`. Its durable URI starts at the submission's
-`output` prefix:
+Record a verified nested run after inspecting its effective outcome in
+`cell-run.json`. The recorder verifies the outer cell manifest, links it
+beside the nested manifest, and uses infrastructure failure as the effective
+outcome when the cell reports one. Its durable URI starts at the
+submission's `output` prefix:
 
 ```bash
 kenshou record fetched/CELL_RUN_ID/tree/output/RUN_ID \
@@ -214,10 +216,11 @@ kenshou record fetched/CELL_RUN_ID/tree/output/RUN_ID \
 kenshou attest RUN_ID --project tan-nb-exp
 ```
 
-The recorder's current run-source path verifies the nested Kenshou manifest;
-it does not yet attach the outer cell manifest or enforce the effective
-outcome automatically. Keep `cell-run.json` and the cell manifest with the
-record until that integration is complete. See
+The outer manifest must already be published at
+`gs://tan-nb-exp-cells-results/runs/CELL_RUN_ID/manifest.json`; the recorder
+checks its digest and size without replacing it. Attestation fetches both
+manifests and recomputes the nested scenario verdict separately from the
+cell's effective outcome. See
 [recording evidence](recording-evidence.md) and
 [ADR-21](../adr/0021-address-cell-runs-by-submission-and-nested-run.md).
 
