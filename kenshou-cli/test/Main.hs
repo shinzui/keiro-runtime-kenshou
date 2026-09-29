@@ -6,7 +6,10 @@ import Data.Aeson (Value, object, (.=))
 import Data.Aeson qualified as Aeson
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString.Lazy qualified as LazyByteString
+import Data.Foldable (toList)
 import Data.List (find)
+import Data.List qualified as List
+import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.IO qualified as Text
@@ -27,7 +30,8 @@ import Kenshou.Remote.Cell.Submit (workObjectFor)
 import Kenshou.Remote.Payload (Bundle (..), CellPayload (..))
 import Kenshou.Remote.Store (Bucket (..), ObjectName (..), ObjectStore (..), Precondition (..))
 import Kenshou.Remote.Store.File (newFileStore)
-import System.Directory (createDirectoryIfMissing, doesFileExist, doesPathExist, makeAbsolute, withCurrentDirectory)
+import Kenshou.Telemetry.Overhead (OverheadState (..), SlotRun (..), loadOverheadState)
+import System.Directory (createDirectoryIfMissing, doesFileExist, doesPathExist, listDirectory, makeAbsolute, withCurrentDirectory)
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
@@ -85,6 +89,7 @@ main = hspec do
       runWithArgs ["cell", "run", "--help"] `shouldReturnCode` ExitSuccess
       runWithArgs ["cell", "probe", "--help"] `shouldReturnCode` ExitSuccess
       runWithArgs ["cell", "pair", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["cell", "overhead", "--help"] `shouldReturnCode` ExitSuccess
       runWithArgs ["cell", "resume", "--help"] `shouldReturnCode` ExitSuccess
       runWithArgs ["cell", "payload", "publish", "--help"] `shouldReturnCode` ExitSuccess
       runWithArgs ["cell", "payload", "show", "--help"] `shouldReturnCode` ExitSuccess
@@ -320,6 +325,116 @@ main = hspec do
             case journal.slices of
               [slice] -> doesFileExist (root </> Text.unpack (renderRunId slice.cellRun) </> "cell-run.json") `shouldReturn` True
               _ -> expectationFailure "expected one verified cell slice"
+          )
+          `finally` killThread worker
+
+    it "runs overhead slots behind one cell lease and links their verified run directories" $
+      withSystemTempDirectory "kenshou-cell-overhead" \root -> do
+        store <- newFileStore root
+        descriptorBytes <- LazyByteString.readFile "../kenshou-remote/test/golden/cell/cell.descriptor.v1.json"
+        observed <- either fail pure (Aeson.eitherDecode descriptorBytes :: Either String CellDescriptor)
+        let control = Bucket "control"
+            results = Bucket observed.buckets.results
+            descriptor = observed {buckets = observed.buckets {control = "control"}}
+            outRoot = root </> "overhead-output"
+            command =
+              [ "cell",
+                "overhead",
+                "keiro/command/benchmark/throughput-latency",
+                "--cell",
+                "alpha",
+                "--control-bucket",
+                "control",
+                "--payload",
+                "../kenshou-remote/test/golden/payload.json",
+                "--arms",
+                "tracing=off,noop",
+                "--trials",
+                "3",
+                "--settle-seconds",
+                "0",
+                "--retries",
+                "0",
+                "--policy",
+                "../policies/telemetry-overhead.json",
+                "--out",
+                outRoot
+              ]
+            awaitMarkers seen = do
+              objects <- store.listObjects control "cells/alpha/submissions/"
+              case find (\(name, _) -> Text.isSuffixOf "/submission.json" name.unObjectName && name `Set.notMember` seen) objects of
+                Nothing -> threadDelay 10000 >> awaitMarkers seen
+                Just (name, _) -> do
+                  marker <- store.getObject control name
+                  submission <- case marker of
+                    Just (bytes, _) -> either fail pure (Aeson.eitherDecode bytes :: Either String Submission)
+                    Nothing -> fail "overhead submission marker disappeared"
+                  let prefix = "cells/alpha/submissions/" <> renderRunId submission.runId <> "/"
+                  work <- store.getObject control (ObjectName (prefix <> "work"))
+                  workBytes <- case work of
+                    Just (bytes, _) -> pure bytes
+                    Nothing -> fail "overhead work disappeared"
+                  workValue <- either fail pure (Aeson.eitherDecode workBytes :: Either String Value)
+                  nestedId <- case workValue of
+                    Aeson.Object fields -> case KeyMap.lookup "runs" fields of
+                      Just (Aeson.Array entries) -> case toList entries of
+                        [Aeson.Object entry] -> case KeyMap.lookup "runId" entry of
+                          Just value -> case Aeson.fromJSON value of Aeson.Success identifier -> pure identifier; Aeson.Error problem -> fail problem
+                          Nothing -> fail "overhead work has no nested run ID"
+                        _ -> fail "overhead work must contain one valid run entry"
+                      _ -> fail "overhead work has no runs"
+                    _ -> fail "overhead work is invalid"
+                  now <- getCurrentTime
+                  let sequenceNumber = Set.size seen + 1
+                      payloadDigest = submission.payload.bundle.sha256
+                      nestedBytes = Aeson.encode (object ["schema" .= ("kenshou.run-result/v1" :: Text), "runId" .= nestedId, "scenario" .= ("keiro/command/benchmark/throughput-latency" :: Text), "outcome" .= Outcome.Passed, "fingerprint" .= object ["cell" .= object ["payload" .= object ["bundleSha256" .= payloadDigest]]]])
+                      nestedInfo = workObjectFor "application/json" nestedBytes
+                      nestedManifest = Manifest nestedId now [ManifestFile "run-result.json" ("sha256:" <> nestedInfo.sha256) (fromIntegral nestedInfo.bytes) "application/json"]
+                      files =
+                        [ ("submission/work", workBytes),
+                          ("submission/submission.json", Aeson.encode submission),
+                          ("cell/result.json", Aeson.encode (CellRunResult submission.runId "alpha" submission.leaseId sequenceNumber Completed (Just 0) Nothing [])),
+                          ("output/" <> renderRunId nestedId <> "/run-result.json", nestedBytes),
+                          ("output/" <> renderRunId nestedId <> "/manifest.json", Aeson.encode nestedManifest)
+                        ]
+                      artifactFor (path, bytes) = let info = workObjectFor "application/json" bytes in Artifact path info.sha256 info.bytes "application/json"
+                      manifest = CellManifest submission.runId "alpha" submission.leaseId sequenceNumber now "0.1.0" (ManifestPayload payloadDigest submission.payload.storePath) Completed 3600 (map artifactFor files)
+                      manifestBytes = Aeson.encode manifest
+                      manifestDigest = (workObjectFor "application/json" manifestBytes).sha256
+                  mapM_ (\(path, bytes) -> do _ <- store.putObject results (ObjectName ("runs/" <> renderRunId submission.runId <> "/" <> path)) "application/json" DoesNotExist bytes; pure ()) files
+                  _ <- store.putObject results (ObjectName ("runs/" <> renderRunId submission.runId <> "/manifest.json")) "application/json" DoesNotExist manifestBytes
+                  _ <- store.putObject control (ObjectName (prefix <> "status.json")) "application/json" DoesNotExist (Aeson.encode (CellStatus submission.runId Sealed (Just sequenceNumber) now Nothing (LogChunks 0 0) (Just Completed) (Just manifestDigest) (Just [])))
+                  if sequenceNumber < 6 then awaitMarkers (Set.insert name seen) else pure ()
+        _ <- store.putObject control (ObjectName "cells/alpha/descriptor.json") "application/json" DoesNotExist (Aeson.encode descriptor)
+        worker <- forkIO (awaitMarkers Set.empty)
+        ( withCellStore root do
+            result <- timeout 30000000 (runWithArgs command)
+            result `shouldBe` Just (ExitFailure 4)
+            store.statObject control (ObjectName "cells/alpha/lease.json") `shouldReturn` Nothing
+            [invocation] <- listDirectory outRoot
+            state <- loadOverheadState (outRoot </> invocation) >>= either fail pure
+            length state.slots `shouldBe` 6
+            all (.complete) state.slots `shouldBe` True
+            observations <-
+              traverse
+                ( \slot -> do
+                    runId <- case reverse slot.runIds of identifier : _ -> pure identifier; [] -> fail "overhead slot has no run"
+                    doesFileExist (outRoot </> invocation </> "runs" </> Text.unpack (renderRunId runId) </> "manifest.json") `shouldReturn` True
+                    journal <- readSessionJournal (outRoot </> invocation </> "cell-sessions" </> Text.unpack (renderRunId runId) </> "session.json") >>= either (fail . Text.unpack) pure
+                    slice <- case journal.slices of [one] -> pure one; _ -> fail "overhead child must have one slice"
+                    sealed <- store.getObject results (ObjectName ("runs/" <> renderRunId slice.cellRun <> "/manifest.json"))
+                    manifest <- case sealed of
+                      Just (bytes, _) -> either fail pure (Aeson.eitherDecode bytes :: Either String CellManifest)
+                      Nothing -> fail "overhead child has no cell manifest"
+                    pure (journal.leaseId, manifest.leaseSequence)
+                )
+                state.slots
+            length (Set.fromList (fmap fst observations)) `shouldBe` 1
+            List.sort (fmap snd observations) `shouldBe` [1 .. 6]
+            resumed <- timeout 15000000 (runWithArgs (command <> ["--resume"]))
+            resumed `shouldBe` Just (ExitFailure 4)
+            markers <- store.listObjects control "cells/alpha/submissions/"
+            length (filter (Text.isSuffixOf "/submission.json" . (.unObjectName) . fst) markers) `shouldBe` 6
           )
           `finally` killThread worker
 

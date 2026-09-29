@@ -18,15 +18,23 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.IO qualified as TextIO
 import Data.Time (diffUTCTime, getCurrentTime)
+import Kenshou.Cli.Command.Overhead qualified as LocalOverhead
+import Kenshou.Core.Bundle (lookupScenario)
 import Kenshou.Core.Cli (CliCommand (..), CliEnv (..), CliGroup (..))
-import Kenshou.Core.Cohort (CohortIdentity (..))
-import Kenshou.Core.Id (RunId, newRunId, parseRunId, renderRunId, unSeed)
+import Kenshou.Core.Cohort (CohortIdentity (..), PlanHash (..))
+import Kenshou.Core.Id (RunId, mkSeed, newRunId, parseRunId, parseScenarioId, renderRunId, unSeed)
+import Kenshou.Core.RunSpec (EnvironmentSpec (..), RunSpec (..), SpecPlacement (..))
+import Kenshou.Core.Scenario (Scenario (..))
+import Kenshou.Diagnose.Leak (analyseRunDirectory, defaultLeakSpec)
 import Kenshou.Measure.Compare (CompareError (..), Comparison (..), compareRuns, verdictExitCode)
 import Kenshou.Measure.Compare.Compatibility (VaryingAxis (..))
 import Kenshou.Measure.Compare.Ordering (Arm (..), PairedOrdering (..))
 import Kenshou.Measure.Compare.Policy (Policy (..), decodePolicy)
-import Kenshou.Plan.Policy (PlanPolicy (..))
-import Kenshou.Plan.RunPlan (PlannedRun (..), RunPlan (..), TrialInfo (..))
+import Kenshou.Plan.Change (Change (..), ChangeSource (..), Reason (..))
+import Kenshou.Plan.Components (ComponentId (..), ComponentRef (..))
+import Kenshou.Plan.Policy (PlanPolicy (..), defaultPlanPolicy)
+import Kenshou.Plan.RunPlan (PlanContext (..), PlanInputs (PlanInputs), PlannedRun (..), RunPlan (..), TrialInfo (..))
+import Kenshou.Plan.Selector (parseSelector)
 import Kenshou.Remote.Cell.Control (CellSnapshot (..), readCellSnapshot)
 import Kenshou.Remote.Cell.Docs (CachePolicy (..), CellBuckets (..), CellDescriptor (..), CellManifest (..), CellNodes (..), CellOutcome (..), CellStatus (..), Limits (..), Rejected (..), Submission (..))
 import Kenshou.Remote.Cell.Exec (cellExec)
@@ -51,8 +59,10 @@ import Kenshou.Remote.Payload.Publisher (PublishError (..), PublishOptions (..),
 import Kenshou.Remote.Store (Bucket (..), ObjectMeta (..), ObjectName (..), ObjectStore (..))
 import Kenshou.Remote.Store.File (newFileStore)
 import Kenshou.Remote.Store.Gcs (newGcsStore, newTokenProvider)
+import Kenshou.Telemetry.Overhead (OverheadHooks (..), OverheadPlan (..), OverheadReport (..), OverheadRequest (..), OverheadState (..), UsageError (..), analyseOverhead, executeOverhead, loadOverheadState, overheadVerdictExitCode, planOverhead)
+import Kenshou.Telemetry.Overhead.Policy (OverheadPolicy)
 import Options.Applicative
-import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesPathExist, renameFile)
+import System.Directory (createDirectoryIfMissing, createDirectoryLink, doesDirectoryExist, doesPathExist, makeAbsolute, renameFile)
 import System.Environment (getExecutablePath, lookupEnv)
 import System.Exit (ExitCode (..))
 import System.FilePath (takeDirectory, (</>))
@@ -78,6 +88,8 @@ data PairCli = PairCli !CellLocation !FilePath !FilePath !FilePath !(Maybe Int) 
 
 data PairObservation = PairObservation !PlannedRun !FilePath !Bool
 
+data OverheadCli = OverheadCli !CellLocation !FilePath !OtlpSink ![Text] !Bool !LocalOverhead.OverheadOptions
+
 data PayloadPublishCli = PayloadPublishCli !Text !Text !(Maybe Text) !FilePath !FilePath !Bool
 
 data CellAction
@@ -93,6 +105,7 @@ data CellAction
   | Run !RunCli
   | Probe !ProbeCli
   | Pair !PairCli
+  | Overhead !OverheadCli
   | Resume !FilePath !(Maybe Text)
   | PublishPayload !PayloadPublishCli
   | ShowPayload !FilePath
@@ -116,6 +129,7 @@ cellParser =
       <> command "run" (info (runParser <**> helper) (progDesc "Lease, submit, verify and release a cell session"))
       <> command "probe" (info (probeParser <**> helper) (progDesc "Run a cell environment probe and cache capabilities"))
       <> command "pair" (info (pairParser <**> helper) (progDesc "Measure interleaved payload arms under one cell lease"))
+      <> command "overhead" (info (overheadCellParser <**> helper) (progDesc "Measure telemetry overhead under one cell lease"))
       <> command "resume" (info (resumeParser <**> helper) (progDesc "Continue a saved cell session"))
       <> command "payload" (info (payloadParser <**> helper) (progDesc "Build and publish a checked cell payload"))
       <> (command "exec" (info (cellExecParser <**> helper) (progDesc "Execute prepared work on a cell driver")) <> internal)
@@ -233,6 +247,18 @@ parsePairOrdering :: String -> Either String PairedOrdering
 parsePairOrdering "abba" = Right ABBA
 parsePairOrdering "baab" = Right BAAB
 parsePairOrdering _ = Left "expected abba or baab"
+
+overheadCellParser :: Parser CellAction
+overheadCellParser =
+  Overhead
+    <$> ( OverheadCli
+            <$> cellLocationParser
+            <*> strOption (long "payload" <> metavar "FILE" <> help "Payload descriptor for every telemetry arm")
+            <*> option (eitherReader parseOtlpSink) (long "otlp-sink" <> metavar "null|file" <> value NullSink <> showDefaultWith (const "null") <> help "Cell OTLP sink")
+            <*> many (strOption (long "pg-setting" <> metavar "KEY=VALUE" <> help "PostgreSQL reset setting; repeat as needed"))
+            <*> switch (long "start" <> help "Start stopped cell instances before acquiring a lease")
+            <*> LocalOverhead.overheadParser
+        )
 
 submitSettingsParser :: Parser Bool -> Parser SubmitSettings
 submitSettingsParser dryFlag =
@@ -574,6 +600,7 @@ runCell selected cli = case selected of
         acquire
   Probe request -> runProbe cli request
   Pair request -> runPair cli request
+  Overhead request -> runCellOverhead cli request
   Resume sessionDir selectedLease -> guardIO do
     let journalPath = sessionDir </> "session.json"
     present <- doesPathExist journalPath
@@ -773,6 +800,139 @@ runPair cli (PairCli location candidateFile baselineFile planFile selectedPairs 
                             current <- reattachLease store ref lease.leaseId
                             traverse_ (\active -> do _ <- releaseLease store ref active; pure ()) current
                       pairUnderLease cli location lease.leaseId baselineFile candidateFile request schedule policy payloads pgSettings outDir `finally` releaseCurrent
+
+runCellOverhead :: CliEnv -> OverheadCli -> IO ExitCode
+runCellOverhead cli (OverheadCli location payloadFile sink settingTexts startInstances options) = guardIO do
+  let requestedScenario =
+        parseScenarioId options.scenario >>= \identifier ->
+          maybe (Left ("unknown scenario " <> options.scenario)) Right (lookupScenario cli.registry identifier)
+      input = LocalOverhead.parseInputs options
+      settings = traverse parsePgSetting settingTexts
+  selectedPolicy <- LocalOverhead.loadPolicy options.policy
+  payloadResult <- loadPayloads [payloadFile]
+  case (requestedScenario, input, settings, selectedPolicy, payloadResult) of
+    (Left problem, _, _, _, _) -> usage problem
+    (_, Left problem, _, _, _) -> usage problem
+    (_, _, Left problem, _, _) -> usage problem
+    (_, _, _, Left problem, _) -> usage problem
+    (_, _, _, _, Left problem) -> usage problem
+    (Right scenario, Right (factors, fixedKnobs, fixedDimensions), Right pgSettings, Right policy, Right payloads) ->
+      case Map.lookup "default" payloads of
+        Nothing -> usage "cell overhead requires one default payload"
+        Just payload -> do
+          resumed <- if options.resume || options.analyseOnly then LocalOverhead.findResumeDirectory options.out scenario.id else pure Nothing
+          case (options.resume || options.analyseOnly, resumed) of
+            (True, Nothing) -> usage "no matching overhead state was found under --out"
+            (_, Just directory) -> do
+              loaded <- loadOverheadState directory
+              case loaded of
+                Left problem -> usage ("invalid overhead state: " <> Text.pack problem)
+                Right state -> continue directory state.plan (Just state) payload policy pgSettings
+            (_, Nothing) -> do
+              identifier <- renderRunId <$> newRunId
+              let directory = options.out </> ("overhead-" <> Text.unpack identifier)
+                  request = OverheadRequest identifier scenario.id factors options.mode options.control options.trials fixedKnobs fixedDimensions options.seed options.settleSeconds options.retries
+              case planOverhead request scenario of
+                Left (UsageError problem) -> usage problem
+                Right plan -> continue directory plan Nothing payload policy pgSettings
+  where
+    continue directory plan existing payload policy pgSettings = do
+      configuredBucket <- lookupEnv "KENSHOU_CELL_CONTROL_BUCKET"
+      let CellLocation name selectedBucket = location
+          bucketName = fromMaybe (maybe "tan-nb-exp-cells-control" Text.pack configuredBucket) selectedBucket
+          configuration = object ["schema" .= ("kenshou.cell-overhead/v1" :: Text), "cell" .= name, "controlBucket" .= bucketName, "payload" .= payload, "otlpSink" .= show sink, "pgSettings" .= pgSettings]
+          configPath = directory </> "cell-overhead.json"
+      case existing of
+        Nothing -> do
+          present <- doesPathExist directory
+          if present
+            then usage "overhead output path already exists"
+            else do
+              createDirectoryIfMissing True directory
+              LazyByteString.writeFile configPath (encode configuration)
+              execute directory plan payload policy pgSettings
+        Just state -> do
+          saved <- eitherDecodeFileStrict' configPath :: IO (Either String Value)
+          if saved /= Right configuration
+            then usage "cell overhead resume arguments differ from the saved cell and payload configuration"
+            else
+              if options.analyseOnly
+                then analyse directory plan state policy
+                else execute directory plan payload policy pgSettings
+
+    execute directory plan payload policy pgSettings = withControl location \store ref observed -> do
+      if startInstances then startCellInstances observed.descriptor else pure ()
+      owner <- Text.pack . fromMaybe "kenshou" <$> lookupEnv "USER"
+      acquired <- acquireLease store ref (LeaseRequest owner "kenshou cell overhead" 120)
+      case acquired of
+        Busy current -> unavailable ("cell is busy under lease " <> renderRunId current.leaseId)
+        Quarantined record -> unavailable ("cell is quarantined: " <> record.reason)
+        Acquired handle -> do
+          lease <- leaseSnapshot handle
+          let releaseCurrent = do
+                current <- reattachLease store ref lease.leaseId
+                traverse_ (\active -> do _ <- releaseLease store ref active; pure ()) current
+              hooks = overheadHooks plan (runCellOverheadChild cli location lease.leaseId payloadFile payload sink pgSettings directory)
+          withHeartbeat
+            store
+            ref
+            handle
+            ( \_ -> do
+                state <- executeOverhead hooks plan directory
+                analyseOverheadResult options.json directory plan state policy hooks
+            )
+            `finally` releaseCurrent
+
+    analyse directory plan state policy = analyseOverheadResult options.json directory plan state policy (overheadHooks plan (\_ _ -> pure (ExitFailure 4)))
+
+overheadHooks :: OverheadPlan -> (RunSpec -> FilePath -> IO ExitCode) -> OverheadHooks
+overheadHooks plan runChild =
+  OverheadHooks runChild compareRuns (Just leakCheck)
+  where
+    leakCheck directory = fmap (either (const Nothing) (Just . Aeson.toJSON)) (analyseRunDirectory directory defaultLeakSpec plan.seed)
+
+analyseOverheadResult :: Bool -> FilePath -> OverheadPlan -> OverheadState -> OverheadPolicy -> OverheadHooks -> IO ExitCode
+analyseOverheadResult asJson directory plan state policy hooks = do
+  report <- analyseOverhead hooks policy plan state directory
+  if asJson
+    then LazyByteString.putStrLn (encode report)
+    else TextIO.putStrLn ("verdict " <> LocalOverhead.verdictText report.verdict <> "  " <> Text.pack directory)
+  pure case overheadVerdictExitCode report.verdict of 0 -> ExitSuccess; code -> ExitFailure code
+
+runCellOverheadChild :: CliEnv -> CellLocation -> RunId -> FilePath -> PayloadDescriptor -> OtlpSink -> [(Text, Text)] -> FilePath -> RunSpec -> FilePath -> IO ExitCode
+runCellOverheadChild cli location leaseId payloadFile payload sink pgSettings directory rawSpec runsRoot = case rawSpec.runId of
+  Nothing -> pure (ExitFailure 4)
+  Just runId -> do
+    planId <- newRunId
+    now <- getCurrentTime
+    selector <- either (ioError . userError . Text.unpack) pure (parseSelector "**")
+    seed <- either (ioError . userError . Text.unpack) pure (mkSeed 1)
+    let reason = Reason (Change (ComponentRef (ComponentId "cell-overhead") Nothing) Named "telemetry overhead slot") [] selector 0
+        spec = rawSpec {environment = rawSpec.environment {Kenshou.Core.RunSpec.placement = RunOnCell}}
+        context = PlanContext Nothing "cell-overhead" payload.cohort payload.cohortIdentity.identityPlanHash.unPlanHash (PlanInputs (object ["overhead" .= True])) [] []
+        plan = RunPlan planId now context (defaultPlanPolicy seed) [PlannedRun 0 runId 10 (reason :| []) Nothing spec] [] 10
+        planPath = directory </> "cell-sessions" </> Text.unpack (renderRunId runId) <> ".plan.json"
+        sessionDir = directory </> "cell-sessions" </> Text.unpack (renderRunId runId)
+        settings = SubmitSettings [payloadFile] planPath sessionDir GranularityRun Cold (fmap (\(name, assigned) -> name <> "=" <> assigned) pgSettings) False True False Nothing sink Nothing False
+    createDirectoryIfMissing True (takeDirectory planPath)
+    LazyByteString.writeFile planPath (encode plan)
+    result <- runCell (Submit (SubmitCli location (renderRunId leaseId) settings False)) cli
+    journal <- readSessionJournal (sessionDir </> "session.json")
+    case journal of
+      Right saved -> case saved.slices of
+        [slice] | slice.state == SliceVerified && slice.runIds == [runId] -> do
+          let target = takeDirectory sessionDir </> Text.unpack (renderRunId slice.cellRun) </> "tree" </> "output" </> Text.unpack (renderRunId runId)
+              link = runsRoot </> Text.unpack (renderRunId runId)
+          available <- doesDirectoryExist target
+          if available
+            then do
+              createDirectoryIfMissing True runsRoot
+              absolute <- makeAbsolute target
+              createDirectoryLink absolute link
+              pure result
+            else pure (ExitFailure 4)
+        _ -> pure (ExitFailure 4)
+      Left _ -> pure (ExitFailure 4)
 
 pairUnderLease :: CliEnv -> CellLocation -> RunId -> FilePath -> FilePath -> PairRequest -> RunPlan -> Policy -> Map.Map Text PayloadDescriptor -> [(Text, Text)] -> FilePath -> IO ExitCode
 pairUnderLease cli location leaseId baselineFile candidateFile request schedule policy payloads pgSettings outDir = do

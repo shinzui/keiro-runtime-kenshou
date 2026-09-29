@@ -158,11 +158,23 @@ PostgreSQL service then hit its five-starts-in-ten-minutes rate limit, so
 that comparison remained inconclusive. This owner-image limit must be
 resolved before repeated cold-reset measurements can pass.
 
-For telemetry arms, `kenshou cell overhead` will run the overhead planner's
-slots as separate submissions under one lease and write
-`overhead-report.json`. Until that verb is available, use local `kenshou
-overhead` for exploratory work and do not present it as a controlled cell
-measurement.
+For telemetry arms, run the overhead planner's slots as separate submissions
+under one lease:
+
+```bash
+kenshou cell overhead keiro/command/benchmark/throughput-latency \
+  --cell alpha --start --payload payloads/released.json \
+  --arms tracing=off,sdk-otlp --trials 3 --otlp-sink file \
+  --policy policies/telemetry-overhead.json --out cell-overhead/tracing
+```
+
+The command writes `overhead-report.json` and keeps each fetched tree below
+`cell-sessions/`; `runs/<run-id>` links to its verified nested directory.
+Use `--resume` with the same cell, payload, sink, and reset settings to
+continue an interrupted invocation. `--analyse-only` rebuilds its report
+without a cell lease. The owner service's current restart rate limit also
+affects overhead; treat a report with too few valid blocks as infrastructure
+failure, not a telemetry result.
 
 For diagnostics, publish the `info-table` or `profiled` payload variant and
 submit it with `--rts OPTS`. Choose the variant before publication; runtime

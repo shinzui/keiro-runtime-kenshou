@@ -79,6 +79,21 @@ control before comparing different cohorts.
 `--start` starts stopped instances named by the verified cell descriptor; it is
 also available on `cell lease` and `cell run`.
 
+Measure telemetry overhead under one lease:
+
+```bash
+kenshou cell overhead keiro/command/benchmark/throughput-latency \
+  --cell alpha --payload payloads/released.json \
+  --arms tracing=off,sdk-otlp --trials 3 --otlp-sink file \
+  --out cell-overhead/tracing
+```
+
+Each arm slot is a separate cold-reset submission. The command links verified
+nested run directories into its `runs/` tree, retains the cell sessions,
+reuses the overhead planner's retry and replacement-block rules, and writes
+`overhead-report.json`. `--resume` continues the saved invocation under a
+new lease; `--analyse-only` recomputes the report without submitting work.
+
 Route a plan across cells with different PostgreSQL majors:
 
 ```bash
