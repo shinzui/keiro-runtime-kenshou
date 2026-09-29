@@ -58,7 +58,7 @@ rebindPlannedSlices store ref handle journalPath = do
                                 then do
                                   identifier <- newRunId
                                   let previous = slice.submission
-                                      submission = Submission identifier lease.leaseId previous.payload previous.work previous.env previous.reset previous.limits previous.requires previous.labels
+                                      submission = Submission identifier lease.leaseId previous.payload previous.work previous.env previous.reset previous.limits previous.requires previous.collect previous.labels
                                   pure (SliceJournal slice.index identifier slice.ordinals slice.runIds slice.reset submission slice.workPath SlicePlanned Nothing Nothing Nothing Nothing Nothing)
                                 else pure slice
                             now <- getCurrentTime

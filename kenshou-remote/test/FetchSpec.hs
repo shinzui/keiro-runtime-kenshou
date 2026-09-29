@@ -199,7 +199,7 @@ completeTreeWithNested root identifier lease nestedId wrongPayload wrongRunId un
   fixture <- either (ioError . userError) pure (eitherDecode source :: Either String Submission)
   let workBytes = encode (object ["schema" .= ("kenshou.run-plan/v1" :: Text), "planId" .= identifier, "runs" .= [object ["ordinal" .= (1 :: Int), "runId" .= nestedId, "estimateMinutes" .= (1 :: Int), "spec" .= minimalRunSpec scenario]]])
       workInfo = workObjectFor "application/json" workBytes
-      submitted = Submission identifier lease fixture.payload workInfo fixture.env fixture.reset fixture.limits fixture.requires fixture.labels
+      submitted = Submission identifier lease fixture.payload workInfo fixture.env fixture.reset fixture.limits fixture.requires Nothing fixture.labels
       payloadDigest = fixture.payload.bundle.sha256
       manifestDigest = if wrongPayload then Text.replicate 64 "b" else payloadDigest
       manifestPayload = ManifestPayload manifestDigest fixture.payload.storePath

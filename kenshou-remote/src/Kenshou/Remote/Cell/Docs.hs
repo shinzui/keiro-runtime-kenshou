@@ -19,6 +19,7 @@ module Kenshou.Remote.Cell.Docs
     ResetBlock (..),
     Limits (..),
     Requirements (..),
+    CollectOptions (..),
     Submission (..),
     LogChunks (..),
     CellStatus (..),
@@ -183,6 +184,11 @@ data Requirements = Requirements
   }
   deriving stock (Eq, Show)
 
+data CollectOptions = CollectOptions
+  { traces :: !Bool
+  }
+  deriving stock (Eq, Show)
+
 data Submission = Submission
   { runId :: !RunId,
     leaseId :: !RunId,
@@ -192,6 +198,7 @@ data Submission = Submission
     reset :: !ResetBlock,
     limits :: !Limits,
     requires :: !Requirements,
+    collect :: !(Maybe CollectOptions),
     labels :: !(Map Text Text)
   }
   deriving stock (Eq, Show)
@@ -506,24 +513,28 @@ instance FromJSON Requirements where
 instance ToJSON Submission where
   toJSON submission =
     object
-      [ "schema" .= ("cell.submission/v1" :: Text),
-        "runId" .= submission.runId,
-        "leaseId" .= submission.leaseId,
-        "payload" .= submission.payload,
-        "work" .= submission.work,
-        "env" .= submission.env,
-        "reset" .= submission.reset,
-        "limits" .= submission.limits,
-        "requires" .= submission.requires,
-        "labels" .= submission.labels
-      ]
+      ( [ "schema" .= ("cell.submission/v1" :: Text),
+          "runId" .= submission.runId,
+          "leaseId" .= submission.leaseId,
+          "payload" .= submission.payload,
+          "work" .= submission.work,
+          "env" .= submission.env,
+          "reset" .= submission.reset,
+          "limits" .= submission.limits,
+          "requires" .= submission.requires,
+          "labels" .= submission.labels
+        ]
+          <> maybe [] (\options -> ["collect" .= object ["traces" .= options.traces]]) submission.collect
+      )
 
 instance FromJSON Submission where
   parseJSON = withObject "cell submission" \value -> do
     expectSchema "cell.submission/v1" value
-    submission <- Submission <$> value .: "runId" <*> value .: "leaseId" <*> value .: "payload" <*> value .: "work" <*> value .: "env" <*> value .: "reset" <*> value .: "limits" <*> value .: "requires" <*> value .: "labels"
+    submission <- Submission <$> value .: "runId" <*> value .: "leaseId" <*> value .: "payload" <*> value .: "work" <*> value .: "env" <*> value .: "reset" <*> value .: "limits" <*> value .: "requires" <*> (value .:? "collect" >>= traverse parseCollect) <*> value .: "labels"
     unless (validStringMap submission.env && validStringMap submission.labels) (fail "invalid cell submission map keys")
     pure submission
+    where
+      parseCollect = withObject "cell collection options" \options -> CollectOptions <$> options .: "traces"
 
 instance ToJSON LogChunks where
   toJSON chunks = object ["stdout" .= chunks.stdout, "stderr" .= chunks.stderr]

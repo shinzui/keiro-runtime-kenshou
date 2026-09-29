@@ -298,7 +298,7 @@ fixtureFor handle = do
   lease <- leaseSnapshot handle
   let bundle = fixture.payload.bundle
       payload = fixture.payload {bundle = bundle {uri = "gs://control/payloads/sha256/" <> bundle.sha256 <> ".nar.zst"}}
-  pure (Submission identifier lease.leaseId payload (workObjectFor "application/json" workBytes) fixture.env fixture.reset fixture.limits fixture.requires fixture.labels)
+  pure (Submission identifier lease.leaseId payload (workObjectFor "application/json" workBytes) fixture.env fixture.reset fixture.limits fixture.requires Nothing fixture.labels)
 
 submissionPrefix :: Submission -> Text
 submissionPrefix submission = "cells/alpha/submissions/" <> renderRunId submission.runId <> "/"

@@ -24,7 +24,7 @@ import Kenshou.Plan.Components (ComponentId (..), ComponentRef (..))
 import Kenshou.Plan.Policy (defaultPlanPolicy)
 import Kenshou.Plan.RunPlan (PlanContext (..), PlanInputs (..), PlannedRun (PlannedRun), RunPlan (..))
 import Kenshou.Plan.Selector (parseSelector)
-import Kenshou.Remote.Cell.Docs (CachePolicy (..), CellBuckets (..), CellDescriptor (..), Limits (..), PgReset (..), ResetBlock (..), Submission (..))
+import Kenshou.Remote.Cell.Docs (CachePolicy (..), CellBuckets (..), CellDescriptor (..), CollectOptions (..), Limits (..), PgReset (..), ResetBlock (..), Submission (..))
 import Kenshou.Remote.Cell.Lease (CellRef (..))
 import Kenshou.Remote.Cell.Prepare (Granularity (..), OtlpSink (..), PrepareOptions (..), Prepared (..), PreparedRun (..), RejectReason (..), Routed (..), Slice (..), SubmissionInputs (..), prepareForCell, routePlan, slicePlan, sliceRuns, submissionFor)
 import Kenshou.Remote.Cell.RouteJson (RouteDocuments (..), routeWorkJson)
@@ -344,10 +344,12 @@ spec = describe "cell run slicing" do
     submission.limits.wallClockSeconds `shouldBe` 310
     Map.lookup "KENSHOU_PAYLOAD_BUNDLE_SHA256" submission.env `shouldBe` Just payload.cell.bundle.sha256
     Map.lookup "KENSHOU_OTLP_SINK" submission.env `shouldBe` Just "file"
+    fmap (.traces) submission.collect `shouldBe` Just True
     Map.lookup "GHCRTS" submission.env `shouldBe` Just "-N2 -T"
     Map.lookup "payload" submission.labels `shouldBe` Just "default"
     defaultSubmission <- either (\problem -> expectationFailure (Text.unpack problem) >> error "unreachable") pure (submissionFor ref (inputs {otlpSink = NullSink, rtsOptions = Nothing}) payload slice work)
     Map.lookup "KENSHOU_OTLP_SINK" defaultSubmission.env `shouldBe` Just "null"
+    defaultSubmission.collect `shouldBe` Nothing
     Map.lookup "GHCRTS" defaultSubmission.env `shouldBe` Nothing
     submissionFor (CellRef "alpha" (Bucket "other")) inputs payload slice work `shouldBe` Left "payload bundle is outside the cell control bucket"
     submissionFor ref inputs payload slice (workObjectFor "text/plain" "{}") `shouldBe` Left "cell work must be a nonempty JSON run plan"

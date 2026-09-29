@@ -179,7 +179,8 @@ infrastructure failure, not a telemetry result.
 For diagnostics, publish the `info-table` or `profiled` payload variant and
 submit it with `--rts OPTS`. Choose the variant before publication; runtime
 flags alone do not add a missing executable build option. `--otlp-sink null`
-discards exported spans, while `file` retains a collector export. A
+discards exported spans, while `file` requests a fresh per-run collector trace
+artifact at `traces/otlp.jsonl`. A
 scenario's `sdk-otlp` arm receives the cell collector endpoint when its
 scenario declares the endpoint knob.
 

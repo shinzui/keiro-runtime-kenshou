@@ -36,7 +36,7 @@ import Kenshou.Core.Id (Kind (..), RunId, ScenarioId (..), renderRunId)
 import Kenshou.Core.RunSpec (CohortExpectation (..), ConnectionSource (..), EnvironmentSpec (..), PostgresSpec (..), RunSpec (..), SpecPlacement (..))
 import Kenshou.Core.Scenario (Placement (..), Scenario (..))
 import Kenshou.Plan.RunPlan (PlannedRun (..), RunPlan (..), TrialInfo (..))
-import Kenshou.Remote.Cell.Docs (BrokerReset (..), CachePolicy (..), CellDescriptor (..), CellImages (..), Limits (..), PgReset (..), Requirements (..), ResetBlock (..), Submission (..), WorkObject (..))
+import Kenshou.Remote.Cell.Docs (BrokerReset (..), CachePolicy (..), CellDescriptor (..), CellImages (..), CollectOptions (..), Limits (..), PgReset (..), Requirements (..), ResetBlock (..), Submission (..), WorkObject (..))
 import Kenshou.Remote.Cell.Lease (CellRef (..))
 import Kenshou.Remote.Cell.RouteRules (CellCapabilities (..), RoutingRule (..), capabilityKnown, descriptorDigest, matchingRules)
 import Kenshou.Remote.Payload (Bundle (..), CellPayload (..), PayloadDescriptor (..))
@@ -333,7 +333,7 @@ submissionFor ref inputs descriptor slice work = do
             ("slice", Text.pack (show slice.index)),
             ("payload", slice.payloadLabel)
           ]
-      submission = Submission inputs.cellRun inputs.leaseId descriptor.cell work env slice.reset (Limits (fromIntegral slice.wallClockSeconds) inputs.memoryMaxBytes inputs.outputMaxBytes) (Requirements inputs.minAgentVersion inputs.requiredCapabilities) labels
+      submission = Submission inputs.cellRun inputs.leaseId descriptor.cell work env slice.reset (Limits (fromIntegral slice.wallClockSeconds) inputs.memoryMaxBytes inputs.outputMaxBytes) (Requirements inputs.minAgentVersion inputs.requiredCapabilities) (case inputs.otlpSink of NullSink -> Nothing; FileSink -> Just (CollectOptions True)) labels
   case eitherDecode (encode submission) :: Either String Submission of
     Left failure -> Left ("invalid cell submission: " <> Text.pack failure)
     Right _ -> Right submission
