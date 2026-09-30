@@ -31,7 +31,7 @@ import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), 
 import Kenshou.Core.Outcome (Outcome (..), worstOutcome)
 import Kenshou.Core.Phase qualified as CorePhase
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport (..), Tier (..), failedWith)
-import Kenshou.Diagnose.Leak (LeakSpec (..), defaultLeakSpec, judgeLeaksWithWindow, leakOutcome)
+import Kenshou.Diagnose.Leak (judgeLeaksWithWindow, leakOutcome)
 import Kenshou.Measure.Knobs (measureKnobs)
 import Kenshou.Measure.Load (Arrival (..), LoadModel (..), LoadReport (..), OpenConfig (..), Operation (..), OverloadConfig (..), runLoad)
 import Kenshou.Measure.Recorder (ErrorCause (..), OpName (..), OpResult (..))
@@ -40,6 +40,7 @@ import Kenshou.Measure.Session (MeasureConfig (..), measureConfigFromKnobs, meas
 import Kenshou.Measure.Session qualified as Measure
 import Kenshou.Suite.Keiro.Command.Correctness (recordCells)
 import Kenshou.Suite.Keiro.Messaging.RelationGrowth (RelationGrowth (..), bytesPerInsertedRow, deadTuplesBounded, readRelationGrowth, sizeBounded)
+import Kenshou.Suite.Keiro.Messaging.SoakDiagnosis (majorGcIntervalMs, majorGcKnob, soakLeakSpec, withSoakMajorGc)
 import Kenshou.Suite.Keiro.Outbox.Workload (sourceName)
 import Kenshou.Telemetry (TelemetryHandles (..), telemetryKnobs, telemetrySpecFromContext, withTelemetry)
 import Pgmq.Types (queueNameToText)
@@ -52,11 +53,11 @@ queueGrowth :: Bool -> Scenario
 queueGrowth reduced =
   Scenario
     { id = either (error . show) id (parseScenarioId (if reduced then "keiro/queue/soak/queue-and-dlq-growth-reduced" else "keiro/queue/soak/queue-and-dlq-growth")),
-      revision = 1,
+      revision = 2,
       summary = "Continuously processes jobs with terminal poison messages, checking bounded main queue, exact DLQ placement and optional DLQ archiving.",
       tier = if reduced then TierExtended else TierSoak,
       placement = if reduced then PlaceEither else PlaceCell,
-      knobs = telemetryKnobs <> measureKnobs Soak <> [intKnob "soak.duration-minutes" (if reduced then 20 else 240) 1 1440, intKnob "queue.rate-per-second" 5 1 100, intKnob "queue.dead-every" 20 2 1000, textKnob "queue.dlq-maintenance" "on" ["off"]],
+      knobs = telemetryKnobs <> measureKnobs Soak <> [intKnob "soak.duration-minutes" (if reduced then 20 else 240) 1 1440, intKnob "queue.rate-per-second" 5 1 100, intKnob "queue.dead-every" 20 2 1000, textKnob "queue.dlq-maintenance" "on" ["off"], majorGcKnob],
       dimensions =
         DimensionSupport
           { tracing = Supported (Support (TracingOff :| [TracingNoop, TracingSdkInMemory, TracingSdkOtlp]) TracingOff),
@@ -146,12 +147,13 @@ runQueueGrowth context = case (measureConfigFromKnobs context (phasePlanFromCore
       depthSampler <- async sampleDepth
       let shutdown = writeIORef stop True >> mapM_ cancel workers >> maybe (pure ()) wait collector >> cancel depthSampler
       ((loadReport, measurement), drained) <-
-        ( do
-            result@(loadReport, _) <- withMeasurement context config \session -> runLoad session load (Operation (OpName "queue.enqueue") enqueueOne)
-            drained <- timeout 120000000 (awaitDrain (fromIntegral loadReport.completed))
-            pure (result, drained)
-        )
-          `finally` shutdown
+        withSoakMajorGc context $
+          ( do
+              result@(loadReport, _) <- withMeasurement context config \session -> runLoad session load (Operation (OpName "queue.enqueue") enqueueOne)
+              drained <- timeout 120000000 (awaitDrain (fromIntegral loadReport.completed))
+              pure (result, drained)
+          )
+            `finally` shutdown
       finalArchive <- if maintenance then runJobEff runtime (archiveDlq job 100000) >>= either (fail . show) pure else pure 0
       purged <- if maintenance then Just <$> (runJobEff runtime (purgeDlq job) >>= either (fail . show) pure) else pure Nothing
       effects <- effectRows
@@ -183,9 +185,9 @@ runQueueGrowth context = case (measureConfigFromKnobs context (phasePlanFromCore
               ("dlq-dead-tuple-growth", minutes < 10 || not maintenance || deadTuplesBoundedDlq)
             ]
           duration = fromIntegral minutes * 60 :: Double
-          leakSpec = defaultLeakSpec {warmupCutSeconds = 0, minDurationSeconds = max 30 (duration * 0.7), minPoints = 10, envelopeWindowSeconds = max 2 (min 30 (duration / 40))}
+          leakSpec = soakLeakSpec context duration
           growthSummary sample = object ["earlyBytes" .= sample.earlyBytes, "lateBytes" .= sample.lateBytes, "earlyDeadTuples" .= sample.earlyDeadTuples, "lateDeadTuples" .= sample.lateDeadTuples, "bytesPerInsertedRow" .= bytesPerInsertedRow sample]
-      putSummary context Measurements "queue-and-dlq-growth" (object ["enqueued" .= completed, "handled" .= length effects, "deadExpected" .= deadExpected, "mainDepth" .= mainDepth, "peakMainDepth" .= maxDepth, "dlqDepth" .= dlqDepth, "dlqArchiveDepth" .= archiveDepth, "archivedDuringSteady" .= archivedDuring, "archivedAtEnd" .= finalArchive, "maintenance" .= maintenance, "purged" .= show purged, "workerErrors" .= errors, "maintenanceErrors" .= gcErrors, "mainGrowth" .= fmap growthSummary mainGrowth, "dlqGrowth" .= fmap growthSummary dlqGrowth])
+      putSummary context Measurements "queue-and-dlq-growth" (object ["enqueued" .= completed, "handled" .= length effects, "deadExpected" .= deadExpected, "mainDepth" .= mainDepth, "peakMainDepth" .= maxDepth, "dlqDepth" .= dlqDepth, "dlqArchiveDepth" .= archiveDepth, "archivedDuringSteady" .= archivedDuring, "archivedAtEnd" .= finalArchive, "maintenance" .= maintenance, "purged" .= show purged, "workerErrors" .= errors, "maintenanceErrors" .= gcErrors, "majorGcIntervalMs" .= majorGcIntervalMs context, "mainGrowth" .= fmap growthSummary mainGrowth, "dlqGrowth" .= fmap growthSummary dlqGrowth])
       base <- recordCells context cells
       leak <- judgeLeaksWithWindow context (Just (5, 5 + duration)) leakSpec
       pure (base {outcome = worstOutcome (base.outcome :| [measuredOutcome measurement base.outcome, leakOutcome leak, if minutes >= 10 && (mainGrowth == Nothing || (maintenance && dlqGrowth == Nothing)) then Inconclusive else Passed])})

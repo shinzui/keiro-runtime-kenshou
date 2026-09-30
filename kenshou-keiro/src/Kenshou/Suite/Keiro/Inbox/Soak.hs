@@ -24,7 +24,7 @@ import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), 
 import Kenshou.Core.Outcome (Outcome (..), worstOutcome)
 import Kenshou.Core.Phase qualified as CorePhase
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport (..), Tier (..), failedWith)
-import Kenshou.Diagnose.Leak (LeakSpec (..), defaultLeakSpec, judgeLeaksWithWindow, leakOutcome)
+import Kenshou.Diagnose.Leak (judgeLeaksWithWindow, leakOutcome)
 import Kenshou.Measure.Knobs (measureKnobs)
 import Kenshou.Measure.Load (Arrival (..), LoadModel (..), LoadReport (..), OpenConfig (..), Operation (..), OverloadConfig (..), runLoad)
 import Kenshou.Measure.Recorder (ErrorCause (..), OpName (..), OpResult (..))
@@ -35,6 +35,7 @@ import Kenshou.Suite.Keiro.Command.Correctness (recordCells)
 import Kenshou.Suite.Keiro.Fixture.Runtime (FixtureEnv (..), KeiroRunner (..), KeiroTelemetry (..), keiroTelemetry, withFixtureTelemetryEnv)
 import Kenshou.Suite.Keiro.Inbox.Correctness (effectInsertStatement, effectReadStatement, ensureEffectTable)
 import Kenshou.Suite.Keiro.Messaging.RelationGrowth (RelationGrowth (..), deadTuplesBounded, readRelationGrowth, sizeBounded)
+import Kenshou.Suite.Keiro.Messaging.SoakDiagnosis (majorGcIntervalMs, majorGcKnob, soakLeakSpec, withSoakMajorGc)
 import Kenshou.Suite.Keiro.Outbox.Workload (inlineEvent, sourceName)
 import Kenshou.Telemetry (telemetryKnobs, telemetrySpecFromContext, withTelemetry)
 import Kiroku.Store (defaultConnectionSettings)
@@ -56,11 +57,11 @@ dedupeWindow :: Bool -> Scenario
 dedupeWindow reduced =
   Scenario
     { id = either (error . show) id (parseScenarioId (if reduced then "keiro/inbox/soak/dedupe-window-reduced" else "keiro/inbox/soak/dedupe-window")),
-      revision = 1,
+      revision = 2,
       summary = "Redelivers continuously before and after completed-row retention while GC runs, checking classification, handler effects and table growth.",
       tier = if reduced then TierExtended else TierSoak,
       placement = if reduced then PlaceEither else PlaceCell,
-      knobs = telemetryKnobs <> measureKnobs Soak <> [intKnob "soak.duration-minutes" (if reduced then 20 else 240) 1 1440, intKnob "inbox.rate-per-second" 2 1 100, intKnob "inbox.retention-seconds" 120 120 120],
+      knobs = telemetryKnobs <> measureKnobs Soak <> [intKnob "soak.duration-minutes" (if reduced then 20 else 240) 1 1440, intKnob "inbox.rate-per-second" 2 1 100, intKnob "inbox.retention-seconds" 120 120 120, majorGcKnob],
       dimensions =
         DimensionSupport
           { tracing = Supported (Support (TracingOff :| [TracingNoop, TracingSdkInMemory, TracingSdkOtlp]) TracingOff),
@@ -142,12 +143,13 @@ runDedupeWindow context = case (measureConfigFromKnobs context (phasePlanFromCor
       deliveryWorker <- async redeliver
       let shutdown = cancel deliveryWorker >> cancel gcWorker
       ((loadReport, measurement), drained) <-
-        ( do
-            result@(loadReport, _) <- withMeasurement context config \session -> runLoad session load (Operation (OpName "inbox.fresh") enqueue)
-            drained <- timeout 240000000 (awaitSchedule (fromIntegral loadReport.completed))
-            pure (result, drained)
-        )
-          `finally` shutdown
+        withSoakMajorGc context $
+          ( do
+              result@(loadReport, _) <- withMeasurement context config \session -> runLoad session load (Operation (OpName "inbox.fresh") enqueue)
+              drained <- timeout 240000000 (awaitSchedule (fromIntegral loadReport.completed))
+              pure (result, drained)
+          )
+            `finally` shutdown
       rows <- runFixture (listInbox source) >>= either (fail . show) pure
       effects <- runFixture (KirokuTransaction.runTransaction (Tx.statement () effectReadStatement)) >>= either (fail . show) pure
       earlyCount <- readIORef earlyDuplicates
@@ -170,8 +172,8 @@ runDedupeWindow context = case (measureConfigFromKnobs context (phasePlanFromCor
               ("dead-tuple-growth", minutes < 10 || deadBounded)
             ]
           duration = fromIntegral minutes * 60 :: Double
-          leakSpec = defaultLeakSpec {warmupCutSeconds = 0, minDurationSeconds = max 30 (duration * 0.7), minPoints = 10, envelopeWindowSeconds = max 2 (min 30 (duration / 40))}
-      putSummary context Measurements "inbox-dedupe-window" (object ["fresh" .= completed, "earlyDuplicates" .= earlyCount, "lateProcessed" .= lateCount, "effects" .= length effects, "rowsRetained" .= length rows, "pending" .= length pending, "classificationErrors" .= classifyFailures, "gcErrors" .= gcFailures, "growth" .= fmap (\sample -> object ["earlyBytes" .= sample.earlyBytes, "lateBytes" .= sample.lateBytes, "earlyDeadTuples" .= sample.earlyDeadTuples, "lateDeadTuples" .= sample.lateDeadTuples, "sizeBounded" .= growthBounded, "deadTuplesBounded" .= deadBounded]) growth])
+          leakSpec = soakLeakSpec context duration
+      putSummary context Measurements "inbox-dedupe-window" (object ["fresh" .= completed, "earlyDuplicates" .= earlyCount, "lateProcessed" .= lateCount, "effects" .= length effects, "rowsRetained" .= length rows, "pending" .= length pending, "classificationErrors" .= classifyFailures, "gcErrors" .= gcFailures, "majorGcIntervalMs" .= majorGcIntervalMs context, "growth" .= fmap (\sample -> object ["earlyBytes" .= sample.earlyBytes, "lateBytes" .= sample.lateBytes, "earlyDeadTuples" .= sample.earlyDeadTuples, "lateDeadTuples" .= sample.lateDeadTuples, "sizeBounded" .= growthBounded, "deadTuplesBounded" .= deadBounded]) growth])
       base <- recordCells context cells
       leak <- judgeLeaksWithWindow context (Just (5, 5 + duration)) leakSpec
       pure (base {outcome = worstOutcome (base.outcome :| [measuredOutcome measurement base.outcome, leakOutcome leak, if minutes >= 10 && growth == Nothing then Inconclusive else Passed])})
