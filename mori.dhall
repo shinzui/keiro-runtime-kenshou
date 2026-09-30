@@ -164,5 +164,26 @@ in  Schema.Project::{
         , okfVersion = "0.2"
         , description = Some "Controlled vocabulary for Kenshou verification"
         }
+      , Schema.OkfBundle::{
+        , name = "improvement-requests"
+        , path = "docs/improvement-requests"
+        , profile = Some "mori/improvement-requests-profile.dhall"
+        , profileBinding = Some
+            ( Schema.ProfileBinding.Published
+                Schema.PinnedImport::{
+                , publisher = "shinzui/okf-profiles"
+                , publisherRef = Some Schema.MoriRef::{
+                  , namespace = "shinzui"
+                  , name = "okf-profiles"
+                  }
+                , export = Some "coordination.improvementRequests"
+                , version = Some "v0.19.0"
+                , pin = Some "sha256:85176d78369b6d73c9f13c30277903b629d6bf048a4c7d71fc26e68b99c3eaa6"
+                }
+            )
+        , okfVersion = "0.2"
+        , description = Some
+            "Improvement requests for Kenshou's own harness and packaging"
+        }
       ]
     }

@@ -94,6 +94,8 @@ suites/             named run suites: smoke, change, nightly, weekly-soak, relea
 policies/           verdict and comparison policies
 docs/adr/           durable architecture decisions
 docs/terminology/   controlled vocabulary for Kenshou's verification concepts
+docs/improvement-requests/
+                    deferred improvements to Kenshou itself
 docs/findings/      runtime defects found by the suite
 docs/guides/        operator guides: measuring, diagnosing, telemetry arms
 docs/layers/        per-layer coverage notes

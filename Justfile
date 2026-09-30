@@ -39,6 +39,13 @@ terminology-validate:
       --profile-enforce \
       --log-enforce
 
+[group('docs')]
+improvement-requests-validate:
+    okf validate docs/improvement-requests --strict \
+      --profile mori/improvement-requests-profile.dhall \
+      --profile-enforce \
+      --log-enforce
+
 [group('verification')]
 evidence-validate:
     okf validate docs/verification --strict \
