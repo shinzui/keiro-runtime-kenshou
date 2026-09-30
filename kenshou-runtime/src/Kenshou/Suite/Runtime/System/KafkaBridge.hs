@@ -2,19 +2,26 @@ module Kenshou.Suite.Runtime.System.KafkaBridge
   ( publishToKafka,
     producerRecord,
     liveTraceHeaders,
+    ConsumerDecodeError (..),
+    decodeConsumerRecord,
   )
 where
 
+import Data.Bifunctor (first)
 import Data.ByteString (ByteString)
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
+import Data.Time (UTCTime)
 import Effectful (runEff)
 import Effectful.Error.Static (runError)
+import Kafka.Consumer.Types (ConsumerRecord (..), Offset (..))
 import Kafka.Effectful.Producer qualified as Producer
-import Kafka.Types (KafkaError, Timeout (..), TopicName (..), headersFromList)
+import Kafka.Types (KafkaError, PartitionId (..), Timeout (..), TopicName (..), headersFromList, headersToList)
+import Keiro.Inbox.Kafka (KafkaDecodeError, KafkaInboundRecord (..), integrationEventFromKafka)
+import Keiro.Inbox.Types (KafkaDeliveryRef)
 import Keiro.Integration.Event (IntegrationEvent (..))
 import Keiro.Outbox (OrderingPolicy (..), OutboxId, OutboxRow (..), PublishOutcome (..))
 import Keiro.Outbox.Kafka (KafkaProducerRecord (..), outboxRowToKafkaRecord)
@@ -74,3 +81,35 @@ liveTraceHeaders stored = do
   pure [(TextEncoding.encodeUtf8 name, TextEncoding.encodeUtf8 value) | (name, value) <- selected]
   where
     isTraceHeader name = name == "traceparent" || name == "tracestate"
+
+data ConsumerDecodeError
+  = MissingKafkaPayload
+  | InvalidKafkaKeyUtf8 !ByteString
+  | InvalidKafkaHeaderUtf8 !ByteString
+  | InvalidKeiroEnvelope !KafkaDecodeError
+  deriving stock (Eq, Show)
+
+-- | Preserve broker coordinates and reject malformed wire bytes before the
+-- Keiro inbox records a receipt. Callers acknowledge the Kafka offset only
+-- after the downstream transaction commits.
+decodeConsumerRecord :: ConsumerRecord (Maybe ByteString) (Maybe ByteString) -> UTCTime -> Either ConsumerDecodeError (IntegrationEvent, KafkaDeliveryRef)
+decodeConsumerRecord record receivedAt = do
+  payload <- maybe (Left MissingKafkaPayload) Right record.crValue
+  key <- traverse (\raw -> first (const (InvalidKafkaKeyUtf8 raw)) (TextEncoding.decodeUtf8' raw)) record.crKey
+  headers <- traverse decodeHeader (headersToList record.crHeaders)
+  first InvalidKeiroEnvelope $
+    integrationEventFromKafka
+      KafkaInboundRecord
+        { topic = unTopicName record.crTopic,
+          partition = fromIntegral (unPartitionId record.crPartition),
+          offset = unOffset record.crOffset,
+          key,
+          payload,
+          headers,
+          receivedAt
+        }
+  where
+    decodeHeader (name, value) = do
+      decodedName <- first (const (InvalidKafkaHeaderUtf8 name)) (TextEncoding.decodeUtf8' name)
+      decodedValue <- first (const (InvalidKafkaHeaderUtf8 value)) (TextEncoding.decodeUtf8' value)
+      pure (decodedName, decodedValue)

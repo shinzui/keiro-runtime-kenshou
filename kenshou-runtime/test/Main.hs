@@ -2,6 +2,9 @@ module Main (main) where
 
 import Control.Exception (evaluate)
 import Data.Map.Strict qualified as Map
+import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
+import Kafka.Consumer.Types (ConsumerRecord (..), Offset (..), Timestamp (NoTimestamp))
+import Kafka.Types (PartitionId (..), TopicName (..), headersFromList)
 import Keiro.Codec (Codec (..))
 import Kenshou.Suite.Runtime.Oracle.Pure qualified as Oracle
 import Kenshou.Suite.Runtime.System.Contracts (CustomerId (..), OrderId (..), Sku (..), TopicPrefix (..), shopTopic, warehouseTopic)
@@ -15,6 +18,23 @@ import Test.Hspec
 
 main :: IO ()
 main = hspec do
+  describe "Kafka inbox wire decoding" do
+    it "rejects missing payloads and malformed UTF-8 before an inbox receipt" do
+      let at = posixSecondsToUTCTime 0
+          record =
+            ConsumerRecord
+              { crTopic = TopicName "shop-events",
+                crPartition = PartitionId 0,
+                crOffset = Offset 7,
+                crTimestamp = NoTimestamp,
+                crHeaders = headersFromList [],
+                crKey = Nothing,
+                crValue = Nothing
+              }
+      KafkaBridge.decodeConsumerRecord record at `shouldBe` Left KafkaBridge.MissingKafkaPayload
+      KafkaBridge.decodeConsumerRecord (record {crKey = Just "\xc3\x28", crValue = Just "{}"}) at
+        `shouldBe` Left (KafkaBridge.InvalidKafkaKeyUtf8 "\xc3\x28")
+
   describe "outbox Kafka trace headers" do
     it "keeps the stored trace when no producer span is active" do
       let headers = [("traceparent", "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"), ("keiro-message-id", "m-1")]
