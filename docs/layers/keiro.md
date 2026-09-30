@@ -511,7 +511,19 @@ verdicts are scoped to upstream
 known defect, while a missed schedule remains a blocking failure. Select the
 arm with `outbox.zombie-outcome=failed|succeeded|dead`.
 
-All eleven registered outbox scenarios completed at their default settings on
+The `table-growth` and `table-growth-reduced` soak scenarios run two publishers
+against the durable table broker while an enqueuer produces at a configured
+rate. A maintenance loop reclaims interrupted claims; one publisher is
+periodically cancelled and restarted. With `outbox.gc=on`, sent-row GC runs
+throughout the steady phase. The oracle checks complete broker coverage,
+bounded duplicates, terminal rows, backlog drainage, retention, sampled table
+and dead-tuple growth, and a process leak verdict. With GC off, the summary
+reports bytes per inserted row. A one-minute, two-message/second local smoke
+exercised seven restarts and passed its business checks; its leak verdict and
+workstation measurements are diagnostic only. The controlled twenty-minute
+reduced soak and four-hour full soak have not yet run.
+
+The eleven correctness and concurrency outbox scenarios completed at their default settings on
 durable PostgreSQL. Nine passed. The inline-order and zombie-finalization
 scenarios reproduced their scoped known defects without a blocking failure.
 

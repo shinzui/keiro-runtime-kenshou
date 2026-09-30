@@ -17,4 +17,5 @@
 - [keiro/queue/concurrency/lease-extension passed on released](01a0ef4d-d6ae-76a1-a6cf-5041695b968d.md) - Recorded keiro/queue/concurrency/lease-extension run against cohort released with digest-pinned data.
 - [keiro/queue/concurrency/redrive-window failed on released](01a0ef4d-d6ae-76a1-a8a2-682fa45c5970.md) - Recorded keiro/queue/concurrency/redrive-window run against cohort released with digest-pinned data.
 - [keiro/queue/concurrency/runtime-pool-isolation passed on released](01a0ef4d-d6ae-76a1-ae65-36dc711c10ec.md) - Recorded keiro/queue/concurrency/runtime-pool-isolation run against cohort released with digest-pinned data.
+- [keiro/command/soak/write-side-steady-state-reduced failed on released](01a0ef66-959a-7183-a9aa-3e4bed4fc7da.md) - Recorded keiro/command/soak/write-side-steady-state-reduced run against cohort released with digest-pinned data.
 

@@ -1,5 +1,8 @@
 # runs/keiro/2026/09 Update Log
 
+## 2026-09-30
+* **Addition**: Recorded run 01a0ef66-959a-7183-a9aa-3e4bed4fc7da (keiro/command/soak/write-side-steady-state-reduced, failed).
+
 ## 2026-09-29
 * **Addition**: Recorded run 01a0ef4d-d6ae-76a1-8a59-c3c7a8d482e0 (keiro/queue/correctness/telemetry-contract, passed).
 * **Addition**: Recorded run 01a0ef4d-d6ae-76a1-ae65-36dc711c10ec (keiro/queue/concurrency/runtime-pool-isolation, passed).

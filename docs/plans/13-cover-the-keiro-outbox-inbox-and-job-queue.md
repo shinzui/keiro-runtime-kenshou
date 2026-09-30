@@ -42,6 +42,11 @@ provenance:
       at: 2026-09-29T20:33:51Z
       mode: "implement"
       note: "Recorded a clean leased-cell reproduction of the stale outbox publisher defect."
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-30T01:18:06Z
+      mode: "implement"
+      note: "Registered the outbox soak pair and verified a functional local smoke."
 ---
 
 # Cover the keiro outbox, inbox and job queue
@@ -73,6 +78,7 @@ The non-soak baseline is in place. The remaining work is to deepen specific scen
 - [x] (2026-09-29) Revised the BUG-3 backend-termination schedule to kill a worker backend while its PGMQ read is observably blocked by a table lock, instead of killing an idle backend after a completed batch. The 37 Keiro package tests pass.
 - [x] (2026-09-29) Ran that revision-2 schedule on clean alpha payload `5b52c93`. [Nested run](../verification/runs/keiro/2026/09/01a0ef2f-0b70-77e1-9c32-cd4283e1fd4d.md) passed after all five blocked-read backend terminations. BUG-3 remains reported because earlier local runs failed; this is a documented environment or error-path reproduction gap.
 - [x] (2026-09-29) Completed that 11-scenario sweep as verified alpha cell run `01a0ef4f-ce12-74f3-823c-360e44b1ff93`, using clean released payload `5b52c93` and durable PostgreSQL 18. All 11 nested runs are [digest-linked](../verification/runs/keiro/2026/09/index.md). Nine scenarios passed, including FIFO ordering, atomic worker dead-lettering, lease extension, outcome semantics, telemetry, ordinary-poll crash redelivery, and runtime pool characterization. Two reproduced the deliberately scoped `mori://shinzui/keiro/okf/user-documentation/concepts/DOC-25` send-before-delete windows (`dead-letter-window-drain-path` and `redrive-window`); both are nonblocking known defects, not new owner reports. The ordinary-poll redelivery pass does not close long-poll BUG-4, which a separate clean run reproduced.
+- [x] (2026-09-29) Registered the outbox table-growth full/reduced soak pair. It continuously enqueues against two publishers, periodically cancels and restarts one in-process publisher, runs maintenance and optional sent-row GC, samples the outbox relation, and checks broker coverage, bounded duplicates, retained rows, relation growth, dead tuples, and process leaks. A one-minute, low-rate local functional smoke completed seven restarts with no business-verdict failure; its short leak signal and all workstation measurements are excluded from the baseline. The planned process-isolated `SIGKILL` arm, per-process leak verdicts, and controlled reduced/full runs remain pending.
 - [ ] Finish the remaining non-soak acceptance work listed below, then rerun the affected scenarios and package tests.
 - [ ] Run the three full and reduced soaks and evaluate leak and table-growth verdicts for the initial baseline.
 

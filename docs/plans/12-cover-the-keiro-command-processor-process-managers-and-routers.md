@@ -22,6 +22,11 @@ provenance:
       at: 2026-09-24T22:53:08Z
       mode: "update"
       note: "Consolidated Progress into delivered outcomes and remaining acceptance"
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-30T01:17:52Z
+      mode: "implement"
+      note: "Verified the effective five-minute soak diagnosis window on a clean cell."
 ---
 
 # Cover the keiro command processor, process managers and routers
@@ -47,7 +52,7 @@ To see it working after the first milestone, run `cabal run kenshou -- run keiro
 - [x] (2026-09-24) Write-side baseline: the account fixture and registered command, snapshot, projection, process-manager, and router scenarios pass durable runs, including real process kills and sabotage checks.
 - [x] (2026-09-24) Integration evidence: a Keiro-only smoke plan ran sixteen scenarios; fifteen passed and one documented process-manager limitation reproduced as a nonblocking known defect.
 - [x] (2026-09-29) Ran the planned 20-minute reduced write-side soak on a clean PostgreSQL 18 cell. [Recorded run](../verification/runs/keiro/2026/09/01a0ef1a-d6e9-77d1-aefb-d43eb6460645.md) suspected post-major heap growth in the process-manager and router workers, consistent with the existing Kiroku BUG-3 on this released cohort. It also failed three post-drain business checks at the default 200 commands/second; [finding 44](../findings/44-keiro-write-side-default-soak-does-not-quiesce.md) keeps those failures unattributed pending durable stage counts and a lower-rate control.
-- [x] (2026-09-29) Found and repaired a local soak-diagnosis mismatch: a five-minute duration override used the static twenty-minute window for leak analysis. [Finding 43](../findings/43-keiro-write-side-soak-uses-default-diagnosis-window.md) excludes that shortened run. The diagnosis API and Keiro soak scenarios now use the effective window, and their focused package suites pass; a clean shortened replay is pending.
+- [x] (2026-09-29) Found and repaired a local soak-diagnosis mismatch: a five-minute duration override used the static twenty-minute window for leak analysis. [Finding 43](../findings/43-keiro-write-side-soak-uses-default-diagnosis-window.md) excludes that old shortened run. The diagnosis API and Keiro soak scenarios now use the effective window, and their focused package suites pass. A [clean shortened alpha replay](../verification/runs/keiro/2026/09/01a0ef66-959a-7183-a9aa-3e4bed4fc7da.md) verified seconds 5–305 and passed all ten business checks at 20 commands/second; its overall failure was the separately tracked router heap-growth signal. The same-seed twenty-minute lower-rate control is in progress.
 - [ ] Finish generalized fixture roles and oracles, write-side benchmark acceptance, telemetry arms, reduced/full soaks, and the layer guide. Audit upstream findings and distill final ADRs/outcomes.
 
 ## Surprises & Discoveries

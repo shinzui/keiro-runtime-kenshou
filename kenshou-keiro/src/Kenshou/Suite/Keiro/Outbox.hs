@@ -9,10 +9,11 @@ import Kenshou.Suite.Keiro.Outbox.IdentityRace qualified as IdentityRace
 import Kenshou.Suite.Keiro.Outbox.ProducerIdentity qualified as ProducerIdentity
 import Kenshou.Suite.Keiro.Outbox.ProducerReplay qualified as ProducerReplay
 import Kenshou.Suite.Keiro.Outbox.Roles qualified as Roles
+import Kenshou.Suite.Keiro.Outbox.Soak qualified as Soak
 import Kenshou.Suite.Keiro.Outbox.Telemetry qualified as Telemetry
 
 scenarios :: [Scenario]
-scenarios = Correctness.scenarios <> ProducerIdentity.scenarios <> Concurrency.scenarios <> IdentityRace.scenarios <> ProducerReplay.scenarios <> Telemetry.scenarios <> Bench.scenarios
+scenarios = Correctness.scenarios <> ProducerIdentity.scenarios <> Concurrency.scenarios <> IdentityRace.scenarios <> ProducerReplay.scenarios <> Telemetry.scenarios <> Bench.scenarios <> Soak.scenarios
 
 roles :: [WorkerRole]
 roles = Roles.roles
