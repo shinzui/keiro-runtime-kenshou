@@ -57,8 +57,22 @@ and [digest-linked nested run](../verification/runs/keiro/2026/09/01a0f01d-96e0-
 passing business checks and the exact 142-to-152 thread increase after ten
 restarts. It was intended as a forced-major-GC control, but [finding 48](48-plan-silently-drops-knob-pinned-for-another-scenario.md)
 shows that the planner omitted the undeclared GC knob from its run spec. The
-second run is a same-seed repeat, not a GC control. A valid no-restart plan has
-`outbox.kill-interval-seconds=0` in its resolved run spec and remains to run.
+second run is a same-seed repeat, not a GC control.
+
+The matched no-restart control, clean alpha cell
+`01a0f062-ff85-74d4-ba79-b9f287a6c58e` and [digest-linked nested
+run](../verification/runs/keiro/2026/09/01a0f02e-688c-7400-a8d6-c2a74ac42e44.md),
+used the same seed, duration and offered rate, with
+`outbox.kill-interval-seconds=0` in its resolved spec. All eight business
+checks held over 621 accepted messages and 621 unique broker records. Its
+main Haskell threads stayed at 141 from the first to last diagnostic window;
+native memory, OS threads, descriptors and connections were stable. The
+overall result was inconclusive solely because the five-minute heap probe
+again captured no eligible post-major-GC points. This comparison ties the
+ten-thread rise in the restart arms to restart activity, but does not yet
+identify whether the retained threads belong to the harness supervisor or
+Keiro publisher lifecycle. A revision-2 forced-major-GC control is running
+to classify heap retention separately.
 
 Reproduce with:
 
@@ -72,5 +86,6 @@ cabal run kenshou -- run keiro/command/soak/write-side-steady-state-reduced \
 ```
 
 Next, run a minimal supervisor loop without the Keiro workers and inspect
-live thread references after each child exit. Compare its thread series with
-the same soak with restarts disabled and with a longer steady window.
+live thread references after each child exit. The no-restart comparison is
+complete; a longer restart window and the forced-major-GC diagnostic will
+test persistence and heap retention.

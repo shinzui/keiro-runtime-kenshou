@@ -1,7 +1,9 @@
 module Main (main) where
 
 import Control.Exception (evaluate)
+import Data.Map.Strict qualified as Map
 import Keiro.Codec (Codec (..))
+import Kenshou.Suite.Runtime.Oracle.Pure qualified as Oracle
 import Kenshou.Suite.Runtime.System.Contracts (CustomerId (..), OrderId (..), Sku (..))
 import Kenshou.Suite.Runtime.System.Fulfilment qualified as Fulfilment
 import Kenshou.Suite.Runtime.System.Ledger qualified as Ledger
@@ -86,3 +88,25 @@ main = hspec do
     it "rejects invalid amounts before building fixture commands" do
       Ledger.openAccount (Ledger.AccountId "customer") (-1) `shouldBe` Left Ledger.NegativeOpeningBalance
       Ledger.debitTransfer (Ledger.AccountId "customer") (Ledger.TransferRef "order-1:hold") (Ledger.AccountId "escrow") 0 10 `shouldBe` Left Ledger.NonPositiveTransfer
+
+  describe "independent order effect oracle" do
+    it "accepts one fully balanced completed order" do
+      Oracle.checkOrderFacts completedOrder `shouldBe` []
+
+    it "rejects a doctored double capture while preserving the terminal outcome" do
+      let doubled = completedOrder {Oracle.ledgerLegCounts = Map.insert Oracle.CaptureCredit 2 completedOrder.ledgerLegCounts}
+      Oracle.checkOrderFacts doubled `shouldBe` [Oracle.LedgerLegCount Oracle.CaptureCredit 1 2]
+
+completedOrder :: Oracle.OrderFacts
+completedOrder =
+  Oracle.OrderFacts
+    { shopTerminals = [OrderCompleted],
+      warehouseTerminals = [FulfilmentShipped],
+      ledgerLegCounts = Map.fromList [(leg, count leg) | leg <- [minBound .. maxBound]],
+      loyaltyFanout = 3
+    }
+  where
+    count Oracle.LoyaltyCredit = 3
+    count leg
+      | leg `elem` [Oracle.RefundDebit, Oracle.RefundCredit, Oracle.ReleaseDebit, Oracle.ReleaseCredit] = 0
+      | otherwise = 1
