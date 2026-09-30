@@ -17,6 +17,11 @@ provenance:
       at: 2026-09-24T22:53:08Z
       mode: "update"
       note: "Consolidated Progress into delivered outcomes and remaining acceptance"
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-30T02:54:00Z
+      mode: "implement"
+      note: "Started the assembled-runtime package with wire contracts and an independent terminal-state oracle."
 ---
 
 # Verify the assembled runtime end to end and under soak
@@ -37,6 +42,7 @@ You can see it working when `kenshou run runtime/order-flow/correctness/happy-pa
 
 ## Progress
 
+- [x] (2026-09-30) Started `kenshou-runtime` with versioned shop and warehouse wire-message contracts and an independent pure order/fulfilment state model. Four contract tests pass, including the ship-versus-expire race and terminal-command rejection. This is the oracle foundation for Milestones 1 and 2; no two-context process system or end-to-end run exists yet.
 - [ ] Deliver the two-context reference system, end-to-end invariants and failure matrix, gated soaks, benchmarks, and whole-runtime telemetry comparison; verify the assembled-runtime acceptance in Validation and Acceptance.
 
 ## Surprises & Discoveries

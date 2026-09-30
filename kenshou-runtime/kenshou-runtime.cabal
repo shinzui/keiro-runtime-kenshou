@@ -1,0 +1,52 @@
+cabal-version: 3.4
+name: kenshou-runtime
+version: 0.1.0.0
+synopsis: Assembled-runtime verification domain and scenarios
+license: BSD-3-Clause
+author: Nadeem Bitar
+maintainer: Nadeem Bitar
+category: Testing
+build-type: Simple
+tested-with: ghc >=9.12 && <9.13
+
+common warnings
+  ghc-options:
+    -Wall
+    -Wcompat
+    -Widentities
+    -Wincomplete-record-updates
+    -Wincomplete-uni-patterns
+    -Wpartial-fields
+    -Wredundant-constraints
+
+  default-language: GHC2024
+  default-extensions:
+    BlockArguments
+    DeriveAnyClass
+    DeriveGeneric
+    DuplicateRecordFields
+    NoFieldSelectors
+    OverloadedRecordDot
+    OverloadedStrings
+
+library
+  import: warnings
+  hs-source-dirs: src
+  exposed-modules:
+    Kenshou.Suite.Runtime.System.Contracts
+    Kenshou.Suite.Runtime.System.Model
+
+  build-depends:
+    aeson,
+    base,
+    text,
+
+test-suite kenshou-runtime-test
+  import: warnings
+  type: exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is: Main.hs
+  build-depends:
+    base,
+    hspec,
+    kenshou-runtime,
