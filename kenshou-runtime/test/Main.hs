@@ -4,7 +4,7 @@ import Control.Exception (evaluate)
 import Data.Map.Strict qualified as Map
 import Keiro.Codec (Codec (..))
 import Kenshou.Suite.Runtime.Oracle.Pure qualified as Oracle
-import Kenshou.Suite.Runtime.System.Contracts (CustomerId (..), OrderId (..), Sku (..))
+import Kenshou.Suite.Runtime.System.Contracts (CustomerId (..), OrderId (..), Sku (..), TopicPrefix (..), shopTopic, warehouseTopic)
 import Kenshou.Suite.Runtime.System.Fulfilment qualified as Fulfilment
 import Kenshou.Suite.Runtime.System.Ledger qualified as Ledger
 import Kenshou.Suite.Runtime.System.Model
@@ -14,6 +14,11 @@ import Test.Hspec
 
 main :: IO ()
 main = hspec do
+  describe "run-scoped broker names" do
+    it "uses the Kafka fixture's valid suffixes for both context topics" do
+      shopTopic (TopicPrefix "run-1") `shouldBe` "run-1-shop-events"
+      warehouseTopic (TopicPrefix "run-1") `shouldBe` "run-1-warehouse-events"
+
   describe "assembled-runtime terminal contract" do
     it "accepts one matching order and fulfilment completion" do
       advanceOrder OrderNotPlaced PlaceOrder `shouldBe` Right OrderPlaced

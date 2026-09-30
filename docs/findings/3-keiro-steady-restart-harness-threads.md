@@ -71,8 +71,21 @@ overall result was inconclusive solely because the five-minute heap probe
 again captured no eligible post-major-GC points. This comparison ties the
 ten-thread rise in the restart arms to restart activity, but does not yet
 identify whether the retained threads belong to the harness supervisor or
-Keiro publisher lifecycle. A revision-2 forced-major-GC control is running
-to classify heap retention separately.
+Keiro publisher lifecycle.
+
+A revision-2 forced-major-GC diagnostic, clean alpha cell
+`01a0f069-e617-717d-a767-e9f4fbd5b134` and [digest-linked nested
+run](../verification/runs/keiro/2026/09/01a0f055-c3bf-774f-9e85-993b6c0d5bb6.md),
+used the same seed, five-minute duration, two-message/s rate and ten
+publisher restarts. The resolved 5,000 ms GC knob produced 40 post-major
+heap points. All eight business checks held over 621 messages, while main
+Haskell threads stayed between 142 and 144 during the steady window and
+finished at 143. Its heap interval straddled the growth floor, leaving the
+overall verdict inconclusive. The forced collections change the runtime's
+collection schedule, so this is a diagnostic control rather than a
+throughput comparison. The flat thread series under frequent collection
+suggests collection timing contributes to the earlier count, but does not
+establish whether any object is retained or who owns it.
 
 Reproduce with:
 
@@ -86,6 +99,6 @@ cabal run kenshou -- run keiro/command/soak/write-side-steady-state-reduced \
 ```
 
 Next, run a minimal supervisor loop without the Keiro workers and inspect
-live thread references after each child exit. The no-restart comparison is
-complete; a longer restart window and the forced-major-GC diagnostic will
-test persistence and heap retention.
+live thread references after each child exit. The no-restart and forced-GC
+comparisons are complete; a longer default-collection restart window is
+running to test persistence and heap retention.

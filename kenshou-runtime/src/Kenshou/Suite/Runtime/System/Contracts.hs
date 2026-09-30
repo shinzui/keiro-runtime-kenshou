@@ -59,7 +59,7 @@ data WarehouseMessage
   deriving anyclass (FromJSON, ToJSON)
 
 shopTopic :: TopicPrefix -> Text
-shopTopic (TopicPrefix prefix) = prefix <> ".shop.events"
+shopTopic (TopicPrefix prefix) = prefix <> "-shop-events"
 
 warehouseTopic :: TopicPrefix -> Text
-warehouseTopic (TopicPrefix prefix) = prefix <> ".warehouse.events"
+warehouseTopic (TopicPrefix prefix) = prefix <> "-warehouse-events"
