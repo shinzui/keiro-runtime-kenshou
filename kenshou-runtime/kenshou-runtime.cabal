@@ -40,6 +40,7 @@ library
   exposed-modules:
     Kenshou.Suite.Runtime.Oracle.Pure
     Kenshou.Suite.Runtime.System.Broker
+    Kenshou.Suite.Runtime.System.Context
     Kenshou.Suite.Runtime.System.Contracts
     Kenshou.Suite.Runtime.System.Fulfilment
     Kenshou.Suite.Runtime.System.KafkaBridge
