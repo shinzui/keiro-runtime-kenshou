@@ -653,12 +653,23 @@ thrown drain handler; the acknowledgement and status mapping, source trace
 parent, FIFO partition, and worker-only inflight attributes are checked against
 the actual deliveries. The contract passes with in-memory tracing and collected
 metrics, and with both disabled.
-`job-throughput` drives open-loop enqueues into concurrent bounded drainers,
-measuring enqueue and enqueue-to-handler-start latency. It checks that every
-accepted job reached the handler exactly once and the queue emptied. Its
-250-per-second durable runs passed with benchmark-grade histograms in both
-unordered and FIFO group modes. The scenario currently covers the bounded
-drain execution shape; continuous worker and polling-mode comparisons remain.
+`job-throughput` drives open-loop enqueues into bounded drainers or continuous
+`runJobWorkers` processors, selected by `queue.execution-shape=drain|workers`.
+It measures enqueue and enqueue-to-handler-start latency under unordered or
+FIFO group ordering. `queue.batch-size` sets the runtime read batch;
+`queue.workers` and `queue.pool-size` control consumer and connection capacity.
+Workers support `queue.polling=poll-every|long-poll`, with
+`queue.poll-interval-ms`, `queue.long-poll-max-seconds`, and
+`queue.long-poll-interval-ms` controlling the wait. Bounded drainers pause after
+an empty immediate read; they reject long polling because that API does not
+honor the long-poll tuning.
+Revision 2 counts every handler call, requires the exact set of enqueued job
+identities with one call each, checks the empty queue, and reports work per
+processor and worker errors. Five short durable PostgreSQL 18 wiring arms
+held all business checks, including both worker polling modes and FIFO groups.
+Their measurement outcomes were inconclusive under the sample-count gate;
+controlled worker/polling comparisons remain pending. The earlier revision-1
+250-per-second bounded-drain runs reached benchmark grade in both orderings.
 The three-block local telemetry overhead matrix completed without a failed
 child run. Served and scraped metrics, noop tracing, and SDK OTLP tracing
 passed its comparison policy; the metrics collection arm was inconclusive.

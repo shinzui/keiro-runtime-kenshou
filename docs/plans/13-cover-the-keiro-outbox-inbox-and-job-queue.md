@@ -47,6 +47,11 @@ provenance:
       at: 2026-09-30T01:18:06Z
       mode: "implement"
       note: "Registered the outbox soak pair and verified a functional local smoke."
+    - model: "gpt-6.1-sol"
+      harness: "codex-cli"
+      at: 2026-09-30T21:20:07Z
+      mode: "implement"
+      note: "Added continuous queue throughput workers, polling and pool controls, and a multiplicity-aware conservation oracle."
 ---
 
 # Cover the keiro outbox, inbox and job queue
@@ -92,6 +97,7 @@ The non-soak baseline is in place. The remaining work is to deepen specific scen
 - [x] (2026-09-30) Ran the matched twenty-minute queue/DLQ forced-major-GC diagnostic on clean alpha as verified cell `01a0f089-f6a8-715c-8c36-460f9cc54eeb`, [digest-linked nested run](../verification/runs/keiro/2026/09/01a0f056-3861-703f-9c5d-f1a689409a8c.md). The overall outcome passed: all nine business checks held over 6,051 exactly-once handled jobs, including 303 terminal jobs archived, with no worker or maintenance errors. Forty-one post-major heap points classified the main heap stable; Haskell threads stayed at 140, and native memory, OS threads, descriptors, and connections were stable. The main queue table was flat across comparison windows and DLQ growth stayed within its bound. This resolves the reduced queue soak's heap-data gap as a forced-GC diagnostic; forced collection perturbs latency, so its throughput is not a default-rate baseline. The four-hour inbox soak is now running on alpha.
 - [x] (2026-09-30) Ran the twenty-minute default-rate inbox dedupe-window soak on clean alpha as verified cell `01a0f04a-bc43-7546-b7b2-20d47c665003`, [digest-linked nested run](../verification/runs/keiro/2026/09/01a0f027-28c8-74bc-873a-f857e53473cd.md). The overall outcome passed: all eight business checks held over 2,421 fresh deliveries, 2,421 suppressed early duplicates, 2,421 late reprocessings and 4,842 effects, with no delivery or GC errors. The sampled inbox table stayed at 401,408 bytes across comparison windows. Forty eligible post-major heap points classified heap stable, and the other bounded-resource probes were stable. The reduced default-rate inbox soak gate is satisfied; its full-duration form and other inbox matrix arms remain open.
 - [x] (2026-09-30) Added the optional `diagnose.major-gc-interval-ms` knob to all three messaging soak pairs, with a dedicated post-major heap series used only when the interval is positive. The default remains zero and preserves historical behavior. Forced collection perturbs latency, so its controls diagnose heap retention and are not benchmark or throughput baselines. The 37 Keiro package examples pass; controlled cell execution remains open.
+- [x] (2026-09-30) Added queue throughput revision 2 with continuous-worker, polling, pool-size, and runtime batch controls. Five short durable PostgreSQL 18 arms held all three business verdicts with zero worker errors; performance remained inconclusive under the sample-count gate. The 38-example package suite includes a multiplicity-aware oracle mutation check. Controlled comparisons and the remaining provision variation stay open; functional run IDs are listed below.
 - [ ] Finish the remaining non-soak acceptance work listed below, then rerun the affected scenarios and package tests.
 - [ ] Run the three full and reduced soaks and evaluate leak and table-growth verdicts for the initial baseline.
 
@@ -99,11 +105,32 @@ The five Keiro owner reports for worker exits, read-attempt accounting, stale ou
 
 ### Remaining non-soak work
 
+Queue throughput revision 2 now implements bounded versus continuous-worker
+execution, ordinary versus long polling, actual runtime batch sizing, and
+connection-pool sizing. Five local durable PostgreSQL 18 functional smokes
+held all three business verdicts with zero worker errors and contributions
+from both workers. Their run IDs are `01a0f431-439b-7324-a24c-e3fd7be04efe`
+(bounded unordered), `01a0f432-0143-77b5-8dfd-54b808db887c` (worker unordered),
+`01a0f432-9955-771c-90a0-a192b57bdd50` (long-poll unordered),
+`01a0f432-e076-76a5-8c79-e87d1576064f` (long-poll FIFO), and
+`01a0f433-14d2-77d1-a419-545c1faee070` (ordinary-poll FIFO with in-memory tracing
+and collected metrics, default three-connection pool). Each is under
+`runs/ep13-worker-throughput/`. They handled 731–732 jobs exactly once and
+emptied their queue. The five-second steady windows had 500 samples per
+operation, below the 1,000-sample gate: all are exploratory/inconclusive and
+excluded from controlled baseline performance claims. The unsupported
+bounded-drain/long-poll combination was rejected in
+`01a0f433-3d85-7360-ad2b-5cbd4e3cd448`. The package suite passes 38 examples,
+including doctored duplicate, missing, substituted, and empty delivery maps.
+`nix develop -c just verify` passed after the component-graph reconciliation;
+all six run specs, results, and manifests passed schema validation, and every
+stored artifact matched its manifest size and SHA-256 digest.
+
 1. Complete the outbox scenario knobs, producer-path SQL oracles, and generalized role/oracle modules. Broaden the remaining concurrency fault and ordering controls beyond the passing default sweep.
 2. Complete inbox effect/persistence oracles and the remaining documented correctness arms. The current table and delegated runs establish the baseline, but the planned matrix is wider.
 3. Complete queue worker-path outcomes, fault modes, ordering controls, and richer DLQ/acknowledgement oracles. Add `shibuya-metrics` for the queue metrics-serving arm.
 4. Finish component-specific telemetry adaptation and metrics-serving endpoint checks for outbox, inbox, and queue. The inbox `InboxInProgress` case now has a passing durable contract run; the queue pre-handler DLQ case observed zero process spans and is recorded as `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-7`.
-5. Add the planned continuous-worker and polling shapes to queue throughput. The current throughput benchmark uses bounded drainers; the separate idle-poll benchmark covers polling cost.
+5. Finish the queue throughput provision variation and controlled worker/polling comparisons. Revision 2 implements the execution and polling controls; the separate idle-poll benchmark covers polling cost.
 6. Refresh `docs/layers/keiro.md`, resolve whether any local ADRs are actually required, validate the bundle, and record final non-soak outcomes. Full plan acceptance also depends on the planned soaks.
 
 ### Evidence at a glance
@@ -118,6 +145,9 @@ The five Keiro owner reports for worker exits, read-attempt accounting, stale ou
 | Telemetry | Inbox `runs/01a0d593-371a-772a-902b-6d5fa0c5a23f`; queue `runs/01a0d599-6794-76cf-9399-000ff650b6e1` | Enabled arms passed on durable PostgreSQL. Queue pre-handler job reached DLQ without a handler call or process span. |
 
 ## Surprises & Discoveries
+
+- The throughput benchmark stored handled identities in a set, which hid repeated calls for the same job, and its batch knob limited the drain count without setting `JobTuning.batchSize`. Revision 2 counts calls per identity and sets the read batch on both execution paths. The bounded API ignores `JobTuning.polling`, so a long-poll arm requires the continuous-worker path rather than silently measuring immediate reads.
+- Repository verification exposed stale planned build edges for `runtime-assembly`. Its direct build edges now match the resolved `kenshou-runtime` library; transitive PGMQ, migration, and Kafka adapter coupling through the shared harness fixtures remains explicit as runtime edges under [ADR-5](../adr/0005-select-runs-from-a-checked-in-component-graph.md). Unused telemetry package edges were removed. This preserves conservative runner-change selection without claiming those packages are direct dependencies.
 
 - The zombie publisher schedule still reproduced BUG-5 after replacing the controller's direct maintenance call with a separate worker process. The maintenance pass reported one reclaimed row, and `01a0d508-7c44-7310-a608-2deaca6b798f` retained `knownDefect.status=reproduced`, `blocking=false`, with only the two scoped finalization verdicts violated.
 
@@ -180,6 +210,10 @@ The five Keiro owner reports for worker exits, read-attempt accounting, stale ou
 
 
 ## Decision Log
+
+- Decision: Keep the default bounded execution shape and three-connection runtime pool, expose explicit worker/polling/pool controls, and bump only the throughput scenario to revision 2. Cancelled continuous-worker tasks call `stopApp` before releasing their runtime pool.
+  Rationale: The controls make the intended workload observable while preserving the default execution shape; changed batch and conservation semantics require a new scenario revision. Existing measurement and fixture ADRs apply, so no new architecture decision is needed for this extension.
+  Date: 2026-09-30
 
 - Decision: The producer crash role parks after the outbox transaction commits and before filling the subscription acknowledgement variable; the controller kills the parked process and restarts with the same subscription name.
   Rationale: This pins the real replay window without relying on timing and proves that Kiroku's checkpoint has not advanced while Keiro's producer identity has already been stored.
@@ -248,7 +282,7 @@ The five Keiro owner reports for worker exits, read-attempt accounting, stale ou
 
 ## Outcomes & Retrospective
 
-The durable baseline now exercises the outbox, inbox, and queue through correctness, process-failure, concurrency, telemetry, and benchmark scenarios. All seven planned benchmark identifiers are registered. The package suite passes 37 examples. Known defects remain visible as scoped expected failures rather than silent passes: BUG-3 through BUG-7 in the upstream Keiro bug-report bundle, plus the documented inline ordering, inbox GC, and DLQ/redrive windows.
+The durable baseline now exercises the outbox, inbox, and queue through correctness, process-failure, concurrency, telemetry, and benchmark scenarios. All seven planned benchmark identifiers are registered. The package suite passes 38 examples. Queue throughput now supports continuous workers and both polling modes, with an oracle that detects duplicate calls; its new short local smokes are functional evidence only. Known defects remain visible as scoped expected failures rather than silent passes; the local finding records above retain their canonical owner references. The documented inline ordering, inbox GC, and DLQ/redrive windows also remain scoped expected failures.
 
 The plan is still in progress. The concrete non-soak gaps are listed in Progress. Full acceptance remains pending the three planned soaks and their leak and table-growth verdicts. The comparison evidence is inconclusive under its three-pair policy, and the overhead reports are local evidence rather than a release performance claim.
 
@@ -494,6 +528,9 @@ Step 5, benchmarks, comparison, overhead and a short soak.
 ```bash
 cabal run kenshou -- run keiro/queue/benchmark/job-throughput --dim pg.durability=durable \
   --set queue.ordering=fifo-heads --set queue.batch-size=10 --out runs/
+cabal run kenshou -- run keiro/queue/benchmark/job-throughput --dim pg.durability=durable \
+  --set queue.execution-shape=workers --set queue.polling=long-poll \
+  --set queue.workers=4 --set queue.pool-size=8 --set queue.batch-size=10 --out runs/
 cabal run kenshou -- summarize runs/<run-id>
 cabal run kenshou -- overhead keiro/outbox/benchmark/enqueue-to-publish \
   --arms tracing=off,noop,sdk-otlp --arms metrics=off,collect,serve-scraped --out runs/overhead-outbox
@@ -620,3 +657,6 @@ A further durable queue run, `runs/01a0d4c9-5084-72ed-803f-591d45cb094c`, passed
 The worker Dead DLQ oracle now decodes the wrapper with Keiro's `readDlq` and checks the original payload, source message ID, read count and raw headers field. The initial expectation of non-null decoded headers was wrong for an untraced send: the wrapper stores JSON null, which decodes to `Nothing`. The corrected durable run passed in `runs/01a0d4cd-1ba2-7100-a84a-17c48e0a619d`.
 
 The zombie-publisher scenario is now registered. Its controlled `SIGSTOP` and maintenance schedule reproduced late finalization in all three outcomes on durable PostgreSQL. A stale failure left a successful second publisher's row `failed`; the attempt-ceiling arm left it `dead`; a stale success also changed the second publisher's claim. The upstream report is `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-5`. The scenario now scopes that known defect to the two ideal finalization verdicts, while `schedule-realised` remains blocking. The known-defect reruns `01a0d4d4-4843-7266-ae9e-f6e5a1b03716`, `01a0d4d4-84c4-7680-810b-db018fce73fe`, and `01a0d4d4-c21c-76ff-a5d4-c8fc5fbe36bb` each exited zero with the defect reproduced. The strengthened terminal matrix also passed at 2,000 rows in `01a0d4ce-902f-7255-a0e5-c38985c6e946`.
+
+
+Revision note (2026-09-30): Queue throughput revision 2 adds the planned continuous-worker and polling shapes, explicit runtime pool sizing, actual read-batch tuning, and delivery multiplicity checks. Five durable local functional arms held all business verdicts; their short measurement windows remain exploratory. Controlled comparisons, provision variation, component metrics serving, and the other acceptance gaps stay open.

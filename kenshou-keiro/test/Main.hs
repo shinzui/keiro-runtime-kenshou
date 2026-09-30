@@ -7,6 +7,7 @@ import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.List (intersect, sort)
 import Data.Map.Strict qualified as Map
 import Data.Proxy (Proxy (..))
+import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (NominalDiffTime, addUTCTime, getCurrentTime)
@@ -40,6 +41,7 @@ import Kenshou.Suite.Keiro.Fixture.Workload qualified as Workload
 import Kenshou.Suite.Keiro.Outbox.Broker qualified as Broker
 import Kenshou.Suite.Keiro.Outbox.Knobs qualified as OutboxKnobs
 import Kenshou.Suite.Keiro.Outbox.Oracle qualified as OutboxOracle
+import Kenshou.Suite.Keiro.Queue.Bench qualified as QueueBench
 import Kenshou.Suite.Keiro.Queue.Concurrency qualified as QueueConcurrency
 import Kenshou.Suite.Keiro.Shard.Knobs qualified as ShardKnobs
 import Kenshou.Suite.Keiro.Shard.Oracle qualified as ShardOracle
@@ -61,6 +63,15 @@ import Test.Hspec.Hedgehog (hedgehog)
 
 main :: IO ()
 main = hspec do
+  describe "job throughput conservation" do
+    it "rejects duplicate handlers and missing or substituted accepted jobs" do
+      let expected = Set.fromList ["job-a", "job-b"]
+          delivered = Map.fromList [("job-a", 1), ("job-b", 1)]
+      QueueBench.exactlyOnce expected delivered `shouldBe` True
+      QueueBench.exactlyOnce expected (Map.insert "job-a" 2 delivered) `shouldBe` False
+      QueueBench.exactlyOnce expected (Map.delete "job-b" delivered) `shouldBe` False
+      QueueBench.exactlyOnce expected (Map.fromList [("job-a", 1), ("unaccepted-job", 1)]) `shouldBe` False
+      QueueBench.exactlyOnce Set.empty Map.empty `shouldBe` False
   describe "FIFO-head oracle" do
     it "rejects missing, repeated, and overlapping group jobs" do
       now <- getCurrentTime
