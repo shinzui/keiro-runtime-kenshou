@@ -87,6 +87,7 @@ library
     Kenshou.Suite.Keiro.Queue.Bench
     Kenshou.Suite.Keiro.Queue.Concurrency
     Kenshou.Suite.Keiro.Queue.Correctness
+    Kenshou.Suite.Keiro.Queue.Metrics
     Kenshou.Suite.Keiro.Queue.Roles
     Kenshou.Suite.Keiro.Queue.Soak
     Kenshou.Suite.Keiro.Queue.Telemetry
@@ -148,6 +149,8 @@ library
     hasql-transaction,
     hedgehog,
     hs-opentelemetry-api,
+    http-client,
+    http-types,
     keiki,
     keiki-codec-json,
     keiro,
@@ -164,6 +167,7 @@ library
     random,
     shibuya-core,
     shibuya-kiroku-adapter,
+    shibuya-metrics,
     shibuya-pgmq-adapter,
     stm,
     streamly,

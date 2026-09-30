@@ -41,9 +41,10 @@ import Kenshou.Measure.Recorder (ErrorCause (..), OpName (..), OpResult (..), ne
 import Kenshou.Measure.Session (MeasureConfig (..), measureConfigFromKnobs, measuredOutcome, measurementRecorder, phasePlanFromCore, withMeasurement)
 import Kenshou.Suite.Keiro.Command.Correctness (recordCells)
 import Kenshou.Suite.Keiro.Outbox.Workload (sourceName)
+import Kenshou.Suite.Keiro.Queue.Metrics qualified as QueueMetrics
 import Kenshou.Telemetry (TelemetryHandles (..), telemetryKnobs, telemetrySpecFromContext, withTelemetry)
 import Pgmq.Types (MessageHeaders (..), queueNameToText)
-import Shibuya.App (SupervisionStrategy (..), stopApp, waitApp)
+import Shibuya.App (SupervisionStrategy (..), getAppMaster, stopApp, waitApp)
 
 scenarios :: [Scenario]
 scenarios = [jobThroughput, enqueueBenchmark, idlePollCost]
@@ -199,7 +200,7 @@ jobThroughput :: Scenario
 jobThroughput =
   Scenario
     { id = either (error . show) id (parseScenarioId "keiro/queue/benchmark/job-throughput"),
-      revision = 2,
+      revision = 3,
       summary = "Measures open-loop job enqueue and handler-start latency with bounded drainers or continuous workers.",
       tier = TierStandard,
       placement = PlaceEither,
@@ -241,7 +242,7 @@ runJobThroughput context
   | otherwise = case (measureConfigFromKnobs context (phasePlanFromCore (CorePhase.PhasePlan 1 duration 5)), telemetrySpecFromContext context) of
       (Left reason, _) -> pure (failedWith ["invalid-measure-config"] reason)
       (_, Left reason) -> pure (failedWith ["invalid-telemetry-config"] reason)
-      (Right config, Right telemetrySpec) -> withTelemetry telemetrySpec \telemetry ->
+      (Right config, Right telemetrySpec) -> QueueMetrics.withQueueTelemetry context telemetrySpec \telemetry metrics ->
         withThroughputRuntime context telemetry \runtime -> do
           let ordered = knobText context.knobs (name "queue.ordering") == "fifo-heads"
               policy = if ordered then FifoHeads else Unordered
@@ -314,11 +315,17 @@ runJobThroughput context
                     started <- runJobWorkers StopAllOnFailure 16 [jobProcessorWithContext tuning (job {jobName = "throughput-worker-" <> Text.pack (show workerId)}) handler]
                     case started of
                       Left err -> liftIO (fail (show err))
-                      Right app -> waitApp app `Eff.finally` stopApp app
+                      Right app ->
+                        ( do
+                            liftIO (QueueMetrics.registerWorker telemetry metrics (fromIntegral (knobInt context.knobs (name "metrics.scrape-interval-ms"))) ("queue-worker-" <> Text.pack (show workerId)) (getAppMaster app))
+                            waitApp app
+                        )
+                          `Eff.finally` stopApp app
               async (if shape == "workers" then continuous >>= either (fail . show) pure else loop)
             ( do
                 generated <- runLoad measurement load (Operation (OpName "queue.enqueue") enqueueOne)
                 drained <- awaitHandled 3000 (fromIntegral generated.completed)
+                _ <- QueueMetrics.checkpoint metrics
                 statuses <- mapM poll workerTasks
                 unless (all (\status -> case status of Nothing -> True; Just _ -> False) statuses) (atomicModifyIORef' workerErrors (\count -> (count + 1, ())))
                 pure (generated, drained)

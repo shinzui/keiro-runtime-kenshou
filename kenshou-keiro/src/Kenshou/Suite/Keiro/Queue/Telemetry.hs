@@ -1,18 +1,25 @@
 module Kenshou.Suite.Keiro.Queue.Telemetry (scenarios) where
 
-import Control.Concurrent (threadDelay)
+import Control.Concurrent (newEmptyMVar, putMVar, readMVar, threadDelay, tryPutMVar)
 import Control.Concurrent.Async (async, cancel)
 import Control.Exception (finally)
 import Data.Aeson (object, (.=))
 import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.List.NonEmpty (NonEmpty (..))
+import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Effectful (liftIO)
+import Effectful.Exception qualified as Eff
+import Hasql.Decoders qualified as Decoders
+import Hasql.Encoders qualified as Encoders
+import Hasql.Pool qualified as Pool
+import Hasql.Session qualified as Session
+import Hasql.Statement qualified as Statement
 import Keiro.PGMQ.Codec (aesonJobCodec)
-import Keiro.PGMQ.Dlq (readDlq)
-import Keiro.PGMQ.Job (Job (..), JobOrdering (..), JobOutcome (..), JobPolling (..), JobTuning (..), RetryPolicy (..), defaultJobTuning, defaultRetryPolicy, enqueue, enqueueTraced, ensureJobQueue, jobProcessorWithContext, runJobOnceWithContext, runJobWorkers, withOrdering)
-import Keiro.PGMQ.Runtime (queueRef, runJobEff, withJobRuntime)
+import Keiro.PGMQ.Dlq (DlqEntry (..), readDlq)
+import Keiro.PGMQ.Job (Job (..), JobOrdering (..), JobOutcome (..), JobPolling (..), JobTuning (..), RetryDelay (..), RetryPolicy (..), defaultJobTuning, defaultRetryPolicy, enqueue, enqueueTraced, ensureJobQueue, jobProcessorWithContext, runJobOnceWithContext, runJobWorkers, withOrdering)
+import Keiro.PGMQ.Runtime (JobRuntime (..), QueueRef (..), queueRef, runJobEff, withJobRuntime)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary, requirePostgres)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
@@ -22,15 +29,103 @@ import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith)
 import Kenshou.Suite.Keiro.Command.Correctness (recordCells)
 import Kenshou.Suite.Keiro.Outbox.Workload (sourceName)
-import Kenshou.Telemetry (TelemetryHandles (..), telemetryKnobs, telemetrySpecFromContext, withTelemetry)
+import Kenshou.Suite.Keiro.Queue.Metrics qualified as Metrics
+import Kenshou.Telemetry (TelemetryHandles (..), TelemetrySpec (..), telemetryKnobs, telemetrySpecFromContext, withTelemetry)
 import Kenshou.Telemetry.Tracing.Probe (SpanView (..), readSpans)
 import OpenTelemetry.Attributes (Attribute (..), PrimitiveAttribute (..), lookupAttribute)
 import OpenTelemetry.Trace.Core (SpanStatus (..), defaultSpanArguments, inSpan')
-import Pgmq.Types (MessageHeaders (..))
-import Shibuya.App (SupervisionStrategy (..), waitApp)
+import Pgmq.Types (MessageHeaders (..), queueNameToText)
+import Shibuya.App (SupervisionStrategy (..), getAllMetricsIO, getAppMaster, stopApp, waitApp)
+import Shibuya.Core.Metrics (ProcessorId (..))
+import System.Timeout (timeout)
 
 scenarios :: [Scenario]
-scenarios = [queueSignals]
+scenarios = [queueSignals, workerMetrics]
+
+workerMetrics :: Scenario
+workerMetrics =
+  queueSignals
+    { id = either (error . show) id (parseScenarioId "keiro/queue/correctness/worker-metrics-contract"),
+      summary = "Checks native and served worker counters for Done, Retry and Dead, plus the active-work gauge.",
+      dimensions =
+        (queueSignals.dimensions)
+          { tracing = Supported (Support (TracingOff :| [TracingSdkInMemory]) TracingOff),
+            metrics = Supported (Support (MetricsOff :| [MetricsCollect, MetricsServe, MetricsServeScraped]) MetricsCollect)
+          },
+      run = runWorkerMetrics
+    }
+
+runWorkerMetrics :: RunContext -> IO ScenarioReport
+runWorkerMetrics context = case telemetrySpecFromContext context of
+  Left reason -> pure (failedWith ["invalid-telemetry-config"] reason)
+  Right spec -> Metrics.withQueueTelemetry context spec \telemetry metrics ->
+    withJobRuntime (requirePostgres context).connectionString telemetry.tracer \runtime -> do
+      let job = Job "queue-metrics-contract" (queueRef (sourceName context "worker-metrics")) (aesonJobCodec @Text) Unordered defaultRetryPolicy
+          tuning = defaultJobTuning {polling = PollEvery 0.01}
+          processor = ProcessorId job.jobName
+          activeExpected = Map.singleton processor (Metrics.WorkerCounts 1 0 0 1)
+          -- Shibuya counts AckRetry as processed; this is not a terminal-Done counter.
+          finalExpected = Map.singleton processor (Metrics.WorkerCounts 5 4 1 0)
+          expectedCalls = Map.fromList [("held", 1), ("done", 1), ("dead", 1), ("retry", 2)]
+          table = "pgmq.q_" <> queueNameToText job.jobQueue.physicalName
+          statement = Statement.preparable ("SELECT count(*) FROM " <> table) Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
+          queueDepth = Pool.use runtime.runtimePool (Session.statement () statement) >>= either (fail . show) pure
+          send payload = runJobEff runtime (enqueue job payload) >>= either (fail . show) pure
+      _ <- runJobEff runtime (ensureJobQueue job) >>= either (fail . show) pure
+      entered <- newEmptyMVar
+      release <- newEmptyMVar
+      calls <- newIORef (Map.empty :: Map.Map Text Int)
+      let handler _ payload = do
+            occurrence <- liftIO $ atomicModifyIORef' calls \seen ->
+              let next = Map.findWithDefault 0 payload seen + 1 in (Map.insert payload next seen, next)
+            case payload of
+              "held" -> liftIO (putMVar entered () >> readMVar release) >> pure Done
+              "dead" -> pure (Dead "metrics contract")
+              "retry" | occurrence == 1 -> pure (Retry (RetryDelay 1))
+              _ -> pure Done
+          awaitDrained 0 = pure False
+          awaitDrained remaining = do
+            seen <- readIORef calls
+            depth <- queueDepth
+            if seen == expectedCalls && depth == 0
+              then pure True
+              else threadDelay 50000 >> awaitDrained (remaining - 1)
+      result <- runJobEff runtime do
+        started <- runJobWorkers StopAllOnFailure 16 [jobProcessorWithContext tuning job handler]
+        app <- either (liftIO . fail . show) pure started
+        let master = getAppMaster app
+            awaitMetrics 0 = getAllMetricsIO master
+            awaitMetrics remaining = do
+              snapshot <- getAllMetricsIO master
+              if Metrics.metricsMatch finalExpected snapshot
+                then pure snapshot
+                else threadDelay 50000 >> awaitMetrics (remaining - 1)
+        ( liftIO do
+            Metrics.registerWorker telemetry metrics spec.scrapeMs "queue-metrics" master
+            _ <- send "held"
+            active <- timeout 10000000 (readMVar entered)
+            activeSnapshot <- if telemetry.metricsLive then getAllMetricsIO master else pure Map.empty
+            activeHttp <- if telemetry.servesEndpoints then Metrics.probeEndpoints metrics "active" activeExpected else pure True
+            putMVar release ()
+            mapM_ send ["done", "dead", "retry"]
+            drained <- awaitDrained (200 :: Int)
+            seen <- readIORef calls
+            dlq <- runJobEff runtime (readDlq job 10) >>= either (fail . show) pure
+            snapshot <- if telemetry.metricsLive then awaitMetrics (100 :: Int) else pure Map.empty
+            _ <- Metrics.checkpoint metrics
+            finalHttp <- if telemetry.servesEndpoints then Metrics.probeEndpoints metrics "complete" finalExpected else pure True
+            let checks =
+                  [ ("handler-schedule-realised", active == Just ()),
+                    ("job-outcomes", drained && seen == expectedCalls && case dlq of [entry] -> entry.originalPayload == Right "dead"; _ -> False),
+                    ("worker-active-gauge", not telemetry.metricsLive || Metrics.metricsMatch activeExpected activeSnapshot),
+                    ("worker-completion-counters", not telemetry.metricsLive || Metrics.metricsMatch finalExpected snapshot),
+                    ("worker-metrics-endpoints", activeHttp && finalHttp)
+                  ]
+            putSummary context Measurements "queue-worker-metrics-contract" (object ["metricsEnabled" .= telemetry.metricsLive, "endpointsEnabled" .= telemetry.servesEndpoints, "handlerCalls" .= seen, "expectedActive" .= activeExpected, "observedActive" .= activeSnapshot, "expectedComplete" .= finalExpected, "observedComplete" .= snapshot, "dlqRows" .= length dlq, "drained" .= drained])
+            recordCells context checks
+          )
+          `Eff.finally` (liftIO (tryPutMVar release ()) >> stopApp app)
+      either (fail . show) pure result
 
 queueSignals :: Scenario
 queueSignals =

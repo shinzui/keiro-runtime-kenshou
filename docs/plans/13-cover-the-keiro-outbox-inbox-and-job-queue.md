@@ -98,6 +98,7 @@ The non-soak baseline is in place. The remaining work is to deepen specific scen
 - [x] (2026-09-30) Ran the twenty-minute default-rate inbox dedupe-window soak on clean alpha as verified cell `01a0f04a-bc43-7546-b7b2-20d47c665003`, [digest-linked nested run](../verification/runs/keiro/2026/09/01a0f027-28c8-74bc-873a-f857e53473cd.md). The overall outcome passed: all eight business checks held over 2,421 fresh deliveries, 2,421 suppressed early duplicates, 2,421 late reprocessings and 4,842 effects, with no delivery or GC errors. The sampled inbox table stayed at 401,408 bytes across comparison windows. Forty eligible post-major heap points classified heap stable, and the other bounded-resource probes were stable. The reduced default-rate inbox soak gate is satisfied; its full-duration form and other inbox matrix arms remain open.
 - [x] (2026-09-30) Added the optional `diagnose.major-gc-interval-ms` knob to all three messaging soak pairs, with a dedicated post-major heap series used only when the interval is positive. The default remains zero and preserves historical behavior. Forced collection perturbs latency, so its controls diagnose heap retention and are not benchmark or throughput baselines. The 37 Keiro package examples pass; controlled cell execution remains open.
 - [x] (2026-09-30) Added queue throughput revision 2 with continuous-worker, polling, pool-size, and runtime batch controls. Five short durable PostgreSQL 18 arms held all three business verdicts with zero worker errors; performance remained inconclusive under the sample-count gate. The 38-example package suite includes a multiplicity-aware oracle mutation check. Controlled comparisons and the remaining provision variation stay open; functional run IDs are listed below.
+- [x] (2026-09-30) Added queue throughput revision 3 native worker collection and JSON/Prometheus serving, plus `worker-metrics-contract`. All eight durable PostgreSQL 18 contract arms passed across four metrics modes and tracing off/in-memory; four throughput integration controls held every business check. The 40-example package suite passes. Native counters remain supporting telemetry, independent of business and timing oracles; controlled performance and broader queue fault coverage remain open.
 - [ ] Finish the remaining non-soak acceptance work listed below, then rerun the affected scenarios and package tests.
 - [ ] Run the three full and reduced soaks and evaluate leak and table-growth verdicts for the initial baseline.
 
@@ -126,11 +127,54 @@ including doctored duplicate, missing, substituted, and empty delivery maps.
 all six run specs, results, and manifests passed schema validation, and every
 stored artifact matched its manifest size and SHA-256 digest.
 
+Queue throughput revision 3 adds periodic native collection and private JSON
+and Prometheus endpoints to the continuous-worker arm. The new
+`keiro/queue/correctness/worker-metrics-contract` checks the active gauge, Done,
+Retry, and Dead counters against independent handler and SQL facts. The eight
+contract arms passed; the four five-second throughput controls held all three
+business checks over 732–735 exactly-once jobs, with no worker errors. Collected
+worker checkpoints matched the handler totals. The two scraped contract runs
+completed 42 native endpoint scrapes in total, and the two-worker long-poll
+benchmark completed 540; all reported zero scrape failures. Metrics-off and
+bounded-drain controls produced no native collection file. Each run spec,
+result, and manifest passed schema checks, every artifact matched its recorded
+size and SHA-256, and periodic/checkpoint rows were checked. These dirty local
+runs under `runs/ep13-worker-metrics/matrix/` establish functional wiring only;
+the benchmark results remain inconclusive and do not add baseline records.
+`nix develop -c just verify` passed, including the full build, shared tests,
+cohort link proof, component graph, evidence bundles, schemas, and self-tests.
+
+To reproduce the scraped contract from the repository root:
+
+```bash
+nix develop -c cabal run kenshou -- run keiro/queue/correctness/worker-metrics-contract --dim pg.durability=durable --dim telemetry.metrics=serve-scraped --dim telemetry.tracing=sdk-inmemory --set metrics.scrape-interval-ms=100 --out runs/ep13-worker-metrics
+```
+
+The command should report `passed`, five held checks, active/complete JSON and
+Prometheus logs, periodic native samples, a completion checkpoint, and successful
+scrape rows for both worker endpoints. Metrics-off arms keep the job checks and
+explicitly mark metrics disabled in the measurements summary.
+
+| Arm | Local functional run | Result |
+| --- | --- | --- |
+| `contract-off-off` | `01a0f494-b342-72b3-9925-6ed20319ef16` | passed |
+| `contract-off-collect` | `01a0f494-cc19-772f-82a1-eadeea697ca4` | passed |
+| `contract-off-serve` | `01a0f494-e63b-757e-8712-4ac34a49fdb8` | passed |
+| `contract-off-serve-scraped` | `01a0f495-0ada-71ed-86d8-2abdd5feebd0` | passed |
+| `contract-sdk-inmemory-off` | `01a0f495-2878-762f-8408-3b315e2704da` | passed |
+| `contract-sdk-inmemory-collect` | `01a0f495-4235-763b-8b0b-e6bd876c0f1a` | passed |
+| `contract-sdk-inmemory-serve` | `01a0f495-5d12-72cc-af96-8d4e08f559ca` | passed |
+| `contract-sdk-inmemory-serve-scraped` | `01a0f495-8d89-7563-9dee-31a6cf3dbd0c` | passed |
+| `throughput-workers-poll-every-off` | `01a0f495-a62f-7310-8816-bfd06a7ab8d5` | inconclusive |
+| `throughput-workers-poll-every-collect` | `01a0f495-d715-767a-84d0-a6fa6958544f` | inconclusive |
+| `throughput-workers-long-poll-serve-scraped` | `01a0f496-0add-7438-bc66-bad4267c0504` | inconclusive |
+| `throughput-drain-poll-every-serve-scraped` | `01a0f496-539a-771d-b087-e7bd3251bdd5` | inconclusive |
+
 1. Complete the outbox scenario knobs, producer-path SQL oracles, and generalized role/oracle modules. Broaden the remaining concurrency fault and ordering controls beyond the passing default sweep.
 2. Complete inbox effect/persistence oracles and the remaining documented correctness arms. The current table and delegated runs establish the baseline, but the planned matrix is wider.
-3. Complete queue worker-path outcomes, fault modes, ordering controls, and richer DLQ/acknowledgement oracles. Add `shibuya-metrics` for the queue metrics-serving arm.
-4. Finish component-specific telemetry adaptation and metrics-serving endpoint checks for outbox, inbox, and queue. The inbox `InboxInProgress` case now has a passing durable contract run; the queue pre-handler DLQ case observed zero process spans and is recorded as `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-7`.
-5. Finish the queue throughput provision variation and controlled worker/polling comparisons. Revision 2 implements the execution and polling controls; the separate idle-poll benchmark covers polling cost.
+3. Complete queue worker-path outcomes, fault modes, ordering controls, and richer DLQ/acknowledgement oracles. Native worker counter and endpoint checks are implemented; the broader fault and pre-handler paths remain open.
+4. Finish component-specific telemetry adaptation and metrics-serving endpoint checks for outbox and inbox, plus the remaining queue fault and pre-handler coverage. The inbox `InboxInProgress` case now has a passing durable contract run; the queue pre-handler DLQ case observed zero process spans and is recorded as `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-7`.
+5. Finish the queue throughput provision variation and controlled worker/polling comparisons. Revision 3 preserves the execution and polling controls and adds native worker collection and serving; the separate idle-poll benchmark covers polling cost.
 6. Refresh `docs/layers/keiro.md`, resolve whether any local ADRs are actually required, validate the bundle, and record final non-soak outcomes. Full plan acceptance also depends on the planned soaks.
 
 ### Evidence at a glance
@@ -145,6 +189,8 @@ stored artifact matched its manifest size and SHA-256 digest.
 | Telemetry | Inbox `runs/01a0d593-371a-772a-902b-6d5fa0c5a23f`; queue `runs/01a0d599-6794-76cf-9399-000ff650b6e1` | Enabled arms passed on durable PostgreSQL. Queue pre-handler job reached DLQ without a handler call or process span. |
 
 ## Surprises & Discoveries
+
+- Native Shibuya worker `processed` counts include acknowledged Retry deliveries. The Done/Retry/Dead schedule therefore expects five received, four processed, and one failed, while the independent handler and SQL oracles expect three terminal Done jobs and one dead job. The first local endpoint run `01a0f48e-cadb-7446-a333-bea5274336d1` failed only the two completion checks because the harness expected three processed; both native and served counters correctly reported four. This is an oracle correction, not an owner defect. Stopped apps unregister their processors, so the harness captures completion metrics before stopping workers.
 
 - The throughput benchmark stored handled identities in a set, which hid repeated calls for the same job, and its batch knob limited the drain count without setting `JobTuning.batchSize`. Revision 2 counts calls per identity and sets the read batch on both execution paths. The bounded API ignores `JobTuning.polling`, so a long-poll arm requires the continuous-worker path rather than silently measuring immediate reads.
 - Repository verification exposed stale planned build edges for `runtime-assembly`. Its direct build edges now match the resolved `kenshou-runtime` library; transitive PGMQ, migration, and Kafka adapter coupling through the shared harness fixtures remains explicit as runtime edges under [ADR-5](../adr/0005-select-runs-from-a-checked-in-component-graph.md). Unused telemetry package edges were removed. This preserves conservative runner-change selection without claiming those packages are direct dependencies.
@@ -210,6 +256,10 @@ stored artifact matched its manifest size and SHA-256 digest.
 
 
 ## Decision Log
+
+- Decision: Collect native worker metrics through the public Shibuya master API and serve each master through the released metrics server. Keep server cleanup outside the telemetry scope so endpoint scraping finishes before servers stop; checkpoint counters before app shutdown. Bump queue throughput to revision 3 and register a separate worker metrics correctness contract. The component graph selects this contract for changes to `mori://shinzui/shibuya/packages/shibuya-metrics`, through its existing core runner dependency.
+  Rationale: Existing released APIs provide the required counters and HTTP responses without upstream changes. Independent handler/SQL checks and the measurement recorder remain authoritative for business correctness and timing, following [ADR-7](../adr/0007-record-measurements-independently-of-the-feature-under-test.md). Bounded drainers have no worker master, so they retain generic telemetry without native worker claims. This follows existing telemetry and layer ownership decisions; no new ADR is required.
+  Date: 2026-09-30
 
 - Decision: Keep the default bounded execution shape and three-connection runtime pool, expose explicit worker/polling/pool controls, and bump only the throughput scenario to revision 2. Cancelled continuous-worker tasks call `stopApp` before releasing their runtime pool.
   Rationale: The controls make the intended workload observable while preserving the default execution shape; changed batch and conservation semantics require a new scenario revision. Existing measurement and fixture ADRs apply, so no new architecture decision is needed for this extension.
@@ -282,7 +332,7 @@ stored artifact matched its manifest size and SHA-256 digest.
 
 ## Outcomes & Retrospective
 
-The durable baseline now exercises the outbox, inbox, and queue through correctness, process-failure, concurrency, telemetry, and benchmark scenarios. All seven planned benchmark identifiers are registered. The package suite passes 38 examples. Queue throughput now supports continuous workers and both polling modes, with an oracle that detects duplicate calls; its new short local smokes are functional evidence only. Known defects remain visible as scoped expected failures rather than silent passes; the local finding records above retain their canonical owner references. The documented inline ordering, inbox GC, and DLQ/redrive windows also remain scoped expected failures.
+The durable baseline now exercises the outbox, inbox, and queue through correctness, process-failure, concurrency, telemetry, and benchmark scenarios. All seven planned benchmark identifiers are registered. The package suite passes 40 examples. Queue throughput now supports continuous workers, both polling modes, native metrics collection and serving, with an oracle that detects duplicate calls. The eight-arm worker metrics contract passes; its new short local smokes are functional evidence only. Known defects remain visible as scoped expected failures rather than silent passes; the local finding records above retain their canonical owner references. The documented inline ordering, inbox GC, and DLQ/redrive windows also remain scoped expected failures.
 
 The plan is still in progress. The concrete non-soak gaps are listed in Progress. Full acceptance remains pending the three planned soaks and their leak and table-growth verdicts. The comparison evidence is inconclusive under its three-pair policy, and the overhead reports are local evidence rather than a release performance claim.
 
@@ -660,3 +710,5 @@ The zombie-publisher scenario is now registered. Its controlled `SIGSTOP` and ma
 
 
 Revision note (2026-09-30): Queue throughput revision 2 adds the planned continuous-worker and polling shapes, explicit runtime pool sizing, actual read-batch tuning, and delivery multiplicity checks. Five durable local functional arms held all business verdicts; their short measurement windows remain exploratory. Controlled comparisons, provision variation, component metrics serving, and the other acceptance gaps stay open.
+
+Revision note (2026-09-30): Queue throughput revision 3 collects and serves native worker metrics through existing released APIs. The new eight-arm correctness matrix passed with independent outcome checks; four throughput integration controls held the business invariants and remain exploratory. Broader fault/pre-handler coverage, outbox and inbox serving, controlled comparisons, and full-duration acceptance stay open.

@@ -43,6 +43,7 @@ import Kenshou.Suite.Keiro.Outbox.Knobs qualified as OutboxKnobs
 import Kenshou.Suite.Keiro.Outbox.Oracle qualified as OutboxOracle
 import Kenshou.Suite.Keiro.Queue.Bench qualified as QueueBench
 import Kenshou.Suite.Keiro.Queue.Concurrency qualified as QueueConcurrency
+import Kenshou.Suite.Keiro.Queue.Metrics qualified as QueueMetrics
 import Kenshou.Suite.Keiro.Shard.Knobs qualified as ShardKnobs
 import Kenshou.Suite.Keiro.Shard.Oracle qualified as ShardOracle
 import Kenshou.Suite.Keiro.Timer.Knobs qualified as TimerKnobs
@@ -56,6 +57,7 @@ import Shibuya.Adapter (Adapter (..))
 import Shibuya.Core.Ack (AckDecision (..))
 import Shibuya.Core.AckHandle (AckHandle (..))
 import Shibuya.Core.Ingested (Ingested (..))
+import Shibuya.Core.Metrics qualified as ShibuyaMetrics
 import Streamly.Data.Fold qualified as Fold
 import Streamly.Data.Stream qualified as Stream
 import Test.Hspec
@@ -63,6 +65,30 @@ import Test.Hspec.Hedgehog (hedgehog)
 
 main :: IO ()
 main = hspec do
+  describe "queue worker metrics oracles" do
+    it "rejects missing processors, incorrect processed counts and incorrect in-flight gauges" do
+      now <- getCurrentTime
+      let pid = ShibuyaMetrics.ProcessorId "worker"
+          expected = Map.singleton pid (QueueMetrics.WorkerCounts 5 4 1 0)
+          completed = (ShibuyaMetrics.emptyProcessorMetrics now) {ShibuyaMetrics.stats = ShibuyaMetrics.StreamStats 5 4 1}
+          active = completed {ShibuyaMetrics.state = ShibuyaMetrics.Processing (ShibuyaMetrics.InFlightInfo 1 1) now}
+          retryNotCounted = completed {ShibuyaMetrics.stats = ShibuyaMetrics.StreamStats 5 3 1}
+      QueueMetrics.metricsMatch expected (Map.singleton pid completed) `shouldBe` True
+      QueueMetrics.metricsMatch expected Map.empty `shouldBe` False
+      QueueMetrics.metricsMatch expected (Map.singleton (ShibuyaMetrics.ProcessorId "other") completed) `shouldBe` False
+      QueueMetrics.metricsMatch expected (Map.singleton pid retryNotCounted) `shouldBe` False
+      QueueMetrics.metricsMatch expected (Map.singleton pid active) `shouldBe` False
+      QueueMetrics.metricsMatch Map.empty Map.empty `shouldBe` False
+    it "requires one correctly labelled Prometheus value for every worker counter and gauge" do
+      let expected = Map.singleton (ShibuyaMetrics.ProcessorId "worker") (QueueMetrics.WorkerCounts 5 4 1 0)
+          received = "shibuya_messages_received_total{processor=\"worker\"} 5.0"
+          body = Text.unlines [received, "shibuya_messages_processed_total{processor=\"worker\"} 4.0", "shibuya_messages_failed_total{processor=\"worker\"} 1.0", "shibuya_processor_in_flight{processor=\"worker\"} 0.0"]
+      QueueMetrics.prometheusMatch expected body `shouldBe` True
+      QueueMetrics.prometheusMatch expected (Text.replace "4.0" "3.0" body) `shouldBe` False
+      QueueMetrics.prometheusMatch expected (Text.replace "worker" "other" body) `shouldBe` False
+      QueueMetrics.prometheusMatch expected (body <> received <> "\n") `shouldBe` False
+      QueueMetrics.prometheusMatch expected "" `shouldBe` False
+      QueueMetrics.prometheusMatch Map.empty "" `shouldBe` False
   describe "job throughput conservation" do
     it "rejects duplicate handlers and missing or substituted accepted jobs" do
       let expected = Set.fromList ["job-a", "job-b"]

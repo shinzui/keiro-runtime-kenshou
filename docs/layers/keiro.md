@@ -653,6 +653,17 @@ thrown drain handler; the acknowledgement and status mapping, source trace
 parent, FIFO partition, and worker-only inflight attributes are checked against
 the actual deliveries. The contract passes with in-memory tracing and collected
 metrics, and with both disabled.
+
+`worker-metrics-contract` holds one job in its handler and checks one received
+message, zero processed messages, and an in-flight gauge of one. It then releases
+that job and handles Done, Retry followed by Done, and Dead. The native counters
+must finish at five received, four processed, one failed, and zero in flight.
+Shibuya counts the first Retry delivery as processed; the handler-call ledger,
+empty main queue, and original dead payload in the DLQ establish the business
+outcomes independently. The contract supports tracing off or in-memory tracing
+and all four metrics modes. Served JSON and Prometheus responses are checked
+against those counts while work is active and after completion.
+
 `job-throughput` drives open-loop enqueues into bounded drainers or continuous
 `runJobWorkers` processors, selected by `queue.execution-shape=drain|workers`.
 It measures enqueue and enqueue-to-handler-start latency under unordered or
@@ -673,7 +684,20 @@ controlled worker/polling comparisons remain pending. The earlier revision-1
 The three-block local telemetry overhead matrix completed without a failed
 child run. Served and scraped metrics, noop tracing, and SDK OTLP tracing
 passed its comparison policy; the metrics collection arm was inconclusive.
-Queue-specific Shibuya metrics are not yet connected to this benchmark.
+Revision 3 connects native Shibuya metrics to the continuous-worker arm.
+With `telemetry.metrics=collect`, each worker master is sampled at
+`metrics.scrape-interval-ms`; `series/queue-worker-metrics.jsonl` records UTC and
+monotonic timestamps, worker source, sampling kind, and native processor state
+and counters. A completion checkpoint is stored in the telemetry summary
+before workers stop and unregister their processors. `serve` also registers
+private JSON and Prometheus endpoints for each master; `serve-scraped` samples
+those endpoints through the harness scraper. The correctness contract saves
+its active and complete responses under `logs/`. Servers remain alive until
+the scraper finishes. `off` creates no native collector or worker endpoint.
+Bounded drainers expose no Shibuya worker master, so their metrics modes retain
+the generic OpenTelemetry behavior without claiming native worker counters.
+Latency and throughput continue to come from the independent measurement
+recorder in every metrics mode.
 The `enqueue` benchmark records single, batch-10, batch-100, and, when tracing
 is active, `enqueueTraced` call latency. Its 1,100-cycle durable traced run
 passed at benchmark grade, with 123,424 accepted rows and the same queue depth.
