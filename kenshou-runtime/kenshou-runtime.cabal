@@ -40,8 +40,10 @@ library
   exposed-modules:
     Kenshou.Suite.Runtime.System.Contracts
     Kenshou.Suite.Runtime.System.Fulfilment
+    Kenshou.Suite.Runtime.System.Ledger
     Kenshou.Suite.Runtime.System.Model
     Kenshou.Suite.Runtime.System.Order
+    Kenshou.Suite.Runtime.System.SagaLog
 
   build-depends:
     aeson,
@@ -49,6 +51,7 @@ library
     keiki,
     keiro,
     keiro-core,
+    kenshou-keiro,
     kiroku-store,
     text,
 
