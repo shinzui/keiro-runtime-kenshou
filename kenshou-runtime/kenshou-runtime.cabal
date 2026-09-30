@@ -48,6 +48,7 @@ library
     Kenshou.Suite.Runtime.System.Model
     Kenshou.Suite.Runtime.System.Order
     Kenshou.Suite.Runtime.System.SagaLog
+    Kenshou.Suite.Runtime.System.Wire
 
   build-depends:
     aeson,
@@ -77,6 +78,8 @@ test-suite kenshou-runtime-test
     containers,
     hspec,
     hw-kafka-client,
+    keiro,
     keiro-core,
     kenshou-runtime,
+    text,
     time,

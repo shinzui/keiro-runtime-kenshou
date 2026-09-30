@@ -2,22 +2,43 @@ module Main (main) where
 
 import Control.Exception (evaluate)
 import Data.Map.Strict qualified as Map
+import Data.Text (Text)
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import Kafka.Consumer.Types (ConsumerRecord (..), Offset (..), Timestamp (NoTimestamp))
 import Kafka.Types (PartitionId (..), TopicName (..), headersFromList)
 import Keiro.Codec (Codec (..))
+import Keiro.Integration.Event (IntegrationEvent (..))
+import Keiro.Outbox qualified
 import Kenshou.Suite.Runtime.Oracle.Pure qualified as Oracle
-import Kenshou.Suite.Runtime.System.Contracts (CustomerId (..), OrderId (..), Sku (..), TopicPrefix (..), shopTopic, warehouseTopic)
+import Kenshou.Suite.Runtime.System.Contracts (CustomerId (..), OrderId (..), ShopMessage (..), Sku (..), TopicPrefix (..), WarehouseMessage (..), shopTopic, warehouseTopic)
 import Kenshou.Suite.Runtime.System.Fulfilment qualified as Fulfilment
 import Kenshou.Suite.Runtime.System.KafkaBridge qualified as KafkaBridge
 import Kenshou.Suite.Runtime.System.Ledger qualified as Ledger
 import Kenshou.Suite.Runtime.System.Model
 import Kenshou.Suite.Runtime.System.Order qualified as Order
 import Kenshou.Suite.Runtime.System.SagaLog qualified as SagaLog
+import Kenshou.Suite.Runtime.System.Wire qualified as Wire
 import Test.Hspec
 
 main :: IO ()
 main = hspec do
+  describe "two-context public wire contract" do
+    it "routes an order and a warehouse outcome by order key with versioned types" do
+      let at = posixSecondsToUTCTime 0
+          prefix = TopicPrefix "run-1"
+          placed = OrderPlacedV1 (OrderId "order-1") (CustomerId "customer-1") (Sku "sku-1") 2 900 False
+          shipped = FulfilmentShippedV1 (OrderId "order-1") (Sku "sku-1") 2
+          shopDraft = Wire.shopEventDraft prefix at placed
+          warehouseDraft = Wire.warehouseEventDraft prefix at shipped
+          shopEvent = fromDraft shopDraft
+          warehouseEvent = fromDraft warehouseDraft
+      shopDraft.key `shouldBe` Just "order-1"
+      warehouseDraft.key `shouldBe` Just "order-1"
+      Wire.decodeShopEvent prefix shopEvent `shouldBe` Right placed
+      Wire.decodeWarehouseEvent prefix warehouseEvent `shouldBe` Right shipped
+      Wire.decodeWarehouseEvent prefix (fromDraftWithType "fulfilment.refused.v1" warehouseDraft)
+        `shouldBe` Left (Wire.PayloadEventTypeMismatch "fulfilment.refused.v1")
+
   describe "Kafka inbox wire decoding" do
     it "rejects missing payloads and malformed UTF-8 before an inbox receipt" do
       let at = posixSecondsToUTCTime 0
@@ -141,3 +162,27 @@ completedOrder =
     count leg
       | leg `elem` [Oracle.RefundDebit, Oracle.RefundCredit, Oracle.ReleaseDebit, Oracle.ReleaseCredit] = 0
       | otherwise = 1
+
+fromDraft :: Keiro.Outbox.IntegrationEventDraft -> IntegrationEvent
+fromDraft draft = fromDraftWithType draft.eventType draft
+
+fromDraftWithType :: Text -> Keiro.Outbox.IntegrationEventDraft -> IntegrationEvent
+fromDraftWithType wireType draft =
+  IntegrationEvent
+    { messageId = "message-1",
+      source = "shop",
+      destination = draft.destination,
+      key = draft.key,
+      eventType = wireType,
+      schemaVersion = draft.schemaVersion,
+      contentType = draft.contentType,
+      schemaReference = draft.schemaReference,
+      sourceEventId = draft.sourceEventId,
+      sourceGlobalPosition = draft.sourceGlobalPosition,
+      payloadBytes = draft.payloadBytes,
+      occurredAt = draft.occurredAt,
+      causationId = draft.causationId,
+      correlationId = draft.correlationId,
+      traceContext = draft.traceContext,
+      attributes = draft.attributes
+    }
