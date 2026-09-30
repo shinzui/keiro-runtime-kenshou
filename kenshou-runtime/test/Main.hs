@@ -38,6 +38,8 @@ main = hspec do
       Wire.decodeWarehouseEvent prefix warehouseEvent `shouldBe` Right shipped
       Wire.decodeWarehouseEvent prefix (fromDraftWithType "fulfilment.refused.v1" warehouseDraft)
         `shouldBe` Left (Wire.PayloadEventTypeMismatch "fulfilment.refused.v1")
+      Wire.decodeShopEvent prefix (fromDraftWith "order.placed.v1" (Just "other-order") shopDraft)
+        `shouldBe` Left (Wire.UnexpectedKey (Just "other-order"))
 
   describe "Kafka inbox wire decoding" do
     it "rejects missing payloads and malformed UTF-8 before an inbox receipt" do
@@ -167,12 +169,15 @@ fromDraft :: Keiro.Outbox.IntegrationEventDraft -> IntegrationEvent
 fromDraft draft = fromDraftWithType draft.eventType draft
 
 fromDraftWithType :: Text -> Keiro.Outbox.IntegrationEventDraft -> IntegrationEvent
-fromDraftWithType wireType draft =
+fromDraftWithType wireType draft = fromDraftWith wireType draft.key draft
+
+fromDraftWith :: Text -> Maybe Text -> Keiro.Outbox.IntegrationEventDraft -> IntegrationEvent
+fromDraftWith wireType partitionKey draft =
   IntegrationEvent
     { messageId = "message-1",
       source = "shop",
       destination = draft.destination,
-      key = draft.key,
+      key = partitionKey,
       eventType = wireType,
       schemaVersion = draft.schemaVersion,
       contentType = draft.contentType,

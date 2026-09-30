@@ -17,6 +17,7 @@ import Kenshou.Suite.Runtime.System.Contracts (OrderId (..), ShopMessage (..), T
 
 data WireError
   = UnexpectedDestination !Text
+  | UnexpectedKey !(Maybe Text)
   | UnsupportedEventType !Text
   | UnsupportedSchemaVersion !Int
   | PayloadEventTypeMismatch !Text
@@ -58,7 +59,9 @@ draft destination key eventType occurredAt message =
 decodeShopEvent :: TopicPrefix -> IntegrationEvent -> Either WireError ShopMessage
 decodeShopEvent prefix event = do
   checkEnvelope (shopTopic prefix) "order.placed.v1" event
-  either (Left . InvalidBusinessPayload) Right (decodeJsonIntegrationEvent event)
+  message <- either (Left . InvalidBusinessPayload) Right (decodeJsonIntegrationEvent event)
+  checkKey (orderKey message.orderId) event
+  pure message
 
 decodeWarehouseEvent :: TopicPrefix -> IntegrationEvent -> Either WireError WarehouseMessage
 decodeWarehouseEvent prefix event = do
@@ -69,8 +72,13 @@ decodeWarehouseEvent prefix event = do
     else Left (UnsupportedEventType event.eventType)
   message <- either (Left . InvalidBusinessPayload) Right (decodeJsonIntegrationEvent event)
   if warehouseEventType message == event.eventType
-    then Right message
+    then checkKey (orderKey message.orderId) event >> Right message
     else Left (PayloadEventTypeMismatch event.eventType)
+
+checkKey :: Maybe Text -> IntegrationEvent -> Either WireError ()
+checkKey expected event
+  | event.key == expected = Right ()
+  | otherwise = Left (UnexpectedKey event.key)
 
 checkEnvelope :: Text -> Text -> IntegrationEvent -> Either WireError ()
 checkEnvelope destination eventType event = do

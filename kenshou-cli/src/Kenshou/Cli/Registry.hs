@@ -26,13 +26,14 @@ import Kenshou.Suite.Kafka qualified as Kafka
 import Kenshou.Suite.Keiro qualified as Keiro
 import Kenshou.Suite.Kiroku qualified as Kiroku
 import Kenshou.Suite.Pgmq qualified as Pgmq
+import Kenshou.Suite.Runtime qualified as Runtime
 import Kenshou.Suite.Shibuya qualified as Shibuya
 import Kenshou.Telemetry.SelfTest qualified as TelemetrySelftest
 
 -- Extension contract: coverage plans add one imported bundle and one list element;
 -- tool plans add command and topic values here without changing a central sum type.
 bundles :: [LayerBundle]
-bundles = [Selftest.bundle, MeasureSelftest.bundle, CheckSelftest.bundle, DiagnoseSelftest.bundle, TelemetrySelftest.selfTestBundle, RemoteSelftest.bundle, Pgmq.bundle, Kiroku.bundle, Keiro.bundle, Shibuya.bundle, Kafka.bundle]
+bundles = [Selftest.bundle, MeasureSelftest.bundle, CheckSelftest.bundle, DiagnoseSelftest.bundle, TelemetrySelftest.selfTestBundle, RemoteSelftest.bundle, Pgmq.bundle, Kiroku.bundle, Keiro.bundle, Shibuya.bundle, Kafka.bundle, Runtime.bundle]
 
 commands :: [CliCommand]
 commands = [listCommand, planCommand, Help.helpCommand, runCommand, executeCommand, cellCommand, overheadCommand, Measure.summarizeCommand, Measure.compareCommand, Diagnose.diagnoseCommand, historyCommand, recordCommand, attestCommandWith [runOutcomeRecomputer, measurementRecomputer, pairedComparisonRecomputer], evidenceCommand, workerCommand, cohortCommand, completionsCommand]

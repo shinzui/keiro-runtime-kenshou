@@ -77,6 +77,7 @@ library
     kenshou-measure,
     kenshou-pgmq,
     kenshou-remote,
+    kenshou-runtime,
     kenshou-shibuya,
     kenshou-telemetry,
     optparse-applicative >=0.19 && <0.20,

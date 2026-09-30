@@ -38,6 +38,8 @@ library
   import: warnings
   hs-source-dirs: src
   exposed-modules:
+    Kenshou.Suite.Runtime
+    Kenshou.Suite.Runtime.Correctness.WireRoundtrip
     Kenshou.Suite.Runtime.Oracle.Pure
     Kenshou.Suite.Runtime.System.Broker
     Kenshou.Suite.Runtime.System.Context
