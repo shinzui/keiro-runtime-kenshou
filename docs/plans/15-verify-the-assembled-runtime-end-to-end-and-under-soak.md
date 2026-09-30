@@ -42,12 +42,13 @@ You can see it working when `kenshou run runtime/order-flow/correctness/happy-pa
 
 ## Progress
 
-- [x] (2026-09-30) Started `kenshou-runtime` with versioned shop and warehouse wire-message contracts and an independent pure order/fulfilment state model. Fifteen domain tests pass, including the ship-versus-expire race, terminal-command rejection, three Keiki graph validations, versioned event-codec round trips, ledger amount guards, and a pure per-order effect-count checker that rejects a doctored double capture. The order aggregate implements `NotPlaced → Placed → Completed | Rejected | Expired`; the fulfilment aggregate implements `NotRequested → Requested → Shipped | Expired` and `NotRequested → Refused` against the pinned cohort. A one-state saga stream records repeatable observations, and `System.Ledger` is the sole import seam for the Keiro account fixture with checked `Int64`-to-`Int` conversion. The broker seam now creates both run-scoped topics and consumer-group names through `Kenshou.Env.Kafka`, with cleanup for external brokers. This is the domain foundation for Milestones 1 and 2; the SQL-backed independent oracle, money and stock conservation, two-context process system, and end-to-end run do not exist yet.
+- [x] (2026-09-30) Started `kenshou-runtime` with versioned shop and warehouse wire-message contracts and an independent pure order/fulfilment state model. Sixteen package tests pass, including the ship-versus-expire race, terminal-command rejection, three Keiki graph validations, versioned event-codec round trips, ledger amount guards, a pure per-order effect-count checker that rejects a doctored double capture, and preservation of a stored outbox trace without an active span. The order aggregate implements `NotPlaced → Placed → Completed | Rejected | Expired`; the fulfilment aggregate implements `NotRequested → Requested → Shipped | Expired` and `NotRequested → Refused` against the pinned cohort. A one-state saga stream records repeatable observations, and `System.Ledger` is the sole import seam for the Keiro account fixture with checked `Int64`-to-`Int` conversion. The broker seam creates both run-scoped topics and consumer-group names through `Kenshou.Env.Kafka`, with cleanup for external brokers. The publisher bridge converts Keiro outbox rows to Kafka records, waits for each broker acknowledgement, refreshes active trace headers, and stops later rows in a failed ordering group while independent groups continue. This is the domain foundation for Milestones 1 and 2; a broker-backed runtime run, SQL-backed independent oracle, money and stock conservation, two-context process system, and end-to-end run do not exist yet.
 - [ ] Deliver the two-context reference system, end-to-end invariants and failure matrix, gated soaks, benchmarks, and whole-runtime telemetry comparison; verify the assembled-runtime acceptance in Validation and Acceptance.
 
 ## Surprises & Discoveries
 
 - The local Kafka fixture's `topicName` and `groupName` accept only lowercase ASCII letters, digits, and hyphens in a suffix. The original dotted topic sketch did not satisfy that naming contract. The broker seam now uses `shop-events` and `warehouse-events` suffixes with the fixture's run prefix, so topic cleanup can recognize both.
+- `injectTraceContext` returns its input unchanged when there is no active producer span. Removing stored trace headers before calling it would erase provenance in that case. The bridge retains stored trace headers without a span and replaces them only when a live span supplies a new context.
 
 
 ## Decision Log
@@ -111,6 +112,10 @@ You can see it working when `kenshou run runtime/order-flow/correctness/happy-pa
 
 - Decision: Use the Kafka fixture's run-scoped hyphenated topic names, `<run-prefix>-shop-events` and `<run-prefix>-warehouse-events`, with `createTopics` and its matching cleanup.
   Rationale: `Kenshou.Env.Kafka.Naming` validates suffixes without dots and owns the run prefix. Using its names keeps creation, consumer groups, and cleanup within one supported boundary.
+  Date: 2026-09-30
+
+- Decision: The outbox publisher callback acknowledges each Kafka record before returning `PublishSucceeded`, and after a failure it skips only successors in that row's Keiro ordering group.
+  Rationale: Keiro's `publishClaimedOutbox` counts a failed first row in each group as an attempt; skipping unrelated groups would consume attempts without trying to publish them. Its own group finalizer skips later rows of a failed group without consuming their attempts.
   Date: 2026-09-30
 
 

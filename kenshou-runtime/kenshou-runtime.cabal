@@ -42,6 +42,7 @@ library
     Kenshou.Suite.Runtime.System.Broker
     Kenshou.Suite.Runtime.System.Contracts
     Kenshou.Suite.Runtime.System.Fulfilment
+    Kenshou.Suite.Runtime.System.KafkaBridge
     Kenshou.Suite.Runtime.System.Ledger
     Kenshou.Suite.Runtime.System.Model
     Kenshou.Suite.Runtime.System.Order
@@ -50,8 +51,11 @@ library
   build-depends:
     aeson,
     base,
+    bytestring,
     containers,
+    effectful,
     hw-kafka-client,
+    kafka-effectful,
     keiki,
     keiro,
     keiro-core,

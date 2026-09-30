@@ -6,6 +6,7 @@ import Keiro.Codec (Codec (..))
 import Kenshou.Suite.Runtime.Oracle.Pure qualified as Oracle
 import Kenshou.Suite.Runtime.System.Contracts (CustomerId (..), OrderId (..), Sku (..), TopicPrefix (..), shopTopic, warehouseTopic)
 import Kenshou.Suite.Runtime.System.Fulfilment qualified as Fulfilment
+import Kenshou.Suite.Runtime.System.KafkaBridge qualified as KafkaBridge
 import Kenshou.Suite.Runtime.System.Ledger qualified as Ledger
 import Kenshou.Suite.Runtime.System.Model
 import Kenshou.Suite.Runtime.System.Order qualified as Order
@@ -14,6 +15,11 @@ import Test.Hspec
 
 main :: IO ()
 main = hspec do
+  describe "outbox Kafka trace headers" do
+    it "keeps the stored trace when no producer span is active" do
+      let headers = [("traceparent", "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"), ("keiro-message-id", "m-1")]
+      KafkaBridge.liveTraceHeaders headers `shouldReturn` headers
+
   describe "run-scoped broker names" do
     it "uses the Kafka fixture's valid suffixes for both context topics" do
       shopTopic (TopicPrefix "run-1") `shouldBe` "run-1-shop-events"
