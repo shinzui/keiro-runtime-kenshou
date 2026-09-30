@@ -1,6 +1,7 @@
 # runs/keiro/2026/09 Update Log
 
 ## 2026-09-30
+* **Addition**: Recorded run 01a0f01e-9ec4-7335-94e8-280a36cf2eac (keiro/outbox/soak/table-growth-reduced, failed).
 * **Addition**: Recorded run 01a0f055-c3bf-774f-9e85-993b6c0d5bb6 (keiro/outbox/soak/table-growth-reduced, inconclusive).
 * **Addition**: Recorded run 01a0f02e-688c-7400-a8d6-c2a74ac42e44 (keiro/outbox/soak/table-growth-reduced, inconclusive).
 * **Addition**: Recorded run 01a0f027-28c8-74bc-873a-f857e53473cd (keiro/inbox/soak/dedupe-window-reduced, passed).

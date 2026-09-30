@@ -87,6 +87,20 @@ throughput comparison. The flat thread series under frequent collection
 suggests collection timing contributes to the earlier count, but does not
 establish whether any object is retained or who owns it.
 
+The twenty-minute default-rate outbox run on clean alpha, cell
+`01a0f070-83c2-75cb-a4f0-515241b13d94` with [digest-linked nested
+run](../verification/runs/keiro/2026/09/01a0f01e-9ec4-7335-94e8-280a36cf2eac.md), sealed and verified after 20
+publisher restarts. All eight business checks held over 24,202 accepted
+messages and exactly 24,202 unique broker records; there were no publisher or
+maintenance errors, the backlog drained, and table and dead-tuple bounds
+held. During the 20-minute steady window, main Haskell threads rose from 142
+to 157, giving a `leak-suspected` diagnostic verdict and a failed overall
+outcome. Native bytes, OS threads, descriptors, and connections were stable;
+the heap probe again had no eligible post-major samples. The increase is
+smaller than the restart count, unlike the short arms, so the current evidence
+does not justify a one-thread-per-restart claim. It does show a persistent
+default-collection thread-growth signal under this workload.
+
 Reproduce with:
 
 ```bash
@@ -99,6 +113,6 @@ cabal run kenshou -- run keiro/command/soak/write-side-steady-state-reduced \
 ```
 
 Next, run a minimal supervisor loop without the Keiro workers and inspect
-live thread references after each child exit. The no-restart and forced-GC
-comparisons are complete; a longer default-collection restart window is
-running to test persistence and heap retention.
+live thread references after each child exit. The no-restart, forced-GC and
+longer default-collection comparisons are complete; heap retention and owner
+attribution remain open.
