@@ -57,6 +57,11 @@ provenance:
       at: 2026-09-29T20:33:51Z
       mode: "implement"
       note: "Recorded clean replay and passing PGMQ cell control."
+    - model: "gpt-6-sol"
+      harness: "codex-cli"
+      at: 2026-09-30T01:50:15Z
+      mode: "implement"
+      note: "Documented reset-failed cell attempt and excluded it from runtime evidence"
 ---
 
 # Run kenshou on leased cells with payloads, submission and retrieval
@@ -148,6 +153,7 @@ Every kenshou run that executed on a cell remains an ordinary kenshou run direct
 - [x] (2026-09-29) Validated the one-time GCS token refresh with the focused mock-server test and the full 104-example remote-client suite; both passed.
 - [x] (2026-09-29) Reran the layer-ladder A/A under one fresh lease after the token fix: ten completed, verified slices and no GCS authorization failure. The five-pair comparison is inconclusive on p99; clean replay of the same sealed trees yielded `01a0eeb8-8fbd-74b7-9dbe-25c1d41b64ae` with `harnessDirty=false` and the same verdict.
 - [x] (2026-09-29) Completed a five-pair invisible-backlog A/A under one alpha lease with ten verified, benchmark-grade slices and zero operation failures. Clean comparison `01a0eec9-b954-7637-a4ff-419acf5efd5c` passed all four metrics. A brokerless Kafka cell attempt is excluded from runtime evidence; corrected catalog routing now rejects it before submission as `NeedsBrokerButCellHasNone` ([finding 40](../findings/40-kenshou-kafka-scenarios-omit-broker-requirement.md)).
+- [x] (2026-09-29) A revised Keiro default-rate replay sealed as alpha cell run `01a0efe8-fd67-72b9-90f8-c5ad281242e3` with `infrastructure-failure` and `reset-failed` before any nested scenario executed. Reset evidence says `role-reset` failed after three minutes, and the alpha PostgreSQL VM was then found terminated while the driver and monitoring VMs remained running. A manual PostgreSQL VM start allowed the next cold reset and scenario to reach `Running`; the cause of the unexpected termination remains under investigation. The failed cell run is excluded from Keiro runtime findings and comparison evidence.
 - [ ] Deliver the content-addressed Kenshou payload and `kenshou cell` lifecycle, paired comparisons within a lease, and equivalent local/cell correctness evidence; verify the acceptance commands in Validation and Acceptance.
 
 ## Surprises & Discoveries

@@ -6,9 +6,10 @@ import Kenshou.Suite.Keiro.Inbox.Bench qualified as Bench
 import Kenshou.Suite.Keiro.Inbox.Concurrency qualified as Concurrency
 import Kenshou.Suite.Keiro.Inbox.Correctness qualified as Correctness
 import Kenshou.Suite.Keiro.Inbox.Roles qualified as Roles
+import Kenshou.Suite.Keiro.Inbox.Soak qualified as Soak
 
 scenarios :: [Scenario]
-scenarios = Correctness.scenarios <> Concurrency.scenarios <> Bench.scenarios
+scenarios = Correctness.scenarios <> Concurrency.scenarios <> Bench.scenarios <> Soak.scenarios
 
 roles :: [WorkerRole]
 roles = Roles.roles

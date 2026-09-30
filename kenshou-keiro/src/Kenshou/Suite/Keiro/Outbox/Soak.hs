@@ -6,13 +6,11 @@ import Control.Exception (finally)
 import Control.Monad (forever, unless)
 import Data.Aeson (object, (.=))
 import Data.IORef (atomicModifyIORef', newIORef, readIORef, writeIORef)
-import Data.List (sort)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
-import Data.Text.IO qualified as TextIO
 import Data.Time (getCurrentTime)
 import Keiro.Outbox (OutboxPublishOptions (..), OutboxPublishSummary (..), OutboxRow (..), OutboxStatus (..), countOutboxBacklog, defaultMaintenanceOptions, defaultPublishOptions, enqueueIntegrationEventTx, freshOutboxId, garbageCollectSent, listOutbox, outboxMaintenancePass, publishClaimedOutbox)
 import Keiro.Outbox qualified as Outbox
@@ -35,13 +33,12 @@ import Kenshou.Measure.Session (MeasureConfig (..), measureConfigFromKnobs, meas
 import Kenshou.Measure.Session qualified as Measure
 import Kenshou.Suite.Keiro.Command.Correctness (recordCells)
 import Kenshou.Suite.Keiro.Fixture.Runtime (FixtureEnv (..), KeiroRunner (..), KeiroTelemetry (..), keiroTelemetry, withFixtureTelemetryEnv)
+import Kenshou.Suite.Keiro.Messaging.RelationGrowth (RelationGrowth (..), bytesPerInsertedRow, deadTuplesBounded, readRelationGrowth, sizeBounded)
 import Kenshou.Suite.Keiro.Outbox.Broker qualified as Broker
 import Kenshou.Suite.Keiro.Outbox.Workload (inlineEvent, sourceName)
 import Kenshou.Telemetry (telemetryKnobs, telemetrySpecFromContext, withTelemetry)
 import Kiroku.Store (defaultConnectionSettings, runTransaction)
-import System.FilePath ((</>))
 import System.Timeout (timeout)
-import Text.Read (readMaybe)
 
 scenarios :: [Scenario]
 scenarios = [tableGrowth False, tableGrowth True]
@@ -178,17 +175,13 @@ runTableGrowth context = case (measureConfigFromKnobs context (phasePlanFromCore
         publishFailures <- readIORef publisherErrors
         maintenanceFailures <- readIORef maintenanceErrors
         killCount <- readIORef kills
-        growth <- relationGrowth context "keiro.keiro_outbox"
+        growth <- readRelationGrowth context "keiro.keiro_outbox"
         let completed = fromIntegral loadReport.completed :: Int
             expected = Set.fromList [TextEncoding.encodeUtf8 (Text.pack (show index)) | index <- [0 .. completed - 1]]
             received = Set.fromList (map (.payload) brokerRows)
             duplicates = length brokerRows - Set.size received
-            growthBounded = case growth of
-              Nothing -> False
-              Just (early, late, _, _, _, _) -> late <= early + 8 * 1024 * 1024
-            deadTupleBounded = case growth of
-              Nothing -> False
-              Just (_, _, early, late, _, _) -> late <= early + fromIntegral (max 1000 (rateInt * max 60 (round retention) * 2))
+            growthBounded = maybe False (sizeBounded (8 * 1024 * 1024)) growth
+            deadTupleBounded = maybe False (deadTuplesBounded (fromIntegral (max 1000 (rateInt * max 60 (round retention) * 2)))) growth
             cells =
               [ ("enqueue-load-completed", completed > 0 && loadReport.failed == 0 && not loadReport.abortedEarly),
                 ("no-loss", drained == Just True && backlog == 0 && received == expected),
@@ -201,38 +194,12 @@ runTableGrowth context = case (measureConfigFromKnobs context (phasePlanFromCore
               ]
             duration = fromIntegral minutes * 60 :: Double
             leakSpec = defaultLeakSpec {warmupCutSeconds = 0, minDurationSeconds = max 30 (duration * 0.7), minPoints = 10, envelopeWindowSeconds = max 2 (min 30 (duration / 40))}
-        putSummary context Measurements "outbox-table-growth" (object ["completed" .= completed, "brokerRecords" .= length brokerRows, "uniqueBrokerMessages" .= Set.size received, "duplicates" .= duplicates, "rowsRetained" .= length rows, "backlog" .= backlog, "workerKills" .= killCount, "publisherErrors" .= publishFailures, "maintenanceErrors" .= maintenanceFailures, "gc" .= gcEnabled, "growth" .= fmap (\(early, late, firstDead, lastDead, firstInserts, lastInserts) -> object ["earlyBytes" .= early, "lateBytes" .= late, "earlyDeadTuples" .= firstDead, "lateDeadTuples" .= lastDead, "earlyInserts" .= firstInserts, "lateInserts" .= lastInserts, "bytesPerInsertedRow" .= (if lastInserts > firstInserts then Just (fromIntegral (late - early) / fromIntegral (lastInserts - firstInserts) :: Double) else Nothing), "sizeBounded" .= growthBounded, "deadTuplesBounded" .= deadTupleBounded]) growth])
+        putSummary context Measurements "outbox-table-growth" (object ["completed" .= completed, "brokerRecords" .= length brokerRows, "uniqueBrokerMessages" .= Set.size received, "duplicates" .= duplicates, "rowsRetained" .= length rows, "backlog" .= backlog, "workerKills" .= killCount, "publisherErrors" .= publishFailures, "maintenanceErrors" .= maintenanceFailures, "gc" .= gcEnabled, "growth" .= fmap (\sample -> object ["earlyBytes" .= sample.earlyBytes, "lateBytes" .= sample.lateBytes, "earlyDeadTuples" .= sample.earlyDeadTuples, "lateDeadTuples" .= sample.lateDeadTuples, "earlyInserts" .= sample.earlyInserts, "lateInserts" .= sample.lateInserts, "bytesPerInsertedRow" .= bytesPerInsertedRow sample, "sizeBounded" .= growthBounded, "deadTuplesBounded" .= deadTupleBounded]) growth])
         base <- recordCells context cells
         leak <- judgeLeaksWithWindow context (Just (5, 5 + duration)) leakSpec
         pure (base {outcome = worstOutcome (base.outcome :| [measuredOutcome measurement base.outcome, leakOutcome leak, if gcEnabled && minutes >= 10 && growth == Nothing then Inconclusive else Passed])})
   where
     minutes = fromIntegral (knobInt context.knobs (name "soak.duration-minutes")) :: Int
-
--- Compare the median sampled relation size, dead-tuple count and inserts in the
--- middle and final quarters of the steady phase, after the initial warm-up.
-relationGrowth :: RunContext -> Text -> IO (Maybe (Integer, Integer, Integer, Integer, Integer, Integer))
-relationGrowth context relation = do
-  content <- TextIO.readFile (context.outDir </> "series" </> "pg-relations.csv")
-  let samples =
-        [ (bytes, dead, inserts)
-        | line <- drop 1 (Text.lines content),
-          let columns = Text.splitOn "," line,
-          length columns >= 10,
-          columns !! 2 == "steady",
-          columns !! 3 == relation,
-          Just bytes <- [readMaybe (Text.unpack (columns !! 6))],
-          Just dead <- [readMaybe (Text.unpack (columns !! 8))],
-          Just inserts <- [readMaybe (Text.unpack (columns !! 9))]
-        ]
-      count = length samples
-      quarter = count `div` 4
-      median values = sort values !! (length values `div` 2)
-      early = take quarter (drop (count `div` 2) samples)
-      late = drop (count - quarter) samples
-  pure $
-    if quarter < 10
-      then Nothing
-      else Just (median [bytes | (bytes, _, _) <- early], median [bytes | (bytes, _, _) <- late], median [dead | (_, dead, _) <- early], median [dead | (_, dead, _) <- late], median [inserts | (_, _, inserts) <- early], median [inserts | (_, _, inserts) <- late])
 
 intKnob :: Text -> Int -> Int -> Int -> KnobSpec
 intKnob key def low high = KnobSpec (name key) key KnobInt (VInt (fromIntegral def)) (IntRange (fromIntegral low) (fromIntegral high)) []

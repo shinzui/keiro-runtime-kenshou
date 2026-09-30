@@ -529,6 +529,17 @@ scenarios reproduced their scoped known defects without a blocking failure.
 
 ## Inbox
 
+`keiro/inbox/soak/dedupe-window` and its reduced arm continuously deliver
+fresh messages, schedule redeliveries before and after the two-minute completed
+receipt retention period, and collect expired receipts every 30 seconds. They
+check that early redelivery is suppressed, late redelivery reruns the handler,
+the effect count matches both groups, and inbox rows, relation size, dead
+tuples, and process resources remain bounded. A one-minute local wiring smoke
+processed 71 fresh messages, suppressed all 71 early redeliveries, and
+reprocessed all 71 late redeliveries with 142 effects and no classification or
+GC errors. Its short heap verdict is diagnostic only; controlled reduced and
+full runs are still required.
+
 `intake-throughput` measures fresh and redelivered intake through the inbox
 table or delegated account-stream command receipts. It varies batch size,
 consumer count, payload size, redelivery ratio, and table persistence, then

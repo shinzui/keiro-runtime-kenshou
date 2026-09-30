@@ -64,3 +64,5 @@ children on the released cohort. Its default-rate business checks did not
 quiesce within the fixed drain budget; [finding 44](44-keiro-write-side-default-soak-does-not-quiesce.md)
 tracks that separate, unattributed observation. This cell run strengthens
 the released-cohort leak baseline without serving as a post-fix check.
+
+The [same-seed twenty-minute 20-command/s control](../verification/runs/keiro/2026/09/01a0ef66-959b-7285-87b6-1b2924e04d1e.md) passed all business checks and again suspected router heap growth on the released cohort. The process-manager heap had too few eligible major-GC samples in this control. Both command writers also showed a new sustained post-major heap signal, tracked separately in [finding 46](46-keiro-command-writers-grow-heap-in-low-rate-soak.md) until a writer-only control or heap profile distinguishes harness retention from a runtime defect.
