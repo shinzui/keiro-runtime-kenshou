@@ -29,4 +29,5 @@
 - [keiro/queue/soak/queue-and-dlq-growth-reduced inconclusive on released](01a0f027-6fcb-77d8-889d-78ab23e87e4c.md) - Recorded keiro/queue/soak/queue-and-dlq-growth-reduced run against cohort released with digest-pinned data.
 - [keiro/outbox/soak/table-growth-reduced inconclusive on released](01a0f02e-688c-7400-a8d6-c2a74ac42e44.md) - Recorded keiro/outbox/soak/table-growth-reduced run against cohort released with digest-pinned data.
 - [keiro/outbox/soak/table-growth-reduced inconclusive on released](01a0f055-c3bf-774f-9e85-993b6c0d5bb6.md) - Recorded keiro/outbox/soak/table-growth-reduced run against cohort released with digest-pinned data.
+- [keiro/queue/soak/queue-and-dlq-growth-reduced passed on released](01a0f056-3861-703f-9c5d-f1a689409a8c.md) - Recorded keiro/queue/soak/queue-and-dlq-growth-reduced run against cohort released with digest-pinned data.
 
