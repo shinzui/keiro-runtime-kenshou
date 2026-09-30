@@ -140,12 +140,18 @@ planSelection options suite graph catalog = case (traverse (parseSelector) optio
                 changedSelected = deduplicate (componentSelected <> pathSelected)
                 suiteSelected = maybe changedSelected (\suiteValue -> applySuite suiteValue catalog changedSelected) suite
                 selected = applySelectors includes excludes (deduplicate suiteSelected)
-            if options.explain
-              then renderSelection True changes warnings selected >> pure ExitSuccess
-              else writeRunPlan options suite graph catalog changes warnings selected
+                unmatchedPins = [name | raw <- options.knobPins, let (name, _) = splitAssignment raw, all (\selection -> not (declares name selection.scenario)) selected]
+            if not (null unmatchedPins)
+              then usage ("no selected scenario declares knob: " <> Text.intercalate ", " unmatchedPins)
+              else
+                if options.explain
+                  then renderSelection True changes warnings selected >> pure ExitSuccess
+                  else writeRunPlan options suite graph changes warnings selected
+  where
+    declares name scenario = any ((== name) . renderKnobName . (.name)) scenario.knobs
 
-writeRunPlan :: PlanOptions -> Maybe Suite -> ComponentGraph -> [ScenarioInfo] -> [Change] -> [Warning] -> [Selected] -> IO ExitCode
-writeRunPlan options suite graph catalog changes warnings selected = do
+writeRunPlan :: PlanOptions -> Maybe Suite -> ComponentGraph -> [Change] -> [Warning] -> [Selected] -> IO ExitCode
+writeRunPlan options suite graph changes warnings selected = do
   seedResult <- makeSeed options.seedValue
   cohortResult <- first (("unable to resolve cohort identity: " <>) . Text.pack . show) <$> resolveDefaultCohortIdentity
   case (seedResult, cohortResult, (\seed -> makePolicy options suite seed) =<< seedResult) of
@@ -153,8 +159,7 @@ writeRunPlan options suite graph catalog changes warnings selected = do
     (_, Left err, _) -> usage err
     (_, _, Left err) -> usage err
     (Right _, Right cohort, Right policy) -> do
-      let unknownPins = [name | raw <- options.knobPins, let (name, _) = splitAssignment raw, all (not . declares name) catalog]
-          context =
+      let context =
             PlanContext
               { suite = fmap (.name) suite,
                 graphDigest = Components.graphDigest graph,
@@ -162,7 +167,7 @@ writeRunPlan options suite graph catalog changes warnings selected = do
                 cohortPlanHash = Cohort.unPlanHash cohort.identityPlanHash,
                 inputs = PlanInputs (inputValue options),
                 changes,
-                warnings = fmap (.message) warnings <> fmap ("no selected scenario declares knob " <>) unknownPins
+                warnings = fmap (.message) warnings
               }
       plan <- stampPlan (buildPlan context policy selected)
       let bytes = Aeson.encode plan
@@ -171,8 +176,6 @@ writeRunPlan options suite graph catalog changes warnings selected = do
         Just path -> LazyByteString.writeFile path bytes
       Text.IO.hPutStrLn stderr ("planned " <> Text.pack (show (length plan.runs)) <> " runs, estimate " <> Text.pack (show plan.estimateMinutes) <> " min, " <> Text.pack (show (length plan.skipped)) <> " skipped")
       pure ExitSuccess
-  where
-    declares name scenario = any ((== name) . renderKnobName . (.name)) scenario.knobs
 
 makeSeed :: Maybe Integer -> IO (Either Text Id.Seed)
 makeSeed (Just value)

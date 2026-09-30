@@ -72,6 +72,22 @@ main = hspec do
     it "returns success for help" do
       runWithArgs ["--help"] `shouldReturnCode` ExitSuccess
 
+    it "rejects a pinned knob absent from every selected scenario" $
+      withSystemTempDirectory "kenshou-plan-pin" \root -> do
+        let output = root </> "run-plan.json"
+        runWithArgs
+          [ "plan",
+            "--all",
+            "--select",
+            "keiro/outbox/soak/table-growth-reduced",
+            "--set",
+            "diagnose.major-gc-interval-ms=5000",
+            "--out",
+            output
+          ]
+          `shouldReturnCode` ExitFailure 2
+        doesFileExist output `shouldReturn` False
+
     it "returns success for command-specific help" do
       runWithArgs ["record", "--help"] `shouldReturnCode` ExitSuccess
       runWithArgs ["attest", "--help"] `shouldReturnCode` ExitSuccess

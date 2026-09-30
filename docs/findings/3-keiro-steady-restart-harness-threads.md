@@ -52,6 +52,14 @@ and counted threads is a focused harness clue, not proof that the same retained
 object caused the earlier write-side signal. A matched no-restart or forced-GC
 control is needed before changing the leak policy or assigning an owner defect.
 
+A second clean alpha outbox run, cell `01a0f025-946f-73e8-bfc9-8f7d0b79d871`
+and [digest-linked nested run](../verification/runs/keiro/2026/09/01a0f01d-96e0-747d-838f-053d4518fb4f.md), repeated all eight
+passing business checks and the exact 142-to-152 thread increase after ten
+restarts. It was intended as a forced-major-GC control, but [finding 48](48-plan-silently-drops-knob-pinned-for-another-scenario.md)
+shows that the planner omitted the undeclared GC knob from its run spec. The
+second run is a same-seed repeat, not a GC control. A valid no-restart plan has
+`outbox.kill-interval-seconds=0` in its resolved run spec and remains to run.
+
 Reproduce with:
 
 ```bash

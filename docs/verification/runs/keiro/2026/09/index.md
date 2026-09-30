@@ -22,4 +22,6 @@
 - [keiro/command/soak/write-side-steady-state-reduced failed on released](01a0eff0-81f8-721c-8994-7b922ee544c3.md) - Recorded keiro/command/soak/write-side-steady-state-reduced run against cohort released with digest-pinned data.
 - [keiro/inbox/soak/dedupe-window-reduced inconclusive on released](01a0f00a-5f36-746a-b7de-4e66168494da.md) - Recorded keiro/inbox/soak/dedupe-window-reduced run against cohort released with digest-pinned data.
 - [keiro/outbox/soak/table-growth-reduced failed on released](01a0f013-99ac-7155-aa00-bab4827de47e.md) - Recorded keiro/outbox/soak/table-growth-reduced run against cohort released with digest-pinned data.
+- [keiro/outbox/soak/table-growth-reduced failed on released](01a0f01d-96e0-747d-838f-053d4518fb4f.md) - Recorded keiro/outbox/soak/table-growth-reduced run against cohort released with digest-pinned data.
+- [keiro/queue/soak/queue-and-dlq-growth-reduced inconclusive on released](01a0f021-2f7f-7272-86c4-938bd4e7663b.md) - Recorded keiro/queue/soak/queue-and-dlq-growth-reduced run against cohort released with digest-pinned data.
 
