@@ -6,10 +6,11 @@ import Kenshou.Suite.Keiro.Queue.Bench qualified as Bench
 import Kenshou.Suite.Keiro.Queue.Concurrency qualified as Concurrency
 import Kenshou.Suite.Keiro.Queue.Correctness qualified as Correctness
 import Kenshou.Suite.Keiro.Queue.Roles qualified as Roles
+import Kenshou.Suite.Keiro.Queue.Soak qualified as Soak
 import Kenshou.Suite.Keiro.Queue.Telemetry qualified as Telemetry
 
 scenarios :: [Scenario]
-scenarios = Correctness.scenarios <> Concurrency.scenarios <> Telemetry.scenarios <> Bench.scenarios
+scenarios = Correctness.scenarios <> Concurrency.scenarios <> Telemetry.scenarios <> Bench.scenarios <> Soak.scenarios
 
 roles :: [WorkerRole]
 roles = Roles.roles

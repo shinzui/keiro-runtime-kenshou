@@ -521,7 +521,11 @@ and dead-tuple growth, and a process leak verdict. With GC off, the summary
 reports bytes per inserted row. A one-minute, two-message/second local smoke
 exercised seven restarts and passed its business checks; its leak verdict and
 workstation measurements are diagnostic only. The controlled twenty-minute
-reduced soak and four-hour full soak have not yet run.
+reduced soak and four-hour full soak have not yet run. A clean five-minute
+alpha cell control passed all eight business checks after ten restarts, but
+its main-process Haskell thread count rose by ten and its heap probe lacked
+post-major samples. [Finding 3](../findings/3-keiro-steady-restart-harness-threads.md)
+tracks that harness signal pending an isolation control.
 
 The eleven correctness and concurrency outbox scenarios completed at their default settings on
 durable PostgreSQL. Nine passed. The inline-order and zombie-finalization
@@ -623,6 +627,23 @@ second effect with a replacement receipt; the targeted query barrier resolves
 that ambiguity.
 
 ## Job queue
+
+`keiro/queue/soak/queue-and-dlq-growth` and its reduced arm continuously
+enqueue jobs while two worker loops handle them. Every twentieth job defaults
+to terminal `Dead`; `queue.dead-every` changes that share. The per-job effect
+ledger is written to PostgreSQL and checked after the
+measurement window, so the soak does not retain every job ID in process heap.
+With `queue.dlq-maintenance=on`, a maintenance loop archives visible DLQ rows during
+the steady phase and a final quiesced pass archives the rest before a safe
+purge. With maintenance off, the active DLQ retains the dead jobs. The oracle
+checks each accepted payload was handled once, the main queue drained and its
+sampled depth stayed bounded, and the exact dead count landed in the active
+DLQ or its archive. It also samples relation and dead-tuple growth and judges
+process resources. A one-minute local wiring smoke with maintenance on handled
+71 jobs and archived all 15 terminal jobs; all nine business checks held. The
+maintenance-off smoke also handled 71 jobs and retained exactly 15 active DLQ
+rows with none archived. Both short leak verdicts were inconclusive. Controlled
+reduced and full runs are still required.
 
 The queue scenarios provision PGMQ through the harness migration and run
 Keiro's typed job API through its separate runtime pool.

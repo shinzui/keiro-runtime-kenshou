@@ -21,7 +21,7 @@ where
 
 import Control.Concurrent (forkIO, killThread, threadDelay)
 import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newMVar, readMVar)
-import Control.Exception (SomeAsyncException, SomeException, bracket, fromException, throwIO, try)
+import Control.Exception (SomeAsyncException, SomeException, bracket, displayException, fromException, throwIO, try)
 import Control.Monad (unless)
 import Data.Aeson (FromJSON (..), ToJSON (..), eitherDecode, encode, object, withObject, (.:), (.=))
 import Data.ByteString.Lazy qualified as LazyByteString
@@ -29,9 +29,10 @@ import Data.Int (Int64)
 import Data.Maybe (isJust)
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Data.Time (UTCTime, addUTCTime)
+import Data.Time (UTCTime, addUTCTime, getCurrentTime)
 import Kenshou.Core.Id (RunId, newRunId)
 import Kenshou.Remote.Store (Bucket, ObjectMeta (..), ObjectName (..), ObjectStore (..), Precondition (..), PutOutcome (..))
+import System.IO (hPutStrLn, stderr)
 
 data CellRef = CellRef
   { cellName :: !Text,
@@ -242,12 +243,22 @@ withHeartbeat store ref handle action = bracket start killThread (const (action 
       if held
         then do
           threadDelay (max 100000 (lease.ttlSeconds * 1000000 `div` 3))
-          result <- try (renewLease store ref handle) :: IO (Either SomeException Bool)
-          case result of
-            Right True -> loop
-            Left failure | Just async <- (fromException failure :: Maybe SomeAsyncException) -> throwIO async
-            _ -> modifyMVar_ handle.state \(current, generation, _) -> pure (current, generation, False)
+          renew
         else pure ()
+    renew = do
+      result <- try (renewLease store ref handle) :: IO (Either SomeException Bool)
+      case result of
+        Right True -> loop
+        Right False -> markLost
+        Left failure | Just async <- (fromException failure :: Maybe SomeAsyncException) -> throwIO async
+        Left failure -> do
+          hPutStrLn stderr ("cell lease heartbeat renewal failed; retrying before TTL: " <> displayException failure)
+          current <- leaseSnapshot handle
+          now <- getCurrentTime
+          if now <= addUTCTime (fromIntegral current.ttlSeconds + 30) current.heartbeatAt
+            then threadDelay 1000000 >> renew
+            else markLost
+    markLost = modifyMVar_ handle.state \(current, generation, _) -> pure (current, generation, False)
 
 newHandle :: Lease -> Int64 -> IO LeaseHandle
 newHandle lease generation = LeaseHandle <$> newMVar (lease, generation, True)

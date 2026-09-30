@@ -87,6 +87,7 @@ library
     Kenshou.Suite.Keiro.Queue.Concurrency
     Kenshou.Suite.Keiro.Queue.Correctness
     Kenshou.Suite.Keiro.Queue.Roles
+    Kenshou.Suite.Keiro.Queue.Soak
     Kenshou.Suite.Keiro.Queue.Telemetry
     Kenshou.Suite.Keiro.Router.Bench
     Kenshou.Suite.Keiro.Router.Concurrency

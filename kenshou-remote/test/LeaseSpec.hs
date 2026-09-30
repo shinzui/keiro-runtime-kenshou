@@ -6,6 +6,7 @@ import Control.Monad (replicateM)
 import Data.Aeson (Value, eitherDecode, encode)
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.Either (isRight)
+import Data.IORef (atomicModifyIORef', newIORef)
 import Data.Maybe (isJust)
 import Data.Time (addUTCTime, getCurrentTime)
 import Kenshou.Core.Id (newRunId)
@@ -93,6 +94,29 @@ spec = describe "cell lease protocol" do
     withHeartbeat store cellRef handle \stillHeld -> do
       threadDelay 1200000
       stillHeld `shouldReturn` True
+    releaseLease store cellRef handle `shouldReturn` True
+
+  it "retries one transient heartbeat write failure while the lease remains valid" $ withSystemTempDirectory "kenshou-lease" \root -> do
+    store <- newFileStore root
+    handle <- acquireLease store cellRef shortRequest >>= expectAcquired
+    initial <- leaseSnapshot handle
+    failNext <- newIORef True
+    let flaky =
+          store
+            { putObject = \bucket object mediaType precondition bytes -> do
+                shouldFail <-
+                  if object == ObjectName "cells/alpha/lease.json"
+                    then atomicModifyIORef' failNext (\failPending -> (False, failPending))
+                    else pure False
+                if shouldFail
+                  then ioError (userError "transient heartbeat write failure")
+                  else store.putObject bucket object mediaType precondition bytes
+            }
+    withHeartbeat flaky cellRef handle \stillHeld -> do
+      threadDelay 1700000
+      stillHeld `shouldReturn` True
+    renewed <- leaseSnapshot handle
+    renewed.heartbeatAt `shouldSatisfy` (> initial.heartbeatAt)
     releaseLease store cellRef handle `shouldReturn` True
 
   it "cancels only the expected lease unless force is explicit" $ withSystemTempDirectory "kenshou-lease" \root -> do

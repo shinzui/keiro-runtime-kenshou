@@ -40,6 +40,18 @@ establish that the two runs retain the same objects. The ignored run data is
 under `runs/01a0d130-aab3-70c7-ad94-0a21d40d45fa/` and
 `runs/01a0d12e-fbc4-7367-b1d0-536a84fcacea/`.
 
+A clean released-cohort five-minute outbox soak on alpha, verified cell run
+`01a0f014-6de1-70a5-bb0e-ee6a92a42336` and [digest-linked nested run](../verification/runs/keiro/2026/09/01a0f013-99ac-7155-aa00-bab4827de47e.md), passed all eight business checks:
+621 enqueued messages reached 621 distinct broker records with no backlog,
+duplicate, publisher, or maintenance error. The scenario restarted one
+in-process publisher ten times. Its main-process Haskell thread count rose
+from 142 to 152 and was judged `leak-suspected`; native memory, OS threads,
+file descriptors, and PostgreSQL connections were stable, while the heap
+probe had no eligible post-major-GC samples. The exact match between restarts
+and counted threads is a focused harness clue, not proof that the same retained
+object caused the earlier write-side signal. A matched no-restart or forced-GC
+control is needed before changing the leak policy or assigning an owner defect.
+
 Reproduce with:
 
 ```bash
