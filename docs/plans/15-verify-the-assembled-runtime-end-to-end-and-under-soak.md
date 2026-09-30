@@ -42,7 +42,7 @@ You can see it working when `kenshou run runtime/order-flow/correctness/happy-pa
 
 ## Progress
 
-- [x] (2026-09-30) Started `kenshou-runtime` with versioned shop and warehouse wire-message contracts and an independent pure order/fulfilment state model. Four contract tests pass, including the ship-versus-expire race and terminal-command rejection. This is the oracle foundation for Milestones 1 and 2; no two-context process system or end-to-end run exists yet.
+- [x] (2026-09-30) Started `kenshou-runtime` with versioned shop and warehouse wire-message contracts and an independent pure order/fulfilment state model. Eight contract tests pass, including the ship-versus-expire race, terminal-command rejection, both Keiki graph validations, and versioned event-codec round trips. The order aggregate implements `NotPlaced → Placed → Completed | Rejected | Expired`; the fulfilment aggregate implements `NotRequested → Requested → Shipped | Expired` and `NotRequested → Refused` against the pinned cohort. This is the domain foundation for Milestones 1 and 2; no two-context process system or end-to-end run exists yet.
 - [ ] Deliver the two-context reference system, end-to-end invariants and failure matrix, gated soaks, benchmarks, and whole-runtime telemetry comparison; verify the assembled-runtime acceptance in Validation and Acceptance.
 
 ## Surprises & Discoveries

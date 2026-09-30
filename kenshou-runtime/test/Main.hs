@@ -1,6 +1,11 @@
 module Main (main) where
 
+import Control.Exception (evaluate)
+import Keiro.Codec (Codec (..))
+import Kenshou.Suite.Runtime.System.Contracts (CustomerId (..), OrderId (..), Sku (..))
+import Kenshou.Suite.Runtime.System.Fulfilment qualified as Fulfilment
 import Kenshou.Suite.Runtime.System.Model
+import Kenshou.Suite.Runtime.System.Order qualified as Order
 import Test.Hspec
 
 main :: IO ()
@@ -29,3 +34,35 @@ main = hspec do
       advanceFulfilment FulfilmentNotRequested RefuseFulfilment `shouldBe` Right FulfilmentRefused
       advanceFulfilment FulfilmentRequested RefuseFulfilment `shouldBe` Left (InvalidFulfilmentTransition FulfilmentRequested RefuseFulfilment)
       matchingTerminal OrderRejected FulfilmentRefused `shouldBe` True
+
+  describe "order event stream" do
+    it "validates the Keiki transition graph" do
+      _ <- evaluate Order.orderEventStream
+      pure ()
+
+    it "round-trips every event through its versioned codec" do
+      let identifier = OrderId "order-1"
+          events =
+            [ Order.OrderPlaced (Order.OrderPlacedData identifier (CustomerId "customer-1") (Sku "sku-1") 2 900 False),
+              Order.OrderCompleted (Order.OrderCompletedData identifier),
+              Order.OrderRejected (Order.OrderRejectedData identifier "discontinued"),
+              Order.OrderExpired (Order.OrderExpiredData identifier)
+            ]
+          codec = Order.orderCodec
+      map (\event -> codec.decode (codec.eventType event) (codec.encode event)) events `shouldBe` map Right events
+
+  describe "fulfilment event stream" do
+    it "validates the Keiki transition graph" do
+      _ <- evaluate Fulfilment.fulfilmentEventStream
+      pure ()
+
+    it "round-trips every event through its versioned codec" do
+      let identifier = OrderId "order-1"
+          events =
+            [ Fulfilment.FulfilmentRequested (Fulfilment.FulfilmentRequestedData identifier (Sku "sku-1") 2),
+              Fulfilment.FulfilmentRefused (Fulfilment.FulfilmentRefusedData identifier "discontinued"),
+              Fulfilment.FulfilmentShipped (Fulfilment.FulfilmentShippedData identifier),
+              Fulfilment.FulfilmentExpired (Fulfilment.FulfilmentExpiredData identifier)
+            ]
+          codec = Fulfilment.fulfilmentCodec
+      map (\event -> codec.decode (codec.eventType event) (codec.encode event)) events `shouldBe` map Right events
