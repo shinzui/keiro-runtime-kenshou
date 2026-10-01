@@ -226,6 +226,11 @@ provenance:
       at: 2026-09-30T21:07:06Z
       mode: "update"
       note: "Reconciled remaining baseline work and separated coverage, infrastructure, attribution and attestation gates from owner bug repairs."
+    - model: "gpt-6.1-sol"
+      harness: "codex-cli"
+      at: 2026-10-01T16:33:42Z
+      mode: "implement"
+      note: "Advanced EP-13 process diagnostics and full inbox soak evidence without changing owner-fix gates."
 ---
 
 # Build an extensive verification suite for the keiro runtime
@@ -449,7 +454,7 @@ unrelated infrastructure cleanup.
 
 | Child plan | Remaining deliverable | Current constraint |
 |---|---|---|
-| [EP-13 — messaging](../plans/13-cover-the-keiro-outbox-inbox-and-job-queue.md) | Broaden outbox producer/ordering/fault controls, inbox effect and persistence checks, queue worker/fault/outcome controls, controlled provision and broader throughput comparisons, outbox/inbox metrics serving, queue telemetry fault coverage, and process-isolated soak diagnosis; finish all three full soaks. | Worker/polling controls, the eight-arm worker-metrics contract, and ten local standard/unlogged provision arms pass. Revision 4 verifies the requested storage and all archive/DLQ tables through PostgreSQL metadata; its 7,345 exactly-once jobs are functional evidence, with a clean storage comparison still pending. Thirty clean alpha benchmark arms held their business invariants. Five-pair comparisons show lower worker allocation with inconclusive p99, and lower long-poll allocation/live memory with a 100 ms polling latency regression. Both comparisons and all twenty configuration arms are digest-linked; both comparison attestations are confirmed for VC-2/VC-3. The reduced default-rate inbox soak passed; queue forced-GC diagnosis found stable heap/threads; outbox finding 3 remains unattributed. Finding 49 excludes the unsealed full inbox attempt. A same-seed four-hour retry is running with a verified 15,300-second cap; full-soak acceptance remains open. |
+| [EP-13 — messaging](../plans/13-cover-the-keiro-outbox-inbox-and-job-queue.md) | Broaden outbox producer/ordering/fault controls, inbox effect and persistence checks, queue worker/fault/outcome controls, controlled provision and broader throughput comparisons, outbox/inbox metrics serving, queue telemetry fault coverage, and process-isolated soak diagnosis; finish outbox/queue full soaks and independent inbox verification. | Worker/polling controls, the eight-arm worker-metrics contract, and ten local standard/unlogged provision arms pass. Revision 4 verifies the requested storage and all archive/DLQ tables through PostgreSQL metadata; its 7,345 exactly-once jobs are functional evidence, with a clean storage comparison still pending. Thirty clean alpha benchmark arms held their business invariants. Five-pair comparisons show lower worker allocation with inconclusive p99, and lower long-poll allocation/live memory with a 100 ms polling latency regression. Both comparisons and all twenty configuration arms are digest-linked; both comparison attestations are confirmed for VC-2/VC-3. The reduced default-rate inbox soak passed; queue forced-GC diagnosis found stable heap/threads; outbox finding 3 remains unattributed. Finding 49 excludes the unsealed first inbox attempt. Its same-seed four-hour retry sealed, passed all eight business checks with stable bounded resources, and is digest-linked. Outbox revision 3 now offers SIGKILL publishers, message-specific crash duplicate budgets and per-incarnation diagnosis. A minimal EP-5 regression proved and repaired retired-child retention in supervisor bookkeeping; earlier in-process signals remain unattributed. Controlled process acceptance and Keiro VC-1 recomputation remain open. |
 | [EP-15 — assembled runtime](../plans/15-verify-the-assembled-runtime-end-to-end-and-under-soak.md) | Build the two-context worker topology and persistent business flow, independent SQL money/stock/terminal-state oracles, failure matrix, gated one/four/twenty-four-hour soaks, benchmarks, and whole-system telemetry comparison. | Domain, wire, ledger and broker seams exist, and the local two-topic wire smoke passed. That smoke does not exercise the two databases or establish an end-to-end order outcome. Controlled cell execution needs the required broker capability. |
 | [EP-12 — write side](../plans/12-cover-the-keiro-command-processor-process-managers-and-routers.md) | Finish generalized fixture roles/oracles, the remaining matrix, benchmarks, telemetry, full soak, and guide/acceptance. | Finding 44 needs capacity-versus-drain-budget isolation; finding 46 needs writer-only or profile isolation. Low-rate business checks passed; the default-rate run still missed its drain deadline. Existing Kiroku leak reports do not excuse unrelated failures. |
 | [EP-14 — durable execution](../plans/14-cover-keiro-durable-execution-timers-and-sharded-subscriptions.md) | Complete workflow definitions, crash/fault schedules, shard checkpoint and metrics assertions, benchmarks, soak pairs, telemetry, and final guide/acceptance. | Missing coverage and assertions remain implementation work; no blanket wait for a runtime fix is recorded. |
@@ -480,7 +485,7 @@ Cross-plan baseline handoff gates remain open:
   and confirmed records. Preserve incomplete attestations and add new
   attestations when verification becomes possible.
 
-The historical bundle currently contains 73 run/comparison records: 70 sealed
+The historical bundle currently contains 74 run/comparison records: 71 sealed
 individual runs and three comparisons. The
 [working baseline report](../reports/2026-09-29-runtime-baseline.md) and child
 plans hold the detailed runs and findings. Owner projects can use this as-is
@@ -489,6 +494,14 @@ the separately requested post-fix verification pass.
 
 
 ## Surprises & Discoveries
+
+- (2026-10-01) The full inbox retry sealed with the bounded finalization cap:
+  all eight business checks and six bounded resource probes passed. EP-13 owns
+  its digest-linked record; independent Keiro VC-1 replay remains a separate
+  incomplete evidence gate. Process-isolated outbox diagnosis also exposed a
+  reproducible EP-5 supervisor retention defect, repaired with a regression.
+  This does not identify the owner of historical in-process thread signals.
+
 
 - EP-17's database-free worker scenario still needed the PostgreSQL reset block required by EP-16's current driver. A live run then exposed a race between `postgresql.service` restart and `postgresql-setup.service` database creation: the setup unit recreated `benchmark` while reset verification was reading the database list. EP-16 now waits for setup completion in the role executor; the next live worker run passed and its local/cell parity report has zero unexpected fields. The owner code is in `mori://shinzui/load-testing-infra` at project-relative path `nixos/pkgs/cell-agent/src/src/reset/postgres.rs` (artifact-level URI pending).
 - EP-17's paired control exposed the owner image's PostgreSQL systemd start limit: five starts in ten minutes and five seconds. The first five cold resets passed; subsequent resets sealed `reset-failed` with `start-limit-hit`. The owner raised the bounded allowance to 64 in `mori://shinzui/load-testing-infra` at `b2ae523`, deployed it to alpha, and a five-pair A/A control then passed ten consecutive cold resets under one lease. The unit is at project-relative path `nixos/modules/cell-postgres.nix` (artifact-level URI pending).

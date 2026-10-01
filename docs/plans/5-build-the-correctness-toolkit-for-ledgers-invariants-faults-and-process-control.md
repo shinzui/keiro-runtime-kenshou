@@ -22,6 +22,11 @@ provenance:
       at: 2026-09-24T22:53:07Z
       mode: "update"
       note: "Consolidated Progress into delivered outcomes and remaining acceptance"
+    - model: "gpt-6.1-sol"
+      harness: "codex-cli"
+      at: 2026-10-01T16:33:42Z
+      mode: "implement"
+      note: "Fixed retired-child retention in supervisor bookkeeping with a weak-reference regression."
 ---
 
 # Build the correctness toolkit for ledgers, invariants, faults and process control
@@ -44,8 +49,16 @@ You can see it working without any runtime library involved. Five self-test scen
 
 - [x] (2026-09-21) Correctness toolkit complete: durable ledgers, invariant verdicts, process control, fault injection, and model-based support pass package and live crash tests. See Outcomes & Retrospective for results.
 
+- [x] (2026-10-01) Repaired lazy supervisor bookkeeping that retained retired child handles. A weak-reference regression using the package fixture fails before the repair and passes afterwards; package coverage is now 34 examples. EP-5 remains Complete.
+
 ## Surprises & Discoveries
 
+- A filtered child list stored without forcing its spine can retain exited
+  children and their completed listener threads. A strict list cons also leaves
+  a disturbance-record thunk unevaluated. Force the filtered spine and record
+  constructor before storing them; strict fields then prevent retained child
+  closures. The regression performs major GC while the supervisor and durable
+  disturbance history remain active.
 - PostgreSQL backend enumeration initially used the administrative database, so
   its `current_database()` filter could never see scenario clients. Selecting
   through the run database fixed both targeting and the live self-test.

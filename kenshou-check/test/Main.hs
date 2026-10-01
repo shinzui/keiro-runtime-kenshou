@@ -7,6 +7,7 @@ import Data.Aeson.KeyMap qualified as KeyMap
 import Data.IORef
 import Data.Int (Int64)
 import Data.List (sortOn)
+import Data.Maybe (isNothing)
 import Data.Text qualified as Text
 import Kenshou.Check.Fact
 import Kenshou.Check.Invariant
@@ -14,10 +15,21 @@ import Kenshou.Check.Ledger
 import Kenshou.Check.Ledger.Read
 import Kenshou.Check.Ledger.Sort
 import Kenshou.Check.Model.Linearizability
+import Kenshou.Check.Process
+import Kenshou.Check.Scenario
 import Kenshou.Check.Verdict
+import Kenshou.Core.Context
+import Kenshou.Core.Dimension (emptyDimensions)
+import Kenshou.Core.Id (mkSeed, newRunId, parseScenarioId)
+import Kenshou.Core.Knob (resolveKnobs)
+import Kenshou.Core.Log (nullLogger)
+import Kenshou.Core.Phase (zeroPhases)
+import Kenshou.Core.RunSpec (RunSpec (..), minimalRunSpec)
 import System.Directory (listDirectory)
 import System.FilePath ((</>))
 import System.IO.Temp (withSystemTempDirectory)
+import System.Mem (performMajorGC)
+import System.Mem.Weak (Weak, deRefWeak, mkWeakPtr)
 import Test.Hspec
 
 main :: IO ()
@@ -75,6 +87,21 @@ main = hspec do
       it (label <> " rejects a targeted mutation") $ (evaluateChecker checker violatedFacts).status `shouldBe` Violated
       it (label <> " refuses a vacuous pass") $ (evaluateChecker checker []).status `shouldBe` NotEvaluated
 
+  describe "process supervisor" do
+    it "releases retired children before supervisor cleanup" $ withSystemTempDirectory "kenshou-retirement" \directory -> do
+      runId <- newRunId
+      state <- newRunState
+      let scenario = either (error . show) id (parseScenarioId "selftest/check/process/retirement")
+          knobs = either (error . show) id (resolveKnobs [] [])
+          seed = either (error . show) id (mkSeed 0)
+          runContext = RunContext runId scenario knobs emptyDimensions seed zeroPhases (Environment Nothing mempty) (minimalRunSpec scenario).environment Nothing directory nullLogger state
+      withCheck runContext \environment -> withSupervisor environment \supervisor -> do
+        weak <- retireFixture supervisor
+        performMajorGC
+        (isNothing <$> deRefWeak weak) `shouldReturn` True
+        windows <- crashWindows supervisor
+        length windows `shouldBe` 1
+
   describe "linearizability" do
     it "accepts and rejects register histories" do
       let valid = [Operation "p1" "register" (WriteRegister 1) 0 (Just 1) (Returned Written), Operation "p2" "register" ReadRegister 2 (Just 3) (Returned (ReadValue (Just 1)))]
@@ -106,3 +133,12 @@ cleanDelivery = [fact Intent "producer" 1 1 mempty, fact Produced "producer" 2 1
 isRejected :: LinResult -> Bool
 isRejected (NotLinearizable _) = True
 isRejected _ = False
+
+-- Keep the caller from retaining the fixture across the major collection.
+{-# NOINLINE retireFixture #-}
+retireFixture :: Supervisor -> IO (Weak Child)
+retireFixture supervisor = do
+  child <- spawn supervisor (ProcessSpec (ProcId "retirement" 0 0) "kenshou-check-fixture-worker" [] [] Nothing)
+  weak <- mkWeakPtr child Nothing
+  killChild supervisor child
+  pure weak

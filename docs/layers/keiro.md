@@ -521,11 +521,21 @@ and dead-tuple growth, and a process leak verdict. With GC off, the summary
 reports bytes per inserted row. A one-minute, two-message/second local smoke
 exercised seven restarts and passed its business checks; its leak verdict and
 workstation measurements are diagnostic only. The controlled twenty-minute
-reduced soak and four-hour full soak have not yet run. A clean five-minute
+reduced soak held its business/table checks but failed on main Haskell thread growth; the four-hour full soak remains open. A clean five-minute
 alpha cell control passed all eight business checks after ten restarts, but
 its main-process Haskell thread count rose by ten and its heap probe lacked
 post-major samples. [Finding 3](../findings/3-keiro-steady-restart-harness-threads.md)
-tracks that harness signal pending an isolation control.
+tracks that signal. Revision 3 adds `outbox.publisher-execution=processes`:
+two child publishers, one continuously surviving control, and externally
+injected process-group SIGKILL after a recorded broker-append boundary. Each
+extra append must match that message's own crash marks. Series and leak reports
+are separate per incarnation; short incarnations retain insufficient-data
+verdicts. This arm currently requires tracing and metrics off and rejects
+other combinations. The `in-process` default retains the cooperative restart
+control. Local process smokes establish functional wiring only; controlled
+process acceptance remains open. A minimal supervisor weak-reference regression
+proved and repaired retired-child retention, without establishing the cause
+of every historical in-process signal.
 
 The eleven correctness and concurrency outbox scenarios completed at their default settings on
 durable PostgreSQL. Nine passed. The inline-order and zombie-finalization
@@ -541,8 +551,12 @@ the effect count matches both groups, and inbox rows, relation size, dead
 tuples, and process resources remain bounded. A one-minute local wiring smoke
 processed 71 fresh messages, suppressed all 71 early redeliveries, and
 reprocessed all 71 late redeliveries with 142 effects and no classification or
-GC errors. Its short heap verdict is diagnostic only; controlled reduced and
-full runs are still required.
+GC errors. Its short heap verdict is diagnostic only. The clean twenty-minute reduced
+run passed, and the [four-hour full run](../verification/runs/keiro/2026/10/01a0f4f4-7b1a-7232-b0ab-f62d19abb0aa.md)
+now passed all eight checks over 28,821 fresh/early/late deliveries and 57,642
+effects with zero errors or pending rows. Table size/dead tuples stayed flat
+and all six bounded resource probes were stable. Independent Keiro verdict
+replay remains open; no benchmark comparison is inferred from soak metrics.
 
 `intake-throughput` measures fresh and redelivered intake through the inbox
 table or delegated account-stream command receipts. It varies batch size,

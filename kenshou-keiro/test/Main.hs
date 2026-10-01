@@ -41,6 +41,7 @@ import Kenshou.Suite.Keiro.Fixture.Workload qualified as Workload
 import Kenshou.Suite.Keiro.Outbox.Broker qualified as Broker
 import Kenshou.Suite.Keiro.Outbox.Knobs qualified as OutboxKnobs
 import Kenshou.Suite.Keiro.Outbox.Oracle qualified as OutboxOracle
+import Kenshou.Suite.Keiro.Outbox.SoakPublisher qualified as SoakPublisher
 import Kenshou.Suite.Keiro.Queue.Bench qualified as QueueBench
 import Kenshou.Suite.Keiro.Queue.Concurrency qualified as QueueConcurrency
 import Kenshou.Suite.Keiro.Queue.Metrics qualified as QueueMetrics
@@ -65,6 +66,14 @@ import Test.Hspec.Hedgehog (hedgehog)
 
 main :: IO ()
 main = hspec do
+  describe "outbox process soak duplicate oracle" do
+    it "rejects duplicates outside a recorded crash batch" do
+      SoakPublisher.duplicatesWithinCrashBatches [["a", "b"]] ["a", "a", "b", "c"] `shouldBe` True
+      SoakPublisher.duplicatesWithinCrashBatches [["a", "b"]] ["a", "b", "c", "c"] `shouldBe` False
+    it "counts crash windows per identity without multiplying a repeated mark" do
+      SoakPublisher.duplicatesWithinCrashBatches [["a", "a"]] ["a", "a", "a"] `shouldBe` False
+      SoakPublisher.duplicatesWithinCrashBatches [["a"], ["a"]] ["a", "a", "a"] `shouldBe` True
+      SoakPublisher.duplicatesWithinCrashBatches [] ["a", "a"] `shouldBe` False
   describe "queue worker metrics oracles" do
     it "rejects missing processors, incorrect processed counts and incorrect in-flight gauges" do
       now <- getCurrentTime

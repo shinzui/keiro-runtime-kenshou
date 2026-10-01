@@ -1,5 +1,8 @@
 # Bundle Update Log
 
+## 2026-10-01
+* **Update**: Require retired child reachability checks and separate resource series per process incarnation.
+
 ## 2026-09-29
 * **Decision**: ADR-21 addresses cell evidence by submission and nested run, preserving sealed results and effective outcomes.
 * **Decision**: ADR-20 accepts descriptor-pinned Nix payloads only after the resolved cohort identity passes its check.

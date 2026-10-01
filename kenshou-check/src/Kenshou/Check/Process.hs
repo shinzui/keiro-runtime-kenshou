@@ -30,7 +30,7 @@ import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (Async, async, cancel, waitCatch)
 import Control.Concurrent.MVar
 import Control.Concurrent.STM
-import Control.Exception (SomeException, bracket, catch)
+import Control.Exception (SomeException, bracket, catch, evaluate)
 import Control.Monad (forM_, unless, void)
 import Data.Aeson
 import Data.Aeson.Key qualified as Key
@@ -225,7 +225,12 @@ stopGracefully supervisor child graceMillis = do
 
 retireChild :: Supervisor -> Child -> IO ()
 retireChild supervisor child =
-  modifyMVar_ supervisor.children (pure . filter ((/= child.pid) . (.pid)))
+  modifyMVar_ supervisor.children \children -> do
+    let remaining = filter ((/= child.pid) . (.pid)) children
+    -- Force the entire spine: a delayed filter retains retired Child handles
+    -- and their completed listener threads until supervisor cleanup.
+    _ <- evaluate (length remaining)
+    pure remaining
 
 withRestartLoop :: Supervisor -> RestartPolicy -> ProcessSpec -> (IO Child -> IO value) -> IO value
 withRestartLoop supervisor _policy spec action = action (spawn supervisor spec)
@@ -298,7 +303,8 @@ recordWindowEdge supervisor child kind signal = do
       target = renderProcId child.spec.proc
       attrs = KeyMap.fromList [(Key.fromText "label", String label), (Key.fromText "target", String target), (Key.fromText "pid", Number (fromIntegral child.pid))]
   recordDurable supervisor.environment.ledger kind target 0 label attrs
-  modifyIORef' supervisor.windows (DisturbanceWindow label target now (if kind == DisturbanceEnd then Just now else Nothing) :)
+  window <- evaluate (DisturbanceWindow label target now (if kind == DisturbanceEnd then Just now else Nothing))
+  modifyIORef' supervisor.windows (window :)
 
 appendPid :: Supervisor -> Child -> IO ()
 appendPid supervisor child = do

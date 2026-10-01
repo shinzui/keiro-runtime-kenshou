@@ -95,6 +95,7 @@ test-suite kenshou-check-test
   type: exitcode-stdio-1.0
   hs-source-dirs: test
   main-is: Main.hs
+  build-tool-depends: kenshou-check:kenshou-check-fixture-worker
   ghc-options:
     -threaded
     -rtsopts

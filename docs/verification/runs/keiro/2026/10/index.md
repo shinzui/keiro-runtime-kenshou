@@ -21,6 +21,7 @@
 - [keiro/queue/benchmark/job-throughput passed on released](01a0f4a8-8e83-7595-a750-bf0430cb3f0e.md) - Recorded keiro/queue/benchmark/job-throughput run against cohort released with digest-pinned data.
 - [keiro/queue/benchmark/job-throughput passed on released](01a0f4a8-8e83-7595-a7e3-60c531a95658.md) - Recorded keiro/queue/benchmark/job-throughput run against cohort released with digest-pinned data.
 - [keiro/queue/benchmark/job-throughput passed on released](01a0f4a8-8e83-7595-a89e-edd24bb5e993.md) - Recorded keiro/queue/benchmark/job-throughput run against cohort released with digest-pinned data.
+- [keiro/inbox/soak/dedupe-window passed on released](01a0f4f4-7b1a-7232-b0ab-f62d19abb0aa.md) - Recorded keiro/inbox/soak/dedupe-window run against cohort released with digest-pinned data.
 - [keiro/queue/benchmark/job-throughput comparison inconclusive](01a0f4fe-74b7-73ab-907d-a63b1ec0d2a3.md) - Recorded comparison of 5 paired runs with digest-pinned data.
 - [keiro/queue/benchmark/job-throughput comparison regression](01a0f4fe-7821-7681-90ab-eb17be1d2d35.md) - Recorded comparison of 5 paired runs with digest-pinned data.
 

@@ -13,11 +13,12 @@ import Kenshou.Core.Role (ControlMessage (..), PostgresConnInfo (..), RoleContex
 import Kenshou.Suite.Keiro.Fixture.Runtime (FixtureEnv (..), KeiroRunner (..), withFixtureEnv)
 import Kenshou.Suite.Keiro.Outbox.Broker qualified as Broker
 import Kenshou.Suite.Keiro.Outbox.ProducerReplay qualified as ProducerReplay
+import Kenshou.Suite.Keiro.Outbox.SoakPublisher qualified as SoakPublisher
 import Kenshou.Suite.Keiro.Outbox.Workload (enqueueInline)
 import Kiroku.Store (defaultConnectionSettings)
 
 roles :: [WorkerRole]
-roles = [WorkerRole (roleName "keiro/outbox-enqueuer") "Enqueues a serial, run-namespaced integration-event workload." enqueuer, WorkerRole (roleName "keiro/outbox-maintenance") "Reclaims stale publisher claims and optionally collects sent rows." maintenance, WorkerRole (roleName "keiro/outbox-publisher") "Publishes one claimed outbox batch, with a controllable acknowledgement window." publisher, ProducerReplay.role]
+roles = [WorkerRole (roleName "keiro/outbox-enqueuer") "Enqueues a serial, run-namespaced integration-event workload." enqueuer, WorkerRole (roleName "keiro/outbox-maintenance") "Reclaims stale publisher claims and optionally collects sent rows." maintenance, WorkerRole (roleName "keiro/outbox-publisher") "Publishes one claimed outbox batch, with a controllable acknowledgement window." publisher, ProducerReplay.role, SoakPublisher.role]
 
 roleName :: Text -> RoleName
 roleName = either (error . Text.unpack) id . mkRoleName

@@ -52,6 +52,11 @@ provenance:
       at: 2026-09-30T21:20:07Z
       mode: "implement"
       note: "Added continuous queue throughput workers, polling and pool controls, and a multiplicity-aware conservation oracle."
+    - model: "gpt-6.1-sol"
+      harness: "codex-cli"
+      at: 2026-10-01T16:33:42Z
+      mode: "implement"
+      note: "Implemented process-isolated outbox soak diagnosis and recovered the sealed four-hour inbox evidence."
 ---
 
 # Cover the keiro outbox, inbox and job queue
@@ -104,23 +109,75 @@ The non-soak baseline is in place. The remaining work is to deepen specific scen
 - [x] (2026-09-30) Completed both five-pair queue configuration comparisons on clean alpha payload `9c2c9b8`: twenty benchmark-grade runs held all business checks over 307,782 exactly-once jobs, with 500 manifested files verified. Clean replay from `71f5a9e` reproduced every provisional metric and saved policy decision. Continuous workers used about 14.4% less allocation, with inconclusive p99; 100 ms long polling used about 60.2% less allocation and 36.7% less maximum live memory, with a handler-start latency regression. All twenty arms and both comparisons are digest-linked. Both comparison attestations are confirmed with all six checks passing, including independent VC-2/VC-3 recomputation. The [dated report](../reports/2026-09-30-queue-worker-comparisons.md) links every pair, clean raw comparison, and attestation. Strict evidence validation, local ledger/CLI checks, profile fixtures, and index regeneration pass; all `just verify` targets passed across foundation and evidence phases. Individual business-oracle attestation, provision variation, broader performance acceptance, and full soaks remain open.
 - [x] (2026-10-01 UTC) Added queue throughput revision 4 standard/unlogged provision controls through the released API, with PostgreSQL persistence checks before and after load. Ten durable PostgreSQL 18 functional arms held all four verdicts over 7,345 exactly-once jobs, with zero worker errors, empty queues, and both consumers participating. All 30 result/spec/manifest schema checks and 264 artifact digest/size checks passed. The 41-example Keiro package suite and full `nix develop -c just verify` pass, including persistence-oracle mutations and shared integration/evidence checks. These dirty workstation runs are exploratory and do not change baseline record counts; controlled storage-performance acceptance remains open.
 - [ ] Finish the remaining non-soak acceptance work listed below, then rerun the affected scenarios and package tests.
-- [ ] Run the three full and reduced soaks and evaluate leak and table-growth verdicts for the initial baseline.
+- [x] (2026-10-01) Full inbox soak sealed, passed, and was digest-linked; the first timed-out attempt remains excluded.
+- [x] (2026-10-01) Implemented revision-3 process-isolated outbox soak with per-incarnation diagnosis and message-specific crash duplicate budgets.
+- [ ] Finish controlled outbox/queue full soaks, process isolation acceptance, remaining matrix arms, and independent evidence verification.
 
 The five Keiro owner reports for worker exits, read-attempt accounting, stale outbox claims, pool starvation, and missing process spans now have local finding records [34](../findings/34-keiro-job-worker-exits-after-polling-backend-termination.md), [35](../findings/35-keiro-long-poll-consumes-read-attempt-without-handler.md), [36](../findings/36-keiro-stale-outbox-publisher-finalizes-new-claim.md), [37](../findings/37-keiro-long-poll-processors-starve-runtime-pool.md), and [38](../findings/38-keiro-pre-handler-dead-letter-lacks-process-span.md). Each finding has its canonical owner URI; the MasterPlan register counts those records separately from the scenarios that cite them.
 
-The same-seed four-hour inbox retry was submitted on 2026-10-01 UTC as cell
-`01a0f4f5-7e09-7358-ac15-b2ac2128e990`, fresh nested run
-`01a0f4f4-7b1a-7232-b0ab-f62d19abb0aa`, session
-`01a0f4f5-7e09-7358-aba1-34c52e8a1b2c`. Its submission confirms a
-15,300-second cap and detached lease `01a0f4f5-771e-75a8-a833-216524ea28a7`.
-It uses clean released payload `9c2c9b8`, unchanged inbox revision 2 business
-settings, and original seed `4252662818734786`. The inbox and diagnosis
-implementations match the original attempt; the updated local client supplies
-the larger cap for this fresh submission. No nested verdict or full-soak acceptance is claimed before collection and sealing.
-Collect from this repository:
+The same-seed four-hour inbox retry sealed and verified on 2026-10-01 UTC:
+cell `01a0f4f5-7e09-7358-ac15-b2ac2128e990`, [digest-linked nested
+run](../verification/runs/keiro/2026/10/01a0f4f4-7b1a-7232-b0ab-f62d19abb0aa.md).
+Clean released payload `9c2c9b8`, inbox revision 2, seed `4252662818734786`,
+and the bounded 15,300-second cap are unchanged from submission. The run
+passed all eight business checks: 28,821 fresh deliveries, 28,821 suppressed
+early duplicates, 28,821 late reprocessings, and 57,642 effects; classification
+and GC errors and pending deliveries were zero. It retained 257 rows; table
+size stayed at 409,600 bytes and sampled dead tuples at 120. All six bounded
+resource probes were stable, including 466 eligible post-major heap points.
+The full inbox execution gate is satisfied. Its digest-pinned record is an
+investigation record; independent Keiro VC-1 recomputation remains unavailable,
+and exploratory soak measurements establish no benchmark comparison. The
+unsealed first attempt remains excluded under finding 49.
+
+### Process-isolated outbox soak
+
+Revision 3 adds `outbox.publisher-execution=processes` alongside the unchanged
+`in-process` default. Two child publishers use the released API; one survives
+the whole run while the other parks after a durable broker append and before
+outbox finalization. The controller waits for its persisted `crash-window`
+message IDs, sends process-group `SIGKILL`, reaps it, and starts a fresh child.
+A duplicate append must belong to that exact message's recorded crash batches.
+Tracing and metrics must both be off for this process arm; other combinations
+are explicitly rejected until child telemetry is implemented.
+
+Each incarnation writes separate RTS/process series and a leak report; no
+fresh process clock or heap is spliced into an old series. The ordinary
+full-window leak policy is preserved: short killed incarnations can yield
+`insufficient-data`, keeping the overall outcome inconclusive, while suspected
+child leaks still fail. The survivor provides a continuous resource control.
+
+A one-minute dirty-workstation smoke `01a0f845-ef94-703f-87d6-1cff0db414bf`
+under `runs/ep13-outbox-process-soak/` held all eleven business verdicts:
+141 accepted messages, 147 broker records, six realized kills, no backlog or
+publisher/maintenance errors, and every duplicate covered by its own crash
+mark. Its survivor resources were stable, but main Haskell threads grew.
+A minimal weak-reference test then proved that supervisor bookkeeping retained
+retired Child handles without Keiro present. EP-5 now forces the filtered child
+list and stored disturbance records; the regression failed before the repair
+and passed afterwards. This identifies a harness defect without attributing
+all earlier in-process restart signals to it. The same-seed post-repair smoke `01a0f84f-c814-748e-83aa-0b4b60cb8c7d`
+under `runs/ep13-outbox-process-soak-fixed/` held all eleven verdicts over 141
+unique messages, 148 broker records and six kills, with no errors/backlog.
+All six bounded main-process probes and the continuous survivor were stable;
+main Haskell threads stayed at 145–146. Short killed incarnations lacked enough
+samples, so the unchanged combined outcome was inconclusive. These functional
+controls are dirty local evidence, not controlled baseline acceptance.
+Clean controlled process soaks, queue process isolation, child telemetry, and
+the full outbox/queue execution gates remain open.
+
+The 43-example Keiro package suite covers targeted mutations of crash-batch
+duplicate budgets; the 34-example toolkit suite covers retired-child
+reachability. All 15 run spec/result/manifest schema checks passed across the
+four local process/control trees and the full inbox tree. Every one of the
+216 local manifested artifacts matched its recorded size and SHA-256. ADR-10
+now records eager retirement bookkeeping and separate per-incarnation series;
+its descriptor type-check and strict 21-record bundle validation pass.
+
+Reproduce the functional process arm from the repository root:
 
 ```bash
-nix develop -c env CLOUDSDK_CORE_PROJECT=tan-nb-exp cabal run -v0 kenshou -- cell resume --session .dev/keiro-inbox-soak-4h-budget-retry
+nix develop -c cabal run -v0 kenshou -- run keiro/outbox/soak/table-growth-reduced --dim pg.durability=durable --set soak.duration-minutes=1 --set outbox.rate-per-second=2 --set outbox.kill-interval-seconds=10 --set outbox.publisher-execution=processes --set diagnose.major-gc-interval-ms=5000 --seed 4252662818734786 --out runs/ep13-outbox-process-soak
 ```
 
 ### Remaining non-soak work

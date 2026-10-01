@@ -78,6 +78,7 @@ library
     Kenshou.Suite.Keiro.Outbox.ProducerReplay
     Kenshou.Suite.Keiro.Outbox.Roles
     Kenshou.Suite.Keiro.Outbox.Soak
+    Kenshou.Suite.Keiro.Outbox.SoakPublisher
     Kenshou.Suite.Keiro.Outbox.Telemetry
     Kenshou.Suite.Keiro.Outbox.Workload
     Kenshou.Suite.Keiro.ProcessManager.Bench

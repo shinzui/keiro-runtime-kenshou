@@ -37,7 +37,7 @@ Service runtime: 4h 5min 27ms
 payload unit stopped without an entry exit record (exit status: 1)
 ```
 
-The outer manifest is preserved at `gs://tan-nb-exp-cells-results/runs/01a0f09f-4259-700c-b501-ceb1848f8ef3/manifest.json`, SHA-256 `5e935ff4f19e61a6599f449ae88c7044edbcd1ede907f9ba9b96f79d09a891c7` (11,134 bytes). The local verified tree is `.dev/01a0f09f-4259-700c-b501-ceb1848f8ef3/tree`. Full inbox acceptance remains open.
+The outer manifest is preserved at `gs://tan-nb-exp-cells-results/runs/01a0f09f-4259-700c-b501-ceb1848f8ef3/manifest.json`, SHA-256 `5e935ff4f19e61a6599f449ae88c7044edbcd1ede907f9ba9b96f79d09a891c7` (11,134 bytes). The local verified tree is `.dev/01a0f09f-4259-700c-b501-ceb1848f8ef3/tree`. The original attempt remains excluded; the successful fresh retry is recorded below.
 
 The read-only replay uses the public diagnosis API directly because the CLI
 requires a sealed `run-result.json`. No result is fabricated for that check:
@@ -62,3 +62,15 @@ soaks receive 30,300 seconds. Non-soak limits and scenario business deadlines
 are unchanged. The 107-example remote suite includes full-duration, grouped,
 benchmark, and overflow checks. This is a bounded budget mitigation; a fresh
 full-duration cell run must still seal and verify before acceptance.
+
+
+On 2026-10-01 UTC the fresh same-seed retry sealed and verified as cell
+`01a0f4f5-7e09-7358-ac15-b2ac2128e990`, [digest-linked nested
+run](../verification/runs/keiro/2026/10/01a0f4f4-7b1a-7232-b0ab-f62d19abb0aa.md).
+It used clean released payload `9c2c9b8`, unchanged inbox revision 2 business
+settings, seed `4252662818734786`, and the bounded 15,300-second cap. All eight
+business checks held over 28,821 fresh deliveries and 57,642 effects; all six
+bounded resource probes were stable. The full inbox execution gate is now
+satisfied. This validates the bounded budget mitigation without retroactively
+accepting the first attempt or attributing its exact finalization cost.
+Independent Keiro VC-1 verification remains unavailable.

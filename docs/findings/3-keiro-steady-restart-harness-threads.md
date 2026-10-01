@@ -112,7 +112,36 @@ cabal run kenshou -- run keiro/command/soak/write-side-steady-state-reduced \
   --dim pg.durability=durable --out runs
 ```
 
-Next, run a minimal supervisor loop without the Keiro workers and inspect
-live thread references after each child exit. The no-restart, forced-GC and
-longer default-collection comparisons are complete; heap retention and owner
-attribution remain open.
+The minimal supervisor control is recorded below. The no-restart, forced-GC
+and longer default-collection comparisons are complete; clean post-repair
+workload confirmation and historical in-process attribution remain open.
+
+
+On 2026-10-01 UTC a minimal toolkit regression reproduced retired-child
+retention with only `kenshou-check-fixture-worker`, without Keiro. It creates a
+weak reference, sends SIGKILL and reaps the child, performs major GC while the
+supervisor remains alive, then requires the child to be unreachable. Before
+repair it failed; after repair it passed. `retireChild` now forces the filtered
+list spine, and stored disturbance records are evaluated before insertion so
+their strict fields release child closures. The package suite passes 34
+examples. This establishes a local harness bookkeeping defect, not a root-cause
+assignment for every earlier in-process restart signal.
+
+A new dirty local outbox process arm, run `01a0f845-ef94-703f-87d6-1cff0db414bf`
+under `runs/ep13-outbox-process-soak/`, held all eleven business verdicts over
+141 unique messages and six SIGKILLs. Its six extra broker appends were covered
+by message-specific crash marks and its continuous surviving publisher's
+resources were stable. Main Haskell threads still grew in this pre-repair run.
+These short workstation diagnostics are excluded from controlled baseline and
+throughput claims. A clean matched cell control remains required before
+closing this finding.
+
+
+The same-seed post-repair process smoke `01a0f84f-c814-748e-83aa-0b4b60cb8c7d`
+under `runs/ep13-outbox-process-soak-fixed/` held all eleven business checks
+with 141 unique messages, 148 broker records and six kills. Main Haskell
+threads stayed at 145–146, all six bounded main probes were stable, and the
+continuous survivor was stable. The overall result remained inconclusive
+because short killed incarnations had insufficient data under the unchanged
+leak policy. This supports the local supervisor repair; a clean matched
+cell control and historical in-process attribution remain open.

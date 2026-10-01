@@ -1,6 +1,7 @@
 # runs/keiro/2026/10 Update Log
 
 ## 2026-10-01
+* **Addition**: Recorded run 01a0f4f4-7b1a-7232-b0ab-f62d19abb0aa (keiro/inbox/soak/dedupe-window, passed).
 * **Addition**: Recorded comparison 01a0f4fe-7821-7681-90ab-eb17be1d2d35 (keiro/queue/benchmark/job-throughput, failed).
 * **Addition**: Recorded comparison 01a0f4fe-74b7-73ab-907d-a63b1ec0d2a3 (keiro/queue/benchmark/job-throughput, inconclusive).
 * **Addition**: Recorded run 01a0f4a8-8e83-7595-a750-bf0430cb3f0e (keiro/queue/benchmark/job-throughput, passed).

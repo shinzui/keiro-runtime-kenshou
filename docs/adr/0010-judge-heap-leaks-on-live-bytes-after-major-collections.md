@@ -2,10 +2,10 @@
 type: Architecture Decision Record
 title: Judge heap leaks on live bytes after major collections
 description: Heap leak verdicts use forced-major-collection samples or the lower envelope of post-major live bytes, while native memory is reported separately.
-timestamp: 2026-09-21T18:15:00Z
+timestamp: 2026-10-01T16:37:00Z
 generated:
   by: process:codex
-  at: "2026-09-21T18:15:00Z"
+  at: "2026-10-01T16:37:00Z"
 docId: ADR-10
 status: Accepted
 date: 2026-09-21
@@ -59,3 +59,12 @@ the major-collection basis for a Haskell heap verdict.
   update, and supervised worker handles must close when workers exit. Otherwise
   the harness itself can satisfy the leak detector's growth criteria, as the
   Kiroku reduced soak demonstrated with retained heap and descriptors.
+- Retired worker handles must also become unreachable while the supervisor
+  stays active. Force the full spine of filtered child lists and evaluate
+  disturbance records before storing them: forcing only the outer cons leaves
+  closures that retain completed listener threads. A weak-reference test with
+  major GC verifies retirement independently of runtime-library workers.
+- Resource series belong to one process incarnation. Restarted processes have
+  fresh clocks and heaps, so their series must not be joined. Preserve
+  insufficient-data verdicts for short incarnations and keep a continuous
+  surviving worker when a soak needs a full-window process control.
