@@ -280,7 +280,11 @@ sliceRuns granularity prepared = do
   where
     valid run = run.ordinal >= 0 && run.timeoutSeconds > 0 && not (Text.null run.payloadLabel) && maybe True (== run.runId) run.spec.runId
     makeSlice (index, group) =
-      let total = 300 + sum (fmap (toInteger . (.timeoutSeconds)) (NonEmpty.toList group))
+      let runBudget :: PreparedRun -> Integer
+          runBudget run = toInteger run.timeoutSeconds + if run.spec.scenario.kind == Soak then 600 else 0
+          -- Soaks drain delayed work and compute resource verdicts after load ends.
+          -- Finding 49 records a full inbox run exhausting the old shared margin.
+          total = 300 + sum (fmap runBudget (NonEmpty.toList group))
        in if total > toInteger (maxBound :: Int)
             then Left "cell slice wall-clock limit is too large"
             else Right (Slice index (NonEmpty.head group).payloadLabel (NonEmpty.head group).reset group (fromInteger total))

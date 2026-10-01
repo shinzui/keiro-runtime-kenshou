@@ -241,7 +241,13 @@ cell. Multi-hour forms are soak-tier, cell-placed runs. Submit one slice
 with `--detach`; a later gated stage can name the earlier stage's durable
 `gs://<results-bucket>/runs/<cell-run-id>/output/<run-id>/run-result.json`
 as its gate input. Keep the cell lease budget and the scenario timeout long
-enough for the full stage.
+enough for the full stage. The cell submission adds five minutes of shared
+finalization allowance plus ten minutes per soak. A single four-hour soak
+therefore has a four-hour-fifteen-minute wall-clock cap for drain, diagnosis,
+and sealing. This allowance does not change the scenario’s own business
+deadlines. [Finding 49](../findings/49-four-hour-inbox-soak-times-out-before-sealing.md)
+records why the older four-hour-five-minute cap was insufficient; a complete
+full-duration rerun remains required.
 
 A running default cell is provisionally about US$1 per hour; a stopped
 cell continues to incur disk charges. Storage charges are expected to be

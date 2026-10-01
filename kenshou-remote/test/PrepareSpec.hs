@@ -27,6 +27,7 @@ import Kenshou.Plan.Selector (parseSelector)
 import Kenshou.Remote.Cell.Docs (CachePolicy (..), CellBuckets (..), CellDescriptor (..), CollectOptions (..), Limits (..), PgReset (..), ResetBlock (..), Submission (..))
 import Kenshou.Remote.Cell.Lease (CellRef (..))
 import Kenshou.Remote.Cell.Prepare (Granularity (..), OtlpSink (..), PrepareOptions (..), Prepared (..), PreparedRun (..), RejectReason (..), Routed (..), Slice (..), SubmissionInputs (..), prepareForCell, routePlan, slicePlan, sliceRuns, submissionFor)
+import Kenshou.Remote.Cell.Prepare qualified as Prepare
 import Kenshou.Remote.Cell.RouteJson (RouteDocuments (..), routeWorkJson)
 import Kenshou.Remote.Cell.RouteRules (CellCapabilities (..), RoutingRule (..), RuleCondition (..), defaultRoutingRules, descriptorDigest, loadCellCapabilities, matchingRules)
 import Kenshou.Remote.Cell.Session.Build (BuildOptions (..), BuiltSession (..), buildSession)
@@ -279,7 +280,20 @@ spec = describe "cell run slicing" do
     slices <- expectSlices (sliceRuns GranularityAuto [first, second, benchmark, third, soak, fourth])
     fmap (NonEmpty.length . (.entries)) slices `shouldBe` [2, 1, 1, 1, 1]
     fmap (.index) slices `shouldBe` [0, 1, 2, 3, 4]
-    fmap (.wallClockSeconds) slices `shouldBe` [320, 310, 310, 310, 310]
+    fmap (.wallClockSeconds) slices `shouldBe` [320, 310, 310, 910, 310]
+
+  it "leaves bounded time for full-soak drain and diagnosis without extending benchmark limits" do
+    soak <- prepared 0 Soak "default" cold
+    benchmark <- prepared 1 Benchmark "default" cold
+    slices <- expectSlices (sliceRuns GranularityRun [soak {Prepare.timeoutSeconds = 14400}, benchmark {Prepare.timeoutSeconds = 600}])
+    fmap (.wallClockSeconds) slices `shouldBe` [15300, 900]
+
+  it "budgets finalization for each soak in a grouped slice and rejects overflow" do
+    first <- prepared 0 Soak "default" cold
+    second <- prepared 1 Soak "default" cold
+    slices <- expectSlices (sliceRuns GranularityPlan [first {Prepare.timeoutSeconds = 14400}, second {Prepare.timeoutSeconds = 14400}])
+    fmap (.wallClockSeconds) slices `shouldBe` [30300]
+    sliceRuns GranularityRun [first {Prepare.timeoutSeconds = maxBound}] `shouldSatisfy` isLeft
 
   it "starts a new automatic slice when the payload or reset changes" do
     first <- prepared 0 Correctness "default" cold

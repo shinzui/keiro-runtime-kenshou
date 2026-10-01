@@ -55,3 +55,10 @@ main = do
 Save that script outside the fetched tree, then run
 `nix develop -c cabal exec -- runghc -package=kenshou-diagnose SCRIPT.hs`.
 The supplied policy matches `soakLeakSpec` for 14,400 seconds with forced GC off.
+
+The client now adds ten minutes per soak to the existing shared five-minute
+slice margin. One four-hour soak receives 15,300 seconds; two grouped four-hour
+soaks receive 30,300 seconds. Non-soak limits and scenario business deadlines
+are unchanged. The 107-example remote suite includes full-duration, grouped,
+benchmark, and overflow checks. This is a bounded budget mitigation; a fresh
+full-duration cell run must still seal and verify before acceptance.

@@ -62,6 +62,11 @@ provenance:
       at: 2026-09-30T01:50:15Z
       mode: "implement"
       note: "Documented reset-failed cell attempt and excluded it from runtime evidence"
+    - model: "gpt-6.1-sol"
+      harness: "codex-cli"
+      at: 2026-10-01T00:43:19Z
+      mode: "implement"
+      note: "Budgeted bounded per-soak finalization time after the full inbox timeout and finite statistics replay."
 ---
 
 # Run kenshou on leased cells with payloads, submission and retrieval
@@ -156,9 +161,12 @@ Every kenshou run that executed on a cell remains an ordinary kenshou run direct
 - [x] (2026-09-29) A revised Keiro default-rate replay sealed as alpha cell run `01a0efe8-fd67-72b9-90f8-c5ad281242e3` with `infrastructure-failure` and `reset-failed` before any nested scenario executed. Reset evidence says `role-reset` failed after three minutes, and the alpha PostgreSQL VM was then found terminated while the driver and monitoring VMs remained running. A manual PostgreSQL VM start allowed the next cold reset and scenario to reach `Running`; the cause of the unexpected termination remains under investigation. The failed cell run is excluded from Keiro runtime findings and comparison evidence.
 - [x] (2026-09-29) A clean five-minute Keiro outbox soak later lost its alpha lease near the end of execution. Cell run `01a0f009-3f97-70dc-8dd4-110125fd01e0` sealed `cancelled` with `lease-lost` and `health-unavailable`; its nested run reached measurement `done` but never wrote `run-result.json` or a manifest. A GCP `guestTerminate` operation stopped the driver at 02:05:44 UTC. [Finding 47](../findings/47-alpha-cell-loses-lease-during-outbox-soak.md) preserves the unattributed infrastructure observation; partial verdict files are excluded. A same-seed retry with a twenty-minute lease sealed and verified as cell run `01a0f014-6de1-70a5-bb0e-ee6a92a42336`; all eight outbox business checks held, without identifying the first attempt's lease-loss cause.
 - [x] (2026-09-29) Independently repaired the cell client's fail-fast renewal path: a thrown store error now retries once per second while the last successful heartbeat remains inside TTL plus grace; explicit fencing or cancellation still stops immediately. The injected transient-write test passes and the full remote-client suite passes 105 examples. This is preventive mitigation, not proof that a renewal exception caused finding 47; the clean cell retry remains the runtime gate.
+- [x] (2026-09-30) Added ten minutes of bounded finalization allowance per soak on top of the existing shared five-minute slice margin. [Finding 49](../findings/49-four-hour-inbox-soak-times-out-before-sealing.md) confirms a full inbox attempt timed out after business verdicts and before nested sealing; an offline replay of the same statistics took five minutes. One four-hour soak now gets a 15,300-second cell cap, and grouped soaks receive the extra allowance individually. Benchmark and correctness caps remain unchanged, overflow is rejected, and the 107-example remote suite passes. Full-soak live rerun acceptance remains open.
 - [ ] Deliver the content-addressed Kenshou payload and `kenshou cell` lifecycle, paired comparisons within a lease, and equivalent local/cell correctness evidence; verify the acceptance commands in Validation and Acceptance.
 
 ## Surprises & Discoveries
+
+- A soak’s load duration does not include delayed-message drain and statistical diagnosis. The old shared five-minute margin left about 103 seconds after the full inbox business verdicts; diagnosis replay took 300 seconds on the workstation. The client now budgets ten additional minutes per soak, while preserving finite cell limits and every scenario-level business deadline. This mitigation still needs a full-duration cell rerun.
 
 - A long-lived cell client can receive a `gcloud` CLI token with less than 45 minutes remaining. The prior cache assumed 45 minutes from first retrieval, so a later GCS metadata read returned HTTP 401 and aborted an otherwise recoverable paired session. Journal resume correctly retained seven verified slices, but it cannot turn the cancelled eighth slice or a two-lease session into a valid A/A control. The GCS adapter now invalidates the cached token on 401 and retries once. This is a harness finding, not an owner runtime failure.
 - EP-16's draft `cell.submission/v1` embeds a full `cell.payload/v1` descriptor. The client must include `schema`, `narHash`, `closurePaths`, and `system` alongside the bundle digest, store path, and command. The producer description already required these fields, while its earlier illustrative submission omitted them. The draft schema and examples are in `mori://shinzui/load-testing-infra` at project-relative path `schemas/cell/` (artifact-level URI pending), commit `396ff30`; agent acceptance is pending.
