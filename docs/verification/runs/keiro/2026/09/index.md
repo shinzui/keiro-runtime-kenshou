@@ -30,4 +30,13 @@
 - [keiro/outbox/soak/table-growth-reduced inconclusive on released](01a0f02e-688c-7400-a8d6-c2a74ac42e44.md) - Recorded keiro/outbox/soak/table-growth-reduced run against cohort released with digest-pinned data.
 - [keiro/outbox/soak/table-growth-reduced inconclusive on released](01a0f055-c3bf-774f-9e85-993b6c0d5bb6.md) - Recorded keiro/outbox/soak/table-growth-reduced run against cohort released with digest-pinned data.
 - [keiro/queue/soak/queue-and-dlq-growth-reduced passed on released](01a0f056-3861-703f-9c5d-f1a689409a8c.md) - Recorded keiro/queue/soak/queue-and-dlq-growth-reduced run against cohort released with digest-pinned data.
+- [keiro/queue/benchmark/job-throughput passed on released](01a0f4a8-8e83-7594-a02d-592fb7c56b5c.md) - Recorded keiro/queue/benchmark/job-throughput run against cohort released with digest-pinned data.
+- [keiro/queue/benchmark/job-throughput passed on released](01a0f4a8-8e83-7594-a07e-006809658925.md) - Recorded keiro/queue/benchmark/job-throughput run against cohort released with digest-pinned data.
+- [keiro/queue/benchmark/job-throughput passed on released](01a0f4a8-8e83-7594-a100-440e56951a4c.md) - Recorded keiro/queue/benchmark/job-throughput run against cohort released with digest-pinned data.
+- [keiro/queue/benchmark/job-throughput passed on released](01a0f4a8-8e83-7594-a1b0-b815f3f1f17e.md) - Recorded keiro/queue/benchmark/job-throughput run against cohort released with digest-pinned data.
+- [keiro/queue/benchmark/job-throughput passed on released](01a0f4a8-8e83-7594-a304-72cc62d29ea9.md) - Recorded keiro/queue/benchmark/job-throughput run against cohort released with digest-pinned data.
+- [keiro/queue/benchmark/job-throughput passed on released](01a0f4a8-8e83-7594-a4a4-095f502faf1c.md) - Recorded keiro/queue/benchmark/job-throughput run against cohort released with digest-pinned data.
+- [keiro/queue/benchmark/job-throughput passed on released](01a0f4a8-8e83-7594-a4fa-d8bfcb892f26.md) - Recorded keiro/queue/benchmark/job-throughput run against cohort released with digest-pinned data.
+- [keiro/queue/benchmark/job-throughput passed on released](01a0f4a8-8e83-7594-a83d-cb3604b6995f.md) - Recorded keiro/queue/benchmark/job-throughput run against cohort released with digest-pinned data.
+- [keiro/queue/benchmark/job-throughput passed on released](01a0f4a8-8e83-7594-ab91-f155443ddce8.md) - Recorded keiro/queue/benchmark/job-throughput run against cohort released with digest-pinned data.
 
