@@ -8,8 +8,9 @@ The [queue lease acceptance](../plans/13-cover-the-keiro-outbox-inbox-and-job-qu
 adds four clean local PostgreSQL 18 investigation records at harness `fed2eca`.
 Worker and drain extension arms pass; deliberately ignored-extension controls
 fail exactly the two extension checks. All 40 schema and 84 artifact checks
-pass, and independent offline replay agrees with each outcome. The new
-scenario-specific VC-1 verifier uses raw SQL lease rows and handler observations.
+pass, and all four cloud-backed attestations are confirmed with six checks
+passed apiece. The scenario-specific VC-1 verifier uses raw SQL lease rows
+and handler observations; confirmation preserves the deliberate failures.
 Other Keiro business-oracle replay and full soak acceptance remain open.
 
 ## Reference cohort and evidence quality

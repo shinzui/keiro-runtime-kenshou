@@ -206,9 +206,20 @@ nix develop -c cabal run -v0 kenshou -- run keiro/queue/concurrency/lease-extens
 The extended cases exit 0; ignored-extension cases exit 1. The latter still
 hold the unextended-expiry, cadence, and drained-queue checks. Raw inputs are
 `logs/queue-lease-unextended.json` and `logs/queue-lease-extended.json` in each
-sealed directory. All four are digest-linked investigation records in the historical bundle,
-including both raw observation documents. Cloud-backed attestation follows
-the record commit from a clean verifier checkout.
+sealed directory. All four are digest-linked investigation records in the
+historical bundle, including both raw observation documents. All four
+cloud-backed attestations are confirmed: all six checks pass,
+including independent VC-1 replay and clean run/verifier worktrees. The
+attester used the exact clean-run executable at `fed2eca`. Confirmation
+preserves the two deliberately failed outcomes. Strict profile validation,
+the evidence checker, CLI integration checks, and generated indexes pass.
+
+| Arm | Confirmed attestation |
+| --- | --- |
+| `drain-extended` | [01a0f920-0b42-72d2-b3d4-6eca7317239a](../verification/attestations/2026/10/01a0f920-0b42-72d2-b3d4-6eca7317239a.md) |
+| `drain-ignored` | [01a0f921-1b29-7229-9e39-b7a249cc7ad1](../verification/attestations/2026/10/01a0f921-1b29-7229-9e39-b7a249cc7ad1.md) |
+| `worker-extended` | [01a0f922-276b-7722-b023-1c3d385b5e6e](../verification/attestations/2026/10/01a0f922-276b-7722-b023-1c3d385b5e6e.md) |
+| `worker-ignored` | [01a0f923-39ea-712c-bb6d-4efca52d76dd](../verification/attestations/2026/10/01a0f923-39ea-712c-bb6d-4efca52d76dd.md) |
 
 
 ### Process-isolated outbox soak
