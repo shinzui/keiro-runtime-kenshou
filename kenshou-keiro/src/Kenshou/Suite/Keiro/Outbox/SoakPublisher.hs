@@ -11,7 +11,7 @@ where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (cancel, link, withAsync)
-import Control.Concurrent.MVar (modifyMVar_, newMVar, readMVar)
+import Control.Concurrent.MVar (modifyMVar_, newMVar, readMVar, withMVar)
 import Control.Exception (bracket, mask_)
 import Control.Monad (forM, forever, unless, when)
 import Data.Aeson (encode, object, withObject, (.:), (.=))
@@ -96,7 +96,9 @@ withProcessPublishers context killInterval action = withCheck context \check -> 
         restartLoop (index + 1)
   value <- withAsync (if killInterval == 0 then pure () else restartLoop 2) \killer -> do
     link killer
-    action (cancel killer)
+    -- Quiesce between complete restarts. Cancelling while a child is parked
+    -- but before its SIGKILL is recorded would create an unbudgeted duplicate.
+    action (withMVar current (const (cancel killer)))
   active <- readMVar current
   exits <- traverse (\child -> stopGracefully supervisor child 30000) [active, second]
   mapM_ collectErrors [active, second]

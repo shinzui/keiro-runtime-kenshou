@@ -138,6 +138,8 @@ the whole run while the other parks after a durable broker append and before
 outbox finalization. The controller waits for its persisted `crash-window`
 message IDs, sends process-group `SIGKILL`, reaps it, and starts a fresh child.
 A duplicate append must belong to that exact message's recorded crash batches.
+Drain shutdown acquires the restart lock before cancelling its controller,
+so a parked child cannot be left between append and recorded SIGKILL.
 Tracing and metrics must both be off for this process arm; other combinations
 are explicitly rejected until child telemetry is implemented.
 
@@ -172,7 +174,19 @@ reachability. All 15 run spec/result/manifest schema checks passed across the
 four local process/control trees and the full inbox tree. Every one of the
 216 local manifested artifacts matched its recorded size and SHA-256. ADR-10
 now records eager retirement bookkeeping and separate per-incarnation series;
-its descriptor type-check and strict 21-record bundle validation pass.
+its descriptor type-check and strict 21-record bundle validation pass. All
+`just verify` targets passed across the foundation and evidence phases; the
+new evidence index required its record commit before the index-diff check.
+The unsupported process/tracing combination was explicitly rejected with
+`process-telemetry-unsupported` in run `01a0f856-4d2a-7025-865d-f6bc533d5611`.
+The package tests were rerun after synchronizing shutdown with restart
+completion and remained at 43 examples with zero failures. The final one-minute
+shutdown smoke, `01a0f85b-b236-74b7-bed7-675f55873184` under
+`runs/ep13-outbox-process-shutdown/`, used a five-second kill interval and held
+all eleven checks over 141 unique messages, 153 broker records and twelve
+recorded kills. Publisher/maintenance errors and backlog were zero; the
+continuous survivor was stable. Short killed incarnations again retained
+insufficient-data verdicts and the overall outcome was inconclusive.
 
 Reproduce the functional process arm from the repository root:
 
@@ -296,6 +310,7 @@ as clean controlled comparisons.
 | Queue correctness | `runs/01a0d539-*` through `runs/01a0d53c-*`; FIFO run `runs/01a0d51b-71dc-72be-97b8-e8404c67590a` | Default sweep exited zero; eight direct passes, three scoped expected failures. |
 | Benchmarks | Outbox `runs/01a0d566-56e8-7179-93f1-5bf480c9119c`; inbox `runs/01a0d58e-f76a-739d-821a-c1983474427c`; queue `runs/01a0d571-c677-739f-bd01-9b72c804d995` | Representative durable runs reached benchmark grade; all seven identifiers emit artifacts. |
 | Comparison and overhead | `runs/keiro-producer-local-comparison.json`; `runs/overhead-outbox/overhead-01a0d579-3e04-740b-be98-63ee4c60addf/overhead-report.json`; `runs/overhead-queue/overhead-01a0d57b-8c4b-721b-b04d-08c1b3d43ac8/overhead-report.json` | Comparison inconclusive under sample policy; overhead reports have three valid blocks each. |
+| Full inbox soak | [Released four-hour run](../verification/runs/keiro/2026/10/01a0f4f4-7b1a-7232-b0ab-f62d19abb0aa.md) | All eight checks held; six bounded resource probes stable. Independent VC-1 remains open. |
 | Telemetry | Inbox `runs/01a0d593-371a-772a-902b-6d5fa0c5a23f`; queue `runs/01a0d599-6794-76cf-9399-000ff650b6e1` | Enabled arms passed on durable PostgreSQL. Queue pre-handler job reached DLQ without a handler call or process span. |
 
 ## Surprises & Discoveries
@@ -444,9 +459,9 @@ as clean controlled comparisons.
 
 ## Outcomes & Retrospective
 
-The durable baseline now exercises the outbox, inbox, and queue through correctness, process-failure, concurrency, telemetry, and benchmark scenarios. All seven planned benchmark identifiers are registered. The package suite passes 41 examples. Queue throughput now supports continuous workers, both polling modes, standard/unlogged provision variation, and native metrics collection and serving, with oracles that detect duplicate calls and incorrect physical persistence. The eight-arm worker metrics contract passes; its new short local smokes are functional evidence only. Known defects remain visible as scoped expected failures rather than silent passes; the local finding records above retain their canonical owner references. The documented inline ordering, inbox GC, and DLQ/redrive windows also remain scoped expected failures.
+The durable baseline now exercises the outbox, inbox, and queue through correctness, process-failure, concurrency, telemetry, and benchmark scenarios. All seven planned benchmark identifiers are registered. The package suite passes 43 examples. Queue throughput now supports continuous workers, both polling modes, standard/unlogged provision variation, and native metrics collection and serving, with oracles that detect duplicate calls and incorrect physical persistence. The eight-arm worker metrics contract passes; its new short local smokes are functional evidence only. Known defects remain visible as scoped expected failures rather than silent passes; the local finding records above retain their canonical owner references. The documented inline ordering, inbox GC, and DLQ/redrive windows also remain scoped expected failures.
 
-The plan is still in progress. The concrete non-soak gaps are listed in Progress. Full acceptance remains pending the three planned soaks and their leak and table-growth verdicts. The earlier producer comparison remains inconclusive under its three-pair policy. New clean five-pair queue comparisons preserve execution-shape p99 uncertainty and measure a latency/memory tradeoff for 100 ms long polling; both are durably recorded and independently confirmed for VC-2/VC-3, with individual business-oracle attestation still open. The overhead reports remain local evidence, and no configuration experiment measures an upstream release change.
+The plan is still in progress. The concrete non-soak gaps are listed in Progress. The full inbox execution gate passed with stable bounded resources and a digest-linked record. Full acceptance still requires outbox/queue full soaks, controlled process-isolation evidence, remaining matrix coverage and independent Keiro verdict verification. The earlier producer comparison remains inconclusive under its three-pair policy. New clean five-pair queue comparisons preserve execution-shape p99 uncertainty and measure a latency/memory tradeoff for 100 ms long polling; both are durably recorded and independently confirmed for VC-2/VC-3, with individual business-oracle attestation still open. The overhead reports remain local evidence, and no configuration experiment measures an upstream release change.
 
 
 ## Context and Orientation
