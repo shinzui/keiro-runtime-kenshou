@@ -145,3 +145,22 @@ continuous survivor was stable. The overall result remained inconclusive
 because short killed incarnations had insufficient data under the unchanged
 leak policy. This supports the local supervisor repair; a clean matched
 cell control and historical in-process attribution remain open.
+
+
+The clean post-repair twenty-minute process control is now digest-linked as
+[01a0f8c1-747d-7434-befb-a01931028005](../verification/runs/keiro/2026/10/01a0f8c1-747d-7434-befb-a01931028005.md).
+All eleven business checks held after 20 SIGKILLs over 24,202 unique messages;
+20 extra broker appends matched the crash budgets. All six bounded main probes
+were stable, including Haskell thread medians 144–145; the continuous survivor
+was also stable. Twenty-one short incarnations retain insufficient-data
+verdicts, so the overall process result remains inconclusive. This supports
+the supervisor repair without closing historical in-process attribution.
+
+The matched [in-process control](../verification/runs/keiro/2026/10/01a0f8c5-2ae0-768c-a4d1-14c63e1cb802.md)
+passed and held all eight business checks over the same
+24,202 messages and 20 restarts. Both controls force major GC every five seconds.
+The [dated report](../reports/2026-10-01-outbox-metrics-and-restart-controls.md) records all resource decisions and the
+local GHC 9.12.4 observation that finished threads remain in `listThreads`
+until collected. That observation explains a possible collection-timing
+contribution, not the owner or retained-object cause of the earlier workload.
+The finding remains investigating; default-GC attribution remains open.

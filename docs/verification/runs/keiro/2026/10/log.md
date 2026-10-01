@@ -1,6 +1,27 @@
 # runs/keiro/2026/10 Update Log
 
 ## 2026-10-01
+* **Addition**: Recorded run 01a0f8c5-2ae0-768c-a4d1-14c63e1cb802 (keiro/outbox/soak/table-growth-reduced, passed).
+* **Addition**: Recorded run 01a0f8c1-747d-7434-befb-a01931028005 (keiro/outbox/soak/table-growth-reduced, inconclusive).
+* **Addition**: Recorded comparison 01a0f8be-8279-7667-ad13-3757c626211f (keiro/outbox/benchmark/enqueue-to-publish, passed).
+* **Addition**: Recorded comparison 01a0f8be-8179-75d7-9d7a-0b089f042fa8 (keiro/outbox/benchmark/enqueue-to-publish, inconclusive).
+* **Addition**: Recorded comparison 01a0f8be-8005-7455-a352-f2165da567f6 (keiro/outbox/benchmark/enqueue-to-publish, passed).
+* **Addition**: Recorded run 01a0f8b8-eed2-7406-b54b-55be68231d95 (keiro/outbox/benchmark/enqueue-to-publish, passed).
+* **Addition**: Recorded run 01a0f8ba-af98-7607-af3e-1ce8271ed91a (keiro/outbox/benchmark/enqueue-to-publish, passed).
+* **Addition**: Recorded run 01a0f8bc-9f3d-76ce-bdde-662078433ce4 (keiro/outbox/benchmark/enqueue-to-publish, passed).
+* **Addition**: Recorded run 01a0f8b5-3434-77e6-a3e9-ced441da2fa7 (keiro/outbox/benchmark/enqueue-to-publish, passed).
+* **Addition**: Recorded run 01a0f8b7-233c-7471-96e8-29cb50b1f908 (keiro/outbox/benchmark/enqueue-to-publish, passed).
+* **Addition**: Recorded run 01a0f8af-7dbe-7050-910d-9b3eca09b9a4 (keiro/outbox/benchmark/enqueue-to-publish, passed).
+* **Addition**: Recorded run 01a0f8b1-63ca-704b-8fea-fed0339b50f6 (keiro/outbox/benchmark/enqueue-to-publish, passed).
+* **Addition**: Recorded run 01a0f8b3-46c6-774a-8de5-c0daa19a1c05 (keiro/outbox/benchmark/enqueue-to-publish, passed).
+* **Addition**: Recorded run 01a0f8ab-bf34-760b-8a29-8b514d545050 (keiro/outbox/benchmark/enqueue-to-publish, passed).
+* **Addition**: Recorded run 01a0f8ad-87e1-739d-9544-6bf01e555fe7 (keiro/outbox/benchmark/enqueue-to-publish, passed).
+* **Addition**: Recorded run 01a0f8a9-de59-7509-95a1-ec880428ba12 (keiro/outbox/benchmark/enqueue-to-publish, passed).
+* **Addition**: Recorded run 01a0f8a8-0fbe-7737-b239-d7be7f258756 (keiro/outbox/benchmark/enqueue-to-publish, passed).
+* **Addition**: Recorded run 01a0f8a4-3c36-746e-a2ec-0c47a79ae357 (keiro/outbox/benchmark/enqueue-to-publish, passed).
+* **Addition**: Recorded run 01a0f8a2-690d-70ad-8c16-1d46e7397a5e (keiro/outbox/benchmark/enqueue-to-publish, passed).
+* **Addition**: Recorded run 01a0f8a6-304f-7726-bcf1-ba6343c2bb1e (keiro/outbox/benchmark/enqueue-to-publish, passed).
+* **Addition**: Recorded run 01a0f899-f196-7031-aa56-2d49cf00e6b6 (keiro/outbox/correctness/telemetry-contract, passed).
 * **Addition**: Recorded run 01a0f4f4-7b1a-7232-b0ab-f62d19abb0aa (keiro/inbox/soak/dedupe-window, passed).
 * **Addition**: Recorded comparison 01a0f4fe-7821-7681-90ab-eb17be1d2d35 (keiro/queue/benchmark/job-throughput, failed).
 * **Addition**: Recorded comparison 01a0f4fe-74b7-73ab-907d-a63b1ec0d2a3 (keiro/queue/benchmark/job-throughput, inconclusive).

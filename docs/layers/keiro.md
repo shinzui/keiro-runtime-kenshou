@@ -439,8 +439,11 @@ store collector and server lifecycle in revision 2. `collect` gathers without
 opening HTTP endpoints; `serve` opens them; `serve-scraped` adds the separate
 scraper. The store and native server remain alive until scraping finishes.
 Core measurements and business verdicts continue to use independent channels.
-These revisions require fresh controlled comparisons before making performance
-claims about the additional metrics path.
+The [clean controlled metrics investigation](../reports/2026-10-01-outbox-metrics-and-restart-controls.md)
+records fifteen benchmark-grade arms and confirmed VC-2/VC-3 comparisons.
+Collection and scraping pass their policies; serving and the identical-arm
+control remain inconclusive on p99. These results apply to the paced
+250-message/second workload; broader overhead acceptance remains open.
 
 ```bash
 nix develop -c cabal run -v0 kenshou -- run keiro/outbox/correctness/telemetry-contract --dim pg.durability=durable --dim telemetry.tracing=sdk-inmemory --dim telemetry.metrics=serve-scraped --set metrics.scrape-interval-ms=100 --out runs/
@@ -552,8 +555,14 @@ extra append must match that message's own crash marks. Series and leak reports
 are separate per incarnation; short incarnations retain insufficient-data
 verdicts. This arm currently requires tracing and metrics off and rejects
 other combinations. The `in-process` default retains the cooperative restart
-control. Local process smokes establish functional wiring only; controlled
-process acceptance remains open. A minimal supervisor weak-reference regression
+control. Clean matched twenty-minute forced-GC controls now hold all applicable
+business checks over 24,202 unique messages and 20 restarts each. The process
+main and continuous surviving publisher have stable bounded resources, but
+short killed incarnations retain insufficient-data verdicts. The matched
+in-process result and exact evidence are in the
+[dated report](../reports/2026-10-01-outbox-metrics-and-restart-controls.md).
+Full process acceptance and historical default-GC attribution remain open.
+A minimal supervisor weak-reference regression
 proved and repaired retired-child retention, without establishing the cause
 of every historical in-process signal.
 
