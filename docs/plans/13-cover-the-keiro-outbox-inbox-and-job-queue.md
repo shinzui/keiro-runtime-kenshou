@@ -57,6 +57,11 @@ provenance:
       at: 2026-10-01T16:33:42Z
       mode: "implement"
       note: "Implemented process-isolated outbox soak diagnosis and recovered the sealed four-hour inbox evidence."
+    - model: "gpt-6-astra"
+      harness: "codex-cli"
+      at: 2026-10-01T17:36:58Z
+      mode: "implement"
+      note: "Implemented native store and OpenTelemetry endpoint coverage for messaging contracts and benchmarks."
 ---
 
 # Cover the keiro outbox, inbox and job queue
@@ -108,6 +113,7 @@ The non-soak baseline is in place. The remaining work is to deepen specific scen
 - [x] (2026-09-30) Completed the clean five-pair queue-worker A/A on alpha under one lease. All ten nested runs passed at benchmark grade with full raw samples, zero operation failures, 153,896 jobs handled exactly once, and 250 verified manifested files. [Saved comparison and experiment design](../reports/2026-09-30-queue-worker-comparisons.md) preserve its inconclusive p99 intervals; throughput, p50, allocation, and maximum live bytes passed. The unchanged policy has no health or compatibility rejection reason. All ten arms are digest-linked investigation records. The twenty execution-shape and polling trials completed with passing business checks; clean replay reproduced their inconclusive execution-shape and polling-latency regression results; both formal comparisons and all twenty arms are digest-linked, and both comparison attestations are confirmed. P99 repeatability and broader performance acceptance remain open.
 - [x] (2026-09-30) Completed both five-pair queue configuration comparisons on clean alpha payload `9c2c9b8`: twenty benchmark-grade runs held all business checks over 307,782 exactly-once jobs, with 500 manifested files verified. Clean replay from `71f5a9e` reproduced every provisional metric and saved policy decision. Continuous workers used about 14.4% less allocation, with inconclusive p99; 100 ms long polling used about 60.2% less allocation and 36.7% less maximum live memory, with a handler-start latency regression. All twenty arms and both comparisons are digest-linked. Both comparison attestations are confirmed with all six checks passing, including independent VC-2/VC-3 recomputation. The [dated report](../reports/2026-09-30-queue-worker-comparisons.md) links every pair, clean raw comparison, and attestation. Strict evidence validation, local ledger/CLI checks, profile fixtures, and index regeneration pass; all `just verify` targets passed across foundation and evidence phases. Individual business-oracle attestation, provision variation, broader performance acceptance, and full soaks remain open.
 - [x] (2026-10-01 UTC) Added queue throughput revision 4 standard/unlogged provision controls through the released API, with PostgreSQL persistence checks before and after load. Ten durable PostgreSQL 18 functional arms held all four verdicts over 7,345 exactly-once jobs, with zero worker errors, empty queues, and both consumers participating. All 30 result/spec/manifest schema checks and 264 artifact digest/size checks passed. The 41-example Keiro package suite and full `nix develop -c just verify` pass, including persistence-oracle mutations and shared integration/evidence checks. These dirty workstation runs are exploratory and do not change baseline record counts; controlled storage-performance acceptance remains open.
+- [x] (2026-10-01) Added outbox/inbox native metrics serving in the telemetry contract and four benchmarks. Eight durable contract arms pass all eleven checks; five short benchmark controls hold their business checks. All 39 schema and 293 artifact integrity checks pass, with 381 successful scrapes. Controlled overhead and remaining process-role telemetry acceptance stay open.
 - [ ] Finish the remaining non-soak acceptance work listed below, then rerun the affected scenarios and package tests.
 - [x] (2026-10-01) Full inbox soak sealed, passed, and was digest-linked; the first timed-out attempt remains excluded.
 - [x] (2026-10-01) Implemented revision-3 process-isolated outbox soak with per-incarnation diagnosis and message-specific crash duplicate budgets.
@@ -193,6 +199,44 @@ Reproduce the functional process arm from the repository root:
 ```bash
 nix develop -c cabal run -v0 kenshou -- run keiro/outbox/soak/table-growth-reduced --dim pg.durability=durable --set soak.duration-minutes=1 --set outbox.rate-per-second=2 --set outbox.kill-interval-seconds=10 --set outbox.publisher-execution=processes --set diagnose.major-gc-interval-ms=5000 --seed 4252662818734786 --out runs/ep13-outbox-process-soak
 ```
+
+### Messaging metrics serving
+
+Revision 2 of the outbox telemetry contract and all four outbox/inbox
+benchmarks uses `Kenshou.Suite.Keiro.Messaging.Metrics`. It connects the
+released Kiroku collector to the fixture store, serves the native JSON and
+Prometheus endpoints in serving modes, and preserves their lifetime through
+scraper finalization. The contract additionally checks Keiro's OpenTelemetry
+Prometheus endpoint before and after processing against durable workload
+counts; raw HTTP bodies are sealed as logs. The shared telemetry handles expose
+the reader's existing endpoint, without starting a second reader or server.
+The contract declares only the Prometheus reader; benchmark reader choices
+remain available. Cohort versions are unchanged.
+
+The first live traced scrape exposed a parser omission: valid exemplars follow
+some counter values. Run `01a0f88a-5020-709a-80c8-351aab494e20` failed only the
+new final endpoint check with correct runtime counts. The parser now separates
+the exemplar suffix, with mutation checks for missing, duplicated, mislabelled
+and incorrect samples. This is a local oracle correction, not an owner finding.
+The corrected traced/scraped durable run
+`01a0f88b-3f7c-73df-86da-b51a282e9499` passed all eleven checks. All eight
+tracing-off/in-memory × metrics-off/collect/serve/serve-scraped contract arms
+passed on durable PostgreSQL 18. Five integration controls (outbox drain,
+enqueue-to-publish, producer replay, and table/delegated inbox intake) held
+all business checks; their short measurements remain inconclusive. The
+44-example Keiro and 19-example telemetry suites pass. Run identities and
+resolved arguments are retained under `runs/ep13-messaging-metrics/matrix/`
+and `runs/ep13-messaging-metrics/bench/`, each with `summary.json`. All 39
+spec/result/manifest schema checks and 293 artifact size/SHA-256 checks passed.
+The seven scraped runs completed 381 scrapes (254 native store requests),
+with zero scrape failures. `runs/ep13-messaging-metrics/validation.json` retains
+these totals. These dirty workstation runs do not add controlled baseline
+records. Existing ADR-7 and the MasterPlan's telemetry integration contract
+cover this adaptation; it introduces no new architecture boundary.
+The full `nix develop -c just verify` gate passes, including formatting,
+builds, shared tests, released-cohort link proof, component graph, ADR and
+evidence validation, schemas, and live self-tests. A request for the contract's
+unsupported `metrics.otel-reader=none` is rejected before execution with exit 2.
 
 ### Remaining non-soak work
 
@@ -297,7 +341,7 @@ as clean controlled comparisons.
 1. Complete the outbox scenario knobs, producer-path SQL oracles, and generalized role/oracle modules. Broaden the remaining concurrency fault and ordering controls beyond the passing default sweep.
 2. Complete inbox effect/persistence oracles and the remaining documented correctness arms. The current table and delegated runs establish the baseline, but the planned matrix is wider.
 3. Complete queue worker-path outcomes, fault modes, ordering controls, and richer DLQ/acknowledgement oracles. Native worker counter and endpoint checks are implemented; the broader fault and pre-handler paths remain open.
-4. Finish component-specific telemetry adaptation and metrics-serving endpoint checks for outbox and inbox, plus the remaining queue fault and pre-handler coverage. The inbox `InboxInProgress` case now has a passing durable contract run; the queue pre-handler DLQ case observed zero process spans and is recorded as `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-7`.
+4. Extend the implemented outbox/inbox native metrics serving to remaining process roles and finish queue fault and pre-handler coverage. The messaging contract and all four outbox/inbox benchmarks now serve their native store and OpenTelemetry endpoints; controlled overhead acceptance remains open. The inbox `InboxInProgress` case now has a passing durable contract run; the queue pre-handler DLQ case observed zero process spans and is recorded as `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-7`.
 5. Run a clean controlled standard/unlogged provision comparison and finish broader performance acceptance. Revision 4 implements provision variation and its SQL oracle; the local matrix below establishes functional coverage. Five-pair worker/polling configuration comparisons have clean saved results: execution shape remains inconclusive at p99, and long polling with a 100 ms interval trades lower allocation and live memory for a handler-start latency regression. Both comparisons are durably recorded and independently confirmed for VC-2/VC-3; individual business-oracle attestation remains open. The separate idle-poll benchmark covers polling cost.
 6. Refresh `docs/layers/keiro.md`, resolve whether any local ADRs are actually required, validate the bundle, and record final non-soak outcomes. Full plan acceptance also depends on the planned soaks.
 
@@ -459,7 +503,7 @@ as clean controlled comparisons.
 
 ## Outcomes & Retrospective
 
-The durable baseline now exercises the outbox, inbox, and queue through correctness, process-failure, concurrency, telemetry, and benchmark scenarios. All seven planned benchmark identifiers are registered. The package suite passes 43 examples. Queue throughput now supports continuous workers, both polling modes, standard/unlogged provision variation, and native metrics collection and serving, with oracles that detect duplicate calls and incorrect physical persistence. The eight-arm worker metrics contract passes; its new short local smokes are functional evidence only. Known defects remain visible as scoped expected failures rather than silent passes; the local finding records above retain their canonical owner references. The documented inline ordering, inbox GC, and DLQ/redrive windows also remain scoped expected failures.
+The durable baseline now exercises the outbox, inbox, and queue through correctness, process-failure, concurrency, telemetry, and benchmark scenarios. All seven planned benchmark identifiers are registered. The package suite passes 44 examples. Queue throughput now supports continuous workers, both polling modes, standard/unlogged provision variation, and native metrics collection and serving, with oracles that detect duplicate calls and incorrect physical persistence. The eight-arm worker metrics contract passes; its new short local smokes are functional evidence only. Known defects remain visible as scoped expected failures rather than silent passes; the local finding records above retain their canonical owner references. The documented inline ordering, inbox GC, and DLQ/redrive windows also remain scoped expected failures.
 
 The plan is still in progress. The concrete non-soak gaps are listed in Progress. The full inbox execution gate passed with stable bounded resources and a digest-linked record. Full acceptance still requires outbox/queue full soaks, controlled process-isolation evidence, remaining matrix coverage and independent Keiro verdict verification. The earlier producer comparison remains inconclusive under its three-pair policy. New clean five-pair queue comparisons preserve execution-shape p99 uncertainty and measure a latency/memory tradeoff for 100 ms long polling; both are durably recorded and independently confirmed for VC-2/VC-3, with individual business-oracle attestation still open. The overhead reports remain local evidence, and no configuration experiment measures an upstream release change.
 

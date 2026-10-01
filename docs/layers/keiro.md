@@ -422,9 +422,29 @@ twice to the inbox. It matches the producer span's messaging and batch
 attributes, the published/rejected/retried counters, and the backlog gauge to
 the three durable outbox states. It also checks one inbox handler effect, a
 duplicate receipt, processed and duplicate counters, the inbox backlog gauge,
-and consumer spans continuing the context saved in the outbox row. Both
-in-memory tracing with collected metrics and the fully disabled arm passed on
-durable PostgreSQL.
+and consumer spans continuing the context saved in the outbox row. Revision 2
+supports all four metrics modes with tracing off or in memory. Serving starts
+the released Kiroku JSON and Prometheus endpoints on a private free port and
+the OpenTelemetry Prometheus reader for Keiro's own instruments. The contract
+checks both queued and completed HTTP snapshots: outbox backlog changes from
+three to one, inbox backlog from zero to one, and published, rejected, retried,
+processed and duplicate counts match the durable fixture. Native store position
+remains zero because this workload writes messaging tables, not event streams.
+Raw HTTP responses are retained under `logs/`; exemplars on traced counters do
+not change their sample values. This contract pins `metrics.otel-reader` to
+`prometheus` so the endpoint assertions cannot silently disappear.
+
+The three outbox benchmarks and inbox intake benchmark also use this native
+store collector and server lifecycle in revision 2. `collect` gathers without
+opening HTTP endpoints; `serve` opens them; `serve-scraped` adds the separate
+scraper. The store and native server remain alive until scraping finishes.
+Core measurements and business verdicts continue to use independent channels.
+These revisions require fresh controlled comparisons before making performance
+claims about the additional metrics path.
+
+```bash
+nix develop -c cabal run -v0 kenshou -- run keiro/outbox/correctness/telemetry-contract --dim pg.durability=durable --dim telemetry.tracing=sdk-inmemory --dim telemetry.metrics=serve-scraped --set metrics.scrape-interval-ms=100 --out runs/
+```
 The `drain-throughput` benchmark preloads rows, measures concurrent closed-loop
 publisher passes, then drains any remainder and checks one broker record and a
 sent state for every row. Its 8,000-row durable run produced histograms and

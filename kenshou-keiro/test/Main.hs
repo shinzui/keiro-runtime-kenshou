@@ -38,6 +38,7 @@ import Kenshou.Suite.Keiro.Fixture.Model qualified as Model
 import Kenshou.Suite.Keiro.Fixture.Oracle qualified as Oracle
 import Kenshou.Suite.Keiro.Fixture.Transfer
 import Kenshou.Suite.Keiro.Fixture.Workload qualified as Workload
+import Kenshou.Suite.Keiro.Messaging.Metrics qualified as MessagingMetrics
 import Kenshou.Suite.Keiro.Outbox.Broker qualified as Broker
 import Kenshou.Suite.Keiro.Outbox.Knobs qualified as OutboxKnobs
 import Kenshou.Suite.Keiro.Outbox.Oracle qualified as OutboxOracle
@@ -74,6 +75,26 @@ main = hspec do
       SoakPublisher.duplicatesWithinCrashBatches [["a", "a"]] ["a", "a", "a"] `shouldBe` False
       SoakPublisher.duplicatesWithinCrashBatches [["a"], ["a"]] ["a", "a", "a"] `shouldBe` True
       SoakPublisher.duplicatesWithinCrashBatches [] ["a", "a"] `shouldBe` False
+  describe "messaging endpoint oracle" do
+    it "requires unique counters and gauges with exact values" do
+      let expected = [("keiro_inbox_processed", 1), ("keiro_inbox_backlog", 0)]
+          counter = "keiro_inbox_processed 1.0\n"
+          body = counter <> "keiro_inbox_backlog 0\n"
+      MessagingMetrics.prometheusMatch expected body `shouldBe` True
+      MessagingMetrics.prometheusMatch expected (Text.replace "1.0" "2.0" body) `shouldBe` False
+      MessagingMetrics.prometheusMatch expected counter `shouldBe` False
+      MessagingMetrics.prometheusMatch expected (body <> counter) `shouldBe` False
+      MessagingMetrics.prometheusMatch expected (Text.replace "_processed " "_processed{source=\"wrong\"} " body) `shouldBe` False
+      MessagingMetrics.prometheusMatch expected (Text.replace "1.0" "NaN" body) `shouldBe` False
+      MessagingMetrics.prometheusMatch [] body `shouldBe` False
+      let labelled = "keiro_inbox_processed{job=\"kenshou\"} 1\n"
+          expectedLabel = [("keiro_inbox_processed{job=\"kenshou\"}", 1)]
+      MessagingMetrics.prometheusMatch expectedLabel labelled `shouldBe` True
+      let exemplar = Text.replace " 1\n" " 1 # {trace_id=\"abc\",span_id=\"def\"} 1\n" labelled
+      MessagingMetrics.prometheusMatch expectedLabel exemplar `shouldBe` True
+      MessagingMetrics.prometheusMatch expectedLabel (Text.replace " 1 # " " 2 # " exemplar) `shouldBe` False
+      MessagingMetrics.prometheusMatch expectedLabel (Text.replace "kenshou" "wrong" labelled) `shouldBe` False
+      MessagingMetrics.prometheusMatch expectedLabel (labelled <> counter) `shouldBe` False
   describe "queue worker metrics oracles" do
     it "rejects missing processors, incorrect processed counts and incorrect in-flight gauges" do
       now <- getCurrentTime

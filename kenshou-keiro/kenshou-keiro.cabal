@@ -63,6 +63,7 @@ library
     Kenshou.Suite.Keiro.Inbox.Roles
     Kenshou.Suite.Keiro.Inbox.Soak
     Kenshou.Suite.Keiro.Inbox.Telemetry
+    Kenshou.Suite.Keiro.Messaging.Metrics
     Kenshou.Suite.Keiro.Messaging.RelationGrowth
     Kenshou.Suite.Keiro.Messaging.SoakDiagnosis
     Kenshou.Suite.Keiro.Messaging.Verdict
@@ -162,6 +163,7 @@ library
     kenshou-diagnose,
     kenshou-measure,
     kenshou-telemetry,
+    kiroku-metrics,
     kiroku-store,
     pgmq-core,
     pgmq-effectful,
