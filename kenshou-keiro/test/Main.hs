@@ -2,6 +2,7 @@ module Main (main) where
 
 import Data.Aeson (object)
 import Data.Aeson qualified as Aeson
+import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString qualified as ByteString
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.List (intersect, sort)
@@ -21,6 +22,7 @@ import Hedgehog.Range qualified as Range
 import Keiki.Core (RegFile (..), step)
 import Keiro.Codec (Codec (..))
 import Keiro.EventStream (SnapshotPolicy (..))
+import Keiro.Inbox (KafkaDeliveryRef (..))
 import Keiro.Integration.Event (IntegrationContentType (..), IntegrationEvent (..))
 import Keiro.Outbox (BackoffSchedule (..), OutboxId (..), OutboxPublishConfigError (..), OutboxPublishOptions (..), OutboxRow (..), OutboxStatus (..))
 import Keiro.ProcessManager (ProcessManager (..), deterministicCommandId)
@@ -38,11 +40,13 @@ import Kenshou.Suite.Keiro.Fixture.Model qualified as Model
 import Kenshou.Suite.Keiro.Fixture.Oracle qualified as Oracle
 import Kenshou.Suite.Keiro.Fixture.Transfer
 import Kenshou.Suite.Keiro.Fixture.Workload qualified as Workload
+import Kenshou.Suite.Keiro.Inbox.Oracle qualified as InboxOracle
 import Kenshou.Suite.Keiro.Messaging.Metrics qualified as MessagingMetrics
 import Kenshou.Suite.Keiro.Outbox.Broker qualified as Broker
 import Kenshou.Suite.Keiro.Outbox.Knobs qualified as OutboxKnobs
 import Kenshou.Suite.Keiro.Outbox.Oracle qualified as OutboxOracle
 import Kenshou.Suite.Keiro.Outbox.SoakPublisher qualified as SoakPublisher
+import Kenshou.Suite.Keiro.Outbox.Workload (inlineEvent)
 import Kenshou.Suite.Keiro.Queue.Bench qualified as QueueBench
 import Kenshou.Suite.Keiro.Queue.Concurrency qualified as QueueConcurrency
 import Kenshou.Suite.Keiro.Queue.Metrics qualified as QueueMetrics
@@ -67,6 +71,38 @@ import Test.Hspec.Hedgehog (hedgehog)
 
 main :: IO ()
 main = hspec do
+  describe "inbox SQL receipt oracle" do
+    it "rejects altered or missing columns, duplicate rows, and vacuous evidence" do
+      now <- getCurrentTime
+      let event = InboxOracle.richEvent 1 (inlineEvent "source" "message" Nothing 1 now)
+          ref = KafkaDeliveryRef "topic" 2 3
+      mapM_
+        ( \(dedupeOnly, failed) -> do
+            let row = InboxOracle.expectedReceipt dedupeOnly failed "key" event ref
+                matches = InboxOracle.receiptsMatch [row]
+            matches [row] `shouldBe` True
+            matches [] `shouldBe` False
+            matches [row, row] `shouldBe` False
+            InboxOracle.receiptsMatch [] [] `shouldBe` False
+            case row of
+              Aeson.Object fields ->
+                mapM_
+                  ( \(key, value) -> do
+                      matches [Aeson.Object (KeyMap.delete key fields)] `shouldBe` False
+                      matches [Aeson.Object (KeyMap.insert key (if value == Aeson.Null then Aeson.String "unexpected" else Aeson.Null) fields)] `shouldBe` False
+                  )
+                  (KeyMap.toList fields)
+              _ -> expectationFailure "receipt is not an object"
+        )
+        [(False, False), (True, False), (False, True), (True, True)]
+    it "requires failed receipts to preserve the full envelope in either persistence mode" do
+      now <- getCurrentTime
+      let event = InboxOracle.richEvent 1 (inlineEvent "source" "message" Nothing 1 now)
+          row dedupeOnly failed = InboxOracle.expectedReceipt dedupeOnly failed "key" event (KafkaDeliveryRef "topic" 2 3)
+      row True True `shouldBe` row False True
+      InboxOracle.receiptsMatch [row True False] [row False False] `shouldBe` False
+      InboxOracle.receiptsMatch [row False False] [row True False] `shouldBe` False
+
   describe "queue lease SQL oracle" do
     it "requires one unchanged live lease after the original visibility window" do
       now <- getCurrentTime

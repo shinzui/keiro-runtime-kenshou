@@ -1,6 +1,6 @@
 module Kenshou.Suite.Keiro.Inbox.Correctness (scenarios, ensureEffectTable, effectReadStatement, effectInsertStatement) where
 
-import Data.Aeson (object, (.=))
+import Data.Aeson (encodeFile, object, (.=))
 import Data.ByteString qualified as ByteString
 import Data.IORef (atomicModifyIORef', modifyIORef', newIORef, readIORef)
 import Data.Int (Int64)
@@ -18,10 +18,11 @@ import Hasql.Encoders qualified as Encoders
 import Hasql.Statement qualified as Statement
 import Hasql.Transaction qualified as Tx
 import Keiro.Command (CommandError (..), CommandResult (..), defaultRunCommandOptions, runCommand)
-import Keiro.Inbox (DelegatedOutcome (..), InboxDedupePolicy (..), InboxError (..), InboxPersistence (..), InboxResult (..), InboxRow (..), InboxStatus (..), KafkaDeliveryRef (..), dedupeKeyFor, garbageCollectCompleted, listInbox, mkDelegatedRetryContext, runInboxDelegated, runInboxDelegatedBatch, runInboxDelegatedWithRetries, runInboxTransactionBatch, runInboxTransactionWith, runInboxTransactionWithRetries)
+import Keiro.Inbox (DelegatedOutcome (..), InboxDedupePolicy (..), InboxError (..), InboxPersistence (..), InboxResult (..), InboxRow (..), InboxStatus (..), KafkaDeliveryRef (..), dedupeKeyFor, garbageCollectCompleted, listInbox, mkDelegatedRetryContext, runInboxDelegated, runInboxDelegatedBatch, runInboxDelegatedWithRetries, runInboxTransactionBatch, runInboxTransactionWith, runInboxTransactionWithRetries, runInboxTransactionWithRetriesWith)
 import Keiro.Inbox.Delegated (DelegatedCommandError (..), delegatedCommand, delegatedEventId)
 import Keiro.Inbox.Kafka (KafkaDecodeError (..), KafkaInboundRecord (..), integrationEventFromKafka)
 import Keiro.Integration.Event (IntegrationEvent (..), headerContentType, headerDestination, headerEventType, headerMessageId, headerSchemaVersion, headerSource)
+import Keiro.Integration.Event qualified as Integration
 import Keiro.Outbox (OutboxPublishOptions (..), OutboxRow (..), defaultPublishOptions, listOutbox, publishClaimedOutbox)
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
@@ -35,6 +36,7 @@ import Kenshou.Suite.Keiro.Command.Correctness (recordCells)
 import Kenshou.Suite.Keiro.Fixture.Account (AccountSnapshotPolicy (..), accountEventStream, accountStream, accountStreamName)
 import Kenshou.Suite.Keiro.Fixture.Domain (AccountCommand (..), AccountId (..), DepositData (..), OpenAccountData (..))
 import Kenshou.Suite.Keiro.Fixture.Runtime (CommandRunner (..), FixtureEnv (..), KeiroRunner (..), SubmitOutcome (..), submitAccountCommand, withFixtureEnv)
+import Kenshou.Suite.Keiro.Inbox.Oracle qualified as InboxOracle
 import Kenshou.Suite.Keiro.Messaging.Verdict (recordMessagingCells)
 import Kenshou.Suite.Keiro.Outbox.Broker qualified as Broker
 import Kenshou.Suite.Keiro.Outbox.Workload (enqueueInline, sourceName)
@@ -42,6 +44,7 @@ import Kiroku.Store (defaultConnectionSettings)
 import Kiroku.Store.Read (readStreamForward)
 import Kiroku.Store.Transaction qualified as KirokuTransaction
 import Kiroku.Store.Types (EventId (..), RecordedEvent (..), StreamVersion (..))
+import System.FilePath ((</>))
 
 scenarios :: [Scenario]
 scenarios = [envelopeRoundTrip, poisonAccounting, effectivelyOnceMatrix, batchFastPathAndFallback]
@@ -222,7 +225,7 @@ runDelegatedMatrix context fixture = do
           ("delegated-rejection-refused", rejected == Left (DelegatedCommandFailed negativeName CommandRejected)),
           ("delegated-refusals-leave-stream-unchanged", Vector.length afterRefusals == if doubled then 3 else 2)
         ]
-  recordCells context cells
+  recordMessagingCells context (Map.singleton "accounts" 16) (object ["dedupePolicy" .= policyName, "idempotence" .= ("delegated" :: Text.Text)]) cells
 
 effectTxnCountStatement :: Statement.Statement () Int64
 effectTxnCountStatement = Statement.preparable "SELECT count(DISTINCT txid) FROM kenshou_fx.inbox_effects" Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
@@ -238,7 +241,8 @@ effectivelyOnceMatrix :: Scenario
 effectivelyOnceMatrix =
   envelopeRoundTrip
     { id = either (error . show) id (parseScenarioId "keiro/inbox/correctness/effectively-once-matrix"),
-      summary = "Checks message identity deduplication and persisted envelope shape under redelivery.",
+      revision = 2,
+      summary = "Checks deduplication, exact SQL receipt envelopes, and failed-handler rollback under redelivery.",
       tier = TierStandard,
       knobs =
         [ KnobSpec (knobName "inbox.persistence") "Successful inbox row envelope storage" KnobText (VText "full-envelope") (OneOf (VText "full-envelope" :| [VText "dedupe-only"])) [VText "dedupe-only"],
@@ -282,7 +286,7 @@ runTableMatrix context fixture = do
   ensureEffectTable fixture
   enqueueInline fixture source entries
   original <- map (.event) <$> (runFixture (listOutbox source) >>= either (fail . show) pure)
-  let events = zipWith (\index event -> event {sourceEventId = Just (EventId (UUID.fromWords 0 0 0 (fromIntegral index)))}) [1 .. 16 :: Int] original
+  let events = zipWith InboxOracle.richEvent [1 .. 16 :: Int] original
       republish = [event {messageId = event.messageId <> "-republished"} | event <- events]
   firstEvent <- case events of
     event : _ -> pure event
@@ -297,13 +301,30 @@ runTableMatrix context fixture = do
   missing <- intake malformed (if policyName == "kafka-delivery" then Nothing else Just (ref 100))
   rows <- runFixture (listInbox source) >>= either (fail . show) pure
   effects <- runFixture (KirokuTransaction.runTransaction (Tx.statement () effectReadStatement)) >>= either (fail . show) pure
-  firstKeys <- traverse (\(index, event) -> either (fail . show) pure (dedupeKeyFor (policy event) event (Just (ref index)))) (zip [1 .. 16 :: Int] events)
-  republishKeys <- traverse (\(index, event) -> either (fail . show) pure (dedupeKeyFor (policy event) event (Just (ref (index + 16))))) (zip [1 .. 16 :: Int] republish)
+  sqlRows <- runFixture (KirokuTransaction.runTransaction (Tx.statement source InboxOracle.receiptStatement)) >>= either (fail . show) pure
+  let firstKeys = zipWith (\index event -> InboxOracle.expectedKey policyName event (ref index)) [1 .. 16] events
+      republishKeys = zipWith (\index event -> InboxOracle.expectedKey policyName event (ref (index + 16))) [1 .. 16] republish
+  let failedEvent = firstEvent {Integration.source = source <> "-failed"}
+      failedRef = ref 101
+      failedHandler event = do
+        Tx.statement event.messageId effectInsertStatement
+        pure $! error "synthetic inbox persistence failure"
+      failedIntake = runFixture (runInboxTransactionWithRetriesWith Nothing 1 persistence (policy failedEvent) failedEvent (Just failedRef) failedHandler) >>= either (fail . show) pure
+  failedResult <- failedIntake
+  stoppedResult <- failedIntake
+  let failedKey = InboxOracle.expectedKey policyName failedEvent failedRef
+  failedRows <- runFixture (KirokuTransaction.runTransaction (Tx.statement failedEvent.source InboxOracle.receiptStatement)) >>= either (fail . show) pure
+  afterFailureEffects <- runFixture (KirokuTransaction.runTransaction (Tx.statement () effectReadStatement)) >>= either (fail . show) pure
+  now <- getCurrentTime
+  _ <- runFixture (garbageCollectCompleted 0 now) >>= either (fail . show) pure
+  retainedFailures <- runFixture (KirokuTransaction.runTransaction (Tx.statement failedEvent.source InboxOracle.receiptStatement)) >>= either (fail . show) pure
   let eventIds = map (.messageId) events
       doubled = policyName == "message-id" || policyName == "kafka-delivery"
       expectedEffects = if doubled then 32 else 16
       expectedMessageIds = eventIds <> (if doubled then map (.messageId) republish else [])
       expectedKeys = firstKeys <> (if doubled then republishKeys else [])
+      expectedRows = zipWith3 (InboxOracle.expectedReceipt (persistence == PersistDedupeOnly) False) expectedKeys (events <> if doubled then republish else []) [ref index | index <- [1 .. expectedEffects]]
+      expectedFailed = InboxOracle.expectedReceipt (persistence == PersistDedupeOnly) True failedKey failedEvent failedRef
       processed = \case Right (InboxProcessed _) -> True; _ -> False
       cells =
         [ ("first-delivery-processed", length first == 16 && all processed first),
@@ -312,9 +333,16 @@ runTableMatrix context fixture = do
           ("effect-count-by-policy", length effects == expectedEffects && sort effects == sort expectedMessageIds),
           ("one-completed-row-per-key", length rows == expectedEffects && all ((== InboxCompleted) . (.status)) rows && sort (map (.dedupeKey) rows) == sort expectedKeys),
           ("missing-policy-field-fails-closed", case missing of Left (DedupePolicyUnsatisfied _) -> True; _ -> False),
-          ("persistence-shape", all (\row -> if persistence == PersistDedupeOnly then ByteString.null row.event.payloadBytes && row.event.attributes == Nothing && row.event.traceContext == Nothing && row.event.schemaReference == Nothing else not (ByteString.null row.event.payloadBytes) && row.event.attributes /= Nothing) rows)
+          ("persistence-shape", InboxOracle.receiptsMatch expectedRows sqlRows),
+          ("failed-receipt-retains-envelope", InboxOracle.receiptsMatch [expectedFailed] failedRows),
+          ("failed-handler-rolls-back-effect", sort afterFailureEffects == sort effects),
+          ("failed-receipt-ceiling", case (failedResult, stoppedResult) of (Right (InboxHandlerFailed _ 1), Right (InboxPreviouslyFailed _)) -> True; _ -> False),
+          ("failed-receipt-survives-gc", InboxOracle.receiptsMatch [expectedFailed] retainedFailures)
         ]
-  recordCells context cells
+  encodeFile
+    (context.outDir </> "logs/inbox-matrix-sql.json")
+    (object ["schema" .= ("kenshou.inbox-matrix-sql/v1" :: Text.Text), "successRows" .= sqlRows, "failedRows" .= failedRows, "retainedFailedRows" .= retainedFailures, "effects" .= effects, "effectsAfterFailure" .= afterFailureEffects, "expectedSuccessRows" .= expectedRows, "expectedFailedRow" .= expectedFailed])
+  recordMessagingCells context (Map.fromList [("effects", fromIntegral (length effects)), ("receipts", fromIntegral (length sqlRows))]) (object ["dedupePolicy" .= policyName, "persistence" .= show persistence]) cells
 
 effectInsertStatement :: Statement.Statement Text.Text ()
 effectInsertStatement = Statement.preparable "INSERT INTO kenshou_fx.inbox_effects (message_id, txid) VALUES ($1, txid_current())" (Encoders.param (Encoders.nonNullable Encoders.text)) Decoders.noResult

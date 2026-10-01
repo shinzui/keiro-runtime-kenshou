@@ -606,8 +606,18 @@ or dedupe-only persistence. It redelivers each of 16 messages at the same
 offset, then republishes it with a new message ID and offset. The republish
 produces 32 total effects under message-ID and Kafka-delivery identity, and 16
 under source-event and custom identity. A missing field required by each
-policy fails without a receipt. Dedupe-only rows have empty payloads and no
-attributes; full-envelope rows retain both. The effect table has no uniqueness
+policy fails without a receipt. Revision 2 reads the physical inbox columns
+with a separate SQL oracle. Full-envelope receipts preserve the exact payload,
+schema, trace, attributes, causal identities, source coordinates, and Kafka
+coordinates. Dedupe-only receipts omit the documented envelope columns while
+retaining correlation and delivery identity. The source-event arm covers both
+UUID identity and fallback to global position; expected keys are computed
+independently of Keiro's dedupe function. A handler that inserts an effect and
+then throws must roll that effect back, preserve a full failed envelope in
+either persistence mode, stop at its retry ceiling, and survive completed-row
+GC. Sealed `logs/inbox-matrix-sql.json` contains the SQL receipts and effects.
+These observations support inspection; they do not yet supply an independent
+VC-1 replay for this scenario. The effect table has no uniqueness
 constraint, so the inbox receipt enforces the one-effect result. The
 `inbox.handler-effects=2` mutation arm intentionally writes two rows per
 accepted table-backed delivery. It fails only `effect-count-by-policy` while

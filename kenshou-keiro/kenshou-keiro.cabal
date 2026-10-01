@@ -7,6 +7,7 @@ author: Nadeem Bitar
 maintainer: Nadeem Bitar
 build-type: Simple
 tested-with: ghc >=9.12 && <9.13
+extra-source-files: test/fixtures/inbox-matrix-sql.json
 
 common warnings
   ghc-options:
@@ -60,6 +61,7 @@ library
     Kenshou.Suite.Keiro.Inbox.Bench
     Kenshou.Suite.Keiro.Inbox.Concurrency
     Kenshou.Suite.Keiro.Inbox.Correctness
+    Kenshou.Suite.Keiro.Inbox.Oracle
     Kenshou.Suite.Keiro.Inbox.Roles
     Kenshou.Suite.Keiro.Inbox.Soak
     Kenshou.Suite.Keiro.Inbox.Telemetry

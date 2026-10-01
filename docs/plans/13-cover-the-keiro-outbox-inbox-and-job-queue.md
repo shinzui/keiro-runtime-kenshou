@@ -67,6 +67,11 @@ provenance:
       at: 2026-10-01T19:39:23Z
       mode: "implement"
       note: "Strengthened queue lease extension acceptance with database-clock and direct read-count evidence."
+    - model: "gpt-6-astra"
+      harness: "codex-cli"
+      at: 2026-10-01T20:31:37Z
+      mode: "implement"
+      note: "Strengthened inbox persistence and effect acceptance with direct SQL observations."
 ---
 
 # Cover the keiro outbox, inbox and job queue
@@ -122,6 +127,7 @@ The non-soak baseline is in place. The remaining work is to deepen specific scen
 - [x] (2026-10-01) Completed clean alpha native-metrics acceptance on payload `16ec2d6`: the telemetry contract passed all eleven checks; fifteen benchmark-grade arms conserved 230,915 messages under one lease, with 48 schema and 397 artifact integrity checks and 5,667 successful scrapes. Three metrics comparisons are digest-linked and independently confirmed for VC-2/VC-3: collect and serve-scraped pass; serve remains inconclusive on enqueue p99. The unaltered A/A report remains inconclusive on both p99 metrics and its internal control factor cannot yet be formally recorded. All sixteen underlying runs are recorded. The [dated report](../reports/2026-10-01-outbox-metrics-and-restart-controls.md) preserves the limits; p99 repeatability and broader telemetry acceptance stay open.
 - [x] (2026-10-01) Completed matched clean twenty-minute outbox restart diagnostics on the same seed and payload with forced major GC every five seconds. Both held every applicable business check (eleven process, eight in-process) over 24,202 unique messages and 20 restarts, with bounded table growth. The process arm remains inconclusive because short incarnations have insufficient data, while its main process and continuous survivor have stable bounded resources. The in-process arm passed. Both are digest-linked; the [dated report](../reports/2026-10-01-outbox-metrics-and-restart-controls.md) records the resource decisions. Finding 3 remains open for historical default-GC attribution; these diagnostics do not close full-duration or independent Keiro VC-1 acceptance.
 - [x] (2026-10-01) Strengthened queue lease acceptance for both execution shapes with PostgreSQL lease/read-count snapshots, intentional ignored-extension failures, and independent VC-1 replay. The local four-arm matrix meets every expected outcome; 40 schema checks and 84 artifact digests pass. The Keiro and CLI suites pass 46 and 34 examples respectively; the clean published repeat is linked below.
+- [x] (2026-10-01) Strengthened inbox matrix revision 2 with exact SQL receipt persistence, independent key expectations, source-position fallback and failed-handler rollback checks. Fourteen durable arms met their expected outcomes; 202 schema and 216 artifact checks pass, with 48 package examples. Clean evidence selection and independent VC-1 replay remain separate gates.
 - [ ] Finish the remaining non-soak acceptance work listed below, then rerun the affected scenarios and package tests.
 - [x] (2026-10-01) Full inbox soak sealed, passed, and was digest-linked; the first timed-out attempt remains excluded.
 - [x] (2026-10-01) Implemented revision-3 process-isolated outbox soak with per-incarnation diagnosis and message-specific crash duplicate budgets.
@@ -143,6 +149,38 @@ The full inbox execution gate is satisfied. Its digest-pinned record is an
 investigation record; independent Keiro VC-1 recomputation remains unavailable,
 and exploratory soak measurements establish no benchmark comparison. The
 unsealed first attempt remains excluded under finding 49.
+
+### Inbox persistence SQL acceptance
+
+The table-backed `effectively-once-matrix` is revision 2. Its separate SQL
+oracle compares every persisted envelope and identity column with the input,
+including nullable schema/trace fields that the runtime decoder normalizes.
+The workload supplies nonempty schema, trace, causal and correlation data.
+Half the source-event deliveries use UUID identity and half exercise the
+global-position fallback; expected dedupe keys no longer call the runtime's
+own key function. Full-envelope and dedupe-only success receipts have distinct
+exact expectations. A failed handler first inserts an effect and then throws:
+the effect must roll back, its failed receipt must retain the full envelope in
+both modes, its ceiling must stop another attempt, and completed-row GC must
+leave it unchanged. The raw SQL receipts, effect identities, and diagnostic
+expectations are sealed in `logs/inbox-matrix-sql.json` with a versioned schema.
+These are inspectable observations, not independent VC-1 recomputation.
+
+The 48-example Keiro suite passes, including missing/altered-column and
+multiplicity mutations. The first durable PostgreSQL 18 matrix under
+`runs/ep13-inbox-sql/matrix/` met all fourteen expected runtime outcomes:
+eight table-backed and four delegated passes, and two deliberate double-effect
+failures confined to `effect-count-by-policy`. Schema validation then exposed
+the delegated path's older verdict writer, which lacks required assertion
+counters. This scenario now uses the messaging writer for both paths;
+the corrected fourteen-arm rerun passed all expected outcomes, all 202
+schema checks, and all 216 manifested size/SHA-256 checks. Its summary and
+validation results are under `runs/ep13-inbox-sql/final-matrix/`. These local
+dirty-worktree runs are functional evidence; clean selection remains open.
+The full `nix develop -c just verify` gate passes, including the new schema
+fixture, shared integration checks and live self-tests.
+Existing ADR-8, ADR-15 and ADR-18 govern these assertions and evidence limits;
+no new architecture boundary or cohort pin is introduced.
 
 ### Queue lease SQL evidence and replay
 
@@ -259,6 +297,17 @@ samples, so the unchanged combined outcome was inconclusive. These functional
 controls are dirty local evidence, not controlled baseline acceptance.
 Clean controlled process soaks, queue process isolation, child telemetry, and
 the full outbox/queue execution gates remain open.
+
+The full process-soak resource gate also has a concrete duration conflict:
+`soakLeakSpec` requires at least 70% of the full scenario duration for every
+incarnation, while the allowed kill interval is at most 3,600 seconds. A
+four-hour scenario needs 10,080 seconds of each child series; every killed
+incarnation is shorter than that even at the maximum interval. Merely
+lengthening the run cannot close this acceptance gate. The policy and the
+per-incarnation scheduling contract need an explicit resolution before a
+full process run can be interpreted as complete resource acceptance. No
+threshold or verdict was weakened here, and the stable survivor remains
+separate from those insufficient child series.
 
 The 43-example Keiro package suite covers targeted mutations of crash-batch
 duplicate budgets; the 34-example toolkit suite covers retired-child
@@ -601,7 +650,7 @@ as clean controlled comparisons.
 
 ## Outcomes & Retrospective
 
-The durable baseline now exercises the outbox, inbox, and queue through correctness, process-failure, concurrency, telemetry, and benchmark scenarios. All seven planned benchmark identifiers are registered. The package suite passes 46 examples. Queue throughput now supports continuous workers, both polling modes, standard/unlogged provision variation, and native metrics collection and serving, with oracles that detect duplicate calls and incorrect physical persistence. The eight-arm worker metrics contract passes; its new short local smokes are functional evidence only. Known defects remain visible as scoped expected failures rather than silent passes; the local finding records above retain their canonical owner references. The documented inline ordering, inbox GC, and DLQ/redrive windows also remain scoped expected failures.
+The durable baseline now exercises the outbox, inbox, and queue through correctness, process-failure, concurrency, telemetry, and benchmark scenarios. All seven planned benchmark identifiers are registered. The package suite passes 48 examples. Queue throughput now supports continuous workers, both polling modes, standard/unlogged provision variation, and native metrics collection and serving, with oracles that detect duplicate calls and incorrect physical persistence. The eight-arm worker metrics contract passes; its new short local smokes are functional evidence only. Known defects remain visible as scoped expected failures rather than silent passes; the local finding records above retain their canonical owner references. The documented inline ordering, inbox GC, and DLQ/redrive windows also remain scoped expected failures.
 
 The plan is still in progress. The concrete non-soak gaps are listed in Progress. The full inbox execution gate passed with stable bounded resources and a digest-linked record. Full acceptance still requires outbox/queue full soaks, controlled process-isolation evidence, remaining matrix coverage and independent Keiro verdict verification. The earlier producer comparison remains inconclusive under its three-pair policy. New clean five-pair queue comparisons preserve execution-shape p99 uncertainty and measure a latency/memory tradeoff for 100 ms long polling; both are durably recorded and independently confirmed for VC-2/VC-3, with individual business-oracle attestation still open. The earlier overhead reports remain local evidence. The new clean outbox metrics investigation has sixteen digest-linked runs and three independently confirmed VC-2/VC-3 comparisons, while serving and A/A tail latency remain inconclusive. The matched reduced process/in-process diagnostics are also recorded; short killed incarnations and historical default-GC attribution remain open. No configuration experiment measures an upstream release change.
 

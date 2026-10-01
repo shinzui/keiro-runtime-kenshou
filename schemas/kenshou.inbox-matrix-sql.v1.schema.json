@@ -1,0 +1,221 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/kenshou.inbox-matrix-sql.v1.schema.json",
+  "title": "Inbox matrix SQL receipt and effect observations v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "successRows",
+    "failedRows",
+    "retainedFailedRows",
+    "expectedSuccessRows",
+    "effects",
+    "effectsAfterFailure",
+    "expectedFailedRow"
+  ],
+  "properties": {
+    "schema": {
+      "const": "kenshou.inbox-matrix-sql/v1"
+    },
+    "successRows": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/receipt"
+      }
+    },
+    "failedRows": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/receipt"
+      }
+    },
+    "retainedFailedRows": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/receipt"
+      }
+    },
+    "expectedSuccessRows": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/receipt"
+      }
+    },
+    "effects": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "effectsAfterFailure": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "expectedFailedRow": {
+      "$ref": "#/$defs/receipt"
+    }
+  },
+  "$defs": {
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "dedupe_key",
+        "message_id",
+        "destination",
+        "event_type",
+        "content_type",
+        "kafka_topic",
+        "payload_hex",
+        "status",
+        "source_event_id",
+        "schema_registry",
+        "schema_subject",
+        "schema_fingerprint",
+        "causation_id",
+        "correlation_id",
+        "traceparent",
+        "tracestate",
+        "source_global_position",
+        "schema_version",
+        "schema_version_ref",
+        "schema_id",
+        "kafka_partition",
+        "kafka_offset",
+        "occurred_micros",
+        "attempt_count",
+        "attributes",
+        "completed",
+        "failed",
+        "has_error"
+      ],
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "dedupe_key": {
+          "type": "string"
+        },
+        "message_id": {
+          "type": "string"
+        },
+        "destination": {
+          "type": "string"
+        },
+        "event_type": {
+          "type": "string"
+        },
+        "content_type": {
+          "type": "string"
+        },
+        "kafka_topic": {
+          "type": "string"
+        },
+        "payload_hex": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "source_event_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "schema_registry": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "schema_subject": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "schema_fingerprint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "causation_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "correlation_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "traceparent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tracestate": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_global_position": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "schema_version": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "schema_version_ref": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "schema_id": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "kafka_partition": {
+          "type": "integer"
+        },
+        "kafka_offset": {
+          "type": "integer"
+        },
+        "occurred_micros": {
+          "type": "integer"
+        },
+        "attempt_count": {
+          "type": "integer"
+        },
+        "attributes": {},
+        "completed": {
+          "type": "boolean"
+        },
+        "failed": {
+          "type": "boolean"
+        },
+        "has_error": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}
