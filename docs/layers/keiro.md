@@ -803,14 +803,26 @@ to the DLQ even though the retry policy delay is 60 seconds. The long-poll arm
 currently consumes an extra read attempt without a matching handler delivery;
 the failing verdicts are tracked at `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-4`.
 
-`lease-extension` runs two continuous workers with a six-second handler and a
-two-second base visibility timeout. The current worker-path arm observes two
-effects when the handler leaves the lease alone and one effect when it extends
-the lease by ten seconds before work. Set `queue.execution-shape=drain` to
-exercise bounded `runJobOnceWithContext` calls with the same timing. Its durable
-run observed two unextended effects and one extended effect; the extended job
-was delivered once at attempt zero. The worker path also passed that attempt
-check, regardless of which worker claimed the job.
+`lease-extension` revision 3 parks handlers before their durable effect and
+acknowledgement. The controller suspends the first process after its delivery
+mark, then starts a contender after PostgreSQL's original two-second visibility
+window. It also suspends an unextended contender after delivery, preventing
+intake from prefetching its own expired message. At six seconds on the database
+clock, direct SQL snapshots must show two unextended reads and one extended
+read; the ten-second extended lease must still be live. After resuming the
+processes, the effect table must contain two unextended effects and one extended
+effect, and both queues must drain. `queue.execution-shape=worker|drain` selects
+continuous workers or bounded `runJobOnceWithContext` calls.
+
+The explicit negative control `queue.ignore-extension=true` suppresses the
+handler's extension and must fail `extension-prevents-duplicate` and
+`extended-read-count-one`. It is excluded from automatic knob variants.
+The raw SQL rows and parked-handler observations are sealed under
+`logs/queue-lease-{unextended,extended}.json`. The independent VC-1 replay in
+`Kenshou.Cli.Attest.KeiroLease` checks these facts rather than accepting the
+saved verdict booleans. Record with `--link-logs` to include these inputs as direct data links
+even when the run passes. Older revisions and runs without the raw observations remain incomplete;
+this oracle does not attest other queue, inbox or outbox scenarios.
 
 `fifo-heads-strict-order` records handler start and finish times in a harness
 table. Four independent workers consume 50 jobs in each of 32 groups with an

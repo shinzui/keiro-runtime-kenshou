@@ -67,6 +67,31 @@ import Test.Hspec.Hedgehog (hedgehog)
 
 main :: IO ()
 main = hspec do
+  describe "queue lease SQL oracle" do
+    it "requires one unchanged live lease after the original visibility window" do
+      now <- getCurrentTime
+      let first = QueueConcurrency.LeaseObservation 1 1 now (addUTCTime 10 now) now
+          contested = first {QueueConcurrency.observedAt = addUTCTime 6 now}
+          checkLease = QueueConcurrency.leaseEvidenceValid True first
+      checkLease contested [0] `shouldBe` True
+      checkLease (contested {QueueConcurrency.readCount = 2}) [0] `shouldBe` False
+      checkLease (contested {QueueConcurrency.messageId = 2}) [0] `shouldBe` False
+      checkLease (contested {QueueConcurrency.lastReadAt = addUTCTime 3 now}) [0] `shouldBe` False
+      checkLease (contested {QueueConcurrency.observedAt = addUTCTime 1 now}) [0] `shouldBe` False
+      checkLease (contested {QueueConcurrency.observedAt = addUTCTime 11 now}) [0] `shouldBe` False
+      checkLease contested [] `shouldBe` False
+      checkLease contested [0, 0] `shouldBe` False
+    it "requires a real second read no earlier than the first database lease expiry" do
+      now <- getCurrentTime
+      let first = QueueConcurrency.LeaseObservation 1 1 now (addUTCTime 2 now) now
+          contested = QueueConcurrency.LeaseObservation 1 2 (addUTCTime 3 now) (addUTCTime 5 now) (addUTCTime 6 now)
+          checkLease = QueueConcurrency.leaseEvidenceValid False first
+      checkLease contested [0, 1] `shouldBe` True
+      checkLease contested [1, 0] `shouldBe` True
+      checkLease (contested {QueueConcurrency.readCount = 1}) [0, 1] `shouldBe` False
+      checkLease (contested {QueueConcurrency.lastReadAt = addUTCTime 1 now}) [0, 1] `shouldBe` False
+      checkLease contested [0] `shouldBe` False
+      checkLease contested [0, 0] `shouldBe` False
   describe "outbox process soak duplicate oracle" do
     it "rejects duplicates outside a recorded crash batch" do
       SoakPublisher.duplicatesWithinCrashBatches [["a", "b"]] ["a", "a", "b", "c"] `shouldBe` True

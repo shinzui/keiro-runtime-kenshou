@@ -1,11 +1,11 @@
-module Kenshou.Suite.Keiro.Queue.Concurrency (scenarios, fifoGroupOrder) where
+module Kenshou.Suite.Keiro.Queue.Concurrency (scenarios, fifoGroupOrder, LeaseObservation (..), leaseEvidenceValid) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (mapConcurrently, withAsync)
 import Control.Concurrent.STM (atomically)
 import Control.Exception (bracket)
 import Control.Monad (replicateM)
-import Data.Aeson (object, withObject, (.:), (.=))
+import Data.Aeson (ToJSON (..), encodeFile, object, withObject, (.:), (.=))
 import Data.Aeson.Types (parseMaybe)
 import Data.Int (Int64)
 import Data.List (sortOn)
@@ -13,7 +13,7 @@ import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Data.Time (UTCTime, diffUTCTime)
+import Data.Time (UTCTime, addUTCTime, diffUTCTime)
 import Hasql.Decoders qualified as Decoders
 import Hasql.Encoders qualified as Encoders
 import Hasql.Pool qualified as Pool
@@ -27,10 +27,10 @@ import Keiro.PGMQ.Runtime (JobRuntime (..), QueueRef (..), queueRef, runJobEff, 
 import Kenshou.Check.Fault (Fault (..), FaultHandle (..))
 import Kenshou.Check.Fault.Network (ProxyMode (..), proxiedConnectionString, setProxyMode, withTcpProxy)
 import Kenshou.Check.Fault.Postgres (Backend (..), BackendSelector (..), LockTarget (..), holdLock, listBackends, terminateOneBackend)
-import Kenshou.Check.Process (ProgressSnapshot (..), awaitMark, awaitReady, childPid, killChild, progress, roleProcess, sendCommand, spawn, withSupervisor)
+import Kenshou.Check.Process (ChildSignal (..), ProgressSnapshot (..), awaitMark, awaitReady, childPid, killChild, progress, roleProcess, sendCommand, signalChild, spawn, withSupervisor)
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Check.Verdict (InvariantClass (..))
-import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary, requirePostgres)
+import Kenshou.Core.Context (ArtifactDir (..), RunContext (..), SummarySection (..), artifactPath, putSummary, requirePostgres)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
@@ -454,12 +454,49 @@ fifoGroupOrder jobsPerGroup groupSpans =
    in map (\(sequenceIndex, _, _) -> sequenceIndex) sorted == [0 .. jobsPerGroup - 1]
         && and (zipWith (\(_, _, previousFinished) (_, nextStarted, _) -> previousFinished <= nextStarted) sorted (drop 1 sorted))
 
+-- All timestamps come from PostgreSQL; no worker wall clock decides a lease.
+data LeaseObservation = LeaseObservation
+  { messageId :: !Int64,
+    readCount :: !Int64,
+    lastReadAt :: !UTCTime,
+    visibleAt :: !UTCTime,
+    observedAt :: !UTCTime
+  }
+  deriving stock (Eq, Show)
+
+instance ToJSON LeaseObservation where
+  toJSON value = object ["messageId" .= value.messageId, "readCount" .= value.readCount, "lastReadAt" .= value.lastReadAt, "visibleAt" .= value.visibleAt, "observedAt" .= value.observedAt]
+
+leaseEvidenceValid :: Bool -> LeaseObservation -> LeaseObservation -> [Word] -> Bool
+leaseEvidenceValid extended first contested attempts =
+  first.messageId == contested.messageId
+    && first.readCount == 1
+    && first.lastReadAt <= first.observedAt
+    && first.observedAt < first.visibleAt
+    && contested.observedAt >= addUTCTime 6 first.lastReadAt
+    && contested.lastReadAt <= contested.observedAt
+    && if extended
+      then
+        contested.readCount == 1
+          && contested.lastReadAt == first.lastReadAt
+          && contested.visibleAt == first.visibleAt
+          && contested.observedAt < contested.visibleAt
+          && attempts == [0]
+      else
+        contested.readCount == 2
+          && contested.lastReadAt >= first.visibleAt
+          && sortOn id attempts == [0, 1]
+
 leaseExtension :: Scenario
 leaseExtension =
   workersSurviveTransientPollingError
     { id = either (error . show) id (parseScenarioId "keiro/queue/concurrency/lease-extension"),
-      summary = "Checks that extending a live job lease prevents a second worker from handling it.",
-      knobs = [KnobSpec (knobName "queue.execution-shape") "Worker or bounded drain" KnobText (VText "worker") (OneOf (VText "worker" :| [VText "drain"])) [VText "drain"]],
+      revision = 3,
+      summary = "Checks lease extension against competing processes with gated handlers and direct PostgreSQL read-count and lease evidence.",
+      knobs =
+        [ KnobSpec (knobName "queue.execution-shape") "Worker or bounded drain" KnobText (VText "worker") (OneOf (VText "worker" :| [VText "drain"])) [VText "drain"],
+          KnobSpec (knobName "queue.ignore-extension") "Negative oracle control: suppress the requested lease extension" KnobBool (VBool False) (OneOf (VBool False :| [VBool True])) []
+        ],
       knownDefect = Nothing,
       run = runLeaseExtension
     }
@@ -472,46 +509,77 @@ runLeaseExtension context =
           draining = knobText context.knobs (knobName "queue.execution-shape") == "drain"
           unextended = makeJob "unextended"
           extended = makeJob "extended"
+          query statement = Pool.use runtime.runtimePool (Session.statement () statement) >>= either (fail . show) pure
+          leaseState job =
+            query $
+              Statement.preparable
+                ("SELECT msg_id, read_ct::bigint, last_read_at, vt, clock_timestamp() FROM pgmq.q_" <> queueNameToText job.jobQueue.physicalName <> " ORDER BY msg_id")
+                Encoders.noParams
+                (Decoders.rowList (LeaseObservation <$> Decoders.column (Decoders.nonNullable Decoders.int8) <*> Decoders.column (Decoders.nonNullable Decoders.int8) <*> Decoders.column (Decoders.nonNullable Decoders.timestamptz) <*> Decoders.column (Decoders.nonNullable Decoders.timestamptz) <*> Decoders.column (Decoders.nonNullable Decoders.timestamptz)))
+          oneLease job =
+            leaseState job >>= \case
+              [row] -> pure row
+              _ -> fail "lease probe requires one unacknowledged queue row"
           countEffects payload = do
             let statement = Statement.preparable "SELECT count(*) FROM kenshou_fx.queue_effects WHERE payload = $1" (Encoders.param (Encoders.nonNullable Encoders.text)) (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
             Pool.use runtime.runtimePool (Session.statement payload statement) >>= either (fail . show) pure
-          awaitEffects payload expected = do
+          effectRows payload = do
+            let statement = Statement.preparable "SELECT payload FROM kenshou_fx.queue_effects WHERE payload = $1 ORDER BY payload" (Encoders.param (Encoders.nonNullable Encoders.text)) (Decoders.rowList (Decoders.column (Decoders.nonNullable Decoders.text)))
+            Pool.use runtime.runtimePool (Session.statement payload statement) >>= either (fail . show) pure
+          awaitCompletion job payload expected = do
             count <- countEffects payload
-            if count >= expected then pure True else threadDelay 100000 >> awaitEffects payload expected
+            rows <- leaseState job
+            if count >= expected && null rows then pure True else threadDelay 100000 >> awaitCompletion job payload expected
+          awaitDatabaseTime job target = do
+            row <- oneLease job
+            if row.observedAt >= target then pure row else threadDelay 50000 >> awaitDatabaseTime job target
           startWorker index job extend = do
-            spec <- roleProcess check "keiro/queue-worker" index (object ["queue" .= job.jobQueue.logicalName, "mode" .= (if draining then "lease-drain" else "lease" :: Text), "extend" .= extend])
+            let applyExtension = extend && not (knobBool context.knobs (knobName "queue.ignore-extension"))
+            spec <- roleProcess check "keiro/queue-worker" index (object ["queue" .= job.jobQueue.logicalName, "mode" .= (if draining then "lease-drain-gated" else "lease-gated" :: Text), "extend" .= applyExtension])
             child <- spawn supervisor spec
             awaitReady child 10000
             sendCommand child CtlStart
             awaitMark child "running" 30000
             pure child
-          runArm index job extend payload expected = do
-            if draining
-              then do
-                sent <- runJobEff runtime (enqueue job payload)
-                _ <- either (fail . show) pure sent
-                pure ()
-              else pure ()
-            first <- startWorker index job extend
-            if draining
-              then do
-                awaitMark first "delivery" 10000
-                threadDelay 2500000
-              else pure ()
-            second <- startWorker (index + 1) job extend
-            if draining
+          awaitContender child = do
+            snapshot <- atomically (progress child)
+            if Map.member "delivery" snapshot.marks || Map.member "stopped" snapshot.marks
               then pure ()
+              else threadDelay 50000 >> awaitContender child
+          runArm index job extend payload expected = do
+            sent <- runJobEff runtime (enqueue job payload)
+            _ <- either (fail . show) pure sent
+            first <- startWorker index job extend
+            awaitMark first "delivery" 10000
+            -- Suspend intake as well as the handler: otherwise this process can
+            -- prefetch its own expired lease before the contender reads it.
+            signalChild supervisor first Stop
+            initial <- oneLease job
+            -- Start the contender after the original two-second VT in both arms.
+            -- The extended arm must still be hidden on the database clock.
+            _ <- timeout 10000000 (awaitDatabaseTime job (addUTCTime 2.5 initial.lastReadAt)) >>= maybe (fail "database lease boundary timed out") pure
+            second <- startWorker (index + 1) job extend
+            if extend
+              then if draining then timeout 10000000 (awaitContender second) >>= maybe (fail "contender neither completed nor handled a job") pure else pure ()
               else do
-                sent <- runJobEff runtime (enqueue job payload)
-                _ <- either (fail . show) pure sent
-                pure ()
-            observed <- maybe False id <$> timeout 20000000 (awaitEffects payload expected)
-            threadDelay 2000000
-            count <- countEffects payload
+                awaitMark second "delivery" 10000
+                signalChild supervisor second Stop
+            contested <- timeout 10000000 (awaitDatabaseTime job (addUTCTime 6 initial.lastReadAt)) >>= maybe (fail "database observation window timed out") pure
             firstSnapshot <- atomically (progress first)
             secondSnapshot <- atomically (progress second)
+            let secondDelivered = Map.member "delivery" secondSnapshot.marks
+            if extend && secondDelivered then signalChild supervisor second Stop else pure ()
             let attempt snapshot = Map.lookup "delivery" snapshot.marks >>= parseMaybe (withObject "delivery" (.: "attempt"))
-                attempts = (attempt firstSnapshot :: Maybe Word, attempt secondSnapshot :: Maybe Word)
+                attempts = [value | Just value <- [attempt firstSnapshot, attempt secondSnapshot]] :: [Word]
+            sendCommand first (CtlCustom "finish-lease" (object []))
+            if secondDelivered then sendCommand second (CtlCustom "finish-lease" (object [])) else pure ()
+            signalChild supervisor first Cont
+            if secondDelivered then signalChild supervisor second Cont else pure ()
+            observed <- maybe False id <$> timeout 20000000 (awaitCompletion job payload expected)
+            effects <- effectRows payload
+            remainingRows <- leaseState job
+            evidencePath <- artifactPath context LogsDir ("queue-lease-" <> Text.unpack payload <> ".json")
+            encodeFile evidencePath (object ["schema" .= ("kenshou.queue-lease-observations/v1" :: Text), "initial" .= initial, "contested" .= contested, "deliveries" .= [Map.lookup "delivery" firstSnapshot.marks, Map.lookup "delivery" secondSnapshot.marks], "completionObserved" .= observed, "effects" .= effects, "remainingRows" .= remainingRows])
             if draining
               then do
                 awaitMark first "stopped" 10000
@@ -519,19 +587,21 @@ runLeaseExtension context =
               else do
                 killChild supervisor first
                 killChild supervisor second
-            pure (observed, count, attempts)
+            pure (observed, fromIntegral (length effects), length remainingRows, initial, contested, attempts)
       Pool.use runtime.runtimePool (Session.script "CREATE SCHEMA IF NOT EXISTS kenshou_fx; CREATE TABLE IF NOT EXISTS kenshou_fx.queue_effects (payload text NOT NULL)") >>= either (fail . show) pure
       setup <- runJobEff runtime (ensureJobQueue unextended >> ensureJobQueue extended)
       _ <- either (fail . show) pure setup
-      (duplicateObserved, unextendedCount, unextendedAttempts) <- runArm 0 unextended False "unextended" 2
-      (singleObserved, extendedCount, extendedAttempts) <- runArm 2 extended True "extended" 1
+      (duplicateObserved, unextendedCount, unextendedRemaining, unextendedFirst, unextendedContested, unextendedAttempts) <- runArm 0 unextended False "unextended" 2
+      (singleObserved, extendedCount, extendedRemaining, extendedFirst, extendedContested, extendedAttempts) <- runArm 2 extended True "extended" 1
       recordMessagingCells
         context
-        (Map.fromList [("unextendedEffects", unextendedCount), ("extendedEffects", extendedCount)])
-        (object ["executionShape" .= knobText context.knobs (knobName "queue.execution-shape"), "unextendedAttempts" .= unextendedAttempts, "extendedAttempts" .= extendedAttempts])
-        [ ("unextended-lease-expires", duplicateObserved && unextendedCount >= 2),
+        (Map.fromList [("unextendedEffects", unextendedCount), ("extendedEffects", extendedCount), ("unextendedReadCount", unextendedContested.readCount), ("extendedReadCount", extendedContested.readCount)])
+        (object ["executionShape" .= knobText context.knobs (knobName "queue.execution-shape"), "unextendedAttempts" .= unextendedAttempts, "extendedAttempts" .= extendedAttempts, "unextendedLeases" .= [unextendedFirst, unextendedContested], "extendedLeases" .= [extendedFirst, extendedContested]])
+        [ ("unextended-lease-expires", duplicateObserved && unextendedCount == 2),
+          ("unextended-read-count-and-cadence", leaseEvidenceValid False unextendedFirst unextendedContested unextendedAttempts),
           ("extension-prevents-duplicate", singleObserved && extendedCount == 1),
-          ("extended-read-count-one", extendedAttempts == (Just 0, Nothing) || extendedAttempts == (Nothing, Just 0))
+          ("extended-read-count-one", leaseEvidenceValid True extendedFirst extendedContested extendedAttempts),
+          ("both-queues-drained", unextendedRemaining == 0 && extendedRemaining == 0)
         ]
 
 crashRedeliveryCadence :: Scenario

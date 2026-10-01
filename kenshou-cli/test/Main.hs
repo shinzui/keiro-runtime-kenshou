@@ -13,9 +13,10 @@ import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.IO qualified as Text
-import Data.Time (getCurrentTime)
+import Data.Time (addUTCTime, getCurrentTime)
 import Kenshou.Cli (runWithArgs)
 import Kenshou.Cli.Attest (FencingFacts (..), fencingFacts)
+import Kenshou.Cli.Attest.KeiroLease (replayLeaseCells)
 import Kenshou.Cli.Cohort (resolveDefaultCohortIdentity)
 import Kenshou.Cli.Version (appVersionWithGit)
 import Kenshou.Core.Cohort (CohortIdentity (..), CohortName (..))
@@ -41,6 +42,27 @@ import Test.Hspec (describe, expectationFailure, hspec, it, shouldBe, shouldRetu
 
 main :: IO ()
 main = hspec do
+  describe "independent queue lease replay" do
+    it "rechecks SQL leases, handler attempts, effects and drain state" do
+      now <- getCurrentTime
+      let lease readCount readSeconds vtSeconds observedSeconds = object ["messageId" .= (1 :: Int), "readCount" .= (readCount :: Int), "lastReadAt" .= addUTCTime readSeconds now, "visibleAt" .= addUTCTime vtSeconds now, "observedAt" .= addUTCTime observedSeconds now]
+          delivery attempt payload = object ["attempt" .= (attempt :: Int), "payload" .= (payload :: Text)]
+          arm initial contested deliveries effects = object ["schema" .= ("kenshou.queue-lease-observations/v1" :: Text), "initial" .= initial, "contested" .= contested, "deliveries" .= (deliveries :: [Value]), "completionObserved" .= True, "effects" .= (effects :: [Text]), "remainingRows" .= ([] :: [Value])]
+          unextended = arm (lease 1 0 2 0) (lease 2 3 5 6) [delivery 0 "unextended", delivery 1 "unextended"] ["unextended", "unextended"]
+          extended = arm (lease 1 0 10 0) (lease 1 0 10 6) [delivery 0 "extended", Aeson.Null] ["extended"]
+          replace key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)
+          replace _ _ value = value
+          failures value = fmap (map fst . filter (not . snd)) (replayLeaseCells unextended value)
+      failures extended `shouldBe` Right []
+      failures (replace "contested" (lease 2 3 13 6) extended) `shouldBe` Right ["extended-read-count-one"]
+      failures (replace "contested" (lease 1 0 10 11) extended) `shouldBe` Right ["extended-read-count-one"]
+      failures (replace "contested" (lease 1 0 10 1) extended) `shouldBe` Right ["extended-read-count-one"]
+      failures (replace "effects" (Aeson.toJSON (["extended", "extended"] :: [Text])) extended) `shouldBe` Right ["extension-prevents-duplicate"]
+      failures (replace "effects" (Aeson.toJSON (["substituted"] :: [Text])) extended) `shouldBe` Right ["extension-prevents-duplicate"]
+      failures (replace "deliveries" (Aeson.toJSON ([Aeson.Null, Aeson.Null] :: [Value])) extended) `shouldBe` Right ["extended-read-count-one"]
+      failures (replace "remainingRows" (Aeson.toJSON [lease 1 0 10 6]) extended) `shouldBe` Right ["both-queues-drained"]
+      fmap (map fst . filter (not . snd)) (replayLeaseCells (replace "contested" (lease 2 1 3 6) unextended) extended) `shouldBe` Right ["unextended-read-count-and-cadence"]
+      replayLeaseCells (object []) extended `shouldSatisfy` either (const True) (const False)
   describe "Kafka fencing outcome oracle" do
     it "derives the released idle-member failure from separate worker logs" do
       fencingFacts [] [okEvent 10]

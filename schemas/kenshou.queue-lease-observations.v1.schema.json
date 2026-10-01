@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/kenshou.queue-lease-observations.v1.schema.json",
+  "title": "Keiro queue lease SQL and handler observations v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "initial",
+    "contested",
+    "deliveries",
+    "completionObserved",
+    "effects",
+    "remainingRows"
+  ],
+  "properties": {
+    "schema": {
+      "const": "kenshou.queue-lease-observations/v1"
+    },
+    "initial": {
+      "$ref": "#/$defs/lease"
+    },
+    "contested": {
+      "$ref": "#/$defs/lease"
+    },
+    "deliveries": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "oneOf": [
+          {
+            "type": "null"
+          },
+          {
+            "$ref": "#/$defs/delivery"
+          }
+        ]
+      }
+    },
+    "completionObserved": {
+      "type": "boolean"
+    },
+    "effects": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "remainingRows": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/lease"
+      }
+    }
+  },
+  "$defs": {
+    "lease": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "messageId",
+        "readCount",
+        "lastReadAt",
+        "visibleAt",
+        "observedAt"
+      ],
+      "properties": {
+        "messageId": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "readCount": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "lastReadAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "visibleAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "observedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "delivery": {
+      "type": "object",
+      "required": [
+        "attempt",
+        "payload",
+        "at"
+      ],
+      "properties": {
+        "attempt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "payload": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -67,8 +67,9 @@ worker context = case context.init.postgres of
         Just CtlStart -> withJobRuntime postgres.connectionString Nothing \runtime -> do
           counter <- newIORef (0 :: Int)
           let holding = mode == Just ("hold" :: Text)
-              draining = mode == Just ("lease-drain" :: Text) || mode == Just "dead-drain"
-              leasing = mode == Just ("lease" :: Text) || mode == Just "lease-drain"
+              draining = mode == Just ("lease-drain" :: Text) || mode == Just "dead-drain" || mode == Just "lease-drain-gated"
+              gatedLease = mode == Just ("lease-gated" :: Text) || mode == Just "lease-drain-gated"
+              leasing = mode == Just ("lease" :: Text) || mode == Just "lease-drain" || gatedLease
               fifo = mode == Just ("fifo" :: Text)
               deadWorker = mode == Just ("dead-worker-hold" :: Text) || mode == Just "dead-recovery"
               policy = if holding then RetryPolicy 3 (RetryDelay 60) True else defaultRetryPolicy
@@ -124,7 +125,12 @@ worker context = case context.init.postgres of
                                       when leasing do
                                         now <- getCurrentTime
                                         context.send (WrkCustom "delivery" (object ["attempt" .= jobContext.attempt, "payload" .= payload, "at" .= show now]))
-                                        threadDelay 6000000
+                                        if gatedLease
+                                          then
+                                            context.receive >>= \case
+                                              Just (CtlCustom "finish-lease" _) -> pure ()
+                                              _ -> fail "lease handler requires finish-lease command"
+                                          else threadDelay 6000000
                                       result <- Pool.use runtime.runtimePool (Session.statement payload effectInsertStatement)
                                       either (fail . show) pure result
                                       count <- atomicModifyIORef' counter (\value -> (value + 1, value + 1))

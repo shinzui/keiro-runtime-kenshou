@@ -1,0 +1,30 @@
+{
+  "completionObserved": true,
+  "contested": {
+    "lastReadAt": "2026-10-01T19:51:27.573007Z",
+    "messageId": 1,
+    "observedAt": "2026-10-01T19:51:33.612876Z",
+    "readCount": 1,
+    "visibleAt": "2026-10-01T19:51:37.573306Z"
+  },
+  "deliveries": [
+    {
+      "at": "2026-10-01 19:51:27.577522 UTC",
+      "attempt": 0,
+      "payload": "extended"
+    },
+    null
+  ],
+  "effects": [
+    "extended"
+  ],
+  "initial": {
+    "lastReadAt": "2026-10-01T19:51:27.573007Z",
+    "messageId": 1,
+    "observedAt": "2026-10-01T19:51:27.578046Z",
+    "readCount": 1,
+    "visibleAt": "2026-10-01T19:51:37.573306Z"
+  },
+  "remainingRows": [],
+  "schema": "kenshou.queue-lease-observations/v1"
+}

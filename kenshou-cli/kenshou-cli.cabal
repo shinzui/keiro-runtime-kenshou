@@ -9,7 +9,9 @@ maintainer: Nadeem Bitar
 category: Testing
 build-type: Simple
 tested-with: ghc >=9.12 && <9.13
-extra-source-files: help/*.md
+extra-source-files:
+  help/*.md
+  test/fixtures/*.json
 
 common warnings
   ghc-options:
@@ -37,6 +39,7 @@ library
   exposed-modules:
     Kenshou.Cli
     Kenshou.Cli.Attest
+    Kenshou.Cli.Attest.KeiroLease
     Kenshou.Cli.Cohort
     Kenshou.Cli.Command.Cell
     Kenshou.Cli.Command.Cohort

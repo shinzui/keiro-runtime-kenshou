@@ -62,6 +62,11 @@ provenance:
       at: 2026-10-01T17:36:58Z
       mode: "implement"
       note: "Implemented native store and OpenTelemetry endpoint coverage for messaging contracts and benchmarks."
+    - model: "gpt-6-astra"
+      harness: "codex-cli"
+      at: 2026-10-01T19:39:23Z
+      mode: "implement"
+      note: "Strengthened queue lease extension acceptance with database-clock and direct read-count evidence."
 ---
 
 # Cover the keiro outbox, inbox and job queue
@@ -116,6 +121,7 @@ The non-soak baseline is in place. The remaining work is to deepen specific scen
 - [x] (2026-10-01) Added outbox/inbox native metrics serving in the telemetry contract and four benchmarks. Eight durable contract arms pass all eleven checks; five short benchmark controls hold their business checks. All 39 schema and 293 artifact integrity checks pass, with 381 successful scrapes. Controlled overhead and remaining process-role telemetry acceptance stay open.
 - [x] (2026-10-01) Completed clean alpha native-metrics acceptance on payload `16ec2d6`: the telemetry contract passed all eleven checks; fifteen benchmark-grade arms conserved 230,915 messages under one lease, with 48 schema and 397 artifact integrity checks and 5,667 successful scrapes. Three metrics comparisons are digest-linked and independently confirmed for VC-2/VC-3: collect and serve-scraped pass; serve remains inconclusive on enqueue p99. The unaltered A/A report remains inconclusive on both p99 metrics and its internal control factor cannot yet be formally recorded. All sixteen underlying runs are recorded. The [dated report](../reports/2026-10-01-outbox-metrics-and-restart-controls.md) preserves the limits; p99 repeatability and broader telemetry acceptance stay open.
 - [x] (2026-10-01) Completed matched clean twenty-minute outbox restart diagnostics on the same seed and payload with forced major GC every five seconds. Both held every applicable business check (eleven process, eight in-process) over 24,202 unique messages and 20 restarts, with bounded table growth. The process arm remains inconclusive because short incarnations have insufficient data, while its main process and continuous survivor have stable bounded resources. The in-process arm passed. Both are digest-linked; the [dated report](../reports/2026-10-01-outbox-metrics-and-restart-controls.md) records the resource decisions. Finding 3 remains open for historical default-GC attribution; these diagnostics do not close full-duration or independent Keiro VC-1 acceptance.
+- [x] (2026-10-01) Strengthened queue lease acceptance for both execution shapes with PostgreSQL lease/read-count snapshots, intentional ignored-extension failures, and independent VC-1 replay. The local four-arm matrix meets every expected outcome; 40 schema checks and 84 artifact digests pass. The Keiro and CLI suites pass 46 and 34 examples respectively; clean publication follows below.
 - [ ] Finish the remaining non-soak acceptance work listed below, then rerun the affected scenarios and package tests.
 - [x] (2026-10-01) Full inbox soak sealed, passed, and was digest-linked; the first timed-out attempt remains excluded.
 - [x] (2026-10-01) Implemented revision-3 process-isolated outbox soak with per-incarnation diagnosis and message-specific crash duplicate budgets.
@@ -137,6 +143,43 @@ The full inbox execution gate is satisfied. Its digest-pinned record is an
 investigation record; independent Keiro VC-1 recomputation remains unavailable,
 and exploratory soak measurements establish no benchmark comparison. The
 unsealed first attempt remains excluded under finding 49.
+
+### Queue lease SQL evidence and replay
+
+Revision 3 uses the existing `worker` and `drain` execution shapes with
+controller-gated handlers. The controller suspends intake after each delivery
+mark so a process cannot prefetch its own expired job before the intended
+contender. Initial and contested SQL snapshots preserve message ID, `read_ct`,
+`last_read_at`, `vt`, and PostgreSQL observation time. Six seconds after the
+first read, the unextended arm must have two reads and attempts zero/one;
+the extended arm must retain one read and its still-live ten-second lease.
+After release, two unextended effects and one extended effect must remain,
+and both queues must drain. This follows ADR-12's database-clock rule.
+
+The explicit `queue.ignore-extension=true` knob suppresses extension as a
+negative oracle control and is not an automatic variant. Four durable local
+PostgreSQL 18 arms passed their expected acceptance: both ordinary arms held
+all five checks; both negative arms failed exactly the two extension checks.
+The raw observations are separate manifested JSON documents under `logs/`,
+with a versioned schema. `Kenshou.Cli.Attest.KeiroLease` independently replays
+all five cells for VC-1; it rejects forged exit codes, missing effects, and
+unsupported revisions. Record a passing arm with `--link-logs` to link these inputs directly;
+the sealed manifest also covers them transitively. This does not close other Keiro oracles or full soaks.
+
+The final local matrix is under `runs/ep13-lease-sql/final-matrix/`, seed
+`4252662818734786`: worker pass `01a0f909-92bc-705d-903a-0a5c49e629b3`,
+drain pass `01a0f909-ce22-7668-8a93-a85b66830274`, worker ignored-extension
+`01a0f90a-0933-771c-9906-77223cfabff2`, and drain ignored-extension
+`01a0f90a-4509-75b9-a901-7b7ea389f794`. Both negative controls exit 1 with
+`extension-prevents-duplicate` and `extended-read-count-one`; other checks
+hold. `validation.json` records all 40 schema checks and 84 size/digest checks.
+These dirty workstation controls are functional evidence, not new historical
+baseline records. ADR-12 and ADR-18 cover the clock and replay choices;
+no new architecture boundary or dependency version is introduced. The full
+`nix develop -c just verify` gate passes, including the new raw-observation
+schema fixture; independent replay of all four final runs agrees and rejects
+forged exit codes, missing effects, and unsupported revisions.
+
 
 ### Process-isolated outbox soak
 
@@ -361,6 +404,18 @@ as clean controlled comparisons.
 
 ## Surprises & Discoveries
 
+- (2026-10-01) Parking only a handler did not freeze its continuous intake:
+  the first worker prefetched its own expired lease before the contender could
+  handle it. Exploratory run `01a0f8fd-8a4e-7600-ae15-84126fe62353` errored on
+  that unrealized schedule. Suspending the process after the delivery mark
+  made the competing-read control deterministic; this is harness scheduling,
+  not an owner defect.
+- (2026-10-01) Direct schema validation found that the messaging verdict writer
+  omitted required `examined` and `violations` counters. It now records one
+  examined aggregate assertion and zero/one violations per cell, retaining
+  domain population counts separately. Existing sealed files are unchanged.
+
+
 - The full inbox soak exhausted its cell wall-clock limit during finalization. Measurement reached done and all eight business verdict files held, but those facts cannot substitute for a sealed nested run. Finding 49 distinguishes this confirmed timeout from finding 47’s lease-loss interruption and leaves finalization cost unattributed.
 
 - Native Shibuya worker `processed` counts include acknowledged Retry deliveries. The Done/Retry/Dead schedule therefore expects five received, four processed, and one failed, while the independent handler and SQL oracles expect three terminal Done jobs and one dead job. The first local endpoint run `01a0f48e-cadb-7446-a333-bea5274336d1` failed only the two completion checks because the harness expected three processed; both native and served counters correctly reported four. This is an oracle correction, not an owner defect. Stopped apps unregister their processors, so the harness captures completion metrics before stopping workers.
@@ -419,7 +474,7 @@ as clean controlled comparisons.
 - The drain-handler exception arm passed in `01a0d1ab-f709-7594-b68c-ad4c861ba02b`: the failed handler counted zero settled jobs, left its row hidden, and the row redelivered after the one-second visibility timeout.
 - The payload-decode arms passed in `01a0d1ad-d304-715a-bcfa-633b6381a68e`: a corrupted body moved to the DLQ with `invalid_payload`, while a future-version body remained queued, was hidden during its retry delay, and its `read_ct` rose from one to two on the next delivery.
 - `crash-redelivery-cadence` passed with `PollEvery 1` in `01a0d1b0-e9e6-7507-88a0-4dbb61bf2fc1` and `01a0d1b6-4762-7781-8f97-8a52245b0bb4`: three killed handlers gave attempts 0, 1, 2, delivery gaps of about three seconds, and a DLQ wrapper with `read_count=4`, despite a 60-second retry policy delay. Its long-poll arm instead skipped an attempt or inflated the DLQ read count in `01a0d1b2-0605-71c5-a5c2-5d064a97b35d`, `01a0d1b3-8a6c-7624-aa6f-7fff066f8787`, and `01a0d1b4-5232-707b-abed-404ce0d0db3e`. Reported at `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-4`; the verdict-preserving rerun `01a0d1b5-b342-7584-8a62-771055f84aad` records `knownDefect.status=reproduced`.
-- The worker-path `lease-extension` probe initially stopped before the second six-second unextended handler finished. With a longer observation window, `01a0d1b9-f099-700e-8593-b6eaece98606` passed: the unextended job wrote two effects and the extended job wrote one. The drain-path arm and explicit read-count oracle remain.
+- The worker-path `lease-extension` probe initially stopped before the second six-second unextended handler finished. With a longer observation window, `01a0d1b9-f099-700e-8593-b6eaece98606` passed: the unextended job wrote two effects and the extended job wrote one. Revision 3 now supplies the controlled drain arm and direct SQL read-count oracle, described in Progress.
 - The worker Done/context arm passed in `01a0d1bc-a179-7337-8461-76fd02b42ac3`: a supervised worker emitted attempt zero and `headers=Nothing`, inserted one effect, and deleted its source row.
 - The first per-source and stop-the-line failure-skip pass mixed in earlier failed rows from the same database, so its pass-summary totals were larger than the arm's own ten rows. A 60-second backoff keeps prior failed rows ineligible during subsequent arms. The durable rerun passed all three policy arms in `01a0d1bf-aa69-705c-8820-404149d0736a`.
 - The added per-source and stop-the-line rejection arms passed in `01a0d1c1-0d0e-71d9-ac18-a1cc8b650a70`: both published the rejected row's successor, and stop-the-line left `haltedOn` empty.
@@ -505,7 +560,7 @@ as clean controlled comparisons.
 
 ## Outcomes & Retrospective
 
-The durable baseline now exercises the outbox, inbox, and queue through correctness, process-failure, concurrency, telemetry, and benchmark scenarios. All seven planned benchmark identifiers are registered. The package suite passes 44 examples. Queue throughput now supports continuous workers, both polling modes, standard/unlogged provision variation, and native metrics collection and serving, with oracles that detect duplicate calls and incorrect physical persistence. The eight-arm worker metrics contract passes; its new short local smokes are functional evidence only. Known defects remain visible as scoped expected failures rather than silent passes; the local finding records above retain their canonical owner references. The documented inline ordering, inbox GC, and DLQ/redrive windows also remain scoped expected failures.
+The durable baseline now exercises the outbox, inbox, and queue through correctness, process-failure, concurrency, telemetry, and benchmark scenarios. All seven planned benchmark identifiers are registered. The package suite passes 46 examples. Queue throughput now supports continuous workers, both polling modes, standard/unlogged provision variation, and native metrics collection and serving, with oracles that detect duplicate calls and incorrect physical persistence. The eight-arm worker metrics contract passes; its new short local smokes are functional evidence only. Known defects remain visible as scoped expected failures rather than silent passes; the local finding records above retain their canonical owner references. The documented inline ordering, inbox GC, and DLQ/redrive windows also remain scoped expected failures.
 
 The plan is still in progress. The concrete non-soak gaps are listed in Progress. The full inbox execution gate passed with stable bounded resources and a digest-linked record. Full acceptance still requires outbox/queue full soaks, controlled process-isolation evidence, remaining matrix coverage and independent Keiro verdict verification. The earlier producer comparison remains inconclusive under its three-pair policy. New clean five-pair queue comparisons preserve execution-shape p99 uncertainty and measure a latency/memory tradeoff for 100 ms long polling; both are durably recorded and independently confirmed for VC-2/VC-3, with individual business-oracle attestation still open. The earlier overhead reports remain local evidence. The new clean outbox metrics investigation has sixteen digest-linked runs and three independently confirmed VC-2/VC-3 comparisons, while serving and A/A tail latency remain inconclusive. The matched reduced process/in-process diagnostics are also recorded; short killed incarnations and historical default-GC attribution remain open. No configuration experiment measures an upstream release change.
 

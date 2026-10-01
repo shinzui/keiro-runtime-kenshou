@@ -3,6 +3,7 @@ module Kenshou.Suite.Keiro.Messaging.Verdict (recordMessagingCells, recordMessag
 import Data.Aeson (Value, object, (.=))
 import Data.Int (Int64)
 import Data.Map.Strict (Map)
+import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Time (getCurrentTime)
 import Kenshou.Check.Verdict (InvariantClass (..), RunInfo (..), Verdict (..), VerdictStatus (..), writeVerdict)
@@ -35,7 +36,9 @@ recordMessagingCellsClassified context counts parameters cells = do
               status = if held then Held else Violated,
               reason = Nothing,
               summary = if held then "Expected result observed" else "Expected result did not match",
-              counts,
+              -- Each cell evaluates one aggregate assertion. Domain population
+              -- counts remain under their explicit names (enqueued, effects, …).
+              counts = Map.insert "examined" 1 (Map.insert "violations" (if held then 0 else 1) counts),
               parameters,
               counterExamples = [],
               counterExamplesTruncated = False,

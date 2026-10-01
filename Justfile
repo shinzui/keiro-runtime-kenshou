@@ -71,6 +71,7 @@ evidence-check:
 schemas-check:
     for fixture in kenshou-remote/test/golden/cell/cell.*.v1.json; do schema="${fixture%.json}.schema.json"; check-jsonschema --base-uri "file://$PWD/$schema" --schemafile "$schema" "$fixture" || exit; done
     check-jsonschema --schemafile schemas/kenshou.cohort-identity.v1.schema.json kenshou-core/test/fixtures/cohort-identity.golden.json
+    check-jsonschema --schemafile schemas/kenshou.queue-lease-observations.v1.schema.json kenshou-cli/test/fixtures/queue-lease-observations.json
     check-jsonschema --schemafile schemas/kenshou.payload.v1.schema.json kenshou-remote/test/golden/payload.json
     check-jsonschema --schemafile schemas/kenshou.payload-identity.v1.schema.json kenshou-remote/test/golden/payload-identity.json
     for lock in nix/cohort-locks/*.lock.json; do check-jsonschema --schemafile schemas/kenshou.cohort-nix-lock.v1.schema.json "$lock" || exit; done

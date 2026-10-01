@@ -79,6 +79,19 @@ established. Only a confirmed attestation adds a machine `verified` entry to
 the target record. `kenshou history --confirmed-only` reads those events and
 derives compatible baselines without changing the records.
 
+## Queue lease outcome replay
+
+The `keiro/queue/concurrency/lease-extension` revision-3 oracle independently
+replays its two SQL/handler observation documents, checks database-clock lease
+boundaries and read counts, and reconciles effects, drain state, failure labels,
+blocking and exit code. Include `--link-logs` when recording a passing run to link
+`logs/queue-lease-unextended.json` and `logs/queue-lease-extended.json` directly.
+They are also covered transitively by the manifest, like other sealed files. The intentional `queue.ignore-extension=true` control can be
+confirmed as a faithful failed result; confirmation does not turn its outcome
+into a pass. Earlier revisions and missing raw evidence remain incomplete.
+This support is specific to the lease scenario; it does not close the other
+Keiro scenarios' independent verification gaps.
+
 ## Human sign-off
 
 A person may review the record, raw data, and attestation, then add their own
