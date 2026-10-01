@@ -45,4 +45,8 @@
 - [keiro/outbox/benchmark/enqueue-to-publish comparison pass](01a0f8be-8279-7667-ad13-3757c626211f.md) - Recorded comparison of 3 paired runs with digest-pinned data.
 - [keiro/outbox/soak/table-growth-reduced inconclusive on released](01a0f8c1-747d-7434-befb-a01931028005.md) - Recorded keiro/outbox/soak/table-growth-reduced run against cohort released with digest-pinned data.
 - [keiro/outbox/soak/table-growth-reduced passed on released](01a0f8c5-2ae0-768c-a4d1-14c63e1cb802.md) - Recorded keiro/outbox/soak/table-growth-reduced run against cohort released with digest-pinned data.
+- [keiro/queue/concurrency/lease-extension passed on released](01a0f912-2b59-7552-8cc9-c21fb7b6923f.md) - Recorded keiro/queue/concurrency/lease-extension run against cohort released with digest-pinned data.
+- [keiro/queue/concurrency/lease-extension passed on released](01a0f912-65c8-7785-84df-0996b24c48c9.md) - Recorded keiro/queue/concurrency/lease-extension run against cohort released with digest-pinned data.
+- [keiro/queue/concurrency/lease-extension failed on released](01a0f912-a01f-76c3-8631-91b96114d914.md) - Recorded keiro/queue/concurrency/lease-extension run against cohort released with digest-pinned data.
+- [keiro/queue/concurrency/lease-extension failed on released](01a0f912-da7b-729f-b25e-8c7be8ceb46a.md) - Recorded keiro/queue/concurrency/lease-extension run against cohort released with digest-pinned data.
 

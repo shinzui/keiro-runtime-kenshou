@@ -1,6 +1,10 @@
 # runs/keiro/2026/10 Update Log
 
 ## 2026-10-01
+* **Addition**: Recorded run 01a0f912-a01f-76c3-8631-91b96114d914 (keiro/queue/concurrency/lease-extension, failed).
+* **Addition**: Recorded run 01a0f912-2b59-7552-8cc9-c21fb7b6923f (keiro/queue/concurrency/lease-extension, passed).
+* **Addition**: Recorded run 01a0f912-da7b-729f-b25e-8c7be8ceb46a (keiro/queue/concurrency/lease-extension, failed).
+* **Addition**: Recorded run 01a0f912-65c8-7785-84df-0996b24c48c9 (keiro/queue/concurrency/lease-extension, passed).
 * **Addition**: Recorded run 01a0f8c5-2ae0-768c-a4d1-14c63e1cb802 (keiro/outbox/soak/table-growth-reduced, passed).
 * **Addition**: Recorded run 01a0f8c1-747d-7434-befb-a01931028005 (keiro/outbox/soak/table-growth-reduced, inconclusive).
 * **Addition**: Recorded comparison 01a0f8be-8279-7667-ad13-3757c626211f (keiro/outbox/benchmark/enqueue-to-publish, passed).

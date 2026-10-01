@@ -121,7 +121,7 @@ The non-soak baseline is in place. The remaining work is to deepen specific scen
 - [x] (2026-10-01) Added outbox/inbox native metrics serving in the telemetry contract and four benchmarks. Eight durable contract arms pass all eleven checks; five short benchmark controls hold their business checks. All 39 schema and 293 artifact integrity checks pass, with 381 successful scrapes. Controlled overhead and remaining process-role telemetry acceptance stay open.
 - [x] (2026-10-01) Completed clean alpha native-metrics acceptance on payload `16ec2d6`: the telemetry contract passed all eleven checks; fifteen benchmark-grade arms conserved 230,915 messages under one lease, with 48 schema and 397 artifact integrity checks and 5,667 successful scrapes. Three metrics comparisons are digest-linked and independently confirmed for VC-2/VC-3: collect and serve-scraped pass; serve remains inconclusive on enqueue p99. The unaltered A/A report remains inconclusive on both p99 metrics and its internal control factor cannot yet be formally recorded. All sixteen underlying runs are recorded. The [dated report](../reports/2026-10-01-outbox-metrics-and-restart-controls.md) preserves the limits; p99 repeatability and broader telemetry acceptance stay open.
 - [x] (2026-10-01) Completed matched clean twenty-minute outbox restart diagnostics on the same seed and payload with forced major GC every five seconds. Both held every applicable business check (eleven process, eight in-process) over 24,202 unique messages and 20 restarts, with bounded table growth. The process arm remains inconclusive because short incarnations have insufficient data, while its main process and continuous survivor have stable bounded resources. The in-process arm passed. Both are digest-linked; the [dated report](../reports/2026-10-01-outbox-metrics-and-restart-controls.md) records the resource decisions. Finding 3 remains open for historical default-GC attribution; these diagnostics do not close full-duration or independent Keiro VC-1 acceptance.
-- [x] (2026-10-01) Strengthened queue lease acceptance for both execution shapes with PostgreSQL lease/read-count snapshots, intentional ignored-extension failures, and independent VC-1 replay. The local four-arm matrix meets every expected outcome; 40 schema checks and 84 artifact digests pass. The Keiro and CLI suites pass 46 and 34 examples respectively; clean publication follows below.
+- [x] (2026-10-01) Strengthened queue lease acceptance for both execution shapes with PostgreSQL lease/read-count snapshots, intentional ignored-extension failures, and independent VC-1 replay. The local four-arm matrix meets every expected outcome; 40 schema checks and 84 artifact digests pass. The Keiro and CLI suites pass 46 and 34 examples respectively; the clean published repeat is linked below.
 - [ ] Finish the remaining non-soak acceptance work listed below, then rerun the affected scenarios and package tests.
 - [x] (2026-10-01) Full inbox soak sealed, passed, and was digest-linked; the first timed-out attempt remains excluded.
 - [x] (2026-10-01) Implemented revision-3 process-isolated outbox soak with per-incarnation diagnosis and message-specific crash duplicate budgets.
@@ -179,6 +179,36 @@ no new architecture boundary or dependency version is introduced. The full
 `nix develop -c just verify` gate passes, including the new raw-observation
 schema fixture; independent replay of all four final runs agrees and rejects
 forged exit codes, missing effects, and unsupported revisions.
+
+
+The clean repeat at commit `fed2ecabbabe130b00fa1c10693c67d9cbc0a2d2`
+uses the same seed and durable PostgreSQL 18. All four saved fingerprints have
+`dirty: false`; the matrix again passes 40 schema and 84 artifact integrity
+checks. Independent offline replay agrees with each outcome and rejects the
+same mutations. Both negative controls remain blocking failed run results;
+they demonstrate oracle sensitivity and do not report an owner defect.
+
+| Execution shape | Extension | Clean run | Outcome |
+| --- | --- | --- | --- |
+| worker | requested | [01a0f912-2b59-7552-8cc9-c21fb7b6923f](../verification/runs/keiro/2026/10/01a0f912-2b59-7552-8cc9-c21fb7b6923f.md) | passed |
+| drain | requested | [01a0f912-65c8-7785-84df-0996b24c48c9](../verification/runs/keiro/2026/10/01a0f912-65c8-7785-84df-0996b24c48c9.md) | passed |
+| worker | deliberately ignored | [01a0f912-a01f-76c3-8631-91b96114d914](../verification/runs/keiro/2026/10/01a0f912-a01f-76c3-8631-91b96114d914.md) | failed on the two extension checks |
+| drain | deliberately ignored | [01a0f912-da7b-729f-b25e-8c7be8ceb46a](../verification/runs/keiro/2026/10/01a0f912-da7b-729f-b25e-8c7be8ceb46a.md) | failed on the two extension checks |
+
+Reproduce each arm by choosing `worker` or `drain` and `false` or `true`:
+
+```bash
+nix develop -c cabal run -v0 kenshou -- run keiro/queue/concurrency/lease-extension \
+  --dim pg.durability=durable --set queue.execution-shape=worker \
+  --set queue.ignore-extension=false --seed 4252662818734786 --out runs/lease-replay
+```
+
+The extended cases exit 0; ignored-extension cases exit 1. The latter still
+hold the unextended-expiry, cadence, and drained-queue checks. Raw inputs are
+`logs/queue-lease-unextended.json` and `logs/queue-lease-extended.json` in each
+sealed directory. All four are digest-linked investigation records in the historical bundle,
+including both raw observation documents. Cloud-backed attestation follows
+the record commit from a clean verifier checkout.
 
 
 ### Process-isolated outbox soak

@@ -17,6 +17,7 @@ gcloud config get-value project
 cabal run -v0 kenshou -- record out/RUN-ID \
   --data-base-uri gs://kenshou-evidence-tan-nb-exp/runs \
   --project tan-nb-exp --purpose baseline
+# Commit the new records and generated indexes before attesting.
 cabal run -v0 kenshou -- attest RUN-ID --project tan-nb-exp
 cabal run -v0 kenshou -- history --scenario LAYER/COMPONENT/KIND/NAME --json
 ```
@@ -45,6 +46,14 @@ error. Use `--verify-only` to require existing objects without uploading, and
 `--deep-verify` to fetch and hash them. To rehearse locally, copy
 `docs/verification` outside this repository and use `--bundle COPY --store-root
 DIR`; the scratch store keeps the `gs://` URI shape without touching GCS.
+
+The attester checks its own Git checkout as well as the run's saved fingerprint.
+Uncommitted run records or earlier attestations make that checkout dirty. For
+several attestations, use a clean detached checkout at the verifier's committed
+revision and pass `--bundle` with the absolute path to the evidence bundle in
+the working checkout. The verifier checkout stays clean while the bundle gains
+attestations and verification events. Commit those evidence changes after
+validation; never hide dirty state to obtain a confirmation.
 
 ## Reading a record
 
