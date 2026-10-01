@@ -678,8 +678,12 @@ Revision 2 counts every handler call, requires the exact set of enqueued job
 identities with one call each, checks the empty queue, and reports work per
 processor and worker errors. Five short durable PostgreSQL 18 wiring arms
 held all business checks, including both worker polling modes and FIFO groups.
-Their measurement outcomes were inconclusive under the sample-count gate;
-controlled worker/polling comparisons remain pending. The earlier revision-1
+Their measurement outcomes were inconclusive under the sample-count gate.
+The later [five-pair alpha comparisons](../reports/2026-09-30-queue-worker-comparisons.md)
+found lower allocation with continuous workers and inconclusive p99; long
+polling at 100 ms reduced allocation and live memory while increasing
+handler-start latency. Both comparisons have confirmed VC-2/VC-3 attestations.
+The earlier revision-1
 250-per-second bounded-drain runs reached benchmark grade in both orderings.
 The three-block local telemetry overhead matrix completed without a failed
 child run. Served and scraped metrics, noop tracing, and SDK OTLP tracing
@@ -698,6 +702,18 @@ Bounded drainers expose no Shibuya worker master, so their metrics modes retain
 the generic OpenTelemetry behavior without claiming native worker counters.
 Latency and throughput continue to come from the independent measurement
 recorder in every metrics mode.
+Revision 4 adds `queue.provision=standard|unlogged`, defaulting to standard,
+through the released `keiro-pgmq` provisioning API
+(`mori://shinzui/keiro/packages/keiro-pgmq`). It records PostgreSQL
+`relpersistence` before and after the workload under
+`summaries.diagnosis.queue-provision`. The `queue-provision-matches` verdict
+requires all four expected tables: standard main and all archives/DLQ tables
+are logged (`p`); unlogged provisioning changes only the active main table
+to `u`. Missing, duplicate, or unexpected relations fail the oracle.
+`pg.durability=durable` enables durable PostgreSQL settings; it does not make
+an unlogged main queue survive database crash recovery. This scenario measures
+storage cost and successful processing without injecting a database crash.
+Partitioned provisioning remains outside this fixture's supported matrix.
 The `enqueue` benchmark records single, batch-10, batch-100, and, when tracing
 is active, `enqueueTraced` call latency. Its 1,100-cycle durable traced run
 passed at benchmark grade, with 123,424 accepted rows and the same queue depth.

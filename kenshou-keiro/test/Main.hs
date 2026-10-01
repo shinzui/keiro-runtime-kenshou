@@ -98,6 +98,21 @@ main = hspec do
       QueueBench.exactlyOnce expected (Map.delete "job-b" delivered) `shouldBe` False
       QueueBench.exactlyOnce expected (Map.fromList [("job-a", 1), ("unaccepted-job", 1)]) `shouldBe` False
       QueueBench.exactlyOnce Set.empty Map.empty `shouldBe` False
+  describe "queue provision oracle" do
+    it "requires the requested main persistence and logged archives and DLQ tables" do
+      let standard = [("q_jobs", "p"), ("a_jobs", "p"), ("q_jobs_dlq", "p"), ("a_jobs_dlq", "p")]
+          unlogged = ("q_jobs", "u") : drop 1 standard
+          matches mode = QueueBench.provisionMatches mode "jobs" "jobs_dlq"
+      matches "standard" standard `shouldBe` True
+      matches "unlogged" unlogged `shouldBe` True
+      matches "unlogged" standard `shouldBe` False
+      matches "standard" unlogged `shouldBe` False
+      matches "unlogged" (drop 1 unlogged) `shouldBe` False
+      matches "unlogged" (take 1 unlogged <> unlogged) `shouldBe` False
+      matches "unlogged" (take 1 unlogged <> take 3 unlogged) `shouldBe` False
+      matches "unlogged" (take 3 unlogged <> [("unexpected", "p")]) `shouldBe` False
+      mapM_ (\target -> matches "unlogged" [(relation, if relation == target then "u" else persistence) | (relation, persistence) <- unlogged] `shouldBe` False) ["a_jobs", "q_jobs_dlq", "a_jobs_dlq"]
+      matches "unknown" standard `shouldBe` False
   describe "FIFO-head oracle" do
     it "rejects missing, repeated, and overlapping group jobs" do
       now <- getCurrentTime

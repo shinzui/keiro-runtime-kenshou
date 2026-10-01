@@ -1,10 +1,10 @@
-module Kenshou.Suite.Keiro.Queue.Bench (scenarios, exactlyOnce) where
+module Kenshou.Suite.Keiro.Queue.Bench (scenarios, exactlyOnce, provisionMatches) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (async, cancel, poll)
 import Control.Exception (bracket, finally)
 import Control.Monad (forM, unless)
-import Data.Aeson (object, (.=))
+import Data.Aeson (Value, object, (.=))
 import Data.IORef (atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.Int (Int64)
 import Data.List.NonEmpty (NonEmpty (..))
@@ -24,7 +24,7 @@ import Hasql.Pool.Config qualified as PoolConfig
 import Hasql.Session qualified as Session
 import Hasql.Statement qualified as Statement
 import Keiro.PGMQ.Codec (aesonJobCodec)
-import Keiro.PGMQ.Job (Job (..), JobOrdering (..), JobOutcome (..), JobPolling (..), JobTuning (..), defaultJobTuning, defaultRetryPolicy, enqueue, enqueueBatch, enqueueToGroup, enqueueTraced, ensureJobQueue, jobProcessorWithContext, runJobOnceWithContext, runJobWorkers, withOrdering)
+import Keiro.PGMQ.Job (Job (..), JobOrdering (..), JobOutcome (..), JobPolling (..), JobTuning (..), defaultJobTuning, defaultRetryPolicy, enqueue, enqueueBatch, enqueueToGroup, enqueueTraced, ensureJobQueue, ensureJobQueueWith, jobProcessorWithContext, runJobOnceWithContext, runJobWorkers, standardProvision, unloggedProvision, withOrdering)
 import Keiro.PGMQ.Runtime (JobRuntime (..), QueueRef (..), queueRef, runJobEff, withJobRuntime)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary, requirePostgres)
 import Kenshou.Core.Dimension
@@ -200,7 +200,7 @@ jobThroughput :: Scenario
 jobThroughput =
   Scenario
     { id = either (error . show) id (parseScenarioId "keiro/queue/benchmark/job-throughput"),
-      revision = 3,
+      revision = 4,
       summary = "Measures open-loop job enqueue and handler-start latency with bounded drainers or continuous workers.",
       tier = TierStandard,
       placement = PlaceEither,
@@ -219,7 +219,8 @@ jobThroughput =
                intKnob "queue.poll-interval-ms" 1 1 10000,
                intKnob "queue.long-poll-max-seconds" 3 1 30,
                intKnob "queue.long-poll-interval-ms" 100 1 1000,
-               intKnob "queue.pool-size" 3 1 64
+               intKnob "queue.pool-size" 3 1 64,
+               textKnob "queue.provision" "standard" ["unlogged"]
              ],
       dimensions =
         DimensionSupport
@@ -253,6 +254,8 @@ runJobThroughput context
               rate = knobDouble context.knobs (name "queue.rate")
               shape = knobText context.knobs (name "queue.execution-shape")
               pollingMode = knobText context.knobs (name "queue.polling")
+              provisionMode = knobText context.knobs (name "queue.provision")
+              provision = if provisionMode == "unlogged" then unloggedProvision else standardProvision
               pollMicros = fromIntegral (knobInt context.knobs (name "queue.poll-interval-ms")) * 1000
               tuning =
                 (if ordered then withOrdering FifoHeads else id)
@@ -266,9 +269,19 @@ runJobThroughput context
                     }
               load = OpenLoop (OpenConfig (ConstantRate rate) 128 1 (OverloadConfig 1000000000 3 30000000000))
               table = "pgmq.q_" <> queueNameToText job.jobQueue.physicalName
+              mainName = queueNameToText job.jobQueue.physicalName
+              dlqName = queueNameToText job.jobQueue.dlqName
+              relationNames = ["q_" <> mainName, "a_" <> mainName, "q_" <> dlqName, "a_" <> dlqName]
+              persistenceStatement =
+                Statement.preparable
+                  ("SELECT c.relname::text, c.relpersistence::text FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='pgmq' AND c.relname IN ('" <> Text.intercalate "','" relationNames <> "') ORDER BY c.relname")
+                  Encoders.noParams
+                  (Decoders.rowList ((,) <$> Decoders.column (Decoders.nonNullable Decoders.text) <*> Decoders.column (Decoders.nonNullable Decoders.text)))
+              readPersistence = Pool.use runtime.runtimePool (Session.statement () persistenceStatement) >>= either (fail . show) pure
               countStatement = Statement.preparable ("SELECT count(*) FROM " <> table) Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
               queueCount = Pool.use runtime.runtimePool (Session.statement () countStatement) >>= either (fail . show) pure
-          _ <- runJobEff runtime (ensureJobQueue job) >>= either (fail . show) pure
+          _ <- runJobEff runtime (ensureJobQueueWith provision job) >>= either (fail . show) pure
+          beforePersistence <- readPersistence
           enqueuedAt <- newIORef Map.empty
           handled <- newIORef Map.empty
           handledByWorker <- newIORef (Map.empty :: Map.Map Int Int)
@@ -336,12 +349,15 @@ runJobThroughput context
           participation <- readIORef handledByWorker
           depth <- queueCount
           errors <- readIORef workerErrors
+          afterPersistence <- readPersistence
           let completed = fromIntegral generated.completed :: Int
               cells =
                 [ ("enqueue-load-completed", completed > 0 && generated.failed == 0 && not generated.abortedEarly && errors == 0),
                   ("no-loss", drained && depth == (0 :: Int64) && Map.keysSet seen == attempted && Map.size seen == completed),
-                  ("exactly-once", exactlyOnce attempted seen)
+                  ("exactly-once", exactlyOnce attempted seen),
+                  ("queue-provision-matches", provisionMatches provisionMode mainName dlqName beforePersistence && provisionMatches provisionMode mainName dlqName afterPersistence)
                 ]
+          putSummary context Diagnosis "queue-provision" (object ["requested" .= provisionMode, "before" .= persistenceRows beforePersistence, "after" .= persistenceRows afterPersistence])
           putSummary context Measurements "queue-job-throughput" (object ["rate" .= rate, "batchSize" .= batch, "workers" .= workers, "executionShape" .= shape, "polling" .= pollingMode, "poolSize" .= knobInt context.knobs (name "queue.pool-size"), "ordering" .= (if ordered then "fifo-heads" else "unordered" :: Text), "enqueued" .= completed, "handled" .= Map.size seen, "handlerCalls" .= sum (Map.elems seen), "handledByWorker" .= participation, "workerErrors" .= errors, "queueDepth" .= depth])
           base <- recordCells context cells
           pure (base {outcome = measuredOutcome report base.outcome})
@@ -350,6 +366,17 @@ runJobThroughput context
 
 exactlyOnce :: Set.Set Text -> Map.Map Text Int -> Bool
 exactlyOnce expected observed = not (Set.null expected) && observed == Map.fromSet (const 1) expected
+
+-- Upstream unlogged provisioning changes only the active main table; its
+-- archive and both DLQ tables remain logged. Check every named relation.
+provisionMatches :: Text -> Text -> Text -> [(Text, Text)] -> Bool
+provisionMatches mode mainName dlqName rows =
+  mode `elem` ["standard", "unlogged"]
+    && length rows == 4
+    && Map.fromList rows == Map.fromList [("q_" <> mainName, if mode == "unlogged" then "u" else "p"), ("a_" <> mainName, "p"), ("q_" <> dlqName, "p"), ("a_" <> dlqName, "p")]
+
+persistenceRows :: [(Text, Text)] -> [Value]
+persistenceRows rows = [object ["relation" .= relation, "persistence" .= persistence] | (relation, persistence) <- rows]
 
 withThroughputRuntime :: RunContext -> TelemetryHandles -> (JobRuntime -> IO a) -> IO a
 withThroughputRuntime context telemetry action

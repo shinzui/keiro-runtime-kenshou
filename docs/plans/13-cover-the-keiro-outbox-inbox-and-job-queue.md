@@ -102,6 +102,7 @@ The non-soak baseline is in place. The remaining work is to deepen specific scen
 - [x] (2026-09-30) Recovered full inbox cell attempt `01a0f09f-4259-700c-b501-ceb1848f8ef3` as a verified outer infrastructure failure. Its journal confirms the 14,700-second wall-clock timeout after all eight business verdict files were written, but before nested run `01a0f096-16cd-75a2-8371-d793177c4e8d` sealed a result or manifest. [Finding 49](../findings/49-four-hour-inbox-soak-times-out-before-sealing.md) preserves the evidence; partial artifacts are excluded from baseline acceptance. The client now adds ten minutes per soak to its shared five-minute margin, with 107 passing remote examples. A fresh same-seed full-duration retry is submitted, as described in the handoff below.
 - [x] (2026-09-30) Completed the clean five-pair queue-worker A/A on alpha under one lease. All ten nested runs passed at benchmark grade with full raw samples, zero operation failures, 153,896 jobs handled exactly once, and 250 verified manifested files. [Saved comparison and experiment design](../reports/2026-09-30-queue-worker-comparisons.md) preserve its inconclusive p99 intervals; throughput, p50, allocation, and maximum live bytes passed. The unchanged policy has no health or compatibility rejection reason. All ten arms are digest-linked investigation records. The twenty execution-shape and polling trials completed with passing business checks; clean replay reproduced their inconclusive execution-shape and polling-latency regression results; both formal comparisons and all twenty arms are digest-linked, and both comparison attestations are confirmed. P99 repeatability and broader performance acceptance remain open.
 - [x] (2026-09-30) Completed both five-pair queue configuration comparisons on clean alpha payload `9c2c9b8`: twenty benchmark-grade runs held all business checks over 307,782 exactly-once jobs, with 500 manifested files verified. Clean replay from `71f5a9e` reproduced every provisional metric and saved policy decision. Continuous workers used about 14.4% less allocation, with inconclusive p99; 100 ms long polling used about 60.2% less allocation and 36.7% less maximum live memory, with a handler-start latency regression. All twenty arms and both comparisons are digest-linked. Both comparison attestations are confirmed with all six checks passing, including independent VC-2/VC-3 recomputation. The [dated report](../reports/2026-09-30-queue-worker-comparisons.md) links every pair, clean raw comparison, and attestation. Strict evidence validation, local ledger/CLI checks, profile fixtures, and index regeneration pass; all `just verify` targets passed across foundation and evidence phases. Individual business-oracle attestation, provision variation, broader performance acceptance, and full soaks remain open.
+- [x] (2026-10-01 UTC) Added queue throughput revision 4 standard/unlogged provision controls through the released API, with PostgreSQL persistence checks before and after load. Ten durable PostgreSQL 18 functional arms held all four verdicts over 7,345 exactly-once jobs, with zero worker errors, empty queues, and both consumers participating. All 30 result/spec/manifest schema checks and 264 artifact digest/size checks passed. The 41-example Keiro package suite and full `nix develop -c just verify` pass, including persistence-oracle mutations and shared integration/evidence checks. These dirty workstation runs are exploratory and do not change baseline record counts; controlled storage-performance acceptance remains open.
 - [ ] Finish the remaining non-soak acceptance work listed below, then rerun the affected scenarios and package tests.
 - [ ] Run the three full and reduced soaks and evaluate leak and table-growth verdicts for the initial baseline.
 
@@ -188,11 +189,45 @@ explicitly mark metrics disabled in the measurements summary.
 | `throughput-workers-long-poll-serve-scraped` | `01a0f496-0add-7438-bc66-bad4267c0504` | inconclusive |
 | `throughput-drain-poll-every-serve-scraped` | `01a0f496-539a-771d-b087-e7bd3251bdd5` | inconclusive |
 
+Queue throughput revision 4 adds `queue.provision=standard|unlogged` through
+the released provisioning API. PostgreSQL `relpersistence` is captured before
+and after load, requiring the requested active main persistence and logged
+main archive, DLQ, and DLQ archive. The default remains standard. Durable
+server settings do not imply crash durability for the unlogged main table;
+these arms inject no database crash. Partitioned provisioning remains outside
+the base fixture. No cohort pin or upstream change is required.
+
+The ten local arms below used fresh durable PostgreSQL 18 fixtures, seed
+`4252662818734786`, 100 jobs/second, a five-second steady window, two consumers,
+pool size eight, batch ten, and telemetry off for ordinary polling. The two
+long-poll arms used tracing `sdk-inmemory` and metrics `collect`, with native
+processed counters independently reconciled to handled jobs. All four
+business/provision checks held in every arm, with 7,345 jobs handled exactly
+once, zero errors, zero final depth, and both consumers participating. All
+30 schema checks and 264 manifested artifact digest/size checks passed.
+Every overall outcome is inconclusive under the short-window sample gate.
+Artifacts and the matrix summary are under `runs/ep13-queue-provision/`;
+these dirty workstation runs are functional evidence and are not published
+as clean controlled comparisons.
+
+| Provision / execution / ordering / polling | Run ID | Jobs |
+| --- | --- | ---: |
+| standard / drain / unordered / poll-every | `01a0f5ce-509b-70e4-a38e-f13a6ccfddee` | 734 |
+| standard / drain / fifo-heads / poll-every | `01a0f5ce-8c00-7159-836a-8b10d715e02d` | 740 |
+| standard / workers / unordered / poll-every | `01a0f5ce-c224-740e-8db7-8ec1446d343a` | 732 |
+| standard / workers / fifo-heads / poll-every | `01a0f5ce-fc24-71e7-8f8a-a668abeaf2aa` | 732 |
+| unlogged / drain / unordered / poll-every | `01a0f5cf-3b58-76a4-8e8c-7fa71d1d23ac` | 733 |
+| unlogged / drain / fifo-heads / poll-every | `01a0f5cf-74fc-7307-be5b-d128e3fce507` | 735 |
+| unlogged / workers / unordered / poll-every | `01a0f5cf-ae8f-7431-b887-a60ebc4de94b` | 734 |
+| unlogged / workers / fifo-heads / poll-every | `01a0f5cf-e202-7693-a249-094f81b2e844` | 735 |
+| standard / workers / unordered / long-poll | `01a0f5d0-200e-778e-8385-84a92dbecc9d` | 733 |
+| unlogged / workers / unordered / long-poll | `01a0f5d0-5f9e-76a6-96f1-33f393f2b862` | 737 |
+
 1. Complete the outbox scenario knobs, producer-path SQL oracles, and generalized role/oracle modules. Broaden the remaining concurrency fault and ordering controls beyond the passing default sweep.
 2. Complete inbox effect/persistence oracles and the remaining documented correctness arms. The current table and delegated runs establish the baseline, but the planned matrix is wider.
 3. Complete queue worker-path outcomes, fault modes, ordering controls, and richer DLQ/acknowledgement oracles. Native worker counter and endpoint checks are implemented; the broader fault and pre-handler paths remain open.
 4. Finish component-specific telemetry adaptation and metrics-serving endpoint checks for outbox and inbox, plus the remaining queue fault and pre-handler coverage. The inbox `InboxInProgress` case now has a passing durable contract run; the queue pre-handler DLQ case observed zero process spans and is recorded as `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-7`.
-5. Finish the queue throughput provision variation and broader performance acceptance. Five-pair worker/polling configuration comparisons now have clean saved results: execution shape remains inconclusive at p99, and long polling with a 100 ms interval trades lower allocation and live memory for a handler-start latency regression. Both comparisons are durably recorded and independently confirmed for VC-2/VC-3; individual business-oracle attestation remains open. Revision 3 preserves the execution and polling controls and adds native worker collection and serving; the separate idle-poll benchmark covers polling cost.
+5. Run a clean controlled standard/unlogged provision comparison and finish broader performance acceptance. Revision 4 implements provision variation and its SQL oracle; the local matrix below establishes functional coverage. Five-pair worker/polling configuration comparisons have clean saved results: execution shape remains inconclusive at p99, and long polling with a 100 ms interval trades lower allocation and live memory for a handler-start latency regression. Both comparisons are durably recorded and independently confirmed for VC-2/VC-3; individual business-oracle attestation remains open. The separate idle-poll benchmark covers polling cost.
 6. Refresh `docs/layers/keiro.md`, resolve whether any local ADRs are actually required, validate the bundle, and record final non-soak outcomes. Full plan acceptance also depends on the planned soaks.
 
 ### Evidence at a glance
@@ -352,7 +387,7 @@ explicitly mark metrics disabled in the measurements summary.
 
 ## Outcomes & Retrospective
 
-The durable baseline now exercises the outbox, inbox, and queue through correctness, process-failure, concurrency, telemetry, and benchmark scenarios. All seven planned benchmark identifiers are registered. The package suite passes 40 examples. Queue throughput now supports continuous workers, both polling modes, native metrics collection and serving, with an oracle that detects duplicate calls. The eight-arm worker metrics contract passes; its new short local smokes are functional evidence only. Known defects remain visible as scoped expected failures rather than silent passes; the local finding records above retain their canonical owner references. The documented inline ordering, inbox GC, and DLQ/redrive windows also remain scoped expected failures.
+The durable baseline now exercises the outbox, inbox, and queue through correctness, process-failure, concurrency, telemetry, and benchmark scenarios. All seven planned benchmark identifiers are registered. The package suite passes 41 examples. Queue throughput now supports continuous workers, both polling modes, standard/unlogged provision variation, and native metrics collection and serving, with oracles that detect duplicate calls and incorrect physical persistence. The eight-arm worker metrics contract passes; its new short local smokes are functional evidence only. Known defects remain visible as scoped expected failures rather than silent passes; the local finding records above retain their canonical owner references. The documented inline ordering, inbox GC, and DLQ/redrive windows also remain scoped expected failures.
 
 The plan is still in progress. The concrete non-soak gaps are listed in Progress. Full acceptance remains pending the three planned soaks and their leak and table-growth verdicts. The earlier producer comparison remains inconclusive under its three-pair policy. New clean five-pair queue comparisons preserve execution-shape p99 uncertainty and measure a latency/memory tradeoff for 100 ms long polling; both are durably recorded and independently confirmed for VC-2/VC-3, with individual business-oracle attestation still open. The overhead reports remain local evidence, and no configuration experiment measures an upstream release change.
 
@@ -732,3 +767,5 @@ The zombie-publisher scenario is now registered. Its controlled `SIGSTOP` and ma
 Revision note (2026-09-30): Queue throughput revision 2 adds the planned continuous-worker and polling shapes, explicit runtime pool sizing, actual read-batch tuning, and delivery multiplicity checks. Five durable local functional arms held all business verdicts; their short measurement windows remain exploratory. Controlled comparisons, provision variation, component metrics serving, and the other acceptance gaps stay open.
 
 Revision note (2026-09-30): Queue throughput revision 3 collects and serves native worker metrics through existing released APIs. The new eight-arm correctness matrix passed with independent outcome checks; four throughput integration controls held the business invariants and remain exploratory. Broader fault/pre-handler coverage, outbox and inbox serving, controlled comparisons, and full-duration acceptance stay open.
+
+Revision note (2026-10-01 UTC): Queue throughput revision 4 adds standard/unlogged provision variation with an independent SQL metadata oracle before and after load. Ten durable local arms held all four checks over 7,345 exactly-once jobs; all 30 schema checks and 264 artifact hashes/sizes passed. The 41-example package suite and full `nix develop -c just verify` pass. Controlled storage-performance comparison and the other acceptance gaps remain open.
