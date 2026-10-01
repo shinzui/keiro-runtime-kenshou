@@ -657,6 +657,7 @@ disposition changes.
 - Decision: Complete the initial released-cohort baseline and account for each finding with its existing or newly filed owner-repository OKF bug report, improvement request, or documented non-bug disposition. The respective projects own fixes; this MasterPlan resumes fix verification only when the platform owner asks to return to it.
   Rationale: Baseline evidence and correctly classified owner records are this initiative's current deliverables. The reporting workflow is already underway, so matching records are reused rather than filed again. Repair planning and implementation belong to the projects that own the runtime libraries. Deferring the rerun keeps the current acceptance work from silently expanding into a cross-repository repair program.
   Date: 2026-09-27
+  Status: Fix verification moved to [MasterPlan 2](2-close-the-verification-and-repair-loop-for-the-keiro-runtime-in-rounds.md) on 2026-10-01. It runs the verification and repair loop in rounds; owner projects still own the repairs.
 
 - Decision: Use PostgreSQL 18 as the sole database major for the first repair-and-rerun checkpoint; perform remaining PostgreSQL 17 compatibility acceptance in a later pass.
   Rationale: Repeating every fault and cohort matrix on both majors is slowing the feedback loop from a discovered defect to a verified fix. PostgreSQL 18 is the runtime's required major, and retaining 17 as a supported dimension preserves the broader suite without making it part of this checkpoint.
