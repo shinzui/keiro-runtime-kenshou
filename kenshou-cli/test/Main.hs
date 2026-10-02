@@ -22,6 +22,7 @@ import Kenshou.Cli.Attest.KeiroBatch (replayBatchCells)
 import Kenshou.Cli.Attest.KeiroInbox (replayDelegatedCells, replayInboxCells)
 import Kenshou.Cli.Attest.KeiroLease (replayLeaseCells)
 import Kenshou.Cli.Attest.KeiroPoison (replayPoisonCells)
+import Kenshou.Cli.Attest.KeiroTerminal (replayTerminalCells)
 import Kenshou.Cli.Cohort (resolveDefaultCohortIdentity)
 import Kenshou.Cli.Version (appVersionWithGit)
 import Kenshou.Core.Cohort (CohortIdentity (..), CohortName (..))
@@ -58,6 +59,64 @@ readInboxFixture path = do
 
 main :: IO ()
 main = hspec do
+  describe "independent outbox terminal replay" do
+    it "accepts transient exhaustion at one attempt and rejects premature exhaustion at two" do
+      fixture <- Aeson.eitherDecodeFileStrict' "test/fixtures/outbox-terminal-one-attempt.json" >>= either fail pure
+      let replace key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)
+          replace _ _ value = value
+      case (jsonField "knobs" fixture, jsonField "observations" fixture) of
+        (Just knobs, Just raw) -> do
+          let replay settings observed = fmap (map fst . filter (not . snd)) (replayTerminalCells 4252662818734786 settings observed)
+          replay knobs raw `shouldBe` Right []
+          replay (replace "outbox.max-attempts" (Aeson.Number 2) knobs) raw `shouldBe` Right ["every-row-terminal", "poison-attempt-ceiling"]
+          case jsonField "rows" raw of
+            Just (Aeson.Array rows) ->
+              replay knobs (replace "rows" (Aeson.toJSON (map (replace "lastError" (Aeson.String "synthetic permanent failure")) (toList rows))) raw) `shouldBe` Right ["poison-attempt-ceiling"]
+            _ -> expectationFailure "missing terminal rows"
+        _ -> expectationFailure "missing terminal fixture observations"
+    forM_ ["per-key-head-of-line", "per-source-stream", "stop-the-line", "best-effort"] \policy -> do
+      let loadFixture = do
+            fixture <- Aeson.eitherDecodeFileStrict' ("test/fixtures/outbox-terminal-" <> policy <> ".json") >>= either fail pure
+            case (jsonField "seed" fixture, jsonField "knobs" fixture, jsonField "observations" fixture) of
+              (Just seed, Just knobs, Just raw) -> case Aeson.fromJSON seed of
+                Aeson.Success value -> pure (fmap (map fst . filter (not . snd)) . replayTerminalCells value knobs, raw)
+                Aeson.Error err -> fail err
+              _ -> fail "missing terminal fixture inputs"
+          replace key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)
+          replace _ _ value = value
+          items key raw = case jsonField key raw of Just (Aeson.Array values) -> toList values; _ -> []
+          changeRows change raw = replace "rows" (Aeson.toJSON (map change (items "rows" raw))) raw
+          hasFailure label = either (const False) (elem label)
+          empty = Aeson.toJSON ([] :: [Value])
+      it ("replays twelve checks and requires complete inputs: " <> policy) do
+        (replay, raw) <- loadFixture
+        replay raw `shouldBe` Right []
+        replay (replace "inputs" empty raw) `shouldSatisfy` either (const True) (const False)
+        replay (replace "schema" (Aeson.String "unknown") raw) `shouldSatisfy` either (const True) (const False)
+        replay (replace "rows" empty raw) `shouldSatisfy` hasFailure "every-row-terminal"
+        replay (replace "summaries" Aeson.Null raw) `shouldSatisfy` hasFailure "drained-before-deadline"
+      it ("detects missing/duplicate appends and terminal metadata changes: " <> policy) do
+        (replay, raw) <- loadFixture
+        replay (replace "brokerHeaders" empty raw) `shouldSatisfy` hasFailure "broker-matches-terminal-status"
+        let records = items "brokerHeaders" raw
+        replay (replace "brokerHeaders" (Aeson.toJSON (take 1 records <> records)) raw) `shouldSatisfy` hasFailure "one-broker-record-per-sent-row"
+        replay (changeRows (replace "rejectedAt" Aeson.Null) raw) `shouldSatisfy` hasFailure "rejection-metadata"
+        replay (changeRows (replace "lastError" Aeson.Null) raw) `shouldSatisfy` hasFailure "poison-attempt-ceiling"
+        replay (changeRows (replace "attemptCount" (Aeson.Number 0)) raw) `shouldSatisfy` hasFailure "attempt-count-matches-callbacks"
+      it ("detects missing attempts, premature retries and altered summaries: " <> policy) do
+        (replay, raw) <- loadFixture
+        replay (replace "callbacks" empty raw) `shouldSatisfy` hasFailure "attempt-count-matches-callbacks"
+        let callbacks = items "callbacks" raw
+            sameTime = case callbacks of first : _ -> maybe Aeson.Null id (jsonField "started" first); _ -> Aeson.Null
+            simultaneous = map (replace "started" sameTime . replace "ended" sameTime) callbacks
+        replay (replace "callbacks" (Aeson.toJSON simultaneous) raw) `shouldSatisfy` hasFailure "backoff-respected"
+        forM_ [("retried", "retried-count-matches-attempts-and-skips"), ("published", "published-count-matches-summaries"), ("rejected", "rejected-count-matches-summaries"), ("dead", "dead-count-matches-summaries")] \(key, label) -> do
+          let changed = case items "summaries" raw of
+                first : rest -> case jsonField key first of
+                  Just (Aeson.Number count) -> replace key (Aeson.Number (count + 1)) first : rest
+                  _ -> []
+                [] -> []
+          replay (replace "summaries" (Aeson.toJSON changed) raw) `shouldSatisfy` hasFailure label
   describe "independent inbox batch replay" do
     forM_ [("inbox-table", "pure-exception"), ("inbox-table", "condemn"), ("delegated", "pure-exception")] \(mode, failure) -> do
       let fixture = "test/fixtures/inbox-batch-" <> Text.unpack mode <> "-" <> Text.unpack failure <> ".json"

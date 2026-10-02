@@ -77,6 +77,7 @@ schemas-check:
     check-jsonschema --schemafile schemas/kenshou.inbox-delegated-observations.v1.schema.json kenshou-cli/test/fixtures/inbox-delegated-*.json
     check-jsonschema --schemafile schemas/kenshou.inbox-poison-observations.v1.schema.json kenshou-cli/test/fixtures/inbox-poison-*.json
     check-jsonschema --schemafile schemas/kenshou.inbox-batch-observations.v1.schema.json kenshou-cli/test/fixtures/inbox-batch-*.json
+    for fixture in kenshou-cli/test/fixtures/outbox-terminal-*.json; do jq .observations "$fixture" | check-jsonschema --schemafile schemas/kenshou.outbox-terminal-observations.v1.schema.json - || exit; done
     check-jsonschema --schemafile schemas/kenshou.payload.v1.schema.json kenshou-remote/test/golden/payload.json
     check-jsonschema --schemafile schemas/kenshou.payload-identity.v1.schema.json kenshou-remote/test/golden/payload-identity.json
     for lock in nix/cohort-locks/*.lock.json; do check-jsonschema --schemafile schemas/kenshou.cohort-nix-lock.v1.schema.json "$lock" || exit; done

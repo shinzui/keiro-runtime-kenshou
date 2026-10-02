@@ -775,9 +775,42 @@ schedules, zero/seven keys, 200 rows and batch size 17 at seed
 `4252662818734786`. The nondefault batch/key combination exercises several
 same-key rows together. The Keiro suite passes 54 examples and the full
 `nix develop -c just verify` gate passes. These dirty local controls establish
-functional coverage; clean evidence and independent outbox VC-1 replay remain
-open. Existing fixture/oracle boundaries apply; no new architecture decision
+functional coverage. Revision 3 adds independent terminal replay below; clean
+evidence remains pending. Existing fixture/oracle boundaries apply; no new architecture decision
 or upstream issue follows from this local repair.
+
+### Independently replayable outbox terminal checks
+
+Terminal-state revision 3 seals `logs/outbox-terminal-observations.json`,
+validated by `schemas/kenshou.outbox-terminal-observations.v1.schema.json`.
+It preserves initial and final rows, ordered callback claims and results,
+callback timestamps, raw broker headers and publisher summaries. The CLI's
+`Kenshou.Cli.Attest.KeiroTerminal` reconstructs the seeded poison/rejection
+classification, consumed attempts and skipped successors, retry delays,
+broker cardinality and all twelve business checks without importing the
+scenario or runtime oracle. Missing workload inputs or incompatible revisions
+are refused. Five checked-in fixtures and thirteen mutation/regression examples
+cover missing/duplicate appends, terminal metadata, attempts, premature retries,
+summary counts and complete input requirements.
+
+Four compact policy controls and sixteen policy/backoff/key controls pass and
+independently replay under `runs/ep13-terminal-replay-fixtures/` and
+`runs/ep13-terminal-replay-matrix/`: 320 schema checks and 340 artifact checks.
+Boundary testing exposed [local finding 53](../findings/53-outbox-terminal-oracle-rejects-single-attempt-exhaustion.md):
+the earlier oracle treated transient failures as recoverable even when the
+single allowed attempt was exhausted. Revision 3 accepts the correct dead
+status and transient error in that case. Sixteen more durable controls under
+`runs/ep13-terminal-attempt-boundaries/` vary all four policies, zero/three keys
+and budgets one/two. All pass and replay independently, with another 256 schema
+and 272 artifact checks. The one-attempt arms end dead; the two-attempt arms
+end sent after retry. The preserved failing witness has valid artifacts and
+is not retroactively repaired.
+
+Full `nix develop -c just verify` passes, including 54 Keiro and 79 CLI examples.
+These local controls are dirty investigations. The next step is to commit the
+implementation, rerun the sixteen main controls plus four one-attempt controls
+from the clean revision, and record/attest them. Earlier terminal revisions and
+other outbox scenarios retain their independent replay limitations.
 
 ### Remaining non-soak work
 
@@ -1060,9 +1093,9 @@ as clean controlled comparisons.
 
 ## Outcomes & Retrospective
 
-The durable baseline now exercises the outbox, inbox, and queue through correctness, process-failure, concurrency, telemetry, and benchmark scenarios. All seven planned benchmark identifiers are registered. The package suite passes 50 examples. Queue throughput now supports continuous workers, both polling modes, standard/unlogged provision variation, and native metrics collection and serving, with oracles that detect duplicate calls and incorrect physical persistence. The eight-arm worker metrics contract passes; its new short local smokes are functional evidence only. Known defects remain visible as scoped expected failures rather than silent passes; the local finding records above retain their canonical owner references. The documented inline ordering, inbox GC, and DLQ/redrive windows also remain scoped expected failures.
+The durable baseline now exercises the outbox, inbox, and queue through correctness, process-failure, concurrency, telemetry, and benchmark scenarios. All seven planned benchmark identifiers are registered. The package suite passes 54 examples. Queue throughput now supports continuous workers, both polling modes, standard/unlogged provision variation, and native metrics collection and serving, with oracles that detect duplicate calls and incorrect physical persistence. The eight-arm worker metrics contract passes; its new short local smokes are functional evidence only. Known defects remain visible as scoped expected failures rather than silent passes; the local finding records above retain their canonical owner references. The documented inline ordering, inbox GC, and DLQ/redrive windows also remain scoped expected failures.
 
-The plan is still in progress. The concrete non-soak gaps are listed in Progress. The full inbox run observed stable bounded resources and has a digest-linked record; finding 50 now qualifies its legacy verdict schema, so formal artifact acceptance remains open. Full acceptance still requires queue/outbox resource acceptance and schema-valid full-soak verdicts, controlled process-isolation evidence, remaining matrix coverage and independent Keiro verdict verification. The earlier producer comparison remains inconclusive under its three-pair policy. New clean five-pair queue comparisons preserve execution-shape p99 uncertainty and measure a latency/memory tradeoff for 100 ms long polling; both are durably recorded and independently confirmed for VC-2/VC-3, with individual business-oracle attestation still open. The earlier overhead reports remain local evidence. The new clean outbox metrics investigation has sixteen digest-linked runs and three independently confirmed VC-2/VC-3 comparisons, while serving and A/A tail latency remain inconclusive. The matched reduced process/in-process diagnostics are also recorded; short killed incarnations and historical default-GC attribution remain open. No configuration experiment measures an upstream release change.
+The plan is still in progress. The concrete non-soak gaps are listed in Progress. The repaired-payload full inbox run has a digest-linked record with eight held business checks, six stable resource probes and all eleven schemas valid. This closes inbox full-soak artifact acceptance; independent soak VC-1 remains open. Full acceptance still requires queue/outbox resource acceptance and schema-valid full-soak verdicts, controlled process-isolation evidence, remaining matrix coverage and independent Keiro verdict verification. The earlier producer comparison remains inconclusive under its three-pair policy. New clean five-pair queue comparisons preserve execution-shape p99 uncertainty and measure a latency/memory tradeoff for 100 ms long polling; both are durably recorded and independently confirmed for VC-2/VC-3, with individual business-oracle attestation still open. The earlier overhead reports remain local evidence. The new clean outbox metrics investigation has sixteen digest-linked runs and three independently confirmed VC-2/VC-3 comparisons, while serving and A/A tail latency remain inconclusive. The matched reduced process/in-process diagnostics are also recorded; short killed incarnations and historical default-GC attribution remain open. No configuration experiment measures an upstream release change.
 
 
 ## Context and Orientation
@@ -1088,7 +1121,7 @@ There is no local ADR corpus yet: `docs/adr/` does not exist until `docs/plans/1
 
 ## Plan of Work
 
-All new library modules go under `kenshou-keiro/src/Kenshou/Suite/Keiro/`, unit tests under `kenshou-keiro/test/Kenshou/Suite/Keiro/`, and both are listed in `kenshou-keiro/kenshou-keiro.cabal`. The only files this plan touches outside its three namespaces are that cabal file, the bundle module of `docs/plans/12-…` (three imports and two list concatenations) and `docs/layers/keiro.md`. `kenshou-cli` needs no edit because `docs/plans/12-…` already registered the `keiro` bundle.
+All new library modules go under `kenshou-keiro/src/Kenshou/Suite/Keiro/`, unit tests under `kenshou-keiro/test/Kenshou/Suite/Keiro/`, and both are listed in `kenshou-keiro/kenshou-keiro.cabal`. The bundle registration already exists. This plan also owns the messaging guide, raw observation schemas and fixtures, and scenario-specific independent replay modules under `kenshou-cli/src/Kenshou/Cli/Attest/`. Those replay modules consume sealed observations without importing the runtime or scenario oracles.
 
 Conventions for every scenario below unless it says otherwise: `pg.version` supports `18` only; correctness scenarios support `pg.durability` `fsync-off` and `durable`, all other kinds support `durable` only; correctness and concurrency scenarios support `telemetry.tracing` in `off`, `noop`, `sdk-inmemory` and `telemetry.metrics` in `off`, `collect`; benchmarks and soaks support every value; the environment requirement is a migrated database with the components kiroku and keiro (queue scenarios add PGMQ), one database per run. Every scenario namespaces its data by run: outbox and inbox `source` values are `kenshou-<first 8 hex digits of the run id>-<n>`, queue logical names are `kenshou.<run8>.<name>` (short enough to stay under `queueRef`'s 43-character hashing threshold). Every random choice derives from the run seed. Worker processes set `application_name` in their connection string to the value the correctness toolkit's backend-termination injector expects, for both the kiroku store and the job runtime pool.
 
@@ -1126,7 +1159,7 @@ toInboundRecord :: UTCTime -> BrokerRecord -> KafkaInboundRecord -- consumed by 
 
 `Kenshou.Suite.Keiro.Outbox.Workload` generates integration events from the seed, each carrying a per-key sequence number in `attributes` so order can be judged from broker records alone. The inline path calls `enqueueIntegrationEventTx` with a UUIDv7 from `freshOutboxId`. The producer path appends account events through the fixture aggregate of `docs/plans/12-…` and runs a producer built with `mkIntegrationProducer` over a kiroku subscription, calling `enqueueProducerEventTx producer recorded 0 draft` and then `recordProducerEnqueueOutcome`. `Kenshou.Suite.Keiro.Outbox.Roles` registers four worker roles: `keiro.outbox.enqueuer`, `keiro.outbox.producer`, `keiro.outbox.publisher` (loops `publishClaimedOutbox` with a short idle sleep; under `StopTheLine` it records a `halted` fact when `haltedOn` is set and resumes after the backoff) and `keiro.outbox.maintenance` (loops `outboxMaintenancePass`, and `garbageCollectSent` when `outbox.gc=on`). Each publisher writes ledger facts for callback start, broker append and callback end with the row ids. `Kenshou.Suite.Keiro.Outbox.Oracle` holds the SQL oracles over `keiro.keiro_outbox` and the broker log.
 
-`keiro/outbox/correctness/terminal-state-matrix` (tier `standard`, placement `either`) proves that every row reaches a terminal state under each of the four ordering policies and both backoff schedules. Knobs: the policy, backoff and batch knobs, `outbox.rows=2000`, `outbox.key-cardinality=50`, `broker.fail-ratio=0.1`, `broker.reject-ratio=0.02`, `broker.poison-ratio=0.01`. One process enqueues, then loops publisher passes until `countOutboxBacklog` is zero and no row is `publishing`, within a deadline derived from `maxAttempts` and the backoff. Oracle, class `contract`: every enqueued `outbox_id` is `sent`, `rejected` or `dead`; a row is `sent` exactly when the broker holds at least one record with its `messageId`; rejected rows carry the rejection code the fault plan chose and never appear in the broker; `dead` rows have `attempt_count = maxAttempts` and were chosen as poison by the plan; for every row `attempt_count` equals the number of callback invocations that contained it and were not skipped; after a failed (not skipped) attempt k of a row, its next callback starts no earlier than `nextDelay backoff k` after the failed callback ended. The sums of `published`, `rejected`, `retried` and `dead` over all pass summaries equal the corresponding SQL counts.
+`keiro/outbox/correctness/terminal-state-matrix` (tier `standard`, placement `either`) proves that every row reaches a terminal state under each of the four ordering policies and both backoff schedules. Knobs: the policy, backoff and batch knobs, `outbox.rows=2000`, `outbox.key-cardinality=50`, `broker.fail-ratio=0.1`, `broker.reject-ratio=0.02`, `broker.poison-ratio=0.01`. One process enqueues, then loops publisher passes until `countOutboxBacklog` is zero and no row is `publishing`, within a deadline derived from `maxAttempts` and the backoff. Oracle, class `contract`: every enqueued `outbox_id` is `sent`, `rejected` or `dead`; a row is `sent` exactly when the broker holds at least one record with its `messageId`; rejected rows carry the rejection code the fault plan chose and never appear in the broker; `dead` rows have `attempt_count = maxAttempts` and were chosen as poison, or failed transiently when `maxAttempts=1`; their error text must identify the matching failure; for every row `attempt_count` equals the number of callback invocations that contained it and were not skipped; after a failed (not skipped) attempt k of a row, its next callback starts no earlier than `nextDelay backoff k` after the failed callback ended. The sums of `published`, `rejected`, `retried` and `dead` over all pass summaries equal the corresponding SQL counts.
 
 `keiro/outbox/correctness/per-key-order-serialized` (tier `standard`) proves the ordering guarantee where keiro gives it: one enqueuer (or the producer path), failures injected. Knobs: `outbox.ordering-policy` restricted to the three ordered policies, `outbox.enqueue-path`, `outbox.publishers` (default 1, allowed up to 4 processes), `outbox.rows=5000`, `outbox.key-cardinality=20`. Oracle, class `contract`: for each `(source, key)`, ordering rows by the broker offset of their first record gives strictly increasing per-key sequence numbers once `rejected` and `dead` rows are removed; no record of sequence n+1 is appended before the first record of sequence n unless n ended `rejected` or `dead`; under `per-source-stream` the same holds across all keys of a source.
 

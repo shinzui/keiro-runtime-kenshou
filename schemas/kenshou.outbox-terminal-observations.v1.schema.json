@@ -1,0 +1,264 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "inputs",
+    "rows",
+    "brokerHeaders",
+    "callbacks",
+    "summaries"
+  ],
+  "properties": {
+    "schema": {
+      "const": "kenshou.outbox-terminal-observations/v1"
+    },
+    "inputs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/row"
+      }
+    },
+    "rows": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/row"
+      }
+    },
+    "brokerHeaders": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "minItems": 2,
+          "maxItems": 2
+        }
+      }
+    },
+    "callbacks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "started",
+          "ended",
+          "claimed",
+          "outcomes"
+        ],
+        "properties": {
+          "started": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "ended": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "claimed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/row"
+            }
+          },
+          "outcomes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "outboxId",
+                "outcome"
+              ],
+              "properties": {
+                "outboxId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "outcome": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "tag"
+                      ],
+                      "properties": {
+                        "tag": {
+                          "const": "succeeded"
+                        }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "tag",
+                        "error"
+                      ],
+                      "properties": {
+                        "tag": {
+                          "const": "failed"
+                        },
+                        "error": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "tag": {
+                          "const": "rejected"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "summaries": {
+      "oneOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "claimed",
+              "published",
+              "rejected",
+              "retried",
+              "dead",
+              "haltedOn"
+            ],
+            "properties": {
+              "claimed": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "published": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "rejected": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "retried": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "dead": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "haltedOn": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "uuid"
+              }
+            }
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/kenshou.outbox-terminal-observations.v1.schema.json",
+  "title": "Outbox terminal raw rows, callback attempts, broker headers and publisher summaries v1",
+  "$defs": {
+    "row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "outboxId",
+        "messageId",
+        "source",
+        "key",
+        "status",
+        "attemptCount",
+        "rejectedAt",
+        "rejectionCode",
+        "lastError"
+      ],
+      "properties": {
+        "outboxId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "messageId": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "key": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "enum": [
+            "OutboxPending",
+            "OutboxPublishing",
+            "OutboxSent",
+            "OutboxRejected",
+            "OutboxFailed",
+            "OutboxDead"
+          ]
+        },
+        "attemptCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rejectedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "rejectionCode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lastError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  }
+}

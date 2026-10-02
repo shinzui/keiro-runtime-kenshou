@@ -412,10 +412,17 @@ policies; stop-the-line does not halt on a rejected row. The producer replay
 probe retains a rejected row through maintenance and zero-retention GC. An
 identical re-enqueue returns `ProducerDuplicateIdentical`, leaves the entire
 row unchanged, and does not add to the outbox backlog.
-The terminal-state probe's revision 2 uses policy-aware broker failure groups.
+The terminal-state probe's revision 3 uses policy-aware broker failure groups.
 All sixteen combinations of four policies, constant/exponential backoff and
 zero/seven keys pass at 200 rows with batch size 17. This repairs the local
 [best-effort fixture mismatch](../findings/52-outbox-best-effort-fixture-propagates-key-failures.md).
+Revision 3 also seals raw inputs, final rows, callback attempts/times, broker
+headers and summaries in `logs/outbox-terminal-observations.json`. The CLI
+independently replays all twelve checks, including skipped attempts and retry
+delays. One-attempt transient failures correctly end dead; a second allowed
+attempt recovers them ([finding 53](../findings/53-outbox-terminal-oracle-rejects-single-attempt-exhaustion.md)).
+All sixteen policy/key/budget boundary controls pass and replay. Older terminal
+revisions lack the observations required for independent VC-1 attestation.
 The serialized-order probe passed all three
 ordered policies at 5,000 rows; its per-source broker callback stops dispatch
 after a source failure so later rows are never appended and then marked skipped.

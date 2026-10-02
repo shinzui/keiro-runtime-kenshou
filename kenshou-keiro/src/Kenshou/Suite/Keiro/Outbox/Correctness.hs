@@ -1,6 +1,7 @@
 module Kenshou.Suite.Keiro.Outbox.Correctness (scenarios) where
 
 import Control.Concurrent (threadDelay)
+import Data.Aeson ((.=))
 import Data.Aeson qualified as Aeson
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.List (sortOn)
@@ -31,6 +32,7 @@ import Kenshou.Suite.Keiro.Outbox.Oracle qualified as Oracle
 import Kenshou.Suite.Keiro.Outbox.Workload (enqueueInline, sourceName)
 import Kiroku.Store (defaultConnectionSettings, runTransaction)
 import Kiroku.Store.Types (EventId (..), EventType (..), GlobalPosition (..), RecordedEvent (..), StreamId (..), StreamVersion (..))
+import System.FilePath ((</>))
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
@@ -248,7 +250,7 @@ terminalStateMatrix :: Scenario
 terminalStateMatrix =
   failureSkipsSuccessors
     { id = either (error . show) id (parseScenarioId "keiro/outbox/correctness/terminal-state-matrix"),
-      revision = 2,
+      revision = 3,
       summary = "Drains failed, rejected and poison integration events to their terminal states.",
       tier = TierStandard,
       knobs = map terminalKnob OutboxKnobs.outboxKnobs,
@@ -287,6 +289,7 @@ runTerminalStateMatrix context =
         model = Broker.BrokerModel (fromIntegral (knobInt context.knobs (knobName "broker.invocation-micros"))) (fromIntegral (knobInt context.knobs (knobName "broker.per-record-micros"))) (fromIntegral (knobInt context.knobs (knobName "broker.partitions")))
         hooks = Broker.PublishHook (const (pure ())) (const (pure ()))
     enqueueInline fixture source entries
+    inputs <- runFixture (listOutbox source) >>= either (fail . show) pure
     broker <- Broker.newBroker
     let callback claimed = do
           started <- liftIO getCurrentTime
@@ -311,6 +314,7 @@ runTerminalStateMatrix context =
         statusMatches row =
           case Broker.decide plan (row {attemptCount = 1}) of
             Broker.AlwaysFail -> row.status == OutboxDead && row.attemptCount == options.maxAttempts
+            Broker.FailOnce | options.maxAttempts == 1 -> row.status == OutboxDead && row.attemptCount == 1
             Broker.RejectWith _ -> row.status == OutboxRejected
             _ -> row.status == OutboxSent
         wireMatches row =
@@ -326,7 +330,11 @@ runTerminalStateMatrix context =
             _ -> row.rejectedAt == Nothing && row.rejection == Nothing
         deadMatches row =
           case row.status of
-            OutboxDead -> row.attemptCount == options.maxAttempts && row.lastError == Just "synthetic permanent failure"
+            OutboxDead ->
+              let expectedError = case Broker.decide plan (row {attemptCount = 1}) of
+                    Broker.FailOnce | options.maxAttempts == 1 -> "synthetic transient failure"
+                    _ -> "synthetic permanent failure"
+               in row.attemptCount == options.maxAttempts && row.lastError == Just expectedError
             _ -> True
         effective = concatMap (effectiveAttempts options.orderingPolicy) callbacks
         effectiveCounts = Map.fromListWith (+) [(row.outboxId, 1 :: Int) | (row, _, _, _) <- effective]
@@ -347,7 +355,54 @@ runTerminalStateMatrix context =
             ("rejected-count-matches-summaries", maybe False (\summaries -> sum (map (.rejected) summaries) == length [() | row <- rows, row.status == OutboxRejected]) drained),
             ("dead-count-matches-summaries", maybe False (\summaries -> sum (map (.dead) summaries) == length [() | row <- rows, row.status == OutboxDead]) drained)
           ]
+    Aeson.encodeFile (context.outDir </> "logs/outbox-terminal-observations.json") $
+      Aeson.object
+        [ "schema" .= ("kenshou.outbox-terminal-observations/v1" :: Text),
+          "inputs" .= map terminalRow inputs,
+          "rows" .= map terminalRow rows,
+          "brokerHeaders" .= [[(TextEncoding.decodeUtf8 name, TextEncoding.decodeUtf8 value) | (name, value) <- record.headers] | record <- records],
+          "callbacks" .= map terminalCallback callbacks,
+          "summaries" .= fmap (map terminalSummary) drained
+        ]
     recordCells context cells
+
+terminalRow :: OutboxRow -> Aeson.Value
+terminalRow row =
+  Aeson.object
+    [ "outboxId" .= row.outboxId,
+      "messageId" .= row.event.messageId,
+      "source" .= row.event.source,
+      "key" .= row.event.key,
+      "status" .= show row.status,
+      "attemptCount" .= row.attemptCount,
+      "rejectedAt" .= row.rejectedAt,
+      "rejectionCode" .= fmap publishRejectionCode row.rejection,
+      "lastError" .= row.lastError
+    ]
+
+terminalCallback :: CallbackAttempt -> Aeson.Value
+terminalCallback callback =
+  Aeson.object
+    [ "started" .= callback.started,
+      "ended" .= callback.ended,
+      "claimed" .= map terminalRow callback.claimed,
+      "outcomes" .= [Aeson.object ["outboxId" .= ident, "outcome" .= outcomeValue outcome] | (ident, outcome) <- callback.outcomes]
+    ]
+  where
+    outcomeValue PublishSucceeded = Aeson.object ["tag" .= ("succeeded" :: Text)]
+    outcomeValue (PublishFailed message) = Aeson.object ["tag" .= ("failed" :: Text), "error" .= message]
+    outcomeValue (PublishRejected rejection) = Aeson.object ["tag" .= ("rejected" :: Text), "code" .= publishRejectionCode rejection]
+
+terminalSummary :: OutboxPublishSummary -> Aeson.Value
+terminalSummary summary =
+  Aeson.object
+    [ "claimed" .= summary.claimed,
+      "published" .= summary.published,
+      "rejected" .= summary.rejected,
+      "retried" .= summary.retried,
+      "dead" .= summary.dead,
+      "haltedOn" .= summary.haltedOn
+    ]
 
 data CallbackAttempt = CallbackAttempt
   { started :: !UTCTime,

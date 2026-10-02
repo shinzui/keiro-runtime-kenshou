@@ -1,0 +1,1798 @@
+{
+  "seed": 4252662818734786,
+  "knobs": {
+    "broker.drop-outcome-ratio": 0,
+    "broker.fail-ratio": 0.4,
+    "broker.invocation-micros": 1000,
+    "broker.partitions": 4,
+    "broker.per-record-micros": 10,
+    "broker.poison-ratio": 0.15,
+    "broker.reject-ratio": 0.1,
+    "broker.throw-ratio": 0,
+    "outbox.backoff": "exponential",
+    "outbox.backoff-max-seconds": 0.08,
+    "outbox.backoff-multiplier": 2,
+    "outbox.backoff-seconds": 0.01,
+    "outbox.batch-size": 7,
+    "outbox.enqueue-path": "inline",
+    "outbox.enqueuers": 1,
+    "outbox.gc": "off",
+    "outbox.key-cardinality": 3,
+    "outbox.maintenance-interval-ms": 500,
+    "outbox.max-attempts": 4,
+    "outbox.ordering-policy": "best-effort",
+    "outbox.payload-bytes": 1024,
+    "outbox.publishers": 1,
+    "outbox.publishing-timeout-seconds": 2,
+    "outbox.retention-seconds": 3600,
+    "outbox.rows": 20,
+    "outbox.sources": 1
+  },
+  "observations": {
+    "brokerHeaders": [
+      [
+        [
+          "keiro-message-id",
+          "1"
+        ],
+        [
+          "keiro-source",
+          "kenshou-01a0fdc7-terminal"
+        ],
+        [
+          "keiro-destination",
+          "kenshou.outbox.v1"
+        ],
+        [
+          "keiro-event-type",
+          "OutboxProbe"
+        ],
+        [
+          "keiro-schema-version",
+          "1"
+        ],
+        [
+          "content-type",
+          "application/json"
+        ],
+        [
+          "keiro-occurred-at",
+          "2026-10-02T18:02:07.812348Z"
+        ],
+        [
+          "keiro-attributes",
+          "{\"sequence\":0}"
+        ]
+      ],
+      [
+        [
+          "keiro-message-id",
+          "4"
+        ],
+        [
+          "keiro-source",
+          "kenshou-01a0fdc7-terminal"
+        ],
+        [
+          "keiro-destination",
+          "kenshou.outbox.v1"
+        ],
+        [
+          "keiro-event-type",
+          "OutboxProbe"
+        ],
+        [
+          "keiro-schema-version",
+          "1"
+        ],
+        [
+          "content-type",
+          "application/json"
+        ],
+        [
+          "keiro-occurred-at",
+          "2026-10-02T18:02:07.818498Z"
+        ],
+        [
+          "keiro-attributes",
+          "{\"sequence\":1}"
+        ]
+      ],
+      [
+        [
+          "keiro-message-id",
+          "6"
+        ],
+        [
+          "keiro-source",
+          "kenshou-01a0fdc7-terminal"
+        ],
+        [
+          "keiro-destination",
+          "kenshou.outbox.v1"
+        ],
+        [
+          "keiro-event-type",
+          "OutboxProbe"
+        ],
+        [
+          "keiro-schema-version",
+          "1"
+        ],
+        [
+          "content-type",
+          "application/json"
+        ],
+        [
+          "keiro-occurred-at",
+          "2026-10-02T18:02:07.822231Z"
+        ],
+        [
+          "keiro-attributes",
+          "{\"sequence\":2}"
+        ]
+      ],
+      [
+        [
+          "keiro-message-id",
+          "2"
+        ],
+        [
+          "keiro-source",
+          "kenshou-01a0fdc7-terminal"
+        ],
+        [
+          "keiro-destination",
+          "kenshou.outbox.v1"
+        ],
+        [
+          "keiro-event-type",
+          "OutboxProbe"
+        ],
+        [
+          "keiro-schema-version",
+          "1"
+        ],
+        [
+          "content-type",
+          "application/json"
+        ],
+        [
+          "keiro-occurred-at",
+          "2026-10-02T18:02:07.815402Z"
+        ],
+        [
+          "keiro-attributes",
+          "{\"sequence\":0}"
+        ]
+      ],
+      [
+        [
+          "keiro-message-id",
+          "3"
+        ],
+        [
+          "keiro-source",
+          "kenshou-01a0fdc7-terminal"
+        ],
+        [
+          "keiro-destination",
+          "kenshou.outbox.v1"
+        ],
+        [
+          "keiro-event-type",
+          "OutboxProbe"
+        ],
+        [
+          "keiro-schema-version",
+          "1"
+        ],
+        [
+          "content-type",
+          "application/json"
+        ],
+        [
+          "keiro-occurred-at",
+          "2026-10-02T18:02:07.817036Z"
+        ],
+        [
+          "keiro-attributes",
+          "{\"sequence\":1}"
+        ]
+      ],
+      [
+        [
+          "keiro-message-id",
+          "5"
+        ],
+        [
+          "keiro-source",
+          "kenshou-01a0fdc7-terminal"
+        ],
+        [
+          "keiro-destination",
+          "kenshou.outbox.v1"
+        ],
+        [
+          "keiro-event-type",
+          "OutboxProbe"
+        ],
+        [
+          "keiro-schema-version",
+          "1"
+        ],
+        [
+          "content-type",
+          "application/json"
+        ],
+        [
+          "keiro-occurred-at",
+          "2026-10-02T18:02:07.819913Z"
+        ],
+        [
+          "keiro-attributes",
+          "{\"sequence\":1}"
+        ]
+      ],
+      [
+        [
+          "keiro-message-id",
+          "9"
+        ],
+        [
+          "keiro-source",
+          "kenshou-01a0fdc7-terminal"
+        ],
+        [
+          "keiro-destination",
+          "kenshou.outbox.v1"
+        ],
+        [
+          "keiro-event-type",
+          "OutboxProbe"
+        ],
+        [
+          "keiro-schema-version",
+          "1"
+        ],
+        [
+          "content-type",
+          "application/json"
+        ],
+        [
+          "keiro-occurred-at",
+          "2026-10-02T18:02:07.827333Z"
+        ],
+        [
+          "keiro-attributes",
+          "{\"sequence\":3}"
+        ]
+      ],
+      [
+        [
+          "keiro-message-id",
+          "10"
+        ],
+        [
+          "keiro-source",
+          "kenshou-01a0fdc7-terminal"
+        ],
+        [
+          "keiro-destination",
+          "kenshou.outbox.v1"
+        ],
+        [
+          "keiro-event-type",
+          "OutboxProbe"
+        ],
+        [
+          "keiro-schema-version",
+          "1"
+        ],
+        [
+          "content-type",
+          "application/json"
+        ],
+        [
+          "keiro-occurred-at",
+          "2026-10-02T18:02:07.82879Z"
+        ],
+        [
+          "keiro-attributes",
+          "{\"sequence\":3}"
+        ]
+      ],
+      [
+        [
+          "keiro-message-id",
+          "11"
+        ],
+        [
+          "keiro-source",
+          "kenshou-01a0fdc7-terminal"
+        ],
+        [
+          "keiro-destination",
+          "kenshou.outbox.v1"
+        ],
+        [
+          "keiro-event-type",
+          "OutboxProbe"
+        ],
+        [
+          "keiro-schema-version",
+          "1"
+        ],
+        [
+          "content-type",
+          "application/json"
+        ],
+        [
+          "keiro-occurred-at",
+          "2026-10-02T18:02:07.830266Z"
+        ],
+        [
+          "keiro-attributes",
+          "{\"sequence\":3}"
+        ]
+      ],
+      [
+        [
+          "keiro-message-id",
+          "12"
+        ],
+        [
+          "keiro-source",
+          "kenshou-01a0fdc7-terminal"
+        ],
+        [
+          "keiro-destination",
+          "kenshou.outbox.v1"
+        ],
+        [
+          "keiro-event-type",
+          "OutboxProbe"
+        ],
+        [
+          "keiro-schema-version",
+          "1"
+        ],
+        [
+          "content-type",
+          "application/json"
+        ],
+        [
+          "keiro-occurred-at",
+          "2026-10-02T18:02:07.832118Z"
+        ],
+        [
+          "keiro-attributes",
+          "{\"sequence\":4}"
+        ]
+      ],
+      [
+        [
+          "keiro-message-id",
+          "15"
+        ],
+        [
+          "keiro-source",
+          "kenshou-01a0fdc7-terminal"
+        ],
+        [
+          "keiro-destination",
+          "kenshou.outbox.v1"
+        ],
+        [
+          "keiro-event-type",
+          "OutboxProbe"
+        ],
+        [
+          "keiro-schema-version",
+          "1"
+        ],
+        [
+          "content-type",
+          "application/json"
+        ],
+        [
+          "keiro-occurred-at",
+          "2026-10-02T18:02:07.836937Z"
+        ],
+        [
+          "keiro-attributes",
+          "{\"sequence\":5}"
+        ]
+      ],
+      [
+        [
+          "keiro-message-id",
+          "16"
+        ],
+        [
+          "keiro-source",
+          "kenshou-01a0fdc7-terminal"
+        ],
+        [
+          "keiro-destination",
+          "kenshou.outbox.v1"
+        ],
+        [
+          "keiro-event-type",
+          "OutboxProbe"
+        ],
+        [
+          "keiro-schema-version",
+          "1"
+        ],
+        [
+          "content-type",
+          "application/json"
+        ],
+        [
+          "keiro-occurred-at",
+          "2026-10-02T18:02:07.838546Z"
+        ],
+        [
+          "keiro-attributes",
+          "{\"sequence\":5}"
+        ]
+      ],
+      [
+        [
+          "keiro-message-id",
+          "17"
+        ],
+        [
+          "keiro-source",
+          "kenshou-01a0fdc7-terminal"
+        ],
+        [
+          "keiro-destination",
+          "kenshou.outbox.v1"
+        ],
+        [
+          "keiro-event-type",
+          "OutboxProbe"
+        ],
+        [
+          "keiro-schema-version",
+          "1"
+        ],
+        [
+          "content-type",
+          "application/json"
+        ],
+        [
+          "keiro-occurred-at",
+          "2026-10-02T18:02:07.839919Z"
+        ],
+        [
+          "keiro-attributes",
+          "{\"sequence\":5}"
+        ]
+      ],
+      [
+        [
+          "keiro-message-id",
+          "18"
+        ],
+        [
+          "keiro-source",
+          "kenshou-01a0fdc7-terminal"
+        ],
+        [
+          "keiro-destination",
+          "kenshou.outbox.v1"
+        ],
+        [
+          "keiro-event-type",
+          "OutboxProbe"
+        ],
+        [
+          "keiro-schema-version",
+          "1"
+        ],
+        [
+          "content-type",
+          "application/json"
+        ],
+        [
+          "keiro-occurred-at",
+          "2026-10-02T18:02:07.841409Z"
+        ],
+        [
+          "keiro-attributes",
+          "{\"sequence\":6}"
+        ]
+      ],
+      [
+        [
+          "keiro-message-id",
+          "20"
+        ],
+        [
+          "keiro-source",
+          "kenshou-01a0fdc7-terminal"
+        ],
+        [
+          "keiro-destination",
+          "kenshou.outbox.v1"
+        ],
+        [
+          "keiro-event-type",
+          "OutboxProbe"
+        ],
+        [
+          "keiro-schema-version",
+          "1"
+        ],
+        [
+          "content-type",
+          "application/json"
+        ],
+        [
+          "keiro-occurred-at",
+          "2026-10-02T18:02:07.844473Z"
+        ],
+        [
+          "keiro-attributes",
+          "{\"sequence\":6}"
+        ]
+      ],
+      [
+        [
+          "keiro-message-id",
+          "19"
+        ],
+        [
+          "keiro-source",
+          "kenshou-01a0fdc7-terminal"
+        ],
+        [
+          "keiro-destination",
+          "kenshou.outbox.v1"
+        ],
+        [
+          "keiro-event-type",
+          "OutboxProbe"
+        ],
+        [
+          "keiro-schema-version",
+          "1"
+        ],
+        [
+          "content-type",
+          "application/json"
+        ],
+        [
+          "keiro-occurred-at",
+          "2026-10-02T18:02:07.842863Z"
+        ],
+        [
+          "keiro-attributes",
+          "{\"sequence\":6}"
+        ]
+      ]
+    ],
+    "callbacks": [
+      {
+        "claimed": [
+          {
+            "attemptCount": 1,
+            "key": "key-1",
+            "lastError": null,
+            "messageId": "1",
+            "outboxId": "01a0fdc7-d844-7306-9365-1f0c2a2bcf40",
+            "rejectedAt": null,
+            "rejectionCode": null,
+            "source": "kenshou-01a0fdc7-terminal",
+            "status": "OutboxPublishing"
+          },
+          {
+            "attemptCount": 1,
+            "key": "key-2",
+            "lastError": null,
+            "messageId": "2",
+            "outboxId": "01a0fdc7-d847-74a0-b1b6-fcd89fe0ec81",
+            "rejectedAt": null,
+            "rejectionCode": null,
+            "source": "kenshou-01a0fdc7-terminal",
+            "status": "OutboxPublishing"
+          },
+          {
+            "attemptCount": 1,
+            "key": "key-0",
+            "lastError": null,
+            "messageId": "3",
+            "outboxId": "01a0fdc7-d849-73b2-9230-4365ef70d804",
+            "rejectedAt": null,
+            "rejectionCode": null,
+            "source": "kenshou-01a0fdc7-terminal",
+            "status": "OutboxPublishing"
+          },
+          {
+            "attemptCount": 1,
+            "key": "key-1",
+            "lastError": null,
+            "messageId": "4",
+            "outboxId": "01a0fdc7-d84a-744a-a5d3-952648b141e7",
+            "rejectedAt": null,
+            "rejectionCode": null,
+            "source": "kenshou-01a0fdc7-terminal",
+            "status": "OutboxPublishing"
+          },
+          {
+            "attemptCount": 1,
+            "key": "key-2",
+            "lastError": null,
+            "messageId": "5",
+            "outboxId": "01a0fdc7-d84c-77d5-9650-3b9852d342b4",
+            "rejectedAt": null,
+            "rejectionCode": null,
+            "source": "kenshou-01a0fdc7-terminal",
+            "status": "OutboxPublishing"
+          },
+          {
+            "attemptCount": 1,
+            "key": "key-0",
+            "lastError": null,
+            "messageId": "6",
+            "outboxId": "01a0fdc7-d84e-71eb-98f2-c27591822f3f",
+            "rejectedAt": null,
+            "rejectionCode": null,
+            "source": "kenshou-01a0fdc7-terminal",
+            "status": "OutboxPublishing"
+          },
+          {
+            "attemptCount": 1,
+            "key": "key-1",
+            "lastError": null,
+            "messageId": "7",
+            "outboxId": "01a0fdc7-d850-778c-8ac7-70ad4019eaae",
+            "rejectedAt": null,
+            "rejectionCode": null,
+            "source": "kenshou-01a0fdc7-terminal",
+            "status": "OutboxPublishing"
+          }
+        ],
+        "ended": "2026-10-02T18:02:07.850877Z",
+        "outcomes": [
+          {
+            "outboxId": "01a0fdc7-d844-7306-9365-1f0c2a2bcf40",
+            "outcome": {
+              "tag": "succeeded"
+            }
+          },
+          {
+            "outboxId": "01a0fdc7-d847-74a0-b1b6-fcd89fe0ec81",
+            "outcome": {
+              "error": "synthetic transient failure",
+              "tag": "failed"
+            }
+          },
+          {
+            "outboxId": "01a0fdc7-d849-73b2-9230-4365ef70d804",
+            "outcome": {
+              "error": "synthetic transient failure",
+              "tag": "failed"
+            }
+          },
+          {
+            "outboxId": "01a0fdc7-d84a-744a-a5d3-952648b141e7",
+            "outcome": {
+              "tag": "succeeded"
+            }
+          },
+          {
+            "outboxId": "01a0fdc7-d84c-77d5-9650-3b9852d342b4",
+            "outcome": {
+              "error": "synthetic transient failure",
+              "tag": "failed"
+            }
+          },
+          {
+            "outboxId": "01a0fdc7-d84e-71eb-98f2-c27591822f3f",
+            "outcome": {
+              "tag": "succeeded"
+            }
+          },
+          {
+            "outboxId": "01a0fdc7-d850-778c-8ac7-70ad4019eaae",
+            "outcome": {
+              "error": "synthetic permanent failure",
+              "tag": "failed"
+            }
+          }
+        ],
+        "started": "2026-10-02T18:02:07.849598Z"
+      },
+      {
+        "claimed": [
+          {
+            "attemptCount": 2,
+            "key": "key-2",
+            "lastError": "synthetic transient failure",
+            "messageId": "2",
+            "outboxId": "01a0fdc7-d847-74a0-b1b6-fcd89fe0ec81",
+            "rejectedAt": null,
+            "rejectionCode": null,
+            "source": "kenshou-01a0fdc7-terminal",
+            "status": "OutboxPublishing"
+          },
+          {
+            "attemptCount": 2,
+            "key": "key-0",
+            "lastError": "synthetic transient failure",
+            "messageId": "3",
+            "outboxId": "01a0fdc7-d849-73b2-9230-4365ef70d804",
+            "rejectedAt": null,
+            "rejectionCode": null,
+            "source": "kenshou-01a0fdc7-terminal",
+            "status": "OutboxPublishing"
+          },
+          {
+            "attemptCount": 2,
+            "key": "key-2",
+            "lastError": "synthetic transient failure",
+            "messageId": "5",
+            "outboxId": "01a0fdc7-d84c-77d5-9650-3b9852d342b4",
+            "rejectedAt": null,
+            "rejectionCode": null,
+            "source": "kenshou-01a0fdc7-terminal",
+            "status": "OutboxPublishing"
+          },
+          {
+            "attemptCount": 2,
+            "key": "key-1",
+            "lastError": "synthetic permanent failure",
+            "messageId": "7",
+            "outboxId": "01a0fdc7-d850-778c-8ac7-70ad4019eaae",
+            "rejectedAt": null,
+            "rejectionCode": null,
+            "source": "kenshou-01a0fdc7-terminal",
+            "status": "OutboxPublishing"
+          },
+          {
+            "attemptCount": 1,
+            "key": "key-2",
+            "lastError": null,
+            "messageId": "8",
+            "outboxId": "01a0fdc7-d851-74be-bf18-03312ccdfea5",
+            "rejectedAt": null,
+            "rejectionCode": null,
+            "source": "kenshou-01a0fdc7-terminal",
+            "status": "OutboxPublishing"
+          },
+          {
+            "attemptCount": 1,
+            "key": "key-0",
+            "lastError": null,
+            "messageId": "9",
+            "outboxId": "01a0fdc7-d853-748c-8aa3-f05e113806d3",
+            "rejectedAt": null,
+            "rejectionCode": null,
+            "source": "kenshou-01a0fdc7-terminal",
+            "status": "OutboxPublishing"
+          },
+          {
+            "attemptCount": 1,
+            "key": "key-1",
+            "lastError": null,
+            "messageId": "10",
+            "outboxId": "01a0fdc7-d855-75b8-ac15-d9bc1bfe4a01",
+            "rejectedAt": null,
+            "rejectionCode": null,
+            "source": "kenshou-01a0fdc7-terminal",
+            "status": "OutboxPublishing"
+          }
+        ],
+        "ended": "2026-10-02T18:02:07.866732Z",
+        "outcomes": [
+          {
+            "outboxId": "01a0fdc7-d847-74a0-b1b6-fcd89fe0ec81",
+            "outcome": {
+              "tag": "succeeded"
+            }
+          },
+          {
+            "outboxId": "01a0fdc7-d849-73b2-9230-4365ef70d804",
+            "outcome": {
+              "tag": "succeeded"
+            }
+          },
+          {
+            "outboxId": "01a0fdc7-d84c-77d5-9650-3b9852d342b4",
+            "outcome": {
+              "tag": "succeeded"
+            }
+          },
+          {
+            "outboxId": "01a0fdc7-d850-778c-8ac7-70ad4019eaae",
+            "outcome": {
+              "error": "synthetic permanent failure",
+              "tag": "failed"
+            }
+          },
+          {
+            "outboxId": "01a0fdc7-d851-74be-bf18-03312ccdfea5",
+            "outcome": {
+              "code": "synthetic_rejection",
+              "tag": "rejected"
+            }
+          },
+          {
+            "outboxId": "01a0fdc7-d853-748c-8aa3-f05e113806d3",
+            "outcome": {
+              "error": "synthetic transient failure",
+              "tag": "failed"
+            }
+          },
+          {
+            "outboxId": "01a0fdc7-d855-75b8-ac15-d9bc1bfe4a01",
+            "outcome": {
+              "error": "synthetic transient failure",
+              "tag": "failed"
+            }
+          }
+        ],
+        "started": "2026-10-02T18:02:07.864172Z"
+      },
+      {
+        "claimed": [
+          {
+            "attemptCount": 2,
+            "key": "key-0",
+            "lastError": "synthetic transient failure",
+            "messageId": "9",
+            "outboxId": "01a0fdc7-d853-748c-8aa3-f05e113806d3",
+            "rejectedAt": null,
+            "rejectionCode": null,
+            "source": "kenshou-01a0fdc7-terminal",
+            "status": "OutboxPublishing"
+          },
+          {
+            "attemptCount": 2,
+            "key": "key-1",
+            "lastError": "synthetic transient failure",
+            "messageId": "10",
+            "outboxId": "01a0fdc7-d855-75b8-ac15-d9bc1bfe4a01",
+            "rejectedAt": null,
+            "rejectionCode": null,
+            "source": "kenshou-01a0fdc7-terminal",
+            "status": "OutboxPublishing"
+          },
+          {
+            "attemptCount": 1,
+            "key": "key-2",
+            "lastError": null,
+            "messageId": "11",
+            "outboxId": "01a0fdc7-d856-7003-b334-fb35bdbf6447",
+            "rejectedAt": null,
+            "rejectionCode": null,
+            "source": "kenshou-01a0fdc7-terminal",
+            "status": "OutboxPublishing"
+          },
+          {
+            "attemptCount": 1,
+            "key": "key-0",
+            "lastError": null,
+            "messageId": "12",
+            "outboxId": "01a0fdc7-d858-7304-8fd9-e96fb4163a9d",
+            "rejectedAt": null,
+            "rejectionCode": null,
+            "source": "kenshou-01a0fdc7-terminal",
+            "status": "OutboxPublishing"
+          },
+          {
+            "attemptCount": 1,
+            "key": "key-1",
+            "lastError": null,
+            "messageId": "13",
+            "outboxId": "01a0fdc7-d85a-7275-a549-11ad99f1cfeb",
+            "rejectedAt": null,
+            "rejectionCode": null,
+            "source": "kenshou-01a0fdc7-terminal",
+            "status": "OutboxPublishing"
+          },
+          {
+            "attemptCount": 1,
+            "key": "key-2",
+            "lastError": null,
+            "messageId": "14",
+            "outboxId": "01a0fdc7-d85b-7073-8d6c-f24fab5b611b",
+            "rejectedAt": null,
+            "rejectionCode": null,
+            "source": "kenshou-01a0fdc7-terminal",
+            "status": "OutboxPublishing"
+          },
+          {
+            "attemptCount": 1,
+            "key": "key-0",
+            "lastError": null,
+            "messageId": "15",
+            "outboxId": "01a0fdc7-d85d-777e-acd0-8d57bf457c6e",
+            "rejectedAt": null,
+            "rejectionCode": null,
+            "source": "kenshou-01a0fdc7-terminal",
+            "status": "OutboxPublishing"
+          }
+        ],
+        "ended": "2026-10-02T18:02:07.886013Z",
+        "outcomes": [
+          {
+            "outboxId": "01a0fdc7-d853-748c-8aa3-f05e113806d3",
+            "outcome": {
+              "tag": "succeeded"
+            }
+          },
+          {
+            "outboxId": "01a0fdc7-d855-75b8-ac15-d9bc1bfe4a01",
+            "outcome": {
+              "tag": "succeeded"
+            }
+          },
+          {
+            "outboxId": "01a0fdc7-d856-7003-b334-fb35bdbf6447",
+            "outcome": {
+              "tag": "succeeded"
+            }
+          },
+          {
+            "outboxId": "01a0fdc7-d858-7304-8fd9-e96fb4163a9d",
+            "outcome": {
+              "error": "synthetic transient failure",
+              "tag": "failed"
+            }
+          },
+          {
+            "outboxId": "01a0fdc7-d85a-7275-a549-11ad99f1cfeb",
+            "outcome": {
+              "error": "synthetic permanent failure",
+              "tag": "failed"
+            }
+          },
+          {
+            "outboxId": "01a0fdc7-d85b-7073-8d6c-f24fab5b611b",
+            "outcome": {
+              "error": "synthetic permanent failure",
+              "tag": "failed"
+            }
+          },
+          {
+            "outboxId": "01a0fdc7-d85d-777e-acd0-8d57bf457c6e",
+            "outcome": {
+              "error": "synthetic transient failure",
+              "tag": "failed"
+            }
+          }
+        ],
+        "started": "2026-10-02T18:02:07.883894Z"
+      },
+      {
+        "claimed": [
+          {
+            "attemptCount": 3,
+            "key": "key-1",
+            "lastError": "synthetic permanent failure",
+            "messageId": "7",
+            "outboxId": "01a0fdc7-d850-778c-8ac7-70ad4019eaae",
+            "rejectedAt": null,
+            "rejectionCode": null,
+            "source": "kenshou-01a0fdc7-terminal",
+            "status": "OutboxPublishing"
+          },
+          {
+            "attemptCount": 2,
+            "key": "key-0",
+            "lastError": "synthetic transient failure",
+            "messageId": "12",
+            "outboxId": "01a0fdc7-d858-7304-8fd9-e96fb4163a9d",
+            "rejectedAt": null,
+            "rejectionCode": null,
+            "source": "kenshou-01a0fdc7-terminal",
+            "status": "OutboxPublishing"
+          },
+          {
+            "attemptCount": 2,
+            "key": "key-1",
+            "lastError": "synthetic permanent failure",
+            "messageId": "13",
+            "outboxId": "01a0fdc7-d85a-7275-a549-11ad99f1cfeb",
+            "rejectedAt": null,
+            "rejectionCode": null,
+            "source": "kenshou-01a0fdc7-terminal",
+            "status": "OutboxPublishing"
+          },
+          {
+            "attemptCount": 2,
+            "key": "key-2",
+            "lastError": "synthetic permanent failure",
+            "messageId": "14",
+            "outboxId": "01a0fdc7-d85b-7073-8d6c-f24fab5b611b",
+            "rejectedAt": null,
+            "rejectionCode": null,
+            "source": "kenshou-01a0fdc7-terminal",
+            "status": "OutboxPublishing"
+          },
+          {
+            "attemptCount": 2,
+            "key": "key-0",
+            "lastError": "synthetic transient failure",
+            "messageId": "15",
+            "outboxId": "01a0fdc7-d85d-777e-acd0-8d57bf457c6e",
+            "rejectedAt": null,
+            "rejectionCode": null,
+            "source": "kenshou-01a0fdc7-terminal",
+            "status": "OutboxPublishing"
+          },
+          {
+            "attemptCount": 1,
+            "key": "key-1",
+            "lastError": null,
+            "messageId": "16",
+            "outboxId": "01a0fdc7-d85f-7024-87e5-3ea63c2e5a4b",
+            "rejectedAt": null,
+            "rejectionCode": null,
+            "source": "kenshou-01a0fdc7-terminal",
+            "status": "OutboxPublishing"
+          },
+          {
+            "attemptCount": 1,
+            "key": "key-2",
+            "lastError": null,
+            "messageId": "17",
+            "outboxId": "01a0fdc7-d860-774c-b987-9e540cd3dfd6",
+            "rejectedAt": null,
+            "rejectionCode": null,
+            "source": "kenshou-01a0fdc7-terminal",
+            "status": "OutboxPublishing"
+          }
+        ],
+        "ended": "2026-10-02T18:02:07.905293Z",
+        "outcomes": [
+          {
+            "outboxId": "01a0fdc7-d850-778c-8ac7-70ad4019eaae",
+            "outcome": {
+              "error": "synthetic permanent failure",
+              "tag": "failed"
+            }
+          },
+          {
+            "outboxId": "01a0fdc7-d858-7304-8fd9-e96fb4163a9d",
+            "outcome": {
+              "tag": "succeeded"
+            }
+          },
+          {
+            "outboxId": "01a0fdc7-d85a-7275-a549-11ad99f1cfeb",
+            "outcome": {
+              "error": "synthetic permanent failure",
+              "tag": "failed"
+            }
+          },
+          {
+            "outboxId": "01a0fdc7-d85b-7073-8d6c-f24fab5b611b",
+            "outcome": {
+              "error": "synthetic permanent failure",
+              "tag": "failed"
+            }
+          },
+          {
+            "outboxId": "01a0fdc7-d85d-777e-acd0-8d57bf457c6e",
+            "outcome": {
+              "tag": "succeeded"
+            }
+          },
+          {
+            "outboxId": "01a0fdc7-d85f-7024-87e5-3ea63c2e5a4b",
+            "outcome": {
+              "tag": "succeeded"
+            }
+          },
+          {
+            "outboxId": "01a0fdc7-d860-774c-b987-9e540cd3dfd6",
+            "outcome": {
+              "tag": "succeeded"
+            }
+          }
+        ],
+        "started": "2026-10-02T18:02:07.903866Z"
+      },
+      {
+        "claimed": [
+          {
+            "attemptCount": 3,
+            "key": "key-1",
+            "lastError": "synthetic permanent failure",
+            "messageId": "13",
+            "outboxId": "01a0fdc7-d85a-7275-a549-11ad99f1cfeb",
+            "rejectedAt": null,
+            "rejectionCode": null,
+            "source": "kenshou-01a0fdc7-terminal",
+            "status": "OutboxPublishing"
+          },
+          {
+            "attemptCount": 3,
+            "key": "key-2",
+            "lastError": "synthetic permanent failure",
+            "messageId": "14",
+            "outboxId": "01a0fdc7-d85b-7073-8d6c-f24fab5b611b",
+            "rejectedAt": null,
+            "rejectionCode": null,
+            "source": "kenshou-01a0fdc7-terminal",
+            "status": "OutboxPublishing"
+          },
+          {
+            "attemptCount": 1,
+            "key": "key-0",
+            "lastError": null,
+            "messageId": "18",
+            "outboxId": "01a0fdc7-d861-72d4-b782-a9778b8d0c9d",
+            "rejectedAt": null,
+            "rejectionCode": null,
+            "source": "kenshou-01a0fdc7-terminal",
+            "status": "OutboxPublishing"
+          },
+          {
+            "attemptCount": 1,
+            "key": "key-1",
+            "lastError": null,
+            "messageId": "19",
+            "outboxId": "01a0fdc7-d863-73db-a16c-58ca7cd06192",
+            "rejectedAt": null,
+            "rejectionCode": null,
+            "source": "kenshou-01a0fdc7-terminal",
+            "status": "OutboxPublishing"
+          },
+          {
+            "attemptCount": 1,
+            "key": "key-2",
+            "lastError": null,
+            "messageId": "20",
+            "outboxId": "01a0fdc7-d864-7529-bdd2-774b3e23715b",
+            "rejectedAt": null,
+            "rejectionCode": null,
+            "source": "kenshou-01a0fdc7-terminal",
+            "status": "OutboxPublishing"
+          }
+        ],
+        "ended": "2026-10-02T18:02:07.959893Z",
+        "outcomes": [
+          {
+            "outboxId": "01a0fdc7-d85a-7275-a549-11ad99f1cfeb",
+            "outcome": {
+              "error": "synthetic permanent failure",
+              "tag": "failed"
+            }
+          },
+          {
+            "outboxId": "01a0fdc7-d85b-7073-8d6c-f24fab5b611b",
+            "outcome": {
+              "error": "synthetic permanent failure",
+              "tag": "failed"
+            }
+          },
+          {
+            "outboxId": "01a0fdc7-d861-72d4-b782-a9778b8d0c9d",
+            "outcome": {
+              "tag": "succeeded"
+            }
+          },
+          {
+            "outboxId": "01a0fdc7-d863-73db-a16c-58ca7cd06192",
+            "outcome": {
+              "error": "synthetic transient failure",
+              "tag": "failed"
+            }
+          },
+          {
+            "outboxId": "01a0fdc7-d864-7529-bdd2-774b3e23715b",
+            "outcome": {
+              "tag": "succeeded"
+            }
+          }
+        ],
+        "started": "2026-10-02T18:02:07.957068Z"
+      },
+      {
+        "claimed": [
+          {
+            "attemptCount": 4,
+            "key": "key-1",
+            "lastError": "synthetic permanent failure",
+            "messageId": "7",
+            "outboxId": "01a0fdc7-d850-778c-8ac7-70ad4019eaae",
+            "rejectedAt": null,
+            "rejectionCode": null,
+            "source": "kenshou-01a0fdc7-terminal",
+            "status": "OutboxPublishing"
+          },
+          {
+            "attemptCount": 2,
+            "key": "key-1",
+            "lastError": "synthetic transient failure",
+            "messageId": "19",
+            "outboxId": "01a0fdc7-d863-73db-a16c-58ca7cd06192",
+            "rejectedAt": null,
+            "rejectionCode": null,
+            "source": "kenshou-01a0fdc7-terminal",
+            "status": "OutboxPublishing"
+          }
+        ],
+        "ended": "2026-10-02T18:02:07.976449Z",
+        "outcomes": [
+          {
+            "outboxId": "01a0fdc7-d850-778c-8ac7-70ad4019eaae",
+            "outcome": {
+              "error": "synthetic permanent failure",
+              "tag": "failed"
+            }
+          },
+          {
+            "outboxId": "01a0fdc7-d863-73db-a16c-58ca7cd06192",
+            "outcome": {
+              "tag": "succeeded"
+            }
+          }
+        ],
+        "started": "2026-10-02T18:02:07.973985Z"
+      },
+      {
+        "claimed": [
+          {
+            "attemptCount": 4,
+            "key": "key-1",
+            "lastError": "synthetic permanent failure",
+            "messageId": "13",
+            "outboxId": "01a0fdc7-d85a-7275-a549-11ad99f1cfeb",
+            "rejectedAt": null,
+            "rejectionCode": null,
+            "source": "kenshou-01a0fdc7-terminal",
+            "status": "OutboxPublishing"
+          },
+          {
+            "attemptCount": 4,
+            "key": "key-2",
+            "lastError": "synthetic permanent failure",
+            "messageId": "14",
+            "outboxId": "01a0fdc7-d85b-7073-8d6c-f24fab5b611b",
+            "rejectedAt": null,
+            "rejectionCode": null,
+            "source": "kenshou-01a0fdc7-terminal",
+            "status": "OutboxPublishing"
+          }
+        ],
+        "ended": "2026-10-02T18:02:08.017191Z",
+        "outcomes": [
+          {
+            "outboxId": "01a0fdc7-d85a-7275-a549-11ad99f1cfeb",
+            "outcome": {
+              "error": "synthetic permanent failure",
+              "tag": "failed"
+            }
+          },
+          {
+            "outboxId": "01a0fdc7-d85b-7073-8d6c-f24fab5b611b",
+            "outcome": {
+              "error": "synthetic permanent failure",
+              "tag": "failed"
+            }
+          }
+        ],
+        "started": "2026-10-02T18:02:08.014137Z"
+      }
+    ],
+    "inputs": [
+      {
+        "attemptCount": 0,
+        "key": "key-1",
+        "lastError": null,
+        "messageId": "1",
+        "outboxId": "01a0fdc7-d844-7306-9365-1f0c2a2bcf40",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxPending"
+      },
+      {
+        "attemptCount": 0,
+        "key": "key-2",
+        "lastError": null,
+        "messageId": "2",
+        "outboxId": "01a0fdc7-d847-74a0-b1b6-fcd89fe0ec81",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxPending"
+      },
+      {
+        "attemptCount": 0,
+        "key": "key-0",
+        "lastError": null,
+        "messageId": "3",
+        "outboxId": "01a0fdc7-d849-73b2-9230-4365ef70d804",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxPending"
+      },
+      {
+        "attemptCount": 0,
+        "key": "key-1",
+        "lastError": null,
+        "messageId": "4",
+        "outboxId": "01a0fdc7-d84a-744a-a5d3-952648b141e7",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxPending"
+      },
+      {
+        "attemptCount": 0,
+        "key": "key-2",
+        "lastError": null,
+        "messageId": "5",
+        "outboxId": "01a0fdc7-d84c-77d5-9650-3b9852d342b4",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxPending"
+      },
+      {
+        "attemptCount": 0,
+        "key": "key-0",
+        "lastError": null,
+        "messageId": "6",
+        "outboxId": "01a0fdc7-d84e-71eb-98f2-c27591822f3f",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxPending"
+      },
+      {
+        "attemptCount": 0,
+        "key": "key-1",
+        "lastError": null,
+        "messageId": "7",
+        "outboxId": "01a0fdc7-d850-778c-8ac7-70ad4019eaae",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxPending"
+      },
+      {
+        "attemptCount": 0,
+        "key": "key-2",
+        "lastError": null,
+        "messageId": "8",
+        "outboxId": "01a0fdc7-d851-74be-bf18-03312ccdfea5",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxPending"
+      },
+      {
+        "attemptCount": 0,
+        "key": "key-0",
+        "lastError": null,
+        "messageId": "9",
+        "outboxId": "01a0fdc7-d853-748c-8aa3-f05e113806d3",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxPending"
+      },
+      {
+        "attemptCount": 0,
+        "key": "key-1",
+        "lastError": null,
+        "messageId": "10",
+        "outboxId": "01a0fdc7-d855-75b8-ac15-d9bc1bfe4a01",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxPending"
+      },
+      {
+        "attemptCount": 0,
+        "key": "key-2",
+        "lastError": null,
+        "messageId": "11",
+        "outboxId": "01a0fdc7-d856-7003-b334-fb35bdbf6447",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxPending"
+      },
+      {
+        "attemptCount": 0,
+        "key": "key-0",
+        "lastError": null,
+        "messageId": "12",
+        "outboxId": "01a0fdc7-d858-7304-8fd9-e96fb4163a9d",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxPending"
+      },
+      {
+        "attemptCount": 0,
+        "key": "key-1",
+        "lastError": null,
+        "messageId": "13",
+        "outboxId": "01a0fdc7-d85a-7275-a549-11ad99f1cfeb",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxPending"
+      },
+      {
+        "attemptCount": 0,
+        "key": "key-2",
+        "lastError": null,
+        "messageId": "14",
+        "outboxId": "01a0fdc7-d85b-7073-8d6c-f24fab5b611b",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxPending"
+      },
+      {
+        "attemptCount": 0,
+        "key": "key-0",
+        "lastError": null,
+        "messageId": "15",
+        "outboxId": "01a0fdc7-d85d-777e-acd0-8d57bf457c6e",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxPending"
+      },
+      {
+        "attemptCount": 0,
+        "key": "key-1",
+        "lastError": null,
+        "messageId": "16",
+        "outboxId": "01a0fdc7-d85f-7024-87e5-3ea63c2e5a4b",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxPending"
+      },
+      {
+        "attemptCount": 0,
+        "key": "key-2",
+        "lastError": null,
+        "messageId": "17",
+        "outboxId": "01a0fdc7-d860-774c-b987-9e540cd3dfd6",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxPending"
+      },
+      {
+        "attemptCount": 0,
+        "key": "key-0",
+        "lastError": null,
+        "messageId": "18",
+        "outboxId": "01a0fdc7-d861-72d4-b782-a9778b8d0c9d",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxPending"
+      },
+      {
+        "attemptCount": 0,
+        "key": "key-1",
+        "lastError": null,
+        "messageId": "19",
+        "outboxId": "01a0fdc7-d863-73db-a16c-58ca7cd06192",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxPending"
+      },
+      {
+        "attemptCount": 0,
+        "key": "key-2",
+        "lastError": null,
+        "messageId": "20",
+        "outboxId": "01a0fdc7-d864-7529-bdd2-774b3e23715b",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxPending"
+      }
+    ],
+    "rows": [
+      {
+        "attemptCount": 1,
+        "key": "key-1",
+        "lastError": null,
+        "messageId": "1",
+        "outboxId": "01a0fdc7-d844-7306-9365-1f0c2a2bcf40",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxSent"
+      },
+      {
+        "attemptCount": 2,
+        "key": "key-2",
+        "lastError": null,
+        "messageId": "2",
+        "outboxId": "01a0fdc7-d847-74a0-b1b6-fcd89fe0ec81",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxSent"
+      },
+      {
+        "attemptCount": 2,
+        "key": "key-0",
+        "lastError": null,
+        "messageId": "3",
+        "outboxId": "01a0fdc7-d849-73b2-9230-4365ef70d804",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxSent"
+      },
+      {
+        "attemptCount": 1,
+        "key": "key-1",
+        "lastError": null,
+        "messageId": "4",
+        "outboxId": "01a0fdc7-d84a-744a-a5d3-952648b141e7",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxSent"
+      },
+      {
+        "attemptCount": 2,
+        "key": "key-2",
+        "lastError": null,
+        "messageId": "5",
+        "outboxId": "01a0fdc7-d84c-77d5-9650-3b9852d342b4",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxSent"
+      },
+      {
+        "attemptCount": 1,
+        "key": "key-0",
+        "lastError": null,
+        "messageId": "6",
+        "outboxId": "01a0fdc7-d84e-71eb-98f2-c27591822f3f",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxSent"
+      },
+      {
+        "attemptCount": 4,
+        "key": "key-1",
+        "lastError": "synthetic permanent failure",
+        "messageId": "7",
+        "outboxId": "01a0fdc7-d850-778c-8ac7-70ad4019eaae",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxDead"
+      },
+      {
+        "attemptCount": 1,
+        "key": "key-2",
+        "lastError": null,
+        "messageId": "8",
+        "outboxId": "01a0fdc7-d851-74be-bf18-03312ccdfea5",
+        "rejectedAt": "2026-10-02T18:02:07.866732Z",
+        "rejectionCode": "synthetic_rejection",
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxRejected"
+      },
+      {
+        "attemptCount": 2,
+        "key": "key-0",
+        "lastError": null,
+        "messageId": "9",
+        "outboxId": "01a0fdc7-d853-748c-8aa3-f05e113806d3",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxSent"
+      },
+      {
+        "attemptCount": 2,
+        "key": "key-1",
+        "lastError": null,
+        "messageId": "10",
+        "outboxId": "01a0fdc7-d855-75b8-ac15-d9bc1bfe4a01",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxSent"
+      },
+      {
+        "attemptCount": 1,
+        "key": "key-2",
+        "lastError": null,
+        "messageId": "11",
+        "outboxId": "01a0fdc7-d856-7003-b334-fb35bdbf6447",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxSent"
+      },
+      {
+        "attemptCount": 2,
+        "key": "key-0",
+        "lastError": null,
+        "messageId": "12",
+        "outboxId": "01a0fdc7-d858-7304-8fd9-e96fb4163a9d",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxSent"
+      },
+      {
+        "attemptCount": 4,
+        "key": "key-1",
+        "lastError": "synthetic permanent failure",
+        "messageId": "13",
+        "outboxId": "01a0fdc7-d85a-7275-a549-11ad99f1cfeb",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxDead"
+      },
+      {
+        "attemptCount": 4,
+        "key": "key-2",
+        "lastError": "synthetic permanent failure",
+        "messageId": "14",
+        "outboxId": "01a0fdc7-d85b-7073-8d6c-f24fab5b611b",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxDead"
+      },
+      {
+        "attemptCount": 2,
+        "key": "key-0",
+        "lastError": null,
+        "messageId": "15",
+        "outboxId": "01a0fdc7-d85d-777e-acd0-8d57bf457c6e",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxSent"
+      },
+      {
+        "attemptCount": 1,
+        "key": "key-1",
+        "lastError": null,
+        "messageId": "16",
+        "outboxId": "01a0fdc7-d85f-7024-87e5-3ea63c2e5a4b",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxSent"
+      },
+      {
+        "attemptCount": 1,
+        "key": "key-2",
+        "lastError": null,
+        "messageId": "17",
+        "outboxId": "01a0fdc7-d860-774c-b987-9e540cd3dfd6",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxSent"
+      },
+      {
+        "attemptCount": 1,
+        "key": "key-0",
+        "lastError": null,
+        "messageId": "18",
+        "outboxId": "01a0fdc7-d861-72d4-b782-a9778b8d0c9d",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxSent"
+      },
+      {
+        "attemptCount": 2,
+        "key": "key-1",
+        "lastError": null,
+        "messageId": "19",
+        "outboxId": "01a0fdc7-d863-73db-a16c-58ca7cd06192",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxSent"
+      },
+      {
+        "attemptCount": 1,
+        "key": "key-2",
+        "lastError": null,
+        "messageId": "20",
+        "outboxId": "01a0fdc7-d864-7529-bdd2-774b3e23715b",
+        "rejectedAt": null,
+        "rejectionCode": null,
+        "source": "kenshou-01a0fdc7-terminal",
+        "status": "OutboxSent"
+      }
+    ],
+    "schema": "kenshou.outbox-terminal-observations/v1",
+    "summaries": [
+      {
+        "claimed": 7,
+        "dead": 0,
+        "haltedOn": null,
+        "published": 3,
+        "rejected": 0,
+        "retried": 4
+      },
+      {
+        "claimed": 7,
+        "dead": 0,
+        "haltedOn": null,
+        "published": 3,
+        "rejected": 1,
+        "retried": 3
+      },
+      {
+        "claimed": 7,
+        "dead": 0,
+        "haltedOn": null,
+        "published": 3,
+        "rejected": 0,
+        "retried": 4
+      },
+      {
+        "claimed": 7,
+        "dead": 0,
+        "haltedOn": null,
+        "published": 4,
+        "rejected": 0,
+        "retried": 3
+      },
+      {
+        "claimed": 5,
+        "dead": 0,
+        "haltedOn": null,
+        "published": 2,
+        "rejected": 0,
+        "retried": 3
+      },
+      {
+        "claimed": 2,
+        "dead": 1,
+        "haltedOn": null,
+        "published": 1,
+        "rejected": 0,
+        "retried": 0
+      },
+      {
+        "claimed": 0,
+        "dead": 0,
+        "haltedOn": null,
+        "published": 0,
+        "rejected": 0,
+        "retried": 0
+      },
+      {
+        "claimed": 2,
+        "dead": 2,
+        "haltedOn": null,
+        "published": 0,
+        "rejected": 0,
+        "retried": 0
+      }
+    ]
+  }
+}
