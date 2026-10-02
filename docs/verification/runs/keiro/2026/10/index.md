@@ -75,6 +75,7 @@
 - [keiro/inbox/correctness/effectively-once-matrix passed on released](01a0fa2a-b765-7471-99f8-014d5c34c5b6.md) - Recorded keiro/inbox/correctness/effectively-once-matrix run against cohort released with digest-pinned data.
 - [keiro/inbox/correctness/effectively-once-matrix failed on released](01a0fa2a-c335-76f7-8822-2c81dae1099b.md) - Recorded keiro/inbox/correctness/effectively-once-matrix run against cohort released with digest-pinned data.
 - [keiro/inbox/correctness/effectively-once-matrix failed on released](01a0fa2a-ceac-70ad-9b70-dab8679eb46b.md) - Recorded keiro/inbox/correctness/effectively-once-matrix run against cohort released with digest-pinned data.
+- [keiro/inbox/soak/dedupe-window passed on released](01a0fa97-bbd6-76a5-a7c0-03c6aa076562.md) - Recorded keiro/inbox/soak/dedupe-window run against cohort released with digest-pinned data.
 - [keiro/inbox/correctness/effectively-once-matrix passed on released](01a0fca8-cae6-70df-9ad1-c0ef6577a2e2.md) - Recorded keiro/inbox/correctness/effectively-once-matrix run against cohort released with digest-pinned data.
 - [keiro/inbox/correctness/effectively-once-matrix passed on released](01a0fca8-d813-73af-beca-3d86c9dc0742.md) - Recorded keiro/inbox/correctness/effectively-once-matrix run against cohort released with digest-pinned data.
 - [keiro/inbox/correctness/effectively-once-matrix passed on released](01a0fca8-e4ac-7080-8e46-92bed3d81a9d.md) - Recorded keiro/inbox/correctness/effectively-once-matrix run against cohort released with digest-pinned data.

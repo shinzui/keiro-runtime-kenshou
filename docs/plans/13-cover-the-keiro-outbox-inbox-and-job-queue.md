@@ -134,6 +134,7 @@ The non-soak baseline is in place. The remaining work is to deepen specific scen
 - [ ] Finish the remaining non-soak acceptance work listed below, then rerun the affected scenarios and package tests.
 - [x] (2026-10-01) Full inbox soak sealed with passing business/resource observations and was digest-linked; finding 50 qualifies its legacy verdict schema, and the first timed-out attempt remains excluded.
 - [x] (2026-10-01) Implemented revision-3 process-isolated outbox soak with per-incarnation diagnosis and message-specific crash duplicate budgets.
+- [x] (2026-10-02 UTC) Collected and digest-linked the repaired-payload four-hour inbox run: all eight business checks and six bounded resource probes pass, with 27 artifact checks and all 11 schemas valid. This closes inbox full-soak artifact acceptance; independent soak VC-1 remains open. The follow-on queue GC diagnostic is submitted.
 - [ ] Finish queue and outbox full-soak resource acceptance, schema-valid full-soak artifacts, process isolation acceptance, remaining matrix arms, and independent evidence verification.
 
 The five Keiro owner reports for worker exits, read-attempt accounting, stale outbox claims, pool starvation, and missing process spans now have local finding records [34](../findings/34-keiro-job-worker-exits-after-polling-backend-termination.md), [35](../findings/35-keiro-long-poll-consumes-read-attempt-without-handler.md), [36](../findings/36-keiro-stale-outbox-publisher-finalizes-new-claim.md), [37](../findings/37-keiro-long-poll-processors-starve-runtime-pool.md), and [38](../findings/38-keiro-pre-handler-dead-letter-lacks-process-span.md). Each finding has its canonical owner URI; the MasterPlan register counts those records separately from the scenarios that cite them.
@@ -492,7 +493,7 @@ wrapper of `mori://shinzui/load-testing-infra` (`scripts/iap-ssh.sh`,
 artifact-level URI pending). The repaired payload preserves the existing soak
 revisions and does not contain the later revision-4 delegated matrix change.
 
-The prepared full inbox rerun keeps the prior accepted run's exact seed
+The full inbox rerun keeps the prior accepted run's exact seed
 `4252662818734786`, two messages/second, 120-second retention, default GC,
 telemetry off and durable PostgreSQL 18. Its plan is
 `.dev/ep13-inbox-full-counter-repair-plan.json`, with nested run
@@ -503,19 +504,30 @@ it submitted no inbox run. Manual recovery collected the sealed queue result
 and submitted the prepared inbox plan at 13:04 UTC with the repaired payload
 and a five-hour lease. Session `01a0fcb7-333b-77b1-ab02-fef753395c0f` owns cell
 `01a0fcb7-333b-77b1-ad39-c4a38bbc4b45` and lease
-`01a0fcb7-2d45-712e-90fc-637db7d731c3`. No new inbox outcome is claimed.
+`01a0fcb7-2d45-712e-90fc-637db7d731c3`. The bounded collector verified and
+collected its passing result at 17:15 UTC, releasing that lease.
 
-The recovered handoff is in `.dev/ep13-soak-sequence-state.json`; the original
-stop is preserved in `.dev/ep13-soak-sequence-stopped.json`. The bounded
-`.dev/watch-inbox-full-counter-repair.py` collector retries transient failures
-up to five consecutive attempts and stops by 18:30 UTC. Its current state is
-`.dev/ep13-inbox-full-counter-repair-watch.json`. Manual collection remains:
+The [new digest-linked investigation](../verification/runs/keiro/2026/10/01a0fa97-bbd6-76a5-a7c0-03c6aa076562.md)
+holds all eight business checks: 28,821 fresh deliveries, 28,821 early duplicates
+suppressed, 28,821 late reprocessings and exactly 57,642 effects, with zero
+classification/GC errors or pending deliveries. It retains 258 receipt rows.
+The sampled comparison-window relation size decreases from 417,792 to 409,600
+bytes; dead tuples decrease from 120 to 118, within both bounds.
 
-```bash
-kenshou cell resume --session .dev/ep13-inbox-full-counter-repair
-```
+All six bounded resource probes are stable, including 472 eligible post-major
+heap points with default GC. All 27 nested artifact sizes/digests and all 11
+schemas (three top-level documents and eight verdicts) pass. This closes the
+inbox full-soak artifact gap from finding 50 without rewriting historical
+runs. Independent inbox-soak VC-1 remains unavailable, and exploratory soak
+measurements are not benchmark comparisons. Recording uses `--verify-only`
+and `--deep-verify` against the existing sealed cell objects. Strict validation
+of the expanded 178-concept evidence bundle, reproducible indexes, profile
+rejection fixtures and evidence ledger/CLI checks all pass.
 
-The prepared follow-on queue diagnostic keeps the sealed full queue run's
+The original coordinator stop remains in `.dev/ep13-soak-sequence-stopped.json`;
+the successful collector state is `.dev/ep13-inbox-full-counter-repair-watch.json`.
+
+The follow-on queue diagnostic keeps the sealed full queue run's
 exact seed `8102429385822254`, workload, duration, dimensions and knobs, except
 `diagnose.major-gc-interval-ms=5000`. The generated plan seed was explicitly
 set to that prior run seed before submission. The repaired payload is the same
@@ -525,13 +537,13 @@ control, excluded from default-GC performance claims.
 
 The plan is `.dev/ep13-queue-full-counter-repair-gc-plan.json`, nested run
 `01a0fd67-a9cb-7001-9322-69251c14d682`. The bounded
-`.dev/sequence-queue-full-counter-repair-gc.py` waits for the inbox collector to
-verify and collect its result by 18:35 UTC, then submits the queue plan under
-a five-hour lease. It stops if that prerequisite fails and never replaces an
-existing queue session. Collection has five bounded consecutive retries and a
-23:15 UTC deadline. State is
+`.dev/sequence-queue-full-counter-repair-gc.py` submitted it at 17:16 UTC after
+the inbox collector completed and released its lease. Session
+`01a0fd9d-fcda-74af-b190-c2b7d4a1f282` owns cell run
+`01a0fd9d-fcda-74af-b73c-20bcb13da0f2` under a five-hour lease. Collection has
+five bounded consecutive retries and a 23:15 UTC deadline. State is
 `.dev/ep13-queue-full-counter-repair-gc-state.json`; no queue diagnostic outcome
-is claimed. After submission, manual collection is:
+is claimed. Manual collection is:
 
 ```bash
 kenshou cell resume --session .dev/ep13-queue-full-counter-repair-gc

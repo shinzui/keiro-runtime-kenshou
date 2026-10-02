@@ -51,8 +51,10 @@ The queue/DLQ full soak submitted as cell
 All 28 nested artifact checks and three top-level schemas pass, but all nine
 held verdicts fail the same missing-counter requirement. Its inconclusive
 heap/resource outcome and this artifact qualification remain explicit.
-Formal full-soak artifact acceptance needs a
-payload built from the repair and newly sealed evidence.
+The repaired-payload [full inbox rerun](../verification/runs/keiro/2026/10/01a0fa97-bbd6-76a5-a7c0-03c6aa076562.md)
+passes all 11 schemas, including eight verdict documents with required
+assertion counters, and all 27 artifact checks. Inbox full-soak artifact
+acceptance is closed; repaired full outbox/queue evidence remains pending.
 
 Validation: the Keiro regression failed before the production change and passed
 afterward. All 49 Keiro and 35 core check examples pass. All ten held/violated

@@ -1,6 +1,7 @@
 # runs/keiro/2026/10 Update Log
 
 ## 2026-10-02
+* **Addition**: Recorded run 01a0fa97-bbd6-76a5-a7c0-03c6aa076562 (keiro/inbox/soak/dedupe-window, passed).
 * **Addition**: Recorded run 01a0fd91-d2ca-7637-9dc6-83f1ff82d85e (keiro/inbox/correctness/poison-accounting, passed).
 * **Addition**: Recorded run 01a0fd91-c724-736c-966c-e72a6da6920b (keiro/inbox/correctness/poison-accounting, passed).
 * **Addition**: Recorded run 01a0fd91-bbb6-73eb-98dc-f08211a23ae7 (keiro/inbox/correctness/poison-accounting, passed).

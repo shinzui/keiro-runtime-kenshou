@@ -17,7 +17,7 @@ Other Keiro business-oracle replay and full soak acceptance remain open.
 
 The pinned [released cohort](../../cohort/released.json) includes Keiro 0.17.0.0, Kiroku Store 0.8.0.1 and its Shibuya adapter 0.5.1.2, Shibuya Core and Metrics 0.9.0.3, the Shibuya PGMQ adapter 0.16.0.0, the Shibuya Kafka adapter 0.9.0.1, and pgmq-hs 0.6.1.0. New baseline runs focus on durable PostgreSQL 18; several substrate checks also have PostgreSQL 17 controls. Local results under `runs/` are sealed but ignored by Git. Their IDs and reproduction commands live in the [numbered findings](../findings/) and child plans.
 
-The [historical OKF bundle](../verification/) currently contains 133 digest-linked run/comparison records: 127 individual runs and six comparisons. The individual runs comprise four Kafka runs, six self-tests, 25 Keiro outbox runs, 35 Keiro inbox runs, 53 Keiro queue runs, and four Keiro write-side soaks. The comparisons comprise one self-test, two queue configuration investigations, and three outbox metrics investigations. Two Kafka records preserve failed released-cohort behavior, including [rebalance](../verification/runs/kafka/2026/09/01a0e3bd-ef03-71b4-9486-01ed1bd56a02.md); the [twenty-minute Kafka stability soak](../verification/runs/kafka/2026/09/01a0e3c8-28da-70e4-abcb-81223c70560b.md) passed. The rebalance and soak attestations remain incomplete because their Kafka oracle is not independently replayable from stored artifacts. The [Keiro outbox record](../verification/runs/keiro/2026/09/01a0eec4-bd55-7786-804f-bda62c6ac388.md) also has an [incomplete attestation](../verification/attestations/2026/09/01a0eee9-5ccf-72b7-bcdf-54f5ec80c02a.md): five checks passed, but the independent VC-1 outbox recomputer is unavailable. Most finding-level raw runs have not yet been published to the bundle, so this checkpoint links local sealed evidence and owner reports but is not the final durable baseline handoff. [ADR-18](../adr/0018-keep-verification-records-immutable-and-derive-baselines.md) governs later selection and comparison.
+The [historical OKF bundle](../verification/) currently contains 134 digest-linked run/comparison records: 128 individual runs and six comparisons. The individual runs comprise four Kafka runs, six self-tests, 25 Keiro outbox runs, 36 Keiro inbox runs, 53 Keiro queue runs, and four Keiro write-side soaks. The comparisons comprise one self-test, two queue configuration investigations, and three outbox metrics investigations. Two Kafka records preserve failed released-cohort behavior, including [rebalance](../verification/runs/kafka/2026/09/01a0e3bd-ef03-71b4-9486-01ed1bd56a02.md); the [twenty-minute Kafka stability soak](../verification/runs/kafka/2026/09/01a0e3c8-28da-70e4-abcb-81223c70560b.md) passed. The rebalance and soak attestations remain incomplete because their Kafka oracle is not independently replayable from stored artifacts. The [Keiro outbox record](../verification/runs/keiro/2026/09/01a0eec4-bd55-7786-804f-bda62c6ac388.md) also has an [incomplete attestation](../verification/attestations/2026/09/01a0eee9-5ccf-72b7-bcdf-54f5ec80c02a.md): five checks passed, but the independent VC-1 outbox recomputer is unavailable. Most finding-level raw runs have not yet been published to the bundle, so this checkpoint links local sealed evidence and owner reports but is not the final durable baseline handoff. [ADR-18](../adr/0018-keep-verification-records-immutable-and-derive-baselines.md) governs later selection and comparison.
 
 The [MasterPlan issue register](../masterplans/1-build-an-extensive-verification-suite-for-the-keiro-runtime.md#upstream-issue-register) accounts for 51 numbered findings: 31 linked to an owner bug report, six whose primary disposition is an improvement request, ten local suite findings, two unattributed runtime observations, and two cell-infrastructure observations whose final attribution remains open. It links 32 distinct owner bug records, including two Keiro reports now marked duplicates of `mori://shinzui/kiroku/okf/bug-reports/concepts/BUG-3`, and ten distinct improvement requests, including complementary requests and non-bug dispositions. Owner status at this checkpoint is 16 reported, 14 fixed, and two duplicate. “Fixed” is the owner's classification; the initial released-cohort baseline preserves the historical result until a separately requested, comparable post-fix run verifies it.
 
@@ -100,7 +100,8 @@ The [four-hour default-collection outbox run](../verification/runs/keiro/2026/10
 
 The repaired clean Linux payload at `0eda7ac` is published with all 41 released
 package identities consistent. A same-seed full inbox rerun was submitted at 13:04 UTC on 2026-10-02
-after collecting the queue soak; formal full-soak artifact acceptance remains pending.
+after collecting the queue soak; it passed and was collected at 17:15 UTC,
+closing inbox full-soak artifact acceptance. Independent soak replay remains open.
 The revision-4 delegated inbox controls now derive expected receipt IDs without
 runtime helpers and cover Unicode names and source-position fallback. All four
 local delegated arms pass; they do not add clean selected records or delegated
@@ -138,3 +139,13 @@ attestation checks passing. The clean matrix passes 34 schema and 38 artifact
 checks, and eight mutation examples reject incomplete or altered observations.
 The full verification gate passes with 50 Keiro and 60 CLI examples. Earlier
 poison records and batch replay retain their separate coverage limits.
+
+The [repaired-payload full inbox investigation](../verification/runs/keiro/2026/10/01a0fa97-bbd6-76a5-a7c0-03c6aa076562.md)
+passes all eight business checks over 28,821 fresh deliveries, all expected
+early duplicates and late reprocessings, and exactly 57,642 effects. No delivery
+or GC errors remain. All six bounded resource probes are stable, with 472
+eligible heap points under default GC. All 27 artifact checks and 11 schemas
+pass, closing the inbox full-soak artifact gap while preserving historical
+qualifications. Independent soak VC-1 is still unavailable; these exploratory
+measurements establish no benchmark comparison. The same-seed full queue
+forced-GC diagnostic started at 17:16 UTC and has no reported outcome yet.
