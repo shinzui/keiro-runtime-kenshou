@@ -392,6 +392,23 @@ These dirty controls are not historical records.
 Earlier poison revisions and all batch revisions remain outside independent
 replay coverage.
 
+
+The clean repeat at `e09f9fb58ba35651d11f979b922d275458e6d0f3` passes all four
+poison modes on durable PostgreSQL 18, with 34 schema and 38 artifact-integrity
+checks. All four are digest-linked investigation records with confirmed VC-1
+attestations: all six evidence checks pass, including clean run/verifier
+worktrees and independent reconstruction from raw observations. Older poison
+records and batch replay retain their separate coverage limits.
+Strict validation of the 177-concept bundle, reproducible indexes, negative
+profile fixtures, and evidence ledger/CLI checks all pass.
+
+| Poison mode | Clean run | Confirmed attestation |
+| --- | --- | --- |
+| `inbox-table-pure-exception` | [01a0fd91-addb-737e-ad23-0a042e72cede](../verification/runs/keiro/2026/10/01a0fd91-addb-737e-ad23-0a042e72cede.md) | [01a0fd97-ed17-7647-9805-fc46a151ab78](../verification/attestations/2026/10/01a0fd97-ed17-7647-9805-fc46a151ab78.md) |
+| `inbox-table-condemn` | [01a0fd91-bbb6-73eb-98dc-f08211a23ae7](../verification/runs/keiro/2026/10/01a0fd91-bbb6-73eb-98dc-f08211a23ae7.md) | [01a0fd98-bc9c-7380-9d30-ccf52ca6c465](../verification/attestations/2026/10/01a0fd98-bc9c-7380-9d30-ccf52ca6c465.md) |
+| `inbox-table-sql-error` | [01a0fd91-c724-736c-966c-e72a6da6920b](../verification/runs/keiro/2026/10/01a0fd91-c724-736c-966c-e72a6da6920b.md) | [01a0fd99-a014-70c8-91a5-f52e88de4558](../verification/attestations/2026/10/01a0fd99-a014-70c8-91a5-f52e88de4558.md) |
+| `delegated-pure-exception` | [01a0fd91-d2ca-7637-9dc6-83f1ff82d85e](../verification/runs/keiro/2026/10/01a0fd91-d2ca-7637-9dc6-83f1ff82d85e.md) | [01a0fd9a-1280-7234-984f-28677dca06d0](../verification/attestations/2026/10/01a0fd9a-1280-7234-984f-28677dca06d0.md) |
+
 ### Full-soak artifacts and repaired payload
 
 The full outbox result is [digest-linked](../verification/runs/keiro/2026/10/01a0f938-67a3-7207-a457-fcccd988b600.md)

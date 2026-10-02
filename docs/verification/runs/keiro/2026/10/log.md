@@ -1,6 +1,10 @@
 # runs/keiro/2026/10 Update Log
 
 ## 2026-10-02
+* **Addition**: Recorded run 01a0fd91-d2ca-7637-9dc6-83f1ff82d85e (keiro/inbox/correctness/poison-accounting, passed).
+* **Addition**: Recorded run 01a0fd91-c724-736c-966c-e72a6da6920b (keiro/inbox/correctness/poison-accounting, passed).
+* **Addition**: Recorded run 01a0fd91-bbb6-73eb-98dc-f08211a23ae7 (keiro/inbox/correctness/poison-accounting, passed).
+* **Addition**: Recorded run 01a0fd91-addb-737e-ad23-0a042e72cede (keiro/inbox/correctness/poison-accounting, passed).
 * **Addition**: Recorded run 01a0fa29-a590-7007-81bb-7a26c7ba5cd4 (keiro/queue/soak/queue-and-dlq-growth, inconclusive).
 * **Addition**: Recorded run 01a0fca8-f079-7212-855b-2cc7f53c84dc (keiro/inbox/correctness/effectively-once-matrix, passed).
 * **Addition**: Recorded run 01a0fca8-e4ac-7080-8e46-92bed3d81a9d (keiro/inbox/correctness/effectively-once-matrix, passed).
