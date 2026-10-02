@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/kenshou.queue-physical-outcomes.v1.schema.json",
+  "title": "Queue physical batch, archive, dead-letter and handler-entry observations v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "sentHeaders",
+    "batchPayloads",
+    "batchReturnedIds",
+    "batchRows",
+    "archivePayload",
+    "archiveReturnedId",
+    "archiveRows",
+    "deadPayload",
+    "deadReturnedId",
+    "deadContextHeaders",
+    "drainDeadEntries",
+    "workerDeadPayload",
+    "workerDeadReturnedId",
+    "workerDeadEntries",
+    "workerContext",
+    "malformedHandlerCalls",
+    "futureHandlerCalls"
+  ],
+  "properties": {
+    "schema": {
+      "const": "kenshou.queue-physical-outcomes/v1"
+    },
+    "sentHeaders": {},
+    "batchPayloads": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "batchReturnedIds": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "batchRows": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "prefixItems": [
+          {
+            "type": "integer",
+            "minimum": 0
+          },
+          {},
+          {},
+          {
+            "type": "integer",
+            "minimum": 0
+          }
+        ],
+        "minItems": 4,
+        "maxItems": 4
+      }
+    },
+    "archivePayload": {
+      "type": "string"
+    },
+    "archiveReturnedId": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "archiveRows": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "prefixItems": [
+          {
+            "type": "integer",
+            "minimum": 0
+          },
+          {},
+          {},
+          {
+            "type": "integer",
+            "minimum": 0
+          }
+        ],
+        "minItems": 4,
+        "maxItems": 4
+      }
+    },
+    "deadPayload": {
+      "type": "string"
+    },
+    "deadReturnedId": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "deadContextHeaders": {
+      "type": "array",
+      "items": {}
+    },
+    "drainDeadEntries": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "workerDeadPayload": {
+      "type": "string"
+    },
+    "workerDeadReturnedId": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "workerDeadEntries": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "workerContext": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "attempt",
+            "headers"
+          ],
+          "properties": {
+            "attempt": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "headers": {}
+          }
+        }
+      ]
+    },
+    "malformedHandlerCalls": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "futureHandlerCalls": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

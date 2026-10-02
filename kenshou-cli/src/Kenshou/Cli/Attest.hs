@@ -14,6 +14,7 @@ import Kenshou.Cli.Attest.KeiroBatch (recomputeBatch)
 import Kenshou.Cli.Attest.KeiroInbox (recomputeInbox)
 import Kenshou.Cli.Attest.KeiroLease (recomputeLease)
 import Kenshou.Cli.Attest.KeiroPoison (recomputePoison)
+import Kenshou.Cli.Attest.KeiroQueueConfig (recomputeQueueConfig)
 import Kenshou.Cli.Attest.KeiroTerminal (recomputeTerminal)
 import Kenshou.Core.Cohort (CohortIdentity (..), PackageSource (..), ResolvedComponent (..), ResolvedPackage (..))
 import Kenshou.Core.Id (renderScenarioId)
@@ -37,6 +38,7 @@ runOutcomeRecomputer = Recomputer "run-outcome" 1 $ \root -> do
       | renderScenarioId source.result.resultScenario == "keiro/inbox/correctness/effectively-once-matrix" -> recomputeInbox root source
       | renderScenarioId source.result.resultScenario == "keiro/inbox/correctness/batch-fast-path-and-fallback" -> recomputeBatch root source
       | renderScenarioId source.result.resultScenario == "keiro/inbox/correctness/poison-accounting" -> recomputePoison root source
+      | renderScenarioId source.result.resultScenario == "keiro/queue/correctness/consumption-config-rejections" -> recomputeQueueConfig root source
       | renderScenarioId source.result.resultScenario == "keiro/outbox/correctness/terminal-state-matrix" -> recomputeTerminal root source
       | otherwise -> case coreRecomputers of
           (core : _) -> core.recompute root

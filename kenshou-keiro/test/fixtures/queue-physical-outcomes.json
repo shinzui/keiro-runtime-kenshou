@@ -1,0 +1,108 @@
+{
+  "archivePayload": "archive",
+  "archiveReturnedId": 1,
+  "archiveRows": [
+    [
+      1,
+      "archive",
+      {
+        "nested": {
+          "value": 1
+        },
+        "probe": "preserved"
+      },
+      1
+    ]
+  ],
+  "batchPayloads": [
+    "one",
+    "two",
+    "three"
+  ],
+  "batchReturnedIds": [
+    1,
+    2,
+    3
+  ],
+  "batchRows": [
+    [
+      1,
+      "one",
+      null,
+      0
+    ],
+    [
+      2,
+      "two",
+      null,
+      0
+    ],
+    [
+      3,
+      "three",
+      null,
+      0
+    ]
+  ],
+  "deadContextHeaders": [
+    {
+      "nested": {
+        "value": 1
+      },
+      "probe": "preserved"
+    }
+  ],
+  "deadPayload": "dead",
+  "deadReturnedId": 1,
+  "drainDeadEntries": [
+    {
+      "dead_letter_reason": "poison_pill: bad-work",
+      "dead_letter_reason_code": "poison_pill",
+      "dead_letter_reason_detail": "bad-work",
+      "last_read_at": "2026-10-02T18:53:33.0828Z",
+      "original_enqueued_at": "2026-10-02T18:53:31.873143Z",
+      "original_headers": {
+        "nested": {
+          "value": 1
+        },
+        "probe": "preserved"
+      },
+      "original_message": "dead",
+      "original_message_id": 1,
+      "read_count": 1
+    }
+  ],
+  "futureHandlerCalls": 0,
+  "malformedHandlerCalls": 0,
+  "schema": "kenshou.queue-physical-outcomes/v1",
+  "sentHeaders": {
+    "nested": {
+      "value": 1
+    },
+    "probe": "preserved"
+  },
+  "workerContext": {
+    "attempt": 0,
+    "headers": null
+  },
+  "workerDeadEntries": [
+    {
+      "dead_letter_reason": "poison_pill: worker-poison",
+      "dead_letter_reason_code": "poison_pill",
+      "dead_letter_reason_detail": "worker-poison",
+      "last_read_at": "2026-10-02T18:53:35.689578Z",
+      "original_enqueued_at": "2026-10-02T18:53:35.684695Z",
+      "original_headers": {
+        "nested": {
+          "value": 1
+        },
+        "probe": "preserved"
+      },
+      "original_message": "worker-dead",
+      "original_message_id": 1,
+      "read_count": 1
+    }
+  ],
+  "workerDeadPayload": "worker-dead",
+  "workerDeadReturnedId": 1
+}

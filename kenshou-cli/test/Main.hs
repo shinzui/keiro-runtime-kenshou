@@ -22,6 +22,7 @@ import Kenshou.Cli.Attest.KeiroBatch (replayBatchCells)
 import Kenshou.Cli.Attest.KeiroInbox (replayDelegatedCells, replayInboxCells)
 import Kenshou.Cli.Attest.KeiroLease (replayLeaseCells)
 import Kenshou.Cli.Attest.KeiroPoison (replayPoisonCells)
+import Kenshou.Cli.Attest.KeiroQueueConfig (replayQueueConfigCells)
 import Kenshou.Cli.Attest.KeiroTerminal (replayTerminalCells)
 import Kenshou.Cli.Cohort (resolveDefaultCohortIdentity)
 import Kenshou.Cli.Version (appVersionWithGit)
@@ -59,6 +60,45 @@ readInboxFixture path = do
 
 main :: IO ()
 main = hspec do
+  describe "independent queue configuration replay" do
+    let loadFixture = Aeson.eitherDecodeFileStrict' "test/fixtures/queue-config-rejections.json" >>= either fail pure
+        replay = fmap (map fst . filter (not . snd)) . replayQueueConfigCells
+        replace key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)
+        replace _ _ value = value
+        items raw = case jsonField "cases" raw of Just (Aeson.Array values) -> toList values; _ -> []
+        modifyCase target change raw = replace "cases" (Aeson.toJSON [if jsonField "case" item == Just (Aeson.String target) then change item else item | item <- items raw]) raw
+        rejected = either (const True) (const False)
+    it "replays all twenty-two checks independently of observation ordering" do
+      raw <- loadFixture
+      replayQueueConfigCells raw `shouldSatisfy` either (const False) (\cells -> length cells == 22 && all snd cells)
+      replay (replace "cases" (Aeson.toJSON (reverse (items raw))) raw) `shouldBe` Right []
+    it "refuses missing, duplicate and unknown cases or altered expectations" do
+      raw <- loadFixture
+      let cases = items raw
+      forM_ [[], drop 1 cases, take 1 cases <> cases, map (replace "case" (Aeson.String "unexpected")) (take 1 cases) <> drop 1 cases] \changed ->
+        replay (replace "cases" (Aeson.toJSON changed) raw) `shouldSatisfy` rejected
+      replay (replace "schema" (Aeson.String "unknown") raw) `shouldSatisfy` rejected
+      replay (modifyCase "invalid-visibility" (replace "expectedError" (Aeson.String "forged")) raw) `shouldSatisfy` rejected
+    it "detects each accepted configuration and incorrect exception without trusting expected-error data" do
+      raw <- loadFixture
+      forM_ (items raw) \item -> case jsonField "case" item of
+        Just (Aeson.String label) -> forM_ [("drain", label), ("worker", "worker-" <> label)] \(key, check) -> do
+          replay (modifyCase label (replace key (object ["status" .= ("accepted" :: Text), "detail" .= ("Right ()" :: Text)])) raw) `shouldBe` Right [check]
+          replay (modifyCase label (replace key (object ["status" .= ("rejected" :: Text), "detail" .= ("wrong exception" :: Text)])) raw) `shouldBe` Right [check]
+        _ -> expectationFailure "case label missing"
+    it "detects any rejected call reading or consuming the waiting message" do
+      raw <- loadFixture
+      forM_ (items raw) \item -> case jsonField "case" item of
+        Just (Aeson.String label) -> forM_ [("afterDrain", label), ("afterWorker", "worker-" <> label)] \(key, check) ->
+          forM_ [([0, 0] :: [Int]), [1, 1], [2, 0]] \state ->
+            replay (modifyCase label (replace key (Aeson.toJSON state)) raw) `shouldBe` Right [check]
+        _ -> expectationFailure "case label missing"
+    it "requires the final untouched row and exactly one valid subsequent drain" do
+      raw <- loadFixture
+      replay (replace "beforeValidDrain" (Aeson.toJSON ([1, 1] :: [Int])) raw) `shouldBe` Right ["read-count-untouched"]
+      forM_ [("validDrain", Aeson.Number 0), ("validDrain", Aeson.Null), ("emptyDrain", Aeson.Number 1), ("emptyDrain", Aeson.Null)] \(key, value) ->
+        replay (replace key value raw) `shouldBe` Right ["rejections-did-not-consume-job"]
+      replay (modifyCase "invalid-visibility" (replace "worker" (object [])) raw) `shouldSatisfy` rejected
   describe "independent outbox terminal replay" do
     it "accepts transient exhaustion at one attempt and rejects premature exhaustion at two" do
       fixture <- Aeson.eitherDecodeFileStrict' "test/fixtures/outbox-terminal-one-attempt.json" >>= either fail pure
@@ -95,6 +135,15 @@ main = hspec do
         replay (replace "schema" (Aeson.String "unknown") raw) `shouldSatisfy` either (const True) (const False)
         replay (replace "rows" empty raw) `shouldSatisfy` hasFailure "every-row-terminal"
         replay (replace "summaries" Aeson.Null raw) `shouldSatisfy` hasFailure "drained-before-deadline"
+      it ("rejects a duplicate final row substituted for another exhausted row: " <> policy) do
+        (replay, raw) <- loadFixture
+        let rows = items "rows" raw
+            exhausted = [row | row <- rows, jsonField "status" row == Just (Aeson.String "OutboxDead")]
+        case exhausted of
+          first : second : _ -> do
+            let substituted = [if jsonField "outboxId" row == jsonField "outboxId" second then first else row | row <- rows]
+            replay (replace "rows" (Aeson.toJSON substituted) raw) `shouldBe` Right ["every-row-terminal"]
+          _ -> expectationFailure "terminal fixture must include two exhausted rows"
       it ("detects missing/duplicate appends and terminal metadata changes: " <> policy) do
         (replay, raw) <- loadFixture
         replay (replace "brokerHeaders" empty raw) `shouldSatisfy` hasFailure "broker-matches-terminal-status"

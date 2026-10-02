@@ -1,0 +1,211 @@
+{
+  "beforeValidDrain": [
+    1,
+    0
+  ],
+  "cases": [
+    {
+      "afterDrain": [
+        1,
+        0
+      ],
+      "afterWorker": [
+        1,
+        0
+      ],
+      "case": "invalid-visibility",
+      "drain": {
+        "detail": "InvalidJobTuning (NonPositiveVisibilityTimeout 0)",
+        "status": "rejected"
+      },
+      "expectedError": "InvalidJobTuning (NonPositiveVisibilityTimeout 0)",
+      "worker": {
+        "detail": "InvalidJobTuning (NonPositiveVisibilityTimeout 0)",
+        "status": "rejected"
+      }
+    },
+    {
+      "afterDrain": [
+        1,
+        0
+      ],
+      "afterWorker": [
+        1,
+        0
+      ],
+      "case": "invalid-batch",
+      "drain": {
+        "detail": "InvalidJobTuning (NonPositiveBatchSize 0)",
+        "status": "rejected"
+      },
+      "expectedError": "InvalidJobTuning (NonPositiveBatchSize 0)",
+      "worker": {
+        "detail": "InvalidJobTuning (NonPositiveBatchSize 0)",
+        "status": "rejected"
+      }
+    },
+    {
+      "afterDrain": [
+        1,
+        0
+      ],
+      "afterWorker": [
+        1,
+        0
+      ],
+      "case": "invalid-polling",
+      "drain": {
+        "detail": "InvalidJobTuning NonPositivePollInterval",
+        "status": "rejected"
+      },
+      "expectedError": "InvalidJobTuning NonPositivePollInterval",
+      "worker": {
+        "detail": "InvalidJobTuning NonPositivePollInterval",
+        "status": "rejected"
+      }
+    },
+    {
+      "afterDrain": [
+        1,
+        0
+      ],
+      "afterWorker": [
+        1,
+        0
+      ],
+      "case": "invalid-long-poll-limit",
+      "drain": {
+        "detail": "InvalidJobTuning NonPositivePollInterval",
+        "status": "rejected"
+      },
+      "expectedError": "InvalidJobTuning NonPositivePollInterval",
+      "worker": {
+        "detail": "InvalidJobTuning NonPositivePollInterval",
+        "status": "rejected"
+      }
+    },
+    {
+      "afterDrain": [
+        1,
+        0
+      ],
+      "afterWorker": [
+        1,
+        0
+      ],
+      "case": "invalid-long-poll-interval",
+      "drain": {
+        "detail": "InvalidJobTuning NonPositivePollInterval",
+        "status": "rejected"
+      },
+      "expectedError": "InvalidJobTuning NonPositivePollInterval",
+      "worker": {
+        "detail": "InvalidJobTuning NonPositivePollInterval",
+        "status": "rejected"
+      }
+    },
+    {
+      "afterDrain": [
+        1,
+        0
+      ],
+      "afterWorker": [
+        1,
+        0
+      ],
+      "case": "ordering-mismatch",
+      "drain": {
+        "detail": "JobOrderingMismatch {jobOrderingDeclared = Unordered, tuningOrderingGiven = FifoHeads}",
+        "status": "rejected"
+      },
+      "expectedError": "JobOrderingMismatch {jobOrderingDeclared = Unordered, tuningOrderingGiven = FifoHeads}",
+      "worker": {
+        "detail": "JobOrderingMismatch {jobOrderingDeclared = Unordered, tuningOrderingGiven = FifoHeads}",
+        "status": "rejected"
+      }
+    },
+    {
+      "afterDrain": [
+        1,
+        0
+      ],
+      "afterWorker": [
+        1,
+        0
+      ],
+      "case": "unsafe-legacy-batch",
+      "drain": {
+        "detail": "UnsafeLegacyFifoBatch {unsafeOrdering = FifoThroughput, unsafeBatchSize = 2}",
+        "status": "rejected"
+      },
+      "expectedError": "UnsafeLegacyFifoBatch {unsafeOrdering = FifoThroughput, unsafeBatchSize = 2}",
+      "worker": {
+        "detail": "UnsafeLegacyFifoBatch {unsafeOrdering = FifoThroughput, unsafeBatchSize = 2}",
+        "status": "rejected"
+      }
+    },
+    {
+      "afterDrain": [
+        1,
+        0
+      ],
+      "afterWorker": [
+        1,
+        0
+      ],
+      "case": "unsafe-round-robin-batch",
+      "drain": {
+        "detail": "UnsafeLegacyFifoBatch {unsafeOrdering = FifoRoundRobin, unsafeBatchSize = 2}",
+        "status": "rejected"
+      },
+      "expectedError": "UnsafeLegacyFifoBatch {unsafeOrdering = FifoRoundRobin, unsafeBatchSize = 2}",
+      "worker": {
+        "detail": "UnsafeLegacyFifoBatch {unsafeOrdering = FifoRoundRobin, unsafeBatchSize = 2}",
+        "status": "rejected"
+      }
+    },
+    {
+      "afterDrain": [
+        1,
+        0
+      ],
+      "afterWorker": [
+        1,
+        0
+      ],
+      "case": "validation-precedence",
+      "drain": {
+        "detail": "InvalidJobTuning (NonPositiveVisibilityTimeout 0)",
+        "status": "rejected"
+      },
+      "expectedError": "InvalidJobTuning (NonPositiveVisibilityTimeout 0)",
+      "worker": {
+        "detail": "InvalidJobTuning (NonPositiveVisibilityTimeout 0)",
+        "status": "rejected"
+      }
+    },
+    {
+      "afterDrain": [
+        1,
+        0
+      ],
+      "afterWorker": [
+        1,
+        0
+      ],
+      "case": "mismatch-before-unsafe-batch",
+      "drain": {
+        "detail": "JobOrderingMismatch {jobOrderingDeclared = Unordered, tuningOrderingGiven = FifoThroughput}",
+        "status": "rejected"
+      },
+      "expectedError": "JobOrderingMismatch {jobOrderingDeclared = Unordered, tuningOrderingGiven = FifoThroughput}",
+      "worker": {
+        "detail": "JobOrderingMismatch {jobOrderingDeclared = Unordered, tuningOrderingGiven = FifoThroughput}",
+        "status": "rejected"
+      }
+    }
+  ],
+  "emptyDrain": 0,
+  "schema": "kenshou.queue-config-rejections/v1",
+  "validDrain": 1
+}

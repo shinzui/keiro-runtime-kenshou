@@ -43,6 +43,7 @@ library
     Kenshou.Cli.Attest.KeiroInbox
     Kenshou.Cli.Attest.KeiroLease
     Kenshou.Cli.Attest.KeiroPoison
+    Kenshou.Cli.Attest.KeiroQueueConfig
     Kenshou.Cli.Attest.KeiroTerminal
     Kenshou.Cli.Cohort
     Kenshou.Cli.Command.Cell

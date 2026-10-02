@@ -114,7 +114,7 @@ replayTerminalCells seed knobs raw = either (Left . Text.pack) Right $ parseEith
           total accessor = fmap (sum . map accessor) summaries
       pure
         [ ("drained-before-deadline", maybe False (const True) summaries),
-          ("every-row-terminal", length rows == count && all statusMatches rows),
+          ("every-row-terminal", length rows == count && Set.fromList (map (.ident) rows) == Map.keysSet byId && all statusMatches rows),
           ("broker-matches-terminal-status", all wireMatches rows),
           ("one-broker-record-per-sent-row", length headers == statusCount "OutboxSent" && all (== 1) (Map.elems brokerCounts)),
           ("rejection-metadata", all rejectionMatches rows),

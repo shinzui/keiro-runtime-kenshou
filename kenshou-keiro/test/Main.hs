@@ -1,6 +1,7 @@
 module Main (main) where
 
-import Data.Aeson (object)
+import Control.Monad (forM_)
+import Data.Aeson (Value (..), object, (.=))
 import Data.Aeson qualified as Aeson
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString qualified as ByteString
@@ -26,6 +27,8 @@ import Keiro.EventStream (SnapshotPolicy (..))
 import Keiro.Inbox (KafkaDeliveryRef (..))
 import Keiro.Integration.Event (IntegrationContentType (..), IntegrationEvent (..), headerMessageId)
 import Keiro.Outbox (BackoffSchedule (..), OrderingPolicy (..), OutboxId (..), OutboxPublishConfigError (..), OutboxPublishOptions (..), OutboxRow (..), OutboxStatus (..), PublishOutcome (..))
+import Keiro.PGMQ.Dlq (DlqEntry (..))
+import Keiro.PGMQ.Dlq qualified as Dlq
 import Keiro.ProcessManager (ProcessManager (..), deterministicCommandId)
 import Keiro.Router (deterministicRouterCommandId)
 import Keiro.Subscription.Shard.Worker (ShardedWorkerOptions (..))
@@ -60,6 +63,7 @@ import Kenshou.Suite.Keiro.Outbox.Workload (inlineEvent)
 import Kenshou.Suite.Keiro.Queue.Bench qualified as QueueBench
 import Kenshou.Suite.Keiro.Queue.Concurrency qualified as QueueConcurrency
 import Kenshou.Suite.Keiro.Queue.Metrics qualified as QueueMetrics
+import Kenshou.Suite.Keiro.Queue.Oracle qualified as QueueOracle
 import Kenshou.Suite.Keiro.Shard.Knobs qualified as ShardKnobs
 import Kenshou.Suite.Keiro.Shard.Oracle qualified as ShardOracle
 import Kenshou.Suite.Keiro.Timer.Knobs qualified as TimerKnobs
@@ -69,6 +73,7 @@ import Kenshou.Suite.Keiro.Workflow.Knobs qualified as WorkflowKnobs
 import Kenshou.Suite.Keiro.Workflow.Oracle qualified as WorkflowOracle
 import Kiroku.Store.Subscription.Types (SubscriptionTarget (..))
 import Kiroku.Store.Types (EventId (..), EventType (..), GlobalPosition (..), RecordedEvent (..), StreamId (..), StreamVersion (..))
+import Pgmq.Types (MessageId (..))
 import Shibuya.Adapter (Adapter (..))
 import Shibuya.Core.Ack (AckDecision (..))
 import Shibuya.Core.AckHandle (AckHandle (..))
@@ -82,6 +87,34 @@ import Test.Hspec.Hedgehog (hedgehog)
 
 main :: IO ()
 main = hspec do
+  describe "queue physical outcome oracles" do
+    let rows = [(41, String "one", Nothing, 0), (42, String "two", Nothing, 0), (43, String "three", Nothing, 0)]
+        payloads = ["one", "two", "three"]
+    it "binds each returned batch identifier to its input payload" do
+      QueueOracle.batchRowsMatch [41, 42, 43] payloads rows `shouldBe` True
+      QueueOracle.batchRowsMatch [41, 42, 43] payloads (reverse rows) `shouldBe` True
+      QueueOracle.batchRowsMatch [42, 41, 43] payloads rows `shouldBe` False
+      QueueOracle.batchRowsMatch [41, 42, 43] ["two", "one", "three"] rows `shouldBe` False
+    it "rejects lost or duplicated batch rows and unexpected header/read state" do
+      QueueOracle.batchRowsMatch [41, 42, 43] payloads (drop 1 rows) `shouldBe` False
+      QueueOracle.batchRowsMatch [41, 42, 43] payloads (take 1 rows <> rows) `shouldBe` False
+      QueueOracle.batchRowsMatch [41, 41, 43] payloads rows `shouldBe` False
+      QueueOracle.batchRowsMatch [41, 42, 43] payloads ((41, String "one", Just Null, 0) : drop 1 rows) `shouldBe` False
+      QueueOracle.batchRowsMatch [41, 42, 43] payloads ((41, String "one", Nothing, 1) : drop 1 rows) `shouldBe` False
+    it "requires one DLQ entry preserving message identity, payload, headers and metadata" do
+      now <- getCurrentTime
+      let headers = object ["probe" .= ("preserved" :: Text), "nested" .= object ["value" .= (1 :: Int)]]
+          entry = DlqEntry (MessageId 99) "poison_pill: rejected" (Right "work") (Just 42) (Just now) (Just 1) (Just headers) (object ["original_headers" .= headers, "original_message" .= ("work" :: Text), "original_message_id" .= (42 :: Int), "read_count" .= (1 :: Int), "dead_letter_reason" .= ("poison_pill: rejected" :: Text)])
+          check = QueueOracle.deadLetterPreserves "work" 42 headers
+      check [entry] `shouldBe` True
+      check [] `shouldBe` False
+      check [entry, entry] `shouldBe` False
+      case entry.rawBody of
+        Object body -> forM_ [("original_message", String "other"), ("original_message_id", Number 43), ("read_count", Number 2), ("dead_letter_reason", String "invalid_payload")] \(key, value) ->
+          check [entry {rawBody = Object (KeyMap.insert key value body)}] `shouldBe` False
+        _ -> error "DLQ fixture must have an object body"
+      forM_ [entry {originalPayload = Right "other"}, entry {originalMessageId = Just 43}, entry {originalEnqueuedAt = Nothing}, entry {readCount = Just 2}, entry {originalHeaders = Nothing}, entry {originalHeaders = Just (object [])}, entry {Dlq.reason = "invalid_payload"}, entry {rawBody = object []}] \bad -> check [bad] `shouldBe` False
+
   describe "delegated inbox receipt identity" do
     it "pins UTF-8 byte lengths and separates every identity field" do
       let receipt = InboxOracle.expectedDelegatedId

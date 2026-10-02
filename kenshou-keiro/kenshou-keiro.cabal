@@ -95,6 +95,7 @@ library
     Kenshou.Suite.Keiro.Queue.Concurrency
     Kenshou.Suite.Keiro.Queue.Correctness
     Kenshou.Suite.Keiro.Queue.Metrics
+    Kenshou.Suite.Keiro.Queue.Oracle
     Kenshou.Suite.Keiro.Queue.Roles
     Kenshou.Suite.Keiro.Queue.Soak
     Kenshou.Suite.Keiro.Queue.Telemetry
@@ -208,9 +209,11 @@ test-suite kenshou-keiro-test
     keiki,
     keiro,
     keiro-core,
+    keiro-pgmq,
     kenshou-core,
     kenshou-keiro,
     kiroku-store,
+    pgmq-core,
     shibuya-core,
     streamly-core,
     temporary,

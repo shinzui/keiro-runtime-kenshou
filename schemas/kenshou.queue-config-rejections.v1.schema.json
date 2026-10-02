@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/kenshou.queue-config-rejections.v1.schema.json",
+  "title": "Queue drain and worker configuration rejection observations v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "cases",
+    "beforeValidDrain",
+    "validDrain",
+    "emptyDrain"
+  ],
+  "properties": {
+    "schema": {
+      "const": "kenshou.queue-config-rejections/v1"
+    },
+    "cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "case",
+          "expectedError",
+          "drain",
+          "worker",
+          "afterDrain",
+          "afterWorker"
+        ],
+        "properties": {
+          "case": {
+            "type": "string"
+          },
+          "expectedError": {
+            "type": "string"
+          },
+          "drain": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "status",
+              "detail"
+            ],
+            "properties": {
+              "status": {
+                "enum": [
+                  "accepted",
+                  "rejected"
+                ]
+              },
+              "detail": {
+                "type": "string"
+              }
+            }
+          },
+          "worker": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "status",
+              "detail"
+            ],
+            "properties": {
+              "status": {
+                "enum": [
+                  "accepted",
+                  "rejected"
+                ]
+              },
+              "detail": {
+                "type": "string"
+              }
+            }
+          },
+          "afterDrain": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "integer",
+                "minimum": 0
+              }
+            ],
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "afterWorker": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "integer",
+                "minimum": 0
+              }
+            ],
+            "minItems": 2,
+            "maxItems": 2
+          }
+        }
+      }
+    },
+    "beforeValidDrain": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "type": "integer",
+          "minimum": 0
+        },
+        {
+          "type": "integer",
+          "minimum": 0
+        }
+      ],
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "validDrain": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "emptyDrain": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    }
+  }
+}

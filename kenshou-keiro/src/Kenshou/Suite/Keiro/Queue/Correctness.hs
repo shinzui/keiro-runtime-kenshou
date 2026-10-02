@@ -3,8 +3,8 @@ module Kenshou.Suite.Keiro.Queue.Correctness (scenarios) where
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM (atomically)
 import Control.Exception (try)
-import Data.Aeson (Value (..), object, withObject, (.:), (.=))
-import Data.Aeson.KeyMap qualified as KeyMap
+import Control.Monad (forM)
+import Data.Aeson (Value (..), encodeFile, object, withObject, (.:), (.=))
 import Data.Aeson.Types (parseMaybe)
 import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.Int (Int64)
@@ -21,7 +21,7 @@ import Hasql.Session qualified as Session
 import Hasql.Statement qualified as Statement
 import Keiro.PGMQ.Codec (JobCodec (..), JobDecodeError (..), aesonJobCodec)
 import Keiro.PGMQ.Dlq (DlqEntry (..), readDlq)
-import Keiro.PGMQ.Job (Job (..), JobConsumptionConfigError (..), JobContext (..), JobOrdering (..), JobOutcome (..), JobPolling (..), JobTuning (..), JobTuningConfigError (..), RetryDelay (..), RetryPolicy (..), defaultJobTuning, defaultRetryPolicy, enqueue, enqueueBatch, enqueueToGroup, enqueueWithDelay, ensureJobQueue, runJobOnceWithContext, withOrdering)
+import Keiro.PGMQ.Job (Job (..), JobConsumptionConfigError (..), JobContext (..), JobOrdering (..), JobOutcome (..), JobPolling (..), JobTuning (..), JobTuningConfigError (..), RetryDelay (..), RetryPolicy (..), defaultJobTuning, defaultRetryPolicy, enqueue, enqueueBatch, enqueueToGroup, enqueueWithDelay, enqueueWithHeaders, ensureJobQueue, jobProcessorWithContext, runJobOnceWithContext, withOrdering)
 import Keiro.PGMQ.Runtime (JobRuntime (..), QueueRef (..), queueRef, runJobEff, withJobRuntime)
 import Kenshou.Check.Process (ProgressSnapshot (..), awaitMark, awaitReady, killChild, progress, roleProcess, sendCommand, spawn, withSupervisor)
 import Kenshou.Check.Scenario (withCheck)
@@ -35,7 +35,9 @@ import Kenshou.Core.Role (ControlMessage (..))
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..))
 import Kenshou.Suite.Keiro.Command.Correctness (recordCells)
 import Kenshou.Suite.Keiro.Outbox.Workload (sourceName)
-import Pgmq.Types (queueNameToText)
+import Kenshou.Suite.Keiro.Queue.Oracle qualified as Oracle
+import Pgmq.Types (MessageHeaders (..), MessageId (..), queueNameToText)
+import System.FilePath ((</>))
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
@@ -45,7 +47,8 @@ jobOutcomeSemantics :: Scenario
 jobOutcomeSemantics =
   consumptionConfigRejections
     { id = either (error . show) id (parseScenarioId "keiro/queue/correctness/job-outcome-semantics"),
-      summary = "Checks done, explicit retry, delayed delivery, and terminal dead-letter outcomes.",
+      revision = 2,
+      summary = "Checks job outcomes, batch identity/order, preserved headers and pre-handler refusal.",
       tier = TierStandard,
       run = runJobOutcomeSemantics
     }
@@ -55,6 +58,9 @@ runJobOutcomeSemantics context =
   withJobRuntime (requirePostgres context).connectionString Nothing \runtime -> do
     attempts <- newIORef ([] :: [Maybe Word])
     defaultAttempts <- newIORef ([] :: [Maybe Word])
+    deadHeaders <- newIORef ([] :: [Maybe Value])
+    malformedCalls <- newIORef (0 :: Int)
+    futureCalls <- newIORef (0 :: Int)
     let makeJob name = Job name (queueRef (sourceName context name)) (aesonJobCodec @Text) Unordered defaultRetryPolicy
         doneJob = makeJob "done"
         retryJob = makeJob "retry"
@@ -71,11 +77,15 @@ runJobOutcomeSemantics context =
         workerRetryJob = workerJob {jobQueue = queueRef (sourceName context "worker-retry")}
         workerDeadJob = workerJob {jobQueue = queueRef (sourceName context "worker-dead")}
         workerThrowJob = workerJob {jobQueue = queueRef (sourceName context "worker-throw")}
+        preservedHeaders = object ["probe" .= ("preserved" :: Text), "nested" .= object ["value" .= (1 :: Int)]]
         doneHandler _ _ = pure Done
+        countedHandler calls _ _ = liftIO (atomicModifyIORef' calls (\count -> (count + 1, ()))) >> pure Done
         retryHandler jobContext _ = do
           liftIO $ atomicModifyIORef' attempts (\seen -> (seen <> [jobContext.attempt], ()))
           pure $ if jobContext.attempt == Just 0 then Retry (RetryDelay 1) else Done
-        deadHandler _ _ = pure (Dead "bad-work")
+        deadHandler jobContext _ = do
+          liftIO $ atomicModifyIORef' deadHeaders (\seen -> (seen <> [jobContext.headers], ()))
+          pure (Dead "bad-work")
         defaultHandler jobContext _ = do
           liftIO $ atomicModifyIORef' defaultAttempts (\seen -> (seen <> [jobContext.attempt], ()))
           pure $ if jobContext.attempt == Just 0 then RetryDefault else Done
@@ -93,6 +103,14 @@ runJobOutcomeSemantics context =
         archiveCount target = do
           let table = "pgmq.a_" <> queueNameToText target.jobQueue.physicalName
               statement = Statement.preparable ("SELECT count(*) FROM " <> table) Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
+          Pool.use runtime.runtimePool (Session.statement () statement) >>= either (fail . show) pure
+        physicalRows archived target = do
+          let table = (if archived then "pgmq.a_" else "pgmq.q_") <> queueNameToText target.jobQueue.physicalName
+              statement =
+                Statement.preparable
+                  ("SELECT msg_id, message, headers, read_ct::bigint FROM " <> table <> " ORDER BY msg_id")
+                  Encoders.noParams
+                  (Decoders.rowList ((,,,) <$> Decoders.column (Decoders.nonNullable Decoders.int8) <*> Decoders.column (Decoders.nonNullable Decoders.jsonb) <*> Decoders.column (Decoders.nullable Decoders.jsonb) <*> Decoders.column (Decoders.nonNullable Decoders.int8)))
           Pool.use runtime.runtimePool (Session.statement () statement) >>= either (fail . show) pure
         queueReadCount target = do
           let table = "pgmq.q_" <> queueNameToText target.jobQueue.physicalName
@@ -126,17 +144,17 @@ runJobOutcomeSemantics context =
       ensureJobQueue workerThrowJob
       _ <- enqueue doneJob ("done" :: Text)
       _ <- enqueue retryJob ("retry" :: Text)
-      _ <- enqueue deadJob ("dead" :: Text)
+      deadId <- enqueueWithHeaders deadJob (MessageHeaders preservedHeaders) ("dead" :: Text)
       _ <- enqueueWithDelay delayJob 1 ("delayed" :: Text)
       _ <- enqueue defaultJob ("default" :: Text)
-      _ <- enqueue archiveJob ("archive" :: Text)
+      archiveId <- enqueueWithHeaders archiveJob (MessageHeaders preservedHeaders) ("archive" :: Text)
       batchIds <- enqueueBatch batchJob (["one", "two", "three"] :: [Text])
       _ <- enqueueToGroup groupJob "alpha" ("grouped" :: Text)
       _ <- enqueue thrownJob ("throw" :: Text)
       _ <- enqueue malformedJob ("malformed" :: Text)
       _ <- enqueue futureJob ("future" :: Text)
-      pure batchIds
-    batchIds <- either (fail . show) pure setup
+      pure (batchIds, deadId, archiveId)
+    (batchIds, deadId, archiveId) <- either (fail . show) pure setup
     corruptMessage
     done <- runOne doneJob doneHandler
     doneDepth <- queueCount doneJob
@@ -150,29 +168,35 @@ runJobOutcomeSemantics context =
     dead <- runOne deadJob deadHandler
     deadDepth <- queueCount deadJob
     deadLettered <- deadLetter deadJob
+    drainDeadHeaders <- readIORef deadHeaders
+    drainDlq <- runJobEff runtime (readDlq deadJob 1) >>= either (fail . show) pure
     defaultFirst <- runOne defaultJob defaultHandler
     defaultEarly <- runOne defaultJob defaultHandler
     archiveHandled <- runOne archiveJob deadHandler
     archiveDepth <- queueCount archiveJob
     archived <- archiveCount archiveJob
+    archivedRows <- physicalRows True archiveJob
     groupedHeaders <- groupHeaderCount
     batchDepth <- queueCount batchJob
+    batchRows <- physicalRows False batchJob
     thrownResult <- runThrown throwingHandler
     thrownEarly <- runThrown doneHandler
     thrownDepth <- queueCount thrownJob
-    malformedHandled <- runOne malformedJob doneHandler
+    malformedHandled <- runOne malformedJob (countedHandler malformedCalls)
     malformedDepth <- queueCount malformedJob
     malformedDead <- deadLetter malformedJob
-    futureHandled <- runOne futureJob doneHandler
-    futureEarly <- runOne futureJob doneHandler
+    futureHandled <- runOne futureJob (countedHandler futureCalls)
+    futureEarly <- runOne futureJob (countedHandler futureCalls)
     futureDepth <- queueCount futureJob
     futureFirstReadCount <- queueReadCount futureJob
     threadDelay 1200000
     defaultSecond <- runOne defaultJob defaultHandler
     thrownRedelivery <- runThrown doneHandler
-    futureSecond <- runOne futureJob doneHandler
+    futureSecond <- runOne futureJob (countedHandler futureCalls)
     futureSecondReadCount <- queueReadCount futureJob
     observedDefaultAttempts <- readIORef defaultAttempts
+    malformedHandlerCalls <- readIORef malformedCalls
+    futureHandlerCalls <- readIORef futureCalls
     workerDelivery <- withCheck context \check -> withSupervisor check \supervisor -> do
       Pool.use runtime.runtimePool (Session.script "CREATE SCHEMA IF NOT EXISTS kenshou_fx; CREATE TABLE IF NOT EXISTS kenshou_fx.queue_effects (payload text NOT NULL)") >>= either (fail . show) pure
       spec <- roleProcess check "keiro/queue-worker" 0 (object ["queue" .= workerJob.jobQueue.logicalName])
@@ -180,7 +204,7 @@ runJobOutcomeSemantics context =
       awaitReady child 10000
       sendCommand child CtlStart
       awaitMark child "running" 30000
-      sent <- runJobEff runtime (enqueue workerJob ("worker-done" :: Text))
+      sent <- runJobEff runtime (enqueueWithHeaders workerJob (MessageHeaders preservedHeaders) ("worker-done" :: Text))
       _ <- either (fail . show) pure sent
       awaitMark child "delivery" 10000
       let waitDone = do
@@ -191,7 +215,7 @@ runJobOutcomeSemantics context =
       snapshot <- atomically (progress child)
       killChild supervisor child
       let delivery = Map.lookup "delivery" snapshot.marks >>= parseMaybe (withObject "worker delivery" (\o -> (,) <$> o .: "attempt" <*> o .: "headers"))
-      pure (completed, delivery == Just (Just (0 :: Word), Nothing :: Maybe Value))
+      pure (completed, delivery :: Maybe (Maybe Word, Maybe Value))
     workerOutcomes <- withCheck context \check -> withSupervisor check \supervisor -> do
       let runArm index target mode payload expectedEffects terminal = do
             spec <- roleProcess check "keiro/queue-worker" index (object ["queue" .= target.jobQueue.logicalName, "mode" .= (mode :: Text)])
@@ -199,7 +223,7 @@ runJobOutcomeSemantics context =
             awaitReady child 10000
             sendCommand child CtlStart
             awaitMark child "running" 30000
-            sent <- runJobEff runtime (enqueue target payload)
+            sent <- runJobEff runtime (enqueueWithHeaders target (MessageHeaders preservedHeaders) payload)
             _ <- either (fail . show) pure sent
             let awaitTerminal = do
                   effects <- effectCount payload
@@ -211,12 +235,34 @@ runJobOutcomeSemantics context =
             result <- timeout 15000000 awaitTerminal
             snapshot <- atomically (progress child)
             killChild supervisor child
-            pure (result, snapshot.count)
+            pure (result, snapshot.count, sent)
       retryResult <- runArm 1 workerRetryJob "retry-once" "worker-retry" 2 (const True)
       deadResult <- runArm 2 workerDeadJob "dead" "worker-dead" 1 (\(count, reason) -> count == 1 && Text.isPrefixOf "poison_pill" reason)
       throwResult <- runArm 3 workerThrowJob "throw-once" "worker-throw" 2 (const True)
       pure (retryResult, deadResult, throwResult)
     workerDlq <- runJobEff runtime (readDlq workerDeadJob 1) >>= either (fail . show) pure
+    let (_, (_, _, workerDeadId), _) = workerOutcomes
+    encodeFile (context.outDir </> "logs/queue-physical-outcomes.json") $
+      object
+        [ "schema" .= ("kenshou.queue-physical-outcomes/v1" :: Text),
+          "sentHeaders" .= preservedHeaders,
+          "batchPayloads" .= (["one", "two", "three"] :: [Text]),
+          "batchReturnedIds" .= map unMessageId batchIds,
+          "batchRows" .= batchRows,
+          "archivePayload" .= ("archive" :: Text),
+          "archiveReturnedId" .= unMessageId archiveId,
+          "archiveRows" .= archivedRows,
+          "deadPayload" .= ("dead" :: Text),
+          "deadReturnedId" .= unMessageId deadId,
+          "deadContextHeaders" .= drainDeadHeaders,
+          "drainDeadEntries" .= map (.rawBody) drainDlq,
+          "workerDeadPayload" .= ("worker-dead" :: Text),
+          "workerDeadReturnedId" .= either (const Nothing) (Just . unMessageId) workerDeadId,
+          "workerDeadEntries" .= map (.rawBody) workerDlq,
+          "workerContext" .= fmap (\(attempt, headers) -> object ["attempt" .= attempt, "headers" .= headers]) (snd workerDelivery),
+          "malformedHandlerCalls" .= malformedHandlerCalls,
+          "futureHandlerCalls" .= futureHandlerCalls
+        ]
     recordCells
       context
       [ ("done-deletes", done == 1 && doneDepth == (0 :: Int64)),
@@ -226,21 +272,28 @@ runJobOutcomeSemantics context =
         ("default-retry-delay", defaultFirst == 1 && defaultEarly == 0 && defaultSecond == 1 && observedDefaultAttempts == [Just 0, Just 1]),
         ("archive-when-dlq-disabled", archiveHandled == 1 && archiveDepth == 0 && archived == 1),
         ("batch-ids-and-rows", length batchIds == 3 && length (nub batchIds) == 3 && batchDepth == 3),
+        ("batch-id-order-and-payloads", Oracle.batchRowsMatch (map unMessageId batchIds) ["one", "two", "three"] batchRows),
+        ("drain-context-preserves-headers", drainDeadHeaders == [Just preservedHeaders]),
+        ("drain-dead-wrapper", Oracle.deadLetterPreserves "dead" (unMessageId deadId) preservedHeaders drainDlq),
+        ("archive-preserves-message", archivedRows == [(unMessageId archiveId, String "archive", Just preservedHeaders, 1)]),
+        ("malformed-skips-handler", malformedHandlerCalls == 0),
+        ("future-skips-handler", futureHandlerCalls == 0),
         ("group-header", groupedHeaders == 1),
         ("drain-handler-exception", thrownResult == 0 && thrownEarly == 0 && thrownDepth == 1 && thrownRedelivery == 1),
         ("malformed-payload", malformedHandled == 1 && malformedDepth == 0 && fst malformedDead == 1 && Text.isPrefixOf "invalid_payload" (snd malformedDead)),
         ("future-payload-retries", futureHandled == 1 && futureEarly == 0 && futureDepth == 1 && futureFirstReadCount == 1 && futureSecond == 1 && futureSecondReadCount == 2),
-        ("worker-done-and-context", fst workerDelivery && snd workerDelivery),
-        ("worker-retry", case workerOutcomes of ((Just (effects, _), _), _, _) -> effects == 2; _ -> False),
-        ("worker-dead-letter", case workerOutcomes of (_, (Just (effects, (count, reason)), _), _) -> effects == 1 && count == 1 && Text.isPrefixOf "poison_pill" reason; _ -> False),
-        ("worker-dead-wrapper", case workerDlq of [entry] -> entry.originalPayload == Right "worker-dead" && entry.originalMessageId /= Nothing && entry.readCount == Just 1 && entry.originalHeaders == Nothing && (case entry.rawBody of Object body -> KeyMap.member "original_headers" body; _ -> False); _ -> False),
-        ("worker-handler-exception-redelivery", case workerOutcomes of (_, _, (Just (effects, _), _)) -> effects == 2; _ -> False)
+        ("worker-done-and-context", fst workerDelivery && snd workerDelivery == Just (Just 0, Nothing)),
+        ("worker-retry", case workerOutcomes of ((Just (effects, _), _, _), _, _) -> effects == 2; _ -> False),
+        ("worker-dead-letter", case workerOutcomes of (_, (Just (effects, (count, reason)), _, _), _) -> effects == 1 && count == 1 && Text.isPrefixOf "poison_pill" reason; _ -> False),
+        ("worker-dead-wrapper", case workerDeadId of Right identifier -> Oracle.deadLetterPreserves "worker-dead" (unMessageId identifier) preservedHeaders workerDlq; Left _ -> False),
+        ("worker-handler-exception-redelivery", case workerOutcomes of (_, _, (Just (effects, _), _, _)) -> effects == 2; _ -> False)
       ]
 
 maxRetriesBeforeHandler :: Scenario
 maxRetriesBeforeHandler =
   consumptionConfigRejections
     { id = either (error . show) id (parseScenarioId "keiro/queue/correctness/max-retries-before-handler"),
+      revision = 1,
       summary = "Checks the retry ceiling dead letters before a fourth handler call, including a zero ceiling.",
       tier = TierStandard,
       run = runMaxRetriesBeforeHandler
@@ -285,8 +338,8 @@ consumptionConfigRejections :: Scenario
 consumptionConfigRejections =
   Scenario
     { id = either (error . show) id (parseScenarioId "keiro/queue/correctness/consumption-config-rejections"),
-      revision = 1,
-      summary = "Checks job tuning validation runs before a queued message is read.",
+      revision = 2,
+      summary = "Checks drain and worker configuration validation and precedence before reading a job.",
       tier = TierSmoke,
       placement = PlaceEither,
       knobs = [],
@@ -311,33 +364,58 @@ runConsumptionConfigRejections context =
         invalidVisibility = defaultJobTuning {visibilityTimeout = 0}
         invalidBatch = defaultJobTuning {batchSize = 0}
         invalidPolling = defaultJobTuning {polling = PollEvery 0}
-        mismatched = withOrdering FifoHeads defaultJobTuning
-        legacyJob = job {jobOrdering = FifoThroughput}
-        legacyTuning = (withOrdering FifoThroughput defaultJobTuning) {batchSize = 2}
-        attempt tuning target = try @JobConsumptionConfigError (runJobEff runtime (runJobOnceWithContext tuning 1 target handler))
+        throughputJob = job {jobOrdering = FifoThroughput}
+        roundRobinJob = job {jobOrdering = FifoRoundRobin}
+        throughputTuning = (withOrdering FifoThroughput defaultJobTuning) {batchSize = 2}
+        roundRobinTuning = (withOrdering FifoRoundRobin defaultJobTuning) {batchSize = 2}
+        cases =
+          [ ("invalid-visibility", invalidVisibility, job, InvalidJobTuning (NonPositiveVisibilityTimeout 0)),
+            ("invalid-batch", invalidBatch, job, InvalidJobTuning (NonPositiveBatchSize 0)),
+            ("invalid-polling", invalidPolling, job, InvalidJobTuning NonPositivePollInterval),
+            ("invalid-long-poll-limit", defaultJobTuning {polling = LongPoll 0 100}, job, InvalidJobTuning NonPositivePollInterval),
+            ("invalid-long-poll-interval", defaultJobTuning {polling = LongPoll 5 0}, job, InvalidJobTuning NonPositivePollInterval),
+            ("ordering-mismatch", withOrdering FifoHeads defaultJobTuning, job, JobOrderingMismatch Unordered FifoHeads),
+            ("unsafe-legacy-batch", throughputTuning, throughputJob, UnsafeLegacyFifoBatch FifoThroughput 2),
+            ("unsafe-round-robin-batch", roundRobinTuning, roundRobinJob, UnsafeLegacyFifoBatch FifoRoundRobin 2),
+            ("validation-precedence", withOrdering FifoHeads invalidVisibility, job, InvalidJobTuning (NonPositiveVisibilityTimeout 0)),
+            ("mismatch-before-unsafe-batch", throughputTuning, job, JobOrderingMismatch Unordered FifoThroughput)
+          ]
+        drainAttempt tuning target = try @JobConsumptionConfigError (runJobEff runtime (runJobOnceWithContext tuning 1 target handler >> pure ()))
+        workerAttempt tuning target = try @JobConsumptionConfigError (runJobEff runtime (jobProcessorWithContext tuning target handler >> pure ()))
+        queueTable = "pgmq.q_" <> queueNameToText job.jobQueue.physicalName
+        readState = Statement.preparable ("SELECT count(*), coalesce(max(read_ct),0)::bigint FROM " <> queueTable) Encoders.noParams (Decoders.singleRow ((,) <$> Decoders.column (Decoders.nonNullable Decoders.int8) <*> Decoders.column (Decoders.nonNullable Decoders.int8)))
+        state = Pool.use runtime.runtimePool (Session.statement () readState) >>= either (fail . show) pure
+        matches expected = either (== expected) (const False)
+        observation result = case result of
+          Left err -> object ["status" .= ("rejected" :: Text), "detail" .= show err]
+          Right resultValue -> object ["status" .= ("accepted" :: Text), "detail" .= show resultValue]
     setup <- runJobEff runtime do
       ensureJobQueue job
       enqueue job ("one" :: Text)
     _ <- either (fail . show) pure setup
-    visibility <- attempt invalidVisibility job
-    batch <- attempt invalidBatch job
-    polling <- attempt invalidPolling job
-    mismatch <- attempt mismatched job
-    unsafeBatch <- attempt legacyTuning legacyJob
-    precedence <- attempt (withOrdering FifoHeads invalidVisibility) job
-    let queueTable = "pgmq.q_" <> queueNameToText job.jobQueue.physicalName
-        readState = Statement.preparable ("SELECT count(*), coalesce(max(read_ct),0)::bigint FROM " <> queueTable) Encoders.noParams (Decoders.singleRow ((,) <$> Decoders.column (Decoders.nonNullable Decoders.int8) <*> Decoders.column (Decoders.nonNullable Decoders.int8)))
-    before <- Pool.use runtime.runtimePool (Session.statement () readState) >>= either (fail . show) pure
+    arms <- forM cases \(label, tuning, target, expected) -> do
+      drainResult <- drainAttempt tuning target
+      afterDrain <- state
+      workerResult <- workerAttempt tuning target
+      afterWorker <- state
+      pure
+        ( [(label, matches expected drainResult && afterDrain == (1, 0)), ("worker-" <> label, matches expected workerResult && afterWorker == (1, 0))],
+          object
+            [ "case" .= label,
+              "expectedError" .= show expected,
+              "drain" .= observation drainResult,
+              "worker" .= observation workerResult,
+              "afterDrain" .= afterDrain,
+              "afterWorker" .= afterWorker
+            ]
+        )
+    before <- state
     drained <- runJobEff runtime (runJobOnceWithContext defaultJobTuning 1 job handler)
     empty <- runJobEff runtime (runJobOnceWithContext defaultJobTuning 1 job handler)
-    let cells =
-          [ ("invalid-visibility", visibility == Left (InvalidJobTuning (NonPositiveVisibilityTimeout 0))),
-            ("invalid-batch", batch == Left (InvalidJobTuning (NonPositiveBatchSize 0))),
-            ("invalid-polling", polling == Left (InvalidJobTuning NonPositivePollInterval)),
-            ("ordering-mismatch", mismatch == Left (JobOrderingMismatch Unordered FifoHeads)),
-            ("unsafe-legacy-batch", unsafeBatch == Left (UnsafeLegacyFifoBatch FifoThroughput 2)),
-            ("validation-precedence", precedence == Left (InvalidJobTuning (NonPositiveVisibilityTimeout 0))),
-            ("read-count-untouched", before == (1 :: Int64, 0 :: Int64)),
-            ("rejections-did-not-consume-job", either (const False) (== 1) drained && either (const False) (== 0) empty)
-          ]
-    recordCells context cells
+    encodeFile (context.outDir </> "logs/queue-config-rejections.json") $
+      object ["schema" .= ("kenshou.queue-config-rejections/v1" :: Text), "cases" .= map snd arms, "beforeValidDrain" .= before, "validDrain" .= either (const Nothing) Just drained, "emptyDrain" .= either (const Nothing) Just empty]
+    recordCells context $
+      concatMap fst arms
+        <> [ ("read-count-untouched", before == (1 :: Int64, 0 :: Int64)),
+             ("rejections-did-not-consume-job", either (const False) (== 1) drained && either (const False) (== 0) empty)
+           ]

@@ -861,6 +861,79 @@ and other outbox scenarios retain their independent replay limitations.
 | `stop-the-line-attempts-1-keys-3` | [01a0fdd5-98a7-77b3-8808-326830ac747a](../verification/runs/keiro/2026/10/01a0fdd5-98a7-77b3-8808-326830ac747a.md) | [01a0fe0e-8a0f-7695-81a1-3835ee92178c](../verification/attestations/2026/10/01a0fe0e-8a0f-7695-81a1-3835ee92178c.md) |
 | `best-effort-attempts-1-keys-3` | [01a0fdd5-ab18-7415-aa33-951954eba2ea](../verification/runs/keiro/2026/10/01a0fdd5-ab18-7415-aa33-951954eba2ea.md) | [01a0fe0f-6b5c-74d0-a802-1dffa74dcbb7](../verification/attestations/2026/10/01a0fe0f-6b5c-74d0-a802-1dffa74dcbb7.md) |
 
+The later adversarial replay audit exposed
+[local finding 54](../findings/54-terminal-replay-accepts-duplicate-final-row-substitution.md):
+substituting one exhausted final row for another preserved all twelve checks.
+The recomputer now requires exact coverage of the input identity set as well
+as row cardinality. Four policy-specific mutation regressions cover that
+substitution. This changes replay validation, not the runtime workload or
+artifact revision. Existing attestations keep their actual recomputer revision;
+the original captures are not rewritten.
+All eighteen terminal-focused CLI examples pass, and the corrected recomputer
+agrees with all 52 policy, boundary and clean controls. A separate identity
+audit finds no missing or duplicated final identifiers in the clean controls'
+3,280 rows.
+Integrated `nix develop -c just verify` passes with all 57 Keiro and 88 CLI
+examples and the expanded 224-concept evidence bundle.
+
+### Queue physical outcome acceptance
+
+Job-outcome revision 2 expands the durable scenario from sixteen to twenty-two
+checks. Returned batch identifiers are bound to input payload order and compared
+with physical SQL rows; archive placement preserves identifier, payload, supplied
+headers and read count. Drain and worker poison outcomes now use nonempty nested
+headers and verify both the decoded DLQ entry and its raw wrapper, including the
+exact original message identifier. Drain context must expose those headers;
+worker context must remain absent even though the message carries headers.
+Explicit invocation counters prove malformed and future-version drain payloads
+never enter the handler.
+
+The new `logs/queue-physical-outcomes.json` artifact preserves those observations
+under `schemas/kenshou.queue-physical-outcomes.v1.schema.json`. Three package
+examples reject swapped identifier/payload associations, missing or duplicate
+rows, altered headers/read state, missing DLQ entries and inconsistent raw or
+decoded metadata. The artifact is deliberately partial: independent replay of
+all outcome/timing checks remains open.
+
+The prior sixteen-check durable control passed in
+`runs/ep13-queue-outcomes-before/01a0fde3-04c8-72c9-bd0c-63c7207096d6` with
+nineteen schema and thirty artifact checks. The strengthened dirty control
+passed all twenty-two checks in
+`runs/ep13-queue-outcomes-after-raw/01a0fdf6-e373-7371-9780-84d0172efeec`, with
+26 schema and 37 artifact checks and all 57 Keiro package examples passing.
+Both controls use durable PostgreSQL 18 and seed `8102429385822254`.
+Full `nix develop -c just verify` passes, including all 57 Keiro and 79 CLI
+examples, cohort/link checks, evidence checks, schemas and self-tests.
+No new upstream defect or dependency pin is introduced. Clean publication,
+worker decoder-refusal coverage and the remaining worker/fault matrix stay open.
+
+### Drain and worker configuration rejection
+
+Consumption-config revision 2 tests ten invalid configurations through both
+`runJobOnceWithContext` and `jobProcessorWithContext`. In addition to the earlier
+drain cases, it covers invalid long-poll limits and intervals, unsafe round-robin
+batches, and ordering mismatch taking precedence over unsafe batching. Each
+call must throw the exact documented configuration error and leave one unread
+SQL row. A final valid drain consumes that row once, for twenty-two checks.
+The unchanged max-retries scenario keeps revision 1 explicitly.
+
+`logs/queue-config-rejections.json` seals the observed exceptions and SQL states
+under `schemas/kenshou.queue-config-rejections.v1.schema.json`. Independent CLI
+replay has its own error expectations, requires each of the ten cases exactly
+once, and reconstructs all twenty-two checks and result disposition without
+importing Keiro or the scenario. Five mutation examples reject missing,
+duplicated or unknown cases, forged expectations, accepted invalid settings,
+wrong exceptions, altered row/read counts and invalid final drain totals.
+
+The durable PostgreSQL 18 investigation
+`runs/ep13-queue-config-after/01a0fdff-3ed7-73ef-9d19-3a47c4a0d06a` passes and
+independently replays, with 26 schema and 27 artifact checks. It uses seed
+`8102429385822254`. This dirty run establishes the implementation; a clean
+record and attestation remain pending. No new dependency pin or upstream
+finding is introduced.
+Full `nix develop -c just verify` passes, with 57 Keiro and 84 CLI examples;
+the independent replay and all captured artifact schemas also pass.
+
 ### Remaining non-soak work
 
 Queue throughput revision 2 now implements bounded versus continuous-worker

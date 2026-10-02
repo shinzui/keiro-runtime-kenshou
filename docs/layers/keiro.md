@@ -823,26 +823,45 @@ polling and two under three-second long polling. Both held the empty-queue
 check and produced histograms and time series; they were exploratory under
 the generic sample-count gate.
 `consumption-config-rejections` checks invalid tuning, ordering mismatch,
-unsafe legacy FIFO batch size, and error precedence. Direct SQL confirms that
-the queued row still has `read_ct = 0` after all rejections; valid tuning then
+unsafe legacy FIFO batch size, and error precedence. Revision 2 covers both
+drain calls and worker construction, both legacy FIFO modes, and invalid
+long-poll limits/intervals. SQL confirms one unread row after each of twenty
+rejected calls; valid tuning then
 drains it. `max-retries-before-handler` checks that three immediate retries
 call the handler three times and the fourth read moves the row to the DLQ
 with `max_retries_exceeded` and `read_count = 4`. A zero ceiling moves its
 row to the DLQ on the first read without a handler call.
+Configuration observations are sealed in `logs/queue-config-rejections.json`.
+The CLI independently replays all twenty-two checks, using its own expected
+errors and requiring every named case exactly once. It refuses earlier
+revisions and incomplete captures; mutation tests cover accepted invalid
+configurations, wrong exceptions, changed rows/read counts and invalid final
+drain results.
 The `job-outcome-semantics` arms check Done deletion, explicit and default
 retry delays and attempt numbering, delayed enqueue, terminal Dead routing to
-a DLQ or archive, batch ID uniqueness and rows, FIFO group headers, and
+a DLQ or archive, batch identifier-to-input ordering, FIFO group headers, and
 redelivery at the visibility timeout after a thrown drain handler.
 Malformed payloads move to the DLQ; future-version payloads stay queued and
 consume delivery attempts while the worker waits for a compatible version.
+Revision 2 directly counts handler calls to prove both drain decoder-refusal
+paths skip the handler. SQL archive snapshots require the original identifier,
+payload, supplied headers and read count. Batch snapshots bind each returned
+identifier to its corresponding input payload, rejecting missing, duplicated
+or swapped rows.
 The worker Done arm confirms attempt zero, an absent arbitrary-headers context,
 one effect, and source-row deletion.
 The worker Retry arm checks a second handler effect after its one-second delay
 and eventual source-row deletion. The worker Dead arm checks one handler effect,
 source-row deletion, and a poison-pill wrapper in the DLQ.
-The decoded wrapper retains the original payload, message ID and read count.
-For this untraced job it includes an `original_headers` key with a null value;
-Keiro's decoded view reports that as absent headers.
+The drain and worker Dead arms use nonempty nested headers. Both their decoded
+DLQ entries and raw wrappers must preserve the original payload, exact message
+identifier, headers and read count; the decoded enqueue timestamp must exist.
+Drain context exposes the supplied headers, while worker context remains
+absent even when headers were supplied. `logs/queue-physical-outcomes.json`
+seals these observations and is checked against
+`schemas/kenshou.queue-physical-outcomes.v1.schema.json`. This artifact covers
+the physical-placement checks; it does not yet independently replay every
+outcome or timing check.
 A thrown worker handler is redelivered after the one-second visibility timeout;
 the second delivery completes, leaving two observed handler effects and no
 source row.
