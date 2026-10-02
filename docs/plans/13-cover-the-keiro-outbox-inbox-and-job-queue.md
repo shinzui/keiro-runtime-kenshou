@@ -565,6 +565,29 @@ is claimed. Manual collection is:
 kenshou cell resume --session .dev/ep13-queue-full-counter-repair-gc
 ```
 
+The matching full outbox GC diagnostic was queued at 18:41 UTC on October 2.
+It waits for verified queue collection and lease release before submitting
+`01a0fdea-68ff-704b-bc96-176ee5235120` on alpha. Its plan is
+`.dev/ep13-outbox-full-counter-repair-gc-plan.json`; the bounded collector is
+`.dev/sequence-outbox-full-counter-repair-gc.py`, with state in
+`.dev/ep13-outbox-full-counter-repair-gc-state.json`. The session directory will
+be `.dev/ep13-outbox-full-counter-repair-gc/` once submitted. It uses the same
+clean repaired-counter payload as the inbox and queue retries, source
+`0eda7ac8a63735c7198c5ff16f66b9c9ff19e1df`, payload SHA-256
+`479ab16385e0704b1dd1624969dd6b38bd57b13a848a31a5e541fbb133c86800`.
+
+The run preserves the actual preceding full outbox seed
+`5023798347134724`, revision 3, four-hour duration, 20 messages/second,
+32-row batches, in-process publishers, 60-second restarts, GC on and
+30-second retention, durable PostgreSQL 18 and telemetry off. Among the
+workload knobs, only the diagnostic major-GC interval changes from zero to
+5,000 ms. The plan warning records the explicit run-seed pin. This control
+addresses the heap-data gap and legacy verdict artifacts; it cannot supply
+default-GC performance evidence or independently close finding 3. The launcher
+stops if queue collection fails, never replaces an existing session, uses a
+five-hour lease and bounds repeated collection errors. No submission or
+outcome is claimed while its phase is `waiting-for-queue`.
+
 ### Queue lease SQL evidence and replay
 
 Revision 3 uses the existing `worker` and `drain` execution shapes with
@@ -775,8 +798,8 @@ schedules, zero/seven keys, 200 rows and batch size 17 at seed
 `4252662818734786`. The nondefault batch/key combination exercises several
 same-key rows together. The Keiro suite passes 54 examples and the full
 `nix develop -c just verify` gate passes. These dirty local controls establish
-functional coverage. Revision 3 adds independent terminal replay below; clean
-evidence remains pending. Existing fixture/oracle boundaries apply; no new architecture decision
+functional coverage. Revision 3 adds independent terminal replay below, with
+twenty clean digest-linked controls and confirmed attestations. Existing fixture/oracle boundaries apply; no new architecture decision
 or upstream issue follows from this local repair.
 
 ### Independently replayable outbox terminal checks
@@ -807,10 +830,36 @@ end sent after retry. The preserved failing witness has valid artifacts and
 is not retroactively repaired.
 
 Full `nix develop -c just verify` passes, including 54 Keiro and 79 CLI examples.
-These local controls are dirty investigations. The next step is to commit the
-implementation, rerun the sixteen main controls plus four one-attempt controls
-from the clean revision, and record/attest them. Earlier terminal revisions and
-other outbox scenarios retain their independent replay limitations.
+The exploratory controls above are dirty investigations. Twenty fresh durable
+controls at clean revision `06632b755f0b3eb24fd784a9c1651e96b79cb081` repeat the
+sixteen policy/backoff/key arms plus four one-attempt transient-exhaustion arms.
+All twelve business checks pass in each run, all 320 schema and 340 artifact
+checks pass, and each digest-linked investigation has a confirmed independent
+VC-1 attestation with all six evidence checks passing. Earlier terminal revisions
+and other outbox scenarios retain their independent replay limitations.
+
+| Terminal control | Clean run | Confirmed attestation |
+| --- | --- | --- |
+| `per-key-head-of-line-constant-keys-0` | [01a0fdd4-20b0-7485-bc27-ac793cb81d20](../verification/runs/keiro/2026/10/01a0fdd4-20b0-7485-bc27-ac793cb81d20.md) | [01a0fdfd-ac08-7385-b455-029fd877a008](../verification/attestations/2026/10/01a0fdfd-ac08-7385-b455-029fd877a008.md) |
+| `per-key-head-of-line-constant-keys-7` | [01a0fdd4-2e2b-779f-a61a-969fbbe2e338](../verification/runs/keiro/2026/10/01a0fdd4-2e2b-779f-a61a-969fbbe2e338.md) | [01a0fdfe-9f1f-7320-9461-b26884a01d62](../verification/attestations/2026/10/01a0fdfe-9f1f-7320-9461-b26884a01d62.md) |
+| `per-key-head-of-line-exponential-keys-0` | [01a0fdd4-3d5d-7249-a1d4-457db8f5fdc0](../verification/runs/keiro/2026/10/01a0fdd4-3d5d-7249-a1d4-457db8f5fdc0.md) | [01a0fdff-921e-73d4-8f19-b8dfd7f8fb1a](../verification/attestations/2026/10/01a0fdff-921e-73d4-8f19-b8dfd7f8fb1a.md) |
+| `per-key-head-of-line-exponential-keys-7` | [01a0fdd4-4b0c-75f7-a616-a1d526579ef6](../verification/runs/keiro/2026/10/01a0fdd4-4b0c-75f7-a616-a1d526579ef6.md) | [01a0fe00-7d98-720d-b575-24556d5fd1a2](../verification/attestations/2026/10/01a0fe00-7d98-720d-b575-24556d5fd1a2.md) |
+| `per-source-stream-constant-keys-0` | [01a0fdd4-5bfb-7784-9b44-1e08afdcd867](../verification/runs/keiro/2026/10/01a0fdd4-5bfb-7784-9b44-1e08afdcd867.md) | [01a0fe01-7e19-7101-839c-93c9c9ca67c9](../verification/attestations/2026/10/01a0fe01-7e19-7101-839c-93c9c9ca67c9.md) |
+| `per-source-stream-constant-keys-7` | [01a0fdd4-6f8a-7586-863b-c7d3a26cdc17](../verification/runs/keiro/2026/10/01a0fdd4-6f8a-7586-863b-c7d3a26cdc17.md) | [01a0fe02-6863-74cd-995b-8da168749659](../verification/attestations/2026/10/01a0fe02-6863-74cd-995b-8da168749659.md) |
+| `per-source-stream-exponential-keys-0` | [01a0fdd4-90d6-71f7-806b-ccb279bac815](../verification/runs/keiro/2026/10/01a0fdd4-90d6-71f7-806b-ccb279bac815.md) | [01a0fe03-4df1-7495-814f-d6f28c952da2](../verification/attestations/2026/10/01a0fe03-4df1-7495-814f-d6f28c952da2.md) |
+| `per-source-stream-exponential-keys-7` | [01a0fdd4-ab45-7122-b939-e9a11b545919](../verification/runs/keiro/2026/10/01a0fdd4-ab45-7122-b939-e9a11b545919.md) | [01a0fe04-35a1-77d3-a7ee-a5a8cefc2b4c](../verification/attestations/2026/10/01a0fe04-35a1-77d3-a7ee-a5a8cefc2b4c.md) |
+| `stop-the-line-constant-keys-0` | [01a0fdd4-bd93-76ec-b7a4-8d406c2595a3](../verification/runs/keiro/2026/10/01a0fdd4-bd93-76ec-b7a4-8d406c2595a3.md) | [01a0fe05-2a7d-722a-9ef0-c9c8ba6d37bb](../verification/attestations/2026/10/01a0fe05-2a7d-722a-9ef0-c9c8ba6d37bb.md) |
+| `stop-the-line-constant-keys-7` | [01a0fdd4-cd2a-711b-9e40-4067c052994b](../verification/runs/keiro/2026/10/01a0fdd4-cd2a-711b-9e40-4067c052994b.md) | [01a0fe06-0ec2-76d6-8663-89da0e1efca0](../verification/attestations/2026/10/01a0fe06-0ec2-76d6-8663-89da0e1efca0.md) |
+| `stop-the-line-exponential-keys-0` | [01a0fdd4-dd13-716c-8f01-ef03789d1ccc](../verification/runs/keiro/2026/10/01a0fdd4-dd13-716c-8f01-ef03789d1ccc.md) | [01a0fe06-f5ba-7414-a81d-85853133ad80](../verification/attestations/2026/10/01a0fe06-f5ba-7414-a81d-85853133ad80.md) |
+| `stop-the-line-exponential-keys-7` | [01a0fdd4-ff90-7610-9402-2b566853a9c6](../verification/runs/keiro/2026/10/01a0fdd4-ff90-7610-9402-2b566853a9c6.md) | [01a0fe08-241d-73b7-84c2-27060cff8114](../verification/attestations/2026/10/01a0fe08-241d-73b7-84c2-27060cff8114.md) |
+| `best-effort-constant-keys-0` | [01a0fdd5-1d09-77c3-85fe-1f73552416f7](../verification/runs/keiro/2026/10/01a0fdd5-1d09-77c3-85fe-1f73552416f7.md) | [01a0fe09-031b-768d-ab8e-219a422e94e6](../verification/attestations/2026/10/01a0fe09-031b-768d-ab8e-219a422e94e6.md) |
+| `best-effort-constant-keys-7` | [01a0fdd5-35cf-7782-9c18-29ffc0388787](../verification/runs/keiro/2026/10/01a0fdd5-35cf-7782-9c18-29ffc0388787.md) | [01a0fe09-eab1-739a-8f18-ca235414f5fb](../verification/attestations/2026/10/01a0fe09-eab1-739a-8f18-ca235414f5fb.md) |
+| `best-effort-exponential-keys-0` | [01a0fdd5-435b-757b-bfcd-eb222f33f8f1](../verification/runs/keiro/2026/10/01a0fdd5-435b-757b-bfcd-eb222f33f8f1.md) | [01a0fe0a-e399-74e2-860e-f7fa689d142d](../verification/attestations/2026/10/01a0fe0a-e399-74e2-860e-f7fa689d142d.md) |
+| `best-effort-exponential-keys-7` | [01a0fdd5-50cf-772f-bdd9-e4c467b4f27d](../verification/runs/keiro/2026/10/01a0fdd5-50cf-772f-bdd9-e4c467b4f27d.md) | [01a0fe0b-dfae-75e2-b033-b190ddc87c5a](../verification/attestations/2026/10/01a0fe0b-dfae-75e2-b033-b190ddc87c5a.md) |
+| `per-key-head-of-line-attempts-1-keys-3` | [01a0fdd5-6eb2-734e-a17b-1a27b1f40073](../verification/runs/keiro/2026/10/01a0fdd5-6eb2-734e-a17b-1a27b1f40073.md) | [01a0fe0c-c10e-7734-9529-1bb4aeaf961b](../verification/attestations/2026/10/01a0fe0c-c10e-7734-9529-1bb4aeaf961b.md) |
+| `per-source-stream-attempts-1-keys-3` | [01a0fdd5-8c36-73f0-92db-d79d8be0adac](../verification/runs/keiro/2026/10/01a0fdd5-8c36-73f0-92db-d79d8be0adac.md) | [01a0fe0d-a58d-7658-b2fc-fac30ef0b443](../verification/attestations/2026/10/01a0fe0d-a58d-7658-b2fc-fac30ef0b443.md) |
+| `stop-the-line-attempts-1-keys-3` | [01a0fdd5-98a7-77b3-8808-326830ac747a](../verification/runs/keiro/2026/10/01a0fdd5-98a7-77b3-8808-326830ac747a.md) | [01a0fe0e-8a0f-7695-81a1-3835ee92178c](../verification/attestations/2026/10/01a0fe0e-8a0f-7695-81a1-3835ee92178c.md) |
+| `best-effort-attempts-1-keys-3` | [01a0fdd5-ab18-7415-aa33-951954eba2ea](../verification/runs/keiro/2026/10/01a0fdd5-ab18-7415-aa33-951954eba2ea.md) | [01a0fe0f-6b5c-74d0-a802-1dffa74dcbb7](../verification/attestations/2026/10/01a0fe0f-6b5c-74d0-a802-1dffa74dcbb7.md) |
 
 ### Remaining non-soak work
 
