@@ -129,10 +129,12 @@ The non-soak baseline is in place. The remaining work is to deepen specific scen
 - [x] (2026-10-01) Strengthened queue lease acceptance for both execution shapes with PostgreSQL lease/read-count snapshots, intentional ignored-extension failures, and independent VC-1 replay. The local four-arm matrix meets every expected outcome; 40 schema checks and 84 artifact digests pass. The Keiro and CLI suites pass 46 and 34 examples respectively; the clean published repeat is linked below.
 - [x] (2026-10-01) Strengthened inbox matrix revision 2 with exact SQL receipt persistence, independent key expectations, source-position fallback and failed-handler rollback checks. Fourteen durable arms met their expected outcomes; 202 schema and 216 artifact checks pass, with 48 package examples. Clean evidence selection and independent VC-1 replay remain separate gates.
 - [x] (2026-10-02 UTC) Recorded ten clean revision-3 table-backed inbox controls with independent VC-1 attestations; all six evidence checks confirm each result, including two deliberate double-effect failures. The matrix passes 160 schema and 170 artifact integrity checks.
+- [x] (2026-10-02 UTC) Sealed revision-5 delegated intake/stream observations and independently reconstructed all ten checks. Four clean policy arms are digest-linked with confirmed VC-1 attestations; all 56 schemas and 60 artifact checks pass. The full verification gate and 50 Keiro/52 CLI tests pass.
+- [x] (2026-10-02 UTC) Collected and digest-linked the full queue/DLQ soak: all nine business checks hold over 72,051 exactly-once jobs and 3,603 archived dead jobs. Its heap evidence is insufficient and legacy verdict schemas are invalid under finding 50, so resource and artifact acceptance remain open.
 - [ ] Finish the remaining non-soak acceptance work listed below, then rerun the affected scenarios and package tests.
 - [x] (2026-10-01) Full inbox soak sealed with passing business/resource observations and was digest-linked; finding 50 qualifies its legacy verdict schema, and the first timed-out attempt remains excluded.
 - [x] (2026-10-01) Implemented revision-3 process-isolated outbox soak with per-incarnation diagnosis and message-specific crash duplicate budgets.
-- [ ] Finish queue full-soak execution, outbox resource acceptance, schema-valid full-soak artifacts, process isolation acceptance, remaining matrix arms, and independent evidence verification.
+- [ ] Finish queue and outbox full-soak resource acceptance, schema-valid full-soak artifacts, process isolation acceptance, remaining matrix arms, and independent evidence verification.
 
 The five Keiro owner reports for worker exits, read-attempt accounting, stale outbox claims, pool starvation, and missing process spans now have local finding records [34](../findings/34-keiro-job-worker-exits-after-polling-backend-termination.md), [35](../findings/35-keiro-long-poll-consumes-read-attempt-without-handler.md), [36](../findings/36-keiro-stale-outbox-publisher-finalizes-new-claim.md), [37](../findings/37-keiro-long-poll-processors-starve-runtime-pool.md), and [38](../findings/38-keiro-pre-handler-dead-letter-lacks-process-span.md). Each finding has its canonical owner URI; the MasterPlan register counts those records separately from the scenarios that cite them.
 
@@ -319,12 +321,32 @@ All fourteen durable PostgreSQL 18 controls under
 effect-count failures. All fourteen outcomes independently replay, including
 all four delegated policies. All 216 schema and 230 artifact integrity checks
 pass, and a separate Python UUIDv5 reconstruction matches all 96 delegated
-receipts. These are exploratory local controls; clean selected revision-5
-records and delegated VC-1 attestations are still pending.
+receipts. These are exploratory local controls; the clean selected repeat is
+recorded below.
 The focused suites pass 50 Keiro and 52 CLI examples, including changed
 classifications, missing or duplicated observations, reordered/substituted
 receipt IDs and malformed-schedule mutations. The full
 `nix develop -c just verify` gate passes, including the new observation schema.
+
+
+The clean repeat at `3fe0c80bff83cc0b39b7ee4b4b2e06d10b7ce8b9` passed all four
+delegated policies on durable PostgreSQL 18. All 56 schema and 60 artifact
+checks pass, as does the separate 96-receipt Python UUIDv5 reconstruction.
+All four runs are now digest-linked investigations with confirmed VC-1
+attestations: six evidence checks pass for each, including clean run/attester
+worktrees and independent reconstruction of all ten delegated cells. The
+recording command needed an explicit `CLOUDSDK_CORE_PROJECT=tan-nb-exp`
+because the ambient project differed; no global GCP configuration was changed.
+Older delegated records and inbox soaks retain their separate replay gaps.
+Strict validation of the expanded 169-concept bundle, profile rejection
+fixtures, the evidence ledger and CLI checks all pass.
+
+| Policy arm | Run | Confirmed attestation |
+| --- | --- | --- |
+| `delegated-message-id-full-envelope-1` | [01a0fca8-cae6-70df-9ad1-c0ef6577a2e2](../verification/runs/keiro/2026/10/01a0fca8-cae6-70df-9ad1-c0ef6577a2e2.md) | [01a0fcb3-06eb-73ca-9b92-9d974a0caf89](../verification/attestations/2026/10/01a0fcb3-06eb-73ca-9b92-9d974a0caf89.md) |
+| `delegated-source-event-full-envelope-1` | [01a0fca8-d813-73af-beca-3d86c9dc0742](../verification/runs/keiro/2026/10/01a0fca8-d813-73af-beca-3d86c9dc0742.md) | [01a0fcb3-cbb5-7678-a6a6-aea5ddbf21b1](../verification/attestations/2026/10/01a0fcb3-cbb5-7678-a6a6-aea5ddbf21b1.md) |
+| `delegated-kafka-delivery-full-envelope-1` | [01a0fca8-e4ac-7080-8e46-92bed3d81a9d](../verification/runs/keiro/2026/10/01a0fca8-e4ac-7080-8e46-92bed3d81a9d.md) | [01a0fcb4-90e8-72f0-b463-1e1b8a3c9e32](../verification/attestations/2026/10/01a0fcb4-90e8-72f0-b463-1e1b8a3c9e32.md) |
+| `delegated-custom-full-envelope-1` | [01a0fca8-f079-7212-855b-2cc7f53c84dc](../verification/runs/keiro/2026/10/01a0fca8-f079-7212-855b-2cc7f53c84dc.md) | [01a0fcb5-5aa1-7363-ada1-20b65c33051f](../verification/attestations/2026/10/01a0fcb5-5aa1-7363-ada1-20b65c33051f.md) |
 
 ### Full-soak artifacts and repaired payload
 
@@ -351,13 +373,25 @@ poison every twentieth job, DLQ maintenance on, default collection, and durable
 PostgreSQL 18. Session `01a0fa4d-f1ea-74ed-94f3-929d066d3bac` owns cell run
 `01a0fa4d-f1ea-74ed-9b07-a298ee957541`, nested run
 `01a0fa29-a590-7007-81bb-7a26c7ba5cd4`, and a 15,300-second wall-clock cap.
-Its payload predates the verdict-counter repair, so any result will retain
-finding 50's artifact qualification. No queue outcome is claimed yet. Collect it
-with:
+It sealed at 05:58 UTC and was collected as a verified completed cell result.
+The [digest-linked investigation](../verification/runs/keiro/2026/10/01a0fa29-a590-7007-81bb-7a26c7ba5cd4.md)
+holds all nine business checks: 72,051 jobs handled once, an empty main queue,
+3,603 dead jobs archived with none left active, zero worker/maintenance errors,
+and peak main depth one. Main relation size stays at 172,032 bytes; the steady
+DLQ sample grows from 90,112 to 98,304 bytes (9.1022 bytes per inserted dead row),
+within its bound. Both dead-tuple checks hold.
 
-```bash
-kenshou cell resume --session .dev/ep13-queue-full-default
-```
+Overall outcome is inconclusive. No eligible post-major heap points were
+captured. The other five bounded resource probes are stable: native bytes,
+Haskell threads (139 throughout), OS threads (nine), descriptors (31), and
+connections (three). The informational relation trend does not override the
+scenario's bounded table-growth check. All 28 nested artifact sizes/digests and
+three top-level schemas pass; all nine legacy verdict schemas fail only the
+known missing assertion counters in finding 50. The record verifies the
+existing sealed cloud objects without rewriting them. Queue heap/resource
+acceptance, repaired full-soak artifacts and independent queue-soak VC-1 remain
+open. The fetched tree is under
+`.dev/01a0fa4d-f1ea-74ed-9b07-a298ee957541/tree/`.
 
 A clean repaired Linux payload was published from `0eda7ac` on 2026-10-02 UTC.
 The descriptor is `payloads/released-verdict-counters.json`; the 60,655,972-byte
@@ -377,14 +411,19 @@ The prepared full inbox rerun keeps the prior accepted run's exact seed
 telemetry off and durable PostgreSQL 18. Its plan is
 `.dev/ep13-inbox-full-counter-repair-plan.json`, with nested run
 `01a0fa97-bbd6-76a5-a7c0-03c6aa076562`; the generated run seed was explicitly
-set to the prior run's seed before submission. A bounded local coordinator,
-`.dev/ep13-soak-sequence.py`, is waiting for the active queue run to seal,
-collect and verify. It then releases that lease through `cell resume` and
-submits the inbox plan with the repaired payload and a five-hour lease.
-`.dev/ep13-soak-sequence-state.json` records whether it is waiting, stopped,
-or has submitted the next run. Its queue-collection deadline is 06:30 UTC;
-failures stop the sequence. The inbox run has not yet been submitted and no
-new full-soak outcome is claimed. After submission, collect it with:
+set to the prior run's seed before submission. The original local coordinator
+stopped at 05:13 UTC on a TLS handshake timeout while checking queue status;
+it submitted no inbox run. Manual recovery collected the sealed queue result
+and submitted the prepared inbox plan at 13:04 UTC with the repaired payload
+and a five-hour lease. Session `01a0fcb7-333b-77b1-ab02-fef753395c0f` owns cell
+`01a0fcb7-333b-77b1-ad39-c4a38bbc4b45` and lease
+`01a0fcb7-2d45-712e-90fc-637db7d731c3`. No new inbox outcome is claimed.
+
+The recovered handoff is in `.dev/ep13-soak-sequence-state.json`; the original
+stop is preserved in `.dev/ep13-soak-sequence-stopped.json`. The bounded
+`.dev/watch-inbox-full-counter-repair.py` collector retries transient failures
+up to five consecutive attempts and stops by 18:30 UTC. Its current state is
+`.dev/ep13-inbox-full-counter-repair-watch.json`. Manual collection remains:
 
 ```bash
 kenshou cell resume --session .dev/ep13-inbox-full-counter-repair
@@ -862,7 +901,7 @@ as clean controlled comparisons.
 
 The durable baseline now exercises the outbox, inbox, and queue through correctness, process-failure, concurrency, telemetry, and benchmark scenarios. All seven planned benchmark identifiers are registered. The package suite passes 50 examples. Queue throughput now supports continuous workers, both polling modes, standard/unlogged provision variation, and native metrics collection and serving, with oracles that detect duplicate calls and incorrect physical persistence. The eight-arm worker metrics contract passes; its new short local smokes are functional evidence only. Known defects remain visible as scoped expected failures rather than silent passes; the local finding records above retain their canonical owner references. The documented inline ordering, inbox GC, and DLQ/redrive windows also remain scoped expected failures.
 
-The plan is still in progress. The concrete non-soak gaps are listed in Progress. The full inbox run observed stable bounded resources and has a digest-linked record; finding 50 now qualifies its legacy verdict schema, so formal artifact acceptance remains open. Full acceptance still requires queue full-soak results, outbox resource acceptance and schema-valid full-soak verdicts, controlled process-isolation evidence, remaining matrix coverage and independent Keiro verdict verification. The earlier producer comparison remains inconclusive under its three-pair policy. New clean five-pair queue comparisons preserve execution-shape p99 uncertainty and measure a latency/memory tradeoff for 100 ms long polling; both are durably recorded and independently confirmed for VC-2/VC-3, with individual business-oracle attestation still open. The earlier overhead reports remain local evidence. The new clean outbox metrics investigation has sixteen digest-linked runs and three independently confirmed VC-2/VC-3 comparisons, while serving and A/A tail latency remain inconclusive. The matched reduced process/in-process diagnostics are also recorded; short killed incarnations and historical default-GC attribution remain open. No configuration experiment measures an upstream release change.
+The plan is still in progress. The concrete non-soak gaps are listed in Progress. The full inbox run observed stable bounded resources and has a digest-linked record; finding 50 now qualifies its legacy verdict schema, so formal artifact acceptance remains open. Full acceptance still requires queue/outbox resource acceptance and schema-valid full-soak verdicts, controlled process-isolation evidence, remaining matrix coverage and independent Keiro verdict verification. The earlier producer comparison remains inconclusive under its three-pair policy. New clean five-pair queue comparisons preserve execution-shape p99 uncertainty and measure a latency/memory tradeoff for 100 ms long polling; both are durably recorded and independently confirmed for VC-2/VC-3, with individual business-oracle attestation still open. The earlier overhead reports remain local evidence. The new clean outbox metrics investigation has sixteen digest-linked runs and three independently confirmed VC-2/VC-3 comparisons, while serving and A/A tail latency remain inconclusive. The matched reduced process/in-process diagnostics are also recorded; short killed incarnations and historical default-GC attribution remain open. No configuration experiment measures an upstream release change.
 
 
 ## Context and Orientation

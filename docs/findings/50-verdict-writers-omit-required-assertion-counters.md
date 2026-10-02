@@ -46,8 +46,12 @@ does not backfill immutable raw files or make old runs schema-valid. The
 remains available with its inconclusive resource outcome and this artifact
 qualification. Earlier inbox soaks using the writer have the same limitation.
 The queue/DLQ full soak submitted as cell
-`01a0fa4d-f1ea-74ed-9b07-a298ee957541` also uses the older payload; its observations
-must retain this qualification. Formal full-soak artifact acceptance needs a
+`01a0fa4d-f1ea-74ed-9b07-a298ee957541` sealed and is now
+[digest-linked](../verification/runs/keiro/2026/10/01a0fa29-a590-7007-81bb-7a26c7ba5cd4.md).
+All 28 nested artifact checks and three top-level schemas pass, but all nine
+held verdicts fail the same missing-counter requirement. Its inconclusive
+heap/resource outcome and this artifact qualification remain explicit.
+Formal full-soak artifact acceptance needs a
 payload built from the repair and newly sealed evidence.
 
 Validation: the Keiro regression failed before the production change and passed
