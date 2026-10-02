@@ -1,0 +1,46 @@
+{
+  "failureMode": "condemn",
+  "idempotence": "inbox-table",
+  "inputs": [
+    {
+      "attributes": {
+        "sequence": 1
+      },
+      "causationId": null,
+      "contentType": "application/json",
+      "correlationId": null,
+      "destination": "kenshou.outbox.v1",
+      "eventType": "OutboxProbe",
+      "kafka": null,
+      "messageId": "poison",
+      "occurredAt": "2026-10-02T16:49:30.511041Z",
+      "payloadBytes": [
+        112,
+        111,
+        105,
+        115,
+        111,
+        110
+      ],
+      "schemaReference": null,
+      "schemaVersion": 1,
+      "source": "kenshou-01a0fd85-poison-condemn",
+      "sourceEventId": null,
+      "sourceGlobalPosition": null,
+      "traceContext": null
+    }
+  ],
+  "observations": {
+    "effects": [],
+    "first": {
+      "tag": "processed"
+    },
+    "handlerCalls": 2,
+    "initialCalls": 0,
+    "second": {
+      "tag": "processed"
+    }
+  },
+  "rows": [],
+  "schema": "kenshou.inbox-poison-observations/v1"
+}

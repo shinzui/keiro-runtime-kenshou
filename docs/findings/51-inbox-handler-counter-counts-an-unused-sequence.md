@@ -23,7 +23,7 @@ The query now returns zero while `is_called` is false, otherwise `last_value`.
 These fixtures use a fresh default sequence, increment it once per handler
 entry and never reset it. Sequence increments survive transaction rollback,
 so the counter can distinguish an attempted handler from committed effects.
-The initial-zero guard remains in both scenario families at revision 2.
+The initial-zero guard was added to both scenario families at revision 2.
 
 Poison recovery also now inserts an actual effect before throwing and checks
 that failed attempts leave no effects. Three permanently failing invocations
@@ -43,7 +43,11 @@ nix develop -c cabal run -v0 kenshou -- run \
 ```
 
 Historical sealed runs are not rewritten or promoted to stronger coverage.
-The new observations do not add independent poison/batch VC-1 replay.
+Revision-2 observations do not add independent poison/batch VC-1 replay.
+Poison revision 3 subsequently seals raw invocation, effect and receipt
+observations and supports independent replay for all four poison modes.
+The eight replay mutation examples pass, including the initial-zero and
+missing-handler-call controls. Batch replay remains separate work.
 
 Validation: all seven repaired arms pass under
 `runs/ep13-poison-effects/after/`. Each before/after matrix passes 55 schema

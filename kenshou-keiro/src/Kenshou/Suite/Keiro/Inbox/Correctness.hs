@@ -1,6 +1,6 @@
 module Kenshou.Suite.Keiro.Inbox.Correctness (scenarios, ensureEffectTable, effectReadStatement, effectInsertStatement) where
 
-import Data.Aeson (encodeFile, object, (.=))
+import Data.Aeson (Value, encodeFile, object, (.=))
 import Data.ByteString qualified as ByteString
 import Data.IORef (atomicModifyIORef', modifyIORef', newIORef, readIORef)
 import Data.Int (Int64)
@@ -404,7 +404,7 @@ poisonAccounting :: Scenario
 poisonAccounting =
   envelopeRoundTrip
     { id = either (error . show) id (parseScenarioId "keiro/inbox/correctness/poison-accounting"),
-      revision = 2,
+      revision = 3,
       summary = "Checks retry ceiling, failure receipt retention, and recovery after two failed attempts.",
       knobs =
         [ KnobSpec (knobName "inbox.failure-mode") "Inbox handler failure mode" KnobText (VText "pure-exception") (OneOf (VText "pure-exception" :| [VText "sql-error", VText "condemn"])) [VText "sql-error", VText "condemn"],
@@ -445,6 +445,7 @@ runPoisonDelegated context fixture = do
   withinCeiling <- intake 3
   callsAfterAttempt <- readIORef calls
   rows <- runFixture (listInbox source) >>= either (fail . show) pure
+  writePoisonObservation context [event] rows (object ["attempts" .= ([4, 3] :: [Int]), "aboveCeiling" .= Observation.result aboveCeiling, "withinCeiling" .= Observation.result withinCeiling, "callsAfterCeiling" .= callsAfterCeiling, "callsAfterAttempt" .= callsAfterAttempt])
   recordCells
     context
     [ ("delegated-ceiling-stops-handler", aboveCeiling == Right (InboxPreviouslyFailed Nothing) && callsAfterCeiling == 0),
@@ -509,6 +510,8 @@ runPoisonException context fixture = do
           ("recovery-after-two-failures", length recoveryFailures == 2 && and (zipWith isFailed [1, 2] recoveryFailures) && recovered == Right (InboxProcessed ()) && duplicate == Right InboxDuplicate && null recoveryRows),
           ("recovery-effect-once", failedRecoveryCalls == 5 && recoveredCalls == 6 && duplicateCalls == 6 && recoveredEffects == ["recovery"] && duplicateEffects == ["recovery"])
         ]
+  writePoisonObservation context [poison, recovery] rows $
+    object ["initialCalls" .= initialCalls, "poisonCalls" .= poisonCalls, "failedRecoveryCalls" .= failedRecoveryCalls, "recoveredCalls" .= recoveredCalls, "duplicateCalls" .= duplicateCalls, "poisonEffects" .= poisonEffects, "failedRecoveryEffects" .= failedRecoveryEffects, "recoveredEffects" .= recoveredEffects, "duplicateEffects" .= duplicateEffects, "poisonResults" .= map Observation.result poisonResults, "recoveryFailures" .= map Observation.result recoveryFailures, "recovered" .= Observation.result recovered, "duplicate" .= Observation.result duplicate]
   recordMessagingCells
     context
     (Map.fromList [("handlerCalls", duplicateCalls), ("effects", fromIntegral (length duplicateEffects))])
@@ -553,7 +556,20 @@ runPoisonSpecial context fixture mode = do
             [ ("sql-error-has-no-completed-effect", noCompletion),
               ("sql-error-handler-attempted", calls == 1)
             ]
+  writePoisonObservation context [event] rows (object ["initialCalls" .= initialCalls, "handlerCalls" .= calls, "effects" .= effects, "first" .= Observation.executionResult first, "second" .= fmap Observation.executionResult second])
   recordMessagingCells context (Map.fromList [("handlerCalls", calls), ("inboxRows", fromIntegral (length rows))]) (object ["failureMode" .= mode, "initialCalls" .= initialCalls, "effects" .= effects, "firstClassification" .= show first, "secondClassification" .= fmap show second]) (("handler-count-starts-at-zero", initialCalls == 0) : cells)
+
+writePoisonObservation :: RunContext -> [IntegrationEvent] -> [InboxRow] -> Value -> IO ()
+writePoisonObservation context inputs rows observations =
+  encodeFile (context.outDir </> "logs/inbox-poison-observations.json") $
+    object
+      [ "schema" .= ("kenshou.inbox-poison-observations/v1" :: Text.Text),
+        "idempotence" .= knobText context.knobs (knobName "inbox.idempotence"),
+        "failureMode" .= knobText context.knobs (knobName "inbox.failure-mode"),
+        "inputs" .= map (\event -> Observation.delivery event Nothing) inputs,
+        "rows" .= map Observation.poisonReceipt rows,
+        "observations" .= observations
+      ]
 
 poisonCallStatement :: Statement.Statement () Int64
 poisonCallStatement = Statement.preparable "SELECT nextval('kenshou_fx.poison_calls')" Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))

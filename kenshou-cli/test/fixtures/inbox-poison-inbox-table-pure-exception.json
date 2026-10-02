@@ -1,0 +1,126 @@
+{
+  "failureMode": "pure-exception",
+  "idempotence": "inbox-table",
+  "inputs": [
+    {
+      "attributes": {
+        "sequence": 1
+      },
+      "causationId": null,
+      "contentType": "application/json",
+      "correlationId": null,
+      "destination": "kenshou.outbox.v1",
+      "eventType": "OutboxProbe",
+      "kafka": null,
+      "messageId": "poison",
+      "occurredAt": "2026-10-02T16:49:27.155666Z",
+      "payloadBytes": [
+        112,
+        111,
+        105,
+        115,
+        111,
+        110
+      ],
+      "schemaReference": null,
+      "schemaVersion": 1,
+      "source": "kenshou-01a0fd85-poison",
+      "sourceEventId": null,
+      "sourceGlobalPosition": null,
+      "traceContext": null
+    },
+    {
+      "attributes": {
+        "sequence": 2
+      },
+      "causationId": null,
+      "contentType": "application/json",
+      "correlationId": null,
+      "destination": "kenshou.outbox.v1",
+      "eventType": "OutboxProbe",
+      "kafka": null,
+      "messageId": "recovery",
+      "occurredAt": "2026-10-02T16:49:27.157938Z",
+      "payloadBytes": [
+        114,
+        101,
+        99,
+        111,
+        118,
+        101,
+        114,
+        121
+      ],
+      "schemaReference": null,
+      "schemaVersion": 1,
+      "source": "kenshou-01a0fd85-poison",
+      "sourceEventId": null,
+      "sourceGlobalPosition": null,
+      "traceContext": null
+    }
+  ],
+  "observations": {
+    "duplicate": {
+      "tag": "duplicate"
+    },
+    "duplicateCalls": 6,
+    "duplicateEffects": [
+      "recovery"
+    ],
+    "failedRecoveryCalls": 5,
+    "failedRecoveryEffects": [],
+    "initialCalls": 0,
+    "poisonCalls": 3,
+    "poisonEffects": [],
+    "poisonResults": [
+      {
+        "attempt": 1,
+        "error": "synthetic poison",
+        "tag": "handler-failed"
+      },
+      {
+        "attempt": 2,
+        "error": "synthetic poison",
+        "tag": "handler-failed"
+      },
+      {
+        "attempt": 3,
+        "error": "synthetic poison",
+        "tag": "handler-failed"
+      },
+      {
+        "error": "synthetic poison",
+        "tag": "previously-failed"
+      }
+    ],
+    "recovered": {
+      "tag": "processed"
+    },
+    "recoveredCalls": 6,
+    "recoveredEffects": [
+      "recovery"
+    ],
+    "recoveryFailures": [
+      {
+        "attempt": 1,
+        "error": "synthetic poison",
+        "tag": "handler-failed"
+      },
+      {
+        "attempt": 2,
+        "error": "synthetic poison",
+        "tag": "handler-failed"
+      }
+    ]
+  },
+  "rows": [
+    {
+      "attemptCount": 3,
+      "key": "poison",
+      "messageId": "poison",
+      "source": "kenshou-01a0fd85-poison",
+      "status": "InboxFailed"
+    }
+  ],
+  "schema": "kenshou.inbox-poison-observations/v1"
+}

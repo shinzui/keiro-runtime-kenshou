@@ -1,4 +1,4 @@
-module Kenshou.Suite.Keiro.Inbox.Observation (delivery, result, decodedReceipt) where
+module Kenshou.Suite.Keiro.Inbox.Observation (delivery, result, executionResult, decodedReceipt, poisonReceipt) where
 
 import Data.Aeson (Value, object, (.=))
 import Data.ByteString qualified as ByteString
@@ -48,3 +48,9 @@ result = \case
 
 decodedReceipt :: InboxRow -> Value
 decodedReceipt row = object ["key" .= row.dedupeKey, "status" .= show row.status]
+
+executionResult :: (Show e) => Either e (Either InboxError (InboxResult a)) -> Value
+executionResult = either (\err -> object ["tag" .= ("store-error" :: Text), "error" .= show err]) result
+
+poisonReceipt :: InboxRow -> Value
+poisonReceipt row = object ["source" .= row.event.source, "messageId" .= row.event.messageId, "key" .= row.dedupeKey, "status" .= show row.status, "attemptCount" .= row.attemptCount]

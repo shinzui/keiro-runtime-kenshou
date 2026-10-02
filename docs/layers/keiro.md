@@ -663,6 +663,11 @@ confirms that the handler ran twice, while no inbox row or effect remains. With
 With `inbox.idempotence=delegated`, the caller-owned retry context stops an
 attempt above the ceiling before invoking the handler; the ceiling attempt
 runs it, and neither creates an inbox row.
+Revision 3 captures those observations in `logs/inbox-poison-observations.json`.
+The CLI independently replays all poison checks for the three table-backed
+failure modes and delegated retry accounting. It requires the complete
+schedule and checks the recorded failures, blocking flag, exit code and
+verdict summary; earlier poison revisions cannot receive this VC-1 replay.
 `batch-fast-path-and-fallback` checks that a clean batch shares one transaction
 and a throwing delivery falls back to per-message processing without
 duplicating other effects. With `inbox.failure-mode=condemn`, the batch rolls

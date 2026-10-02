@@ -356,8 +356,8 @@ must enter the handler three times and stop at its ceiling; two recovery
 failures roll back every effect, the succeeding third attempt leaves exactly
 one recovery effect, and redelivery adds neither an effect nor a handler call.
 Returned classifications, durable failed-row retention and completed-row GC
-remain checked. Invocation/effect observations are included in verdict
-parameters; this does not implement independent poison/batch VC-1 replay.
+remain checked. Revision-2 invocation/effect observations were included in
+verdict parameters and did not support independent poison/batch VC-1 replay.
 
 An initial-zero sequence guard exposed [finding 51](../findings/51-inbox-handler-counter-counts-an-unused-sequence.md).
 The old `last_value` query returns one before any `nextval`. The repaired query
@@ -371,6 +371,26 @@ artifact integrity checks. These dirty local controls do not change selected
 historical evidence counts.
 The full `nix develop -c just verify` gate passes, including 50 Keiro and
 52 CLI examples and strict validation of all 169 evidence concepts.
+
+Revision 3 seals `logs/inbox-poison-observations.json` with the complete input
+schedule, returned constructors, invocation checkpoints, effects and retained
+receipt rows. `Kenshou.Cli.Attest.KeiroPoison` independently reconstructs every
+poison check for table-backed exception, condemnation and SQL-error modes,
+and delegated retry accounting. It rejects incomplete schedules and requires
+the same failures, blocking flag, exit code and verdict summary. It imports
+neither the runtime nor the scenario oracle. SQL-error classification remains
+an observation; its contract is rollback without a completed effect.
+
+All four durable PostgreSQL 18 controls under `runs/ep13-poison-replay/matrix/`
+pass, with 34 schema and 38 artifact-integrity checks; offline replay agrees
+with each sealed result. Eight mutation examples detect changed invocation
+counts, missing or duplicate recovery effects, wrong constructors, missing
+failed receipts and altered retry schedules. Targeted tests pass with 50
+Keiro and 60 CLI examples. The full `nix develop -c just verify` gate passes,
+including the schema fixtures, evidence checks and live self-tests.
+These dirty controls are not historical records.
+Earlier poison revisions and all batch revisions remain outside independent
+replay coverage.
 
 ### Full-soak artifacts and repaired payload
 

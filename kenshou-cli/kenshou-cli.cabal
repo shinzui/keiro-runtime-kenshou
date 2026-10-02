@@ -41,6 +41,7 @@ library
     Kenshou.Cli.Attest
     Kenshou.Cli.Attest.KeiroInbox
     Kenshou.Cli.Attest.KeiroLease
+    Kenshou.Cli.Attest.KeiroPoison
     Kenshou.Cli.Cohort
     Kenshou.Cli.Command.Cell
     Kenshou.Cli.Command.Cohort

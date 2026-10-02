@@ -20,6 +20,7 @@ import Kenshou.Cli (runWithArgs)
 import Kenshou.Cli.Attest (FencingFacts (..), fencingFacts)
 import Kenshou.Cli.Attest.KeiroInbox (replayDelegatedCells, replayInboxCells)
 import Kenshou.Cli.Attest.KeiroLease (replayLeaseCells)
+import Kenshou.Cli.Attest.KeiroPoison (replayPoisonCells)
 import Kenshou.Cli.Cohort (resolveDefaultCohortIdentity)
 import Kenshou.Cli.Version (appVersionWithGit)
 import Kenshou.Core.Cohort (CohortIdentity (..), CohortName (..))
@@ -56,6 +57,51 @@ readInboxFixture path = do
 
 main :: IO ()
 main = hspec do
+  describe "independent inbox poison replay" do
+    forM_ [("inbox-table", "pure-exception"), ("inbox-table", "condemn"), ("inbox-table", "sql-error"), ("delegated", "pure-exception")] \(mode, failure) -> do
+      let fixture = "test/fixtures/inbox-poison-" <> Text.unpack mode <> "-" <> Text.unpack failure <> ".json"
+          replay raw = fmap (map fst . filter (not . snd)) (replayPoisonCells mode failure raw)
+          replace key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)
+          replace _ _ value = value
+          change key value raw = replace "observations" (replace key value (maybe Aeson.Null id (jsonField "observations" raw))) raw
+          empty = Aeson.toJSON ([] :: [Value])
+          loadFixture = Aeson.eitherDecodeFileStrict' fixture >>= either fail pure
+      it ("replays the complete workload and rejects missing inputs: " <> Text.unpack mode <> "/" <> Text.unpack failure) do
+        raw <- loadFixture
+        replay raw `shouldBe` Right []
+        replay (replace "inputs" empty raw) `shouldSatisfy` either (const True) (const False)
+        replay (replace "observations" (object []) raw) `shouldSatisfy` either (const True) (const False)
+        replay (replace "failureMode" (Aeson.String "other") raw) `shouldSatisfy` either (const True) (const False)
+      it ("detects altered invocation and durable effect observations: " <> Text.unpack mode <> "/" <> Text.unpack failure) do
+        raw <- loadFixture
+        if mode == "delegated"
+          then do
+            replay (change "callsAfterCeiling" (Aeson.Number 1) raw) `shouldBe` Right ["delegated-ceiling-stops-handler"]
+            replay (change "callsAfterAttempt" (Aeson.Number 0) raw) `shouldBe` Right ["delegated-within-ceiling-runs-handler"]
+            replay (change "withinCeiling" (object ["tag" .= ("duplicate" :: Text)]) raw) `shouldBe` Right ["delegated-within-ceiling-runs-handler"]
+            replay (change "attempts" empty raw) `shouldSatisfy` either (const True) (const False)
+          else do
+            replay (change "initialCalls" (Aeson.Number 1) raw) `shouldBe` Right ["handler-count-starts-at-zero"]
+            if failure == "pure-exception"
+              then do
+                replay (change "poisonCalls" (Aeson.Number 4) raw) `shouldBe` Right ["ceiling-stops-handler"]
+                forM_ ["failedRecoveryCalls", "recoveredCalls", "duplicateCalls"] \key ->
+                  replay (change key (Aeson.Number 0) raw) `shouldBe` Right ["recovery-effect-once"]
+                forM_ ["poisonEffects", "failedRecoveryEffects"] \key ->
+                  replay (change key (Aeson.toJSON (["poison"] :: [Text])) raw) `shouldBe` Right ["failed-effects-roll-back"]
+                forM_ ["recoveredEffects", "duplicateEffects"] \key -> do
+                  replay (change key empty raw) `shouldBe` Right ["recovery-effect-once"]
+                  replay (change key (Aeson.toJSON (["recovery", "recovery"] :: [Text])) raw) `shouldBe` Right ["recovery-effect-once"]
+                replay (replace "rows" empty raw) `shouldBe` Right ["failed-row-survives-gc"]
+                replay (change "poisonResults" empty raw) `shouldBe` Right ["failure-attempts", "ceiling-stops-retry"]
+                replay (change "recoveryFailures" empty raw) `shouldBe` Right ["recovery-after-two-failures"]
+                replay (change "duplicate" (object ["tag" .= ("processed" :: Text)]) raw) `shouldBe` Right ["recovery-after-two-failures"]
+              else do
+                replay (change "effects" (Aeson.toJSON (["poison"] :: [Text])) raw) `shouldBe` Right [if failure == "condemn" then "condemned-call-rolls-back" else "sql-error-has-no-completed-effect"]
+                replay (change "handlerCalls" (Aeson.Number 0) raw) `shouldBe` Right [if failure == "condemn" then "redelivery-runs-handler-again" else "sql-error-handler-attempted"]
+                if failure == "condemn"
+                  then replay (change "second" Aeson.Null raw) `shouldBe` Right ["condemned-call-reports-processed"]
+                  else replay (change "second" (object ["tag" .= ("processed" :: Text)]) raw) `shouldSatisfy` either (const True) (const False)
   describe "independent delegated inbox replay" do
     forM_ ["message-id", "source-event", "kafka-delivery", "custom"] \policy -> do
       let fixture = "test/fixtures/inbox-delegated-" <> Text.unpack policy <> ".json"
