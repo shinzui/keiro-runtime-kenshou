@@ -107,4 +107,6 @@
 - [keiro/outbox/correctness/terminal-state-matrix passed on released](01a0fdd5-8c36-73f0-92db-d79d8be0adac.md) - Recorded keiro/outbox/correctness/terminal-state-matrix run against cohort released with digest-pinned data.
 - [keiro/outbox/correctness/terminal-state-matrix passed on released](01a0fdd5-98a7-77b3-8808-326830ac747a.md) - Recorded keiro/outbox/correctness/terminal-state-matrix run against cohort released with digest-pinned data.
 - [keiro/outbox/correctness/terminal-state-matrix passed on released](01a0fdd5-ab18-7415-aa33-951954eba2ea.md) - Recorded keiro/outbox/correctness/terminal-state-matrix run against cohort released with digest-pinned data.
+- [keiro/queue/correctness/job-outcome-semantics passed on released](01a0fe5c-975b-71ce-b045-dab92a4e703d.md) - Recorded keiro/queue/correctness/job-outcome-semantics run against cohort released with digest-pinned data.
+- [keiro/queue/correctness/consumption-config-rejections passed on released](01a0fe5c-b24c-7705-8fb7-4ad4b6a95a2c.md) - Recorded keiro/queue/correctness/consumption-config-rejections run against cohort released with digest-pinned data.
 

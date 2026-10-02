@@ -17,7 +17,7 @@ Other Keiro business-oracle replay and full soak acceptance remain open.
 
 The pinned [released cohort](../../cohort/released.json) includes Keiro 0.17.0.0, Kiroku Store 0.8.0.1 and its Shibuya adapter 0.5.1.2, Shibuya Core and Metrics 0.9.0.3, the Shibuya PGMQ adapter 0.16.0.0, the Shibuya Kafka adapter 0.9.0.1, and pgmq-hs 0.6.1.0. New baseline runs focus on durable PostgreSQL 18; several substrate checks also have PostgreSQL 17 controls. Local results under `runs/` are sealed but ignored by Git. Their IDs and reproduction commands live in the [numbered findings](../findings/) and child plans.
 
-The [historical OKF bundle](../verification/) currently contains 157 digest-linked run/comparison records: 151 individual runs and six comparisons. The individual runs comprise four Kafka runs, six self-tests, 45 Keiro outbox runs, 39 Keiro inbox runs, 53 Keiro queue runs, and four Keiro write-side soaks. The comparisons comprise one self-test, two queue configuration investigations, and three outbox metrics investigations. Two Kafka records preserve failed released-cohort behavior, including [rebalance](../verification/runs/kafka/2026/09/01a0e3bd-ef03-71b4-9486-01ed1bd56a02.md); the [twenty-minute Kafka stability soak](../verification/runs/kafka/2026/09/01a0e3c8-28da-70e4-abcb-81223c70560b.md) passed. The rebalance and soak attestations remain incomplete because their Kafka oracle is not independently replayable from stored artifacts. The [Keiro outbox record](../verification/runs/keiro/2026/09/01a0eec4-bd55-7786-804f-bda62c6ac388.md) also has an [incomplete attestation](../verification/attestations/2026/09/01a0eee9-5ccf-72b7-bcdf-54f5ec80c02a.md): five checks passed, but the independent VC-1 outbox recomputer is unavailable. Most finding-level raw runs have not yet been published to the bundle, so this checkpoint links local sealed evidence and owner reports but is not the final durable baseline handoff. [ADR-18](../adr/0018-keep-verification-records-immutable-and-derive-baselines.md) governs later selection and comparison.
+The [historical OKF bundle](../verification/) currently contains 159 digest-linked run/comparison records: 153 individual runs and six comparisons. The individual runs comprise four Kafka runs, six self-tests, 45 Keiro outbox runs, 39 Keiro inbox runs, 55 Keiro queue runs, and four Keiro write-side soaks. The comparisons comprise one self-test, two queue configuration investigations, and three outbox metrics investigations. Two Kafka records preserve failed released-cohort behavior, including [rebalance](../verification/runs/kafka/2026/09/01a0e3bd-ef03-71b4-9486-01ed1bd56a02.md); the [twenty-minute Kafka stability soak](../verification/runs/kafka/2026/09/01a0e3c8-28da-70e4-abcb-81223c70560b.md) passed. The rebalance and soak attestations remain incomplete because their Kafka oracle is not independently replayable from stored artifacts. The [Keiro outbox record](../verification/runs/keiro/2026/09/01a0eec4-bd55-7786-804f-bda62c6ac388.md) also has an [incomplete attestation](../verification/attestations/2026/09/01a0eee9-5ccf-72b7-bcdf-54f5ec80c02a.md): five checks passed, but the independent VC-1 outbox recomputer is unavailable. Most finding-level raw runs have not yet been published to the bundle, so this checkpoint links local sealed evidence and owner reports but is not the final durable baseline handoff. [ADR-18](../adr/0018-keep-verification-records-immutable-and-derive-baselines.md) governs later selection and comparison.
 
 The [MasterPlan issue register](../masterplans/1-build-an-extensive-verification-suite-for-the-keiro-runtime.md#upstream-issue-register) accounts for 54 numbered findings: 31 linked to an owner bug report, six whose primary disposition is an improvement request, thirteen local suite findings, two unattributed runtime observations, and two cell-infrastructure observations whose final attribution remains open. It links 32 distinct owner bug records, including two Keiro reports now marked duplicates of `mori://shinzui/kiroku/okf/bug-reports/concepts/BUG-3`, and ten distinct improvement requests, including complementary requests and non-bug dispositions. Owner status at this checkpoint is 16 reported, 14 fixed, and two duplicate. “Fixed” is the owner's classification; the initial released-cohort baseline preserves the historical result until a separately requested, comparable post-fix run verifies it.
 
@@ -188,8 +188,7 @@ payloads. Its raw physical observations pass 26 schema and 37 artifact checks.
 Configuration revision 2 exercises ten invalid settings through both drain
 and worker APIs, preserves an unread SQL row after each rejection, and confirms
 one later valid drain. All twenty-two checks pass and replay independently;
-its capture passes 26 schema and 27 artifact checks. Clean queue publication
-remains pending; these investigations do not add baseline records.
+its capture passes 26 schema and 27 artifact checks. The clean repeats and their replay limits are linked below.
 
 [Finding 54](../findings/54-terminal-replay-accepts-duplicate-final-row-substitution.md)
 repairs a local terminal replay identity gap. Four policy-specific mutations
@@ -197,3 +196,11 @@ now reject a duplicated final row substituted for another. The corrected
 checker agrees with all 52 saved policy, boundary and clean terminal controls;
 the twenty clean controls have 3,280 complete, unique final identities.
 Historical attestations keep the recomputer revision that produced them.
+
+The two revision-2 queue contracts are now digest-linked clean investigations
+at `4899ccb`, with all forty-four business checks, 52 schemas and 64 artifacts
+passing. Configuration rejection has a confirmed independent VC-1 attestation
+with all six checks passing. Job-outcome semantics has an explicit incomplete
+attestation: five checks pass, but its full business oracle is not independently
+replayable. The [child plan](../plans/13-cover-the-keiro-outbox-inbox-and-job-queue.md#clean-queue-contract-evidence)
+links both runs and attestations. These records preserve the coverage gap.

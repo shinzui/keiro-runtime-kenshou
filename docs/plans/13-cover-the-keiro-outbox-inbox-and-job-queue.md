@@ -904,7 +904,7 @@ passed all twenty-two checks in
 Both controls use durable PostgreSQL 18 and seed `8102429385822254`.
 Full `nix develop -c just verify` passes, including all 57 Keiro and 79 CLI
 examples, cohort/link checks, evidence checks, schemas and self-tests.
-No new upstream defect or dependency pin is introduced. Clean publication,
+No new upstream defect or dependency pin is introduced. Revision-2 publication is linked below;
 worker decoder-refusal coverage and the remaining worker/fault matrix stay open.
 
 ### Drain and worker configuration rejection
@@ -928,11 +928,28 @@ wrong exceptions, altered row/read counts and invalid final drain totals.
 The durable PostgreSQL 18 investigation
 `runs/ep13-queue-config-after/01a0fdff-3ed7-73ef-9d19-3a47c4a0d06a` passes and
 independently replays, with 26 schema and 27 artifact checks. It uses seed
-`8102429385822254`. This dirty run establishes the implementation; a clean
-record and attestation remain pending. No new dependency pin or upstream
+`8102429385822254`. This dirty run establishes the implementation; the clean
+record and confirmed attestation are linked below. No new dependency pin or upstream
 finding is introduced.
 Full `nix develop -c just verify` passes, with 57 Keiro and 84 CLI examples;
 the independent replay and all captured artifact schemas also pass.
+
+### Clean queue contract evidence
+
+Both revision-2 queue controls passed on durable PostgreSQL 18 at clean source
+`4899ccb0f573eb2eb1c57cf42cf3a13612bfba56`, seed `8102429385822254`, with
+twenty-two held checks each. All 52 schema and 64 artifact checks passed.
+Both investigations are digest-linked. The configuration run has a confirmed
+independent VC-1 attestation with all six evidence checks passing. The physical
+job-outcome run has an explicit incomplete attestation: its five integrity,
+provenance and evidence checks pass, while complete independent VC-1 replay
+remains unavailable. Its partial physical observations are not promoted into
+complete scenario replay by that record.
+
+| Queue contract | Clean run | Attestation |
+| --- | --- | --- |
+| `job-outcome-semantics` | [01a0fe5c-975b-71ce-b045-dab92a4e703d](../verification/runs/keiro/2026/10/01a0fe5c-975b-71ce-b045-dab92a4e703d.md) | [incomplete: 01a0fe65-efa1-721b-94ff-58ecbfa8a54c](../verification/attestations/2026/10/01a0fe65-efa1-721b-94ff-58ecbfa8a54c.md) |
+| `consumption-config-rejections` | [01a0fe5c-b24c-7705-8fb7-4ad4b6a95a2c](../verification/runs/keiro/2026/10/01a0fe5c-b24c-7705-8fb7-4ad4b6a95a2c.md) | [confirmed: 01a0fe67-67a6-70c6-86cb-683ab6c43ce4](../verification/attestations/2026/10/01a0fe67-67a6-70c6-86cb-683ab6c43ce4.md) |
 
 ### Remaining non-soak work
 
