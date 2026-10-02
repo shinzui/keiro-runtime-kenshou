@@ -111,7 +111,7 @@ runMismatchProbe context = withCheck context \check ->
               status = if held then Held else Violated,
               reason = Nothing,
               summary = if held then "Shard-count startup contract held" else "Shard-count startup contract failed",
-              counts = Map.fromList [("expectedRows", 4), ("observedRows", fromIntegral observed)],
+              counts = Map.fromList [("expectedRows", 4), ("observedRows", fromIntegral observed), ("examined", 1), ("violations", if held then 0 else 1)],
               parameters = object ["subscription" .= ("kenshouShardMismatch" :: Text)],
               counterExamples = if held then [] else [object ["rowsAfterLargerWorker" .= observed, "configuredShardCount" .= (4 :: Int)]],
               counterExamplesTruncated = False,

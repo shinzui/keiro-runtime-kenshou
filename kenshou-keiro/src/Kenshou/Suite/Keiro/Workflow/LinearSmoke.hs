@@ -105,7 +105,7 @@ runLinearReplaySmoke context = withCheck context \check ->
               status = if held then Held else Violated,
               reason = Nothing,
               summary = if held then "Expected durable workflow state observed" else "Durable workflow state differed from expectation",
-              counts = Map.singleton "instances" 1,
+              counts = Map.fromList [("instances", 1), ("examined", 1), ("violations", if held then 0 else 1)],
               parameters = object ["workflow" .= ("kenshouLinear" :: Text)],
               counterExamples = if held then [] else [object ["workflowId" .= ("linear-replay-smoke" :: Text)]],
               counterExamplesTruncated = False,

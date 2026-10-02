@@ -52,7 +52,7 @@ runModel environment model = do
           status
           reason
           summary
-          (Map.fromList [("tests", fromIntegral report.reportTests), ("violations", if status == Violated then 1 else 0)])
+          (Map.fromList [("tests", fromIntegral report.reportTests), ("examined", fromIntegral report.reportTests), ("violations", if status == Violated then 1 else 0)])
           (object ["derivedSeed" .= derived, "size" .= model.size])
           counterExamples
           False

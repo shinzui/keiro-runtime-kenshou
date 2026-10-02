@@ -106,7 +106,7 @@ runLinearSelfKillSmoke context = withCheck context \check ->
               status = if held then Held else Violated,
               reason = Nothing,
               summary = if held then "Crash recovery invariant held" else "Crash recovery invariant failed",
-              counts = Map.singleton "instances" 1,
+              counts = Map.fromList [("instances", 1), ("examined", 1), ("violations", if held then 0 else 1)],
               parameters = object ["killAfter" .= ("s2" :: Text)],
               counterExamples = if held then [] else [object ["workflowId" .= unWorkflowId wid]],
               counterExamplesTruncated = False,

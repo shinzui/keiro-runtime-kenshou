@@ -10,10 +10,12 @@ module Kenshou.Check.Verdict
   )
 where
 
+import Control.Monad (unless)
 import Data.Aeson
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.Int (Int64)
 import Data.Map.Strict (Map)
+import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (UTCTime)
@@ -58,6 +60,8 @@ data Verdict = Verdict
 
 writeVerdict :: FilePath -> RunInfo -> Verdict -> IO FilePath
 writeVerdict directory runInfo verdict = do
+  unless (all (`Map.member` verdict.counts) ["examined", "violations"]) $
+    ioError (userError ("verdict " <> Text.unpack verdict.checker <> " lacks required examined/violations counters"))
   createDirectoryIfMissing True directory
   let path = directory </> sanitise verdict.checker <> ".json"
       temporary = path <> ".tmp"

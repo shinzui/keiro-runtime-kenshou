@@ -128,10 +128,11 @@ The non-soak baseline is in place. The remaining work is to deepen specific scen
 - [x] (2026-10-01) Completed matched clean twenty-minute outbox restart diagnostics on the same seed and payload with forced major GC every five seconds. Both held every applicable business check (eleven process, eight in-process) over 24,202 unique messages and 20 restarts, with bounded table growth. The process arm remains inconclusive because short incarnations have insufficient data, while its main process and continuous survivor have stable bounded resources. The in-process arm passed. Both are digest-linked; the [dated report](../reports/2026-10-01-outbox-metrics-and-restart-controls.md) records the resource decisions. Finding 3 remains open for historical default-GC attribution; these diagnostics do not close full-duration or independent Keiro VC-1 acceptance.
 - [x] (2026-10-01) Strengthened queue lease acceptance for both execution shapes with PostgreSQL lease/read-count snapshots, intentional ignored-extension failures, and independent VC-1 replay. The local four-arm matrix meets every expected outcome; 40 schema checks and 84 artifact digests pass. The Keiro and CLI suites pass 46 and 34 examples respectively; the clean published repeat is linked below.
 - [x] (2026-10-01) Strengthened inbox matrix revision 2 with exact SQL receipt persistence, independent key expectations, source-position fallback and failed-handler rollback checks. Fourteen durable arms met their expected outcomes; 202 schema and 216 artifact checks pass, with 48 package examples. Clean evidence selection and independent VC-1 replay remain separate gates.
+- [x] (2026-10-02 UTC) Recorded ten clean revision-3 table-backed inbox controls with independent VC-1 attestations; all six evidence checks confirm each result, including two deliberate double-effect failures. The matrix passes 160 schema and 170 artifact integrity checks.
 - [ ] Finish the remaining non-soak acceptance work listed below, then rerun the affected scenarios and package tests.
-- [x] (2026-10-01) Full inbox soak sealed, passed, and was digest-linked; the first timed-out attempt remains excluded.
+- [x] (2026-10-01) Full inbox soak sealed with passing business/resource observations and was digest-linked; finding 50 qualifies its legacy verdict schema, and the first timed-out attempt remains excluded.
 - [x] (2026-10-01) Implemented revision-3 process-isolated outbox soak with per-incarnation diagnosis and message-specific crash duplicate budgets.
-- [ ] Finish controlled outbox/queue full soaks, process isolation acceptance, remaining matrix arms, and independent evidence verification.
+- [ ] Finish queue full-soak execution, outbox resource acceptance, schema-valid full-soak artifacts, process isolation acceptance, remaining matrix arms, and independent evidence verification.
 
 The five Keiro owner reports for worker exits, read-attempt accounting, stale outbox claims, pool starvation, and missing process spans now have local finding records [34](../findings/34-keiro-job-worker-exits-after-polling-backend-termination.md), [35](../findings/35-keiro-long-poll-consumes-read-attempt-without-handler.md), [36](../findings/36-keiro-stale-outbox-publisher-finalizes-new-claim.md), [37](../findings/37-keiro-long-poll-processors-starve-runtime-pool.md), and [38](../findings/38-keiro-pre-handler-dead-letter-lacks-process-span.md). Each finding has its canonical owner URI; the MasterPlan register counts those records separately from the scenarios that cite them.
 
@@ -145,9 +146,10 @@ early duplicates, 28,821 late reprocessings, and 57,642 effects; classification
 and GC errors and pending deliveries were zero. It retained 257 rows; table
 size stayed at 409,600 bytes and sampled dead tuples at 120. All six bounded
 resource probes were stable, including 466 eligible post-major heap points.
-The full inbox execution gate is satisfied. Its digest-pinned record is an
-investigation record; independent Keiro VC-1 recomputation remains unavailable,
-and exploratory soak measurements establish no benchmark comparison. The
+The full inbox run supplies business/resource observations, but finding 50
+qualifies its legacy verdict schema and leaves formal artifact acceptance open.
+Its digest-pinned record is an investigation; independent inbox-soak VC-1
+recomputation remains unavailable, and exploratory soak measurements establish no benchmark comparison. The
 unsealed first attempt remains excluded under finding 49.
 
 ### Inbox persistence SQL acceptance
@@ -259,6 +261,60 @@ revision-3 records and confirmed attestations remain the next evidence gate.
 The full `nix develop -c just verify` gate passes, including all 40 CLI
 examples and live self-tests. The existing ADR-8 and ADR-18 contracts cover the change; immutable historical
 records are not backfilled with observations they never captured.
+
+The clean repeat at `af3e8a9` reached the same ten table-backed outcomes,
+passed 160 schema and 170 artifact integrity checks, and independently replayed
+all eleven checks per run. Every run and attester records a clean checkout.
+All ten runs are now digest-linked investigations, and their VC-1 attestations
+confirm all six evidence checks. The two negative controls remain failed runs;
+confirmation establishes that those deliberate failures were reproduced.
+All four dedupe policies and both persistence modes, including the source-position
+fallback, have verifier coverage. Delegated inbox, inbox soaks, and old
+revision-2 records still require different or unavailable replay observations.
+
+| Arm | Run | Confirmed attestation |
+| --- | --- | --- |
+| `inbox-table-message-id-full-envelope-1` | [01a0fa2a-63cc-7643-8be1-e83b65c42aa2](../verification/runs/keiro/2026/10/01a0fa2a-63cc-7643-8be1-e83b65c42aa2.md) | [01a0fa64-7f58-700c-8e60-8cfbce7cf9db](../verification/attestations/2026/10/01a0fa64-7f58-700c-8e60-8cfbce7cf9db.md) |
+| `inbox-table-message-id-dedupe-only-1` | [01a0fa2a-70dd-70e6-98f8-3a0335e85f39](../verification/runs/keiro/2026/10/01a0fa2a-70dd-70e6-98f8-3a0335e85f39.md) | [01a0fa65-5e52-73a8-8830-4ffad9f6ec04](../verification/attestations/2026/10/01a0fa65-5e52-73a8-8830-4ffad9f6ec04.md) |
+| `inbox-table-source-event-full-envelope-1` | [01a0fa2a-7c44-7057-ae6b-8025ad5dffb6](../verification/runs/keiro/2026/10/01a0fa2a-7c44-7057-ae6b-8025ad5dffb6.md) | [01a0fa66-3e70-7191-a7fb-e5a456384c62](../verification/attestations/2026/10/01a0fa66-3e70-7191-a7fb-e5a456384c62.md) |
+| `inbox-table-source-event-dedupe-only-1` | [01a0fa2a-87e9-76e9-9a81-bfc782dd708d](../verification/runs/keiro/2026/10/01a0fa2a-87e9-76e9-9a81-bfc782dd708d.md) | [01a0fa67-2aff-7305-9456-6a61d485f9a7](../verification/attestations/2026/10/01a0fa67-2aff-7305-9456-6a61d485f9a7.md) |
+| `inbox-table-kafka-delivery-full-envelope-1` | [01a0fa2a-93be-7059-ab18-55a46bb489f1](../verification/runs/keiro/2026/10/01a0fa2a-93be-7059-ab18-55a46bb489f1.md) | [01a0fa68-104c-7483-b3f3-1dbc92de30b4](../verification/attestations/2026/10/01a0fa68-104c-7483-b3f3-1dbc92de30b4.md) |
+| `inbox-table-kafka-delivery-dedupe-only-1` | [01a0fa2a-9fb6-748d-9fd3-69a0a4fe4c31](../verification/runs/keiro/2026/10/01a0fa2a-9fb6-748d-9fd3-69a0a4fe4c31.md) | [01a0fa68-f1dd-7455-b321-2e6ced1c01c6](../verification/attestations/2026/10/01a0fa68-f1dd-7455-b321-2e6ced1c01c6.md) |
+| `inbox-table-custom-full-envelope-1` | [01a0fa2a-ab4e-729e-907f-cab5fa75858f](../verification/runs/keiro/2026/10/01a0fa2a-ab4e-729e-907f-cab5fa75858f.md) | [01a0fa69-d160-7199-a737-631067220ffe](../verification/attestations/2026/10/01a0fa69-d160-7199-a737-631067220ffe.md) |
+| `inbox-table-custom-dedupe-only-1` | [01a0fa2a-b765-7471-99f8-014d5c34c5b6](../verification/runs/keiro/2026/10/01a0fa2a-b765-7471-99f8-014d5c34c5b6.md) | [01a0fa6b-0cd0-74c6-bef2-1519a66a5f65](../verification/attestations/2026/10/01a0fa6b-0cd0-74c6-bef2-1519a66a5f65.md) |
+| `inbox-table-message-id-full-envelope-2` | [01a0fa2a-c335-76f7-8822-2c81dae1099b](../verification/runs/keiro/2026/10/01a0fa2a-c335-76f7-8822-2c81dae1099b.md) | [01a0fa6b-f514-7009-87b2-10d07d9f924c](../verification/attestations/2026/10/01a0fa6b-f514-7009-87b2-10d07d9f924c.md) |
+| `inbox-table-message-id-dedupe-only-2` | [01a0fa2a-ceac-70ad-9b70-dab8679eb46b](../verification/runs/keiro/2026/10/01a0fa2a-ceac-70ad-9b70-dab8679eb46b.md) | [01a0fa6c-d797-778c-8ea4-0ded5ee1a40d](../verification/attestations/2026/10/01a0fa6c-d797-778c-8ea4-0ded5ee1a40d.md) |
+
+The full outbox result is [digest-linked](../verification/runs/keiro/2026/10/01a0f938-67a3-7207-a457-fcccd988b600.md)
+with all 27 nested artifact sizes/hashes verified. Its spec, result and manifest
+pass schema validation, but all eight legacy verdict files omit the schema's
+required assertion counters. [Finding 50](../findings/50-verdict-writers-omit-required-assertion-counters.md)
+tracks this local harness defect. The full business/resource observations stay
+available as an investigation; they do not satisfy formal artifact acceptance.
+The same qualification applies to older full inbox evidence from that writer.
+The source repair and writer regression preserve verdict meanings and reject
+future emissions missing required counters. Existing sealed trees stay unchanged.
+
+The required-counter regression failed against the old shared writer and passes
+after repair. The Keiro and core check suites pass 49 and 35 examples; all ten
+held/violated documents from the Keiro, Kiroku, timer, shard and workflow probes
+pass the verdict schema. The complete `nix develop -c just verify` gate passes,
+including 40 CLI examples, strict validation of the 160-concept evidence bundle,
+generated-index consistency and live fault/model self-tests.
+
+The full four-hour queue/DLQ revision-2 soak was submitted on alpha at
+2026-10-02 01:50 UTC with clean payload `16ec2d6`, five jobs/second, terminal
+poison every twentieth job, DLQ maintenance on, default collection, and durable
+PostgreSQL 18. Session `01a0fa4d-f1ea-74ed-94f3-929d066d3bac` owns cell run
+`01a0fa4d-f1ea-74ed-9b07-a298ee957541`, nested run
+`01a0fa29-a590-7007-81bb-7a26c7ba5cd4`, and a 15,300-second wall-clock cap.
+Its payload predates the verdict-counter repair, so any result will retain
+finding 50's artifact qualification. No queue outcome is claimed yet. Collect it
+with:
+
+```bash
+kenshou cell resume --session .dev/ep13-queue-full-default
+```
 
 ### Queue lease SQL evidence and replay
 
@@ -567,10 +623,12 @@ as clean controlled comparisons.
 | Queue correctness | `runs/01a0d539-*` through `runs/01a0d53c-*`; FIFO run `runs/01a0d51b-71dc-72be-97b8-e8404c67590a` | Default sweep exited zero; eight direct passes, three scoped expected failures. |
 | Benchmarks | Outbox `runs/01a0d566-56e8-7179-93f1-5bf480c9119c`; inbox `runs/01a0d58e-f76a-739d-821a-c1983474427c`; queue `runs/01a0d571-c677-739f-bd01-9b72c804d995` | Representative durable runs reached benchmark grade; all seven identifiers emit artifacts. |
 | Comparison and overhead | `runs/keiro-producer-local-comparison.json`; `runs/overhead-outbox/overhead-01a0d579-3e04-740b-be98-63ee4c60addf/overhead-report.json`; `runs/overhead-queue/overhead-01a0d57b-8c4b-721b-b04d-08c1b3d43ac8/overhead-report.json` | Comparison inconclusive under sample policy; overhead reports have three valid blocks each. |
-| Full inbox soak | [Released four-hour run](../verification/runs/keiro/2026/10/01a0f4f4-7b1a-7232-b0ab-f62d19abb0aa.md) | All eight checks held; six bounded resource probes stable. Independent VC-1 remains open. |
+| Full inbox soak | [Released four-hour run](../verification/runs/keiro/2026/10/01a0f4f4-7b1a-7232-b0ab-f62d19abb0aa.md) | All eight checks held; six bounded resource probes stable. Finding 50 qualifies the legacy verdict schema; independent VC-1 remains open. |
 | Telemetry | Inbox `runs/01a0d593-371a-772a-902b-6d5fa0c5a23f`; queue `runs/01a0d599-6794-76cf-9399-000ff650b6e1` | Enabled arms passed on durable PostgreSQL. Queue pre-handler job reached DLQ without a handler call or process span. |
 
 ## Surprises & Discoveries
+
+- (2026-10-02 UTC) Full outbox artifact validation exposed [finding 50](../findings/50-verdict-writers-omit-required-assertion-counters.md): shared verdict writers omitted required assertion counters. This is a local harness defect; intact digests and held business checks do not imply schema-valid artifacts. Producer repairs and an emission guard preserve outcomes, while existing sealed evidence retains its limitation.
 
 - (2026-10-01) Parking only a handler did not freeze its continuous intake:
   the first worker prefetched its own expired lease before the contender could
@@ -728,9 +786,9 @@ as clean controlled comparisons.
 
 ## Outcomes & Retrospective
 
-The durable baseline now exercises the outbox, inbox, and queue through correctness, process-failure, concurrency, telemetry, and benchmark scenarios. All seven planned benchmark identifiers are registered. The package suite passes 48 examples. Queue throughput now supports continuous workers, both polling modes, standard/unlogged provision variation, and native metrics collection and serving, with oracles that detect duplicate calls and incorrect physical persistence. The eight-arm worker metrics contract passes; its new short local smokes are functional evidence only. Known defects remain visible as scoped expected failures rather than silent passes; the local finding records above retain their canonical owner references. The documented inline ordering, inbox GC, and DLQ/redrive windows also remain scoped expected failures.
+The durable baseline now exercises the outbox, inbox, and queue through correctness, process-failure, concurrency, telemetry, and benchmark scenarios. All seven planned benchmark identifiers are registered. The package suite passes 49 examples. Queue throughput now supports continuous workers, both polling modes, standard/unlogged provision variation, and native metrics collection and serving, with oracles that detect duplicate calls and incorrect physical persistence. The eight-arm worker metrics contract passes; its new short local smokes are functional evidence only. Known defects remain visible as scoped expected failures rather than silent passes; the local finding records above retain their canonical owner references. The documented inline ordering, inbox GC, and DLQ/redrive windows also remain scoped expected failures.
 
-The plan is still in progress. The concrete non-soak gaps are listed in Progress. The full inbox execution gate passed with stable bounded resources and a digest-linked record. Full acceptance still requires outbox/queue full soaks, controlled process-isolation evidence, remaining matrix coverage and independent Keiro verdict verification. The earlier producer comparison remains inconclusive under its three-pair policy. New clean five-pair queue comparisons preserve execution-shape p99 uncertainty and measure a latency/memory tradeoff for 100 ms long polling; both are durably recorded and independently confirmed for VC-2/VC-3, with individual business-oracle attestation still open. The earlier overhead reports remain local evidence. The new clean outbox metrics investigation has sixteen digest-linked runs and three independently confirmed VC-2/VC-3 comparisons, while serving and A/A tail latency remain inconclusive. The matched reduced process/in-process diagnostics are also recorded; short killed incarnations and historical default-GC attribution remain open. No configuration experiment measures an upstream release change.
+The plan is still in progress. The concrete non-soak gaps are listed in Progress. The full inbox run observed stable bounded resources and has a digest-linked record; finding 50 now qualifies its legacy verdict schema, so formal artifact acceptance remains open. Full acceptance still requires queue full-soak results, outbox resource acceptance and schema-valid full-soak verdicts, controlled process-isolation evidence, remaining matrix coverage and independent Keiro verdict verification. The earlier producer comparison remains inconclusive under its three-pair policy. New clean five-pair queue comparisons preserve execution-shape p99 uncertainty and measure a latency/memory tradeoff for 100 ms long polling; both are durably recorded and independently confirmed for VC-2/VC-3, with individual business-oracle attestation still open. The earlier overhead reports remain local evidence. The new clean outbox metrics investigation has sixteen digest-linked runs and three independently confirmed VC-2/VC-3 comparisons, while serving and A/A tail latency remain inconclusive. The matched reduced process/in-process diagnostics are also recorded; short killed incarnations and historical default-GC attribution remain open. No configuration experiment measures an upstream release change.
 
 
 ## Context and Orientation

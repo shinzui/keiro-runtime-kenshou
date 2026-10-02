@@ -31,7 +31,16 @@ import Keiro.Subscription.Shard.Worker (ShardedWorkerOptions (..))
 import Keiro.Timer (TimerWorkerOptions (..))
 import Keiro.Workflow (WorkflowId (..), WorkflowRunOptions (..), deterministicJournalId)
 import Keiro.Workflow.Resume (WorkflowResumeOptions (..))
+import Kenshou.Core.Context (Environment (..), RunContext (..), newRunState)
+import Kenshou.Core.Dimension (emptyDimensions)
+import Kenshou.Core.Id (mkSeed, newRunId, parseScenarioId)
 import Kenshou.Core.Knob (RawKnob (..), mkKnobName, resolveKnobs)
+import Kenshou.Core.Log (nullLogger)
+import Kenshou.Core.Outcome qualified as Outcome
+import Kenshou.Core.Phase (zeroPhases)
+import Kenshou.Core.RunSpec (RunSpec (..), minimalRunSpec)
+import Kenshou.Core.Scenario (ScenarioReport (..))
+import Kenshou.Suite.Keiro.Command.Correctness (recordCells)
 import Kenshou.Suite.Keiro.Fixture.Account
 import Kenshou.Suite.Keiro.Fixture.Bonus
 import Kenshou.Suite.Keiro.Fixture.Bridge
@@ -66,11 +75,31 @@ import Shibuya.Core.Ingested (Ingested (..))
 import Shibuya.Core.Metrics qualified as ShibuyaMetrics
 import Streamly.Data.Fold qualified as Fold
 import Streamly.Data.Stream qualified as Stream
+import System.IO.Temp (withSystemTempDirectory)
 import Test.Hspec
 import Test.Hspec.Hedgehog (hedgehog)
 
 main :: IO ()
 main = hspec do
+  describe "shared Keiro verdict protocol" do
+    it "writes required assertion counters for held and violated checks" $ withSystemTempDirectory "kenshou-keiro-verdict" \directory -> do
+      runId <- newRunId
+      state <- newRunState
+      let scenario = either (error . show) id (parseScenarioId "keiro/fixture/correctness/verdict-schema")
+          knobs = either (error . show) id (resolveKnobs [] [])
+          seed = either (error . show) id (mkSeed 0)
+          runContext = RunContext runId scenario knobs emptyDimensions seed zeroPhases (Environment Nothing mempty) (minimalRunSpec scenario).environment Nothing directory nullLogger state
+      report <- recordCells runContext [("held", True), ("violated", False)]
+      report.outcome `shouldBe` Outcome.Failed
+      report.failures `shouldBe` ["violated"]
+      mapM_
+        ( \(label, violations) -> do
+            verdict <- Aeson.eitherDecodeFileStrict' (directory <> "/verdicts/keiro-fixture-" <> label <> ".json") >>= either fail pure
+            case verdict of
+              Aeson.Object fields -> KeyMap.lookup "counts" fields `shouldBe` Just (object ["events" Aeson..= (1 :: Int), "examined" Aeson..= (1 :: Int), "violations" Aeson..= (violations :: Int)])
+              _ -> expectationFailure "verdict must be a JSON object"
+        )
+        [("held", 0), ("violated", 1)]
   describe "inbox SQL receipt oracle" do
     it "rejects altered or missing columns, duplicate rows, and vacuous evidence" do
       now <- getCurrentTime

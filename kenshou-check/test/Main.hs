@@ -1,12 +1,13 @@
 module Main (main) where
 
 import Control.Monad (forM_)
-import Data.Aeson (Object, Value (Number), decode, encode)
+import Data.Aeson (Object, Value (Number), decode, encode, object)
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.IORef
 import Data.Int (Int64)
 import Data.List (sortOn)
+import Data.Map.Strict qualified as Map
 import Data.Maybe (isNothing)
 import Data.Text qualified as Text
 import Kenshou.Check.Fact
@@ -18,6 +19,7 @@ import Kenshou.Check.Model.Linearizability
 import Kenshou.Check.Process
 import Kenshou.Check.Scenario
 import Kenshou.Check.Verdict
+import Kenshou.Check.Verdict qualified as Verdict
 import Kenshou.Core.Context
 import Kenshou.Core.Dimension (emptyDimensions)
 import Kenshou.Core.Id (mkSeed, newRunId, parseScenarioId)
@@ -34,6 +36,17 @@ import Test.Hspec
 
 main :: IO ()
 main = hspec do
+  describe "verdict protocol" do
+    it "rejects missing assertion counters before writing a document" $ withSystemTempDirectory "kenshou-verdict-protocol" \directory -> do
+      runId <- newRunId
+      let scenario = either (error . show) id (parseScenarioId "selftest/check/correctness/verdict-protocol")
+          runInfo = RunInfo runId scenario
+          valid = Verdict "protocol" "required-counters" Contract Held Nothing "protocol fixture" (Map.fromList [("examined", 1), ("violations", 0)]) (object []) [] False [] Nothing (read "2026-01-01 00:00:00 UTC") 0
+      forM_ ["examined", "violations"] \key ->
+        writeVerdict directory runInfo valid {Verdict.counts = Map.delete key valid.counts} `shouldThrow` anyIOException
+      listDirectory directory `shouldReturn` []
+      _ <- writeVerdict directory runInfo valid
+      listDirectory directory `shouldReturn` ["protocol.json"]
   describe "Fact" do
     it "round-trips through JSON" do
       let fact = Fact Produced "stream" 3 "event" "writer/0" (ProcId "writer" 0 0) 1 2 3 KeyMap.empty

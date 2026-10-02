@@ -60,7 +60,7 @@ recordShardTimingCells check cells = do
             status = if held then Held else Violated,
             reason = Nothing,
             summary = if held then "Shard ownership invariant held" else "Shard ownership invariant failed",
-            counts = Map.singleton "snapshots" 1,
+            counts = Map.fromList [("snapshots", 1), ("examined", 1), ("violations", if held then 0 else 1)],
             parameters = object ["gapMillis" .= fmap (\duration -> realToFrac duration * (1000 :: Double)) gap],
             counterExamples = [],
             counterExamplesTruncated = False,

@@ -213,6 +213,7 @@ test-suite kenshou-keiro-test
     kiroku-store,
     shibuya-core,
     streamly-core,
+    temporary,
     text,
     time,
     uuid,

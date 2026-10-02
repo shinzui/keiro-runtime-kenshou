@@ -290,7 +290,7 @@ runModelCases context = withKirokuStore context \store -> do
       checkedAt <- getCurrentTime
       let selected = maybe [0 .. branches - 1] fst shrunk
           command = "kenshou run " <> renderScenarioId context.scenario <> " --seed " <> Text.pack (show (unSeed context.seed))
-          verdict = Verdict "model-based-occ-counterexample" "all-cases-linearizable" Contract Violated Nothing "A concurrent history is not explained by the stream model." (Map.fromList [("cases", fromIntegral cases), ("firstFailedCase", fromIntegral index)]) (object ["selectedBranches" .= selected]) [counterexample] False [] (Just (Replay (fromIntegral (unSeed context.seed)) branches selected command)) checkedAt 0
+          verdict = Verdict "model-based-occ-counterexample" "all-cases-linearizable" Contract Violated Nothing "A concurrent history is not explained by the stream model." (Map.fromList [("cases", fromIntegral cases), ("firstFailedCase", fromIntegral index), ("examined", fromIntegral cases), ("violations", fromIntegral (length failedCases))]) (object ["selectedBranches" .= selected]) [counterexample] False [] (Just (Replay (fromIntegral (unSeed context.seed)) branches selected command)) checkedAt 0
       _ <- writeVerdict (context.outDir </> "verdicts") (RunInfo context.runId context.scenario) verdict
       pure ()
     _ -> pure ()

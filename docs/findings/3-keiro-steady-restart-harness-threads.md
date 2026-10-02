@@ -164,3 +164,15 @@ local GHC 9.12.4 observation that finished threads remain in `listThreads`
 until collected. That observation explains a possible collection-timing
 contribution, not the owner or retained-object cause of the earlier workload.
 The finding remains investigating; default-GC attribution remains open.
+
+The clean four-hour default-collection outbox run, cell
+`01a0f938-eef5-7567-9383-ca0e059e5b85`, [sealed nested run](../verification/runs/keiro/2026/10/01a0f938-67a3-7207-a457-fcccd988b600.md),
+held all eight business checks over 288,202 unique messages and 240 restarts.
+Main Haskell threads were 142 and 164 in the first/last windows. Its bootstrap
+interval was -0.889 to 4.726 threads/hour, crossing the growth floor; the
+second-half slope was 1.101/hour. The unchanged policy therefore classifies
+this thread series as insufficient data, rather than a demonstrated leak or
+stable plateau. No post-major heap points were eligible; native bytes, OS
+threads, descriptors and connections were stable. Historical attribution stays
+open. Finding 50 separately qualifies the legacy verdict document schema;
+all sealed bytes and observations remain unchanged.
