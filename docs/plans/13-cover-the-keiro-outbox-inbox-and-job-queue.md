@@ -348,6 +348,30 @@ fixtures, the evidence ledger and CLI checks all pass.
 | `delegated-kafka-delivery-full-envelope-1` | [01a0fca8-e4ac-7080-8e46-92bed3d81a9d](../verification/runs/keiro/2026/10/01a0fca8-e4ac-7080-8e46-92bed3d81a9d.md) | [01a0fcb4-90e8-72f0-b463-1e1b8a3c9e32](../verification/attestations/2026/10/01a0fcb4-90e8-72f0-b463-1e1b8a3c9e32.md) |
 | `delegated-custom-full-envelope-1` | [01a0fca8-f079-7212-855b-2cc7f53c84dc](../verification/runs/keiro/2026/10/01a0fca8-f079-7212-855b-2cc7f53c84dc.md) | [01a0fcb5-5aa1-7363-ada1-20b65c33051f](../verification/attestations/2026/10/01a0fcb5-5aa1-7363-ada1-20b65c33051f.md) |
 
+### Poison and batch rollback acceptance
+
+Revision 2 strengthens `poison-accounting` with actual effect inserts before
+pure exceptions, SQL errors and condemnation. Permanently failing delivery
+must enter the handler three times and stop at its ceiling; two recovery
+failures roll back every effect, the succeeding third attempt leaves exactly
+one recovery effect, and redelivery adds neither an effect nor a handler call.
+Returned classifications, durable failed-row retention and completed-row GC
+remain checked. Invocation/effect observations are included in verdict
+parameters; this does not implement independent poison/batch VC-1 replay.
+
+An initial-zero sequence guard exposed [finding 51](../findings/51-inbox-handler-counter-counts-an-unused-sequence.md).
+The old `last_value` query returns one before any `nextval`. The repaired query
+uses `is_called` to distinguish zero invocations. The guard also applies to
+both transactional batch modes, making that scenario revision 2. Delegated
+poison/batch behavior is unchanged. The seven-arm durable PostgreSQL 18
+before matrix under `runs/ep13-poison-effects/before/` produces exactly the five
+expected initial-zero failures and two delegated passes. All seven arms under
+`runs/ep13-poison-effects/after/` pass. Each matrix passes 55 schema and 62
+artifact integrity checks. These dirty local controls do not change selected
+historical evidence counts.
+The full `nix develop -c just verify` gate passes, including 50 Keiro and
+52 CLI examples and strict validation of all 169 evidence concepts.
+
 ### Full-soak artifacts and repaired payload
 
 The full outbox result is [digest-linked](../verification/runs/keiro/2026/10/01a0f938-67a3-7207-a457-fcccd988b600.md)
@@ -427,6 +451,28 @@ up to five consecutive attempts and stops by 18:30 UTC. Its current state is
 
 ```bash
 kenshou cell resume --session .dev/ep13-inbox-full-counter-repair
+```
+
+The prepared follow-on queue diagnostic keeps the sealed full queue run's
+exact seed `8102429385822254`, workload, duration, dimensions and knobs, except
+`diagnose.major-gc-interval-ms=5000`. The generated plan seed was explicitly
+set to that prior run seed before submission. The repaired payload is the same
+clean `0eda7ac` bundle. This targets the missing full-duration heap evidence
+and fresh schema-valid artifacts; forced collection remains a diagnostic
+control, excluded from default-GC performance claims.
+
+The plan is `.dev/ep13-queue-full-counter-repair-gc-plan.json`, nested run
+`01a0fd67-a9cb-7001-9322-69251c14d682`. The bounded
+`.dev/sequence-queue-full-counter-repair-gc.py` waits for the inbox collector to
+verify and collect its result by 18:35 UTC, then submits the queue plan under
+a five-hour lease. It stops if that prerequisite fails and never replaces an
+existing queue session. Collection has five bounded consecutive retries and a
+23:15 UTC deadline. State is
+`.dev/ep13-queue-full-counter-repair-gc-state.json`; no queue diagnostic outcome
+is claimed. After submission, manual collection is:
+
+```bash
+kenshou cell resume --session .dev/ep13-queue-full-counter-repair-gc
 ```
 
 ### Queue lease SQL evidence and replay

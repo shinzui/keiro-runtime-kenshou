@@ -54,6 +54,7 @@ batchFastPathAndFallback :: Scenario
 batchFastPathAndFallback =
   envelopeRoundTrip
     { id = either (error . show) id (parseScenarioId "keiro/inbox/correctness/batch-fast-path-and-fallback"),
+      revision = 2,
       summary = "Checks one-transaction batch intake and isolated fallback after a poisoned handler.",
       knobs =
         [ KnobSpec (knobName "inbox.failure-mode") "Batch poison mode" KnobText (VText "pure-exception") (OneOf (VText "pure-exception" :| [VText "condemn"])) [VText "condemn"],
@@ -118,6 +119,7 @@ runTransactionalBatch context fixture = do
       runBatch events = runFixture (runInboxTransactionBatch Nothing 3 PreferIntegrationMessageId PersistFullEnvelope [(event, Nothing) | event <- events] handler) >>= either (fail . show) pure
   ensureEffectTable fixture
   _ <- runFixture (KirokuTransaction.runTransaction (Tx.sql "CREATE SEQUENCE IF NOT EXISTS kenshou_fx.poison_calls")) >>= either (fail . show) pure
+  initialCalls <- runFixture (KirokuTransaction.runTransaction (Tx.statement () poisonCallCountStatement)) >>= either (fail . show) pure
   enqueueInline fixture source [("clean-a", Just "key", 1), ("clean-b", Just "key", 2), ("good-c", Just "key", 3), ("poison", Just "key", 4), ("good-d", Just "key", 5)]
   events <- map (.event) <$> (runFixture (listOutbox source) >>= either (fail . show) pure)
   let byId name = case [event | event <- events, event.messageId == name] of
@@ -132,7 +134,8 @@ runTransactionalBatch context fixture = do
   rows <- runFixture (listInbox source) >>= either (fail . show) pure
   poisonCalls <- runFixture (KirokuTransaction.runTransaction (Tx.statement () poisonCallCountStatement)) >>= either (fail . show) pure
   let cells =
-        [ ("clean-batch-positional", cleanResults == [Right (InboxProcessed ()), Right (InboxProcessed ()), Right InboxDuplicate]),
+        [ ("handler-count-starts-at-zero", initialCalls == 0),
+          ("clean-batch-positional", cleanResults == [Right (InboxProcessed ()), Right (InboxProcessed ()), Right InboxDuplicate]),
           ("clean-batch-one-transaction", cleanTxnCount == (1 :: Int64)),
           ("fallback-isolates-poison", if condemning then fallbackResults == [Right (InboxProcessed ()), Right (InboxProcessed ()), Right (InboxProcessed ())] else case fallbackResults of [Right (InboxProcessed ()), Right (InboxHandlerFailed _ 1), Right (InboxProcessed ())] -> True; _ -> False),
           ("effects-once", all (\name -> length (filter (== name) effects) == 1) ["clean-a", "clean-b", "good-c", "good-d"] && length effects == 4),
@@ -401,6 +404,7 @@ poisonAccounting :: Scenario
 poisonAccounting =
   envelopeRoundTrip
     { id = either (error . show) id (parseScenarioId "keiro/inbox/correctness/poison-accounting"),
+      revision = 2,
       summary = "Checks retry ceiling, failure receipt retention, and recovery after two failed attempts.",
       knobs =
         [ KnobSpec (knobName "inbox.failure-mode") "Inbox handler failure mode" KnobText (VText "pure-exception") (OneOf (VText "pure-exception" :| [VText "sql-error", VText "condemn"])) [VText "sql-error", VText "condemn"],
@@ -453,10 +457,20 @@ runPoisonException context fixture = do
   let KeiroRunner runFixture = fixture.runner
       source = sourceName context "poison"
       poisonHandler :: IntegrationEvent -> Tx.Transaction ()
-      poisonHandler _ = pure $! error "synthetic poison"
+      poisonHandler event = do
+        _ <- Tx.statement () poisonCallStatement
+        Tx.statement event.messageId effectInsertStatement
+        pure $! error "synthetic poison"
       successHandler :: IntegrationEvent -> Tx.Transaction ()
-      successHandler _ = pure ()
+      successHandler event = do
+        _ <- Tx.statement () poisonCallStatement
+        Tx.statement event.messageId effectInsertStatement
       intake event handler = runFixture (runInboxTransactionWithRetries Nothing 3 PreferIntegrationMessageId event Nothing handler) >>= either (fail . show) pure
+      readCalls = runFixture (KirokuTransaction.runTransaction (Tx.statement () poisonCallCountStatement)) >>= either (fail . show) pure
+      readEffects = runFixture (KirokuTransaction.runTransaction (Tx.statement () effectReadStatement)) >>= either (fail . show) pure
+  ensureEffectTable fixture
+  _ <- runFixture (KirokuTransaction.runTransaction (Tx.sql "CREATE SEQUENCE IF NOT EXISTS kenshou_fx.poison_calls")) >>= either (fail . show) pure
+  initialCalls <- readCalls
   enqueueInline fixture source [("poison", Just "key", 1), ("recovery", Just "key", 2)]
   sourceRows <- runFixture (listOutbox source) >>= either (fail . show) pure
   let poison = case [row.event | row <- sourceRows, row.event.messageId == "poison"] of
@@ -466,9 +480,17 @@ runPoisonException context fixture = do
         [event] -> event
         _ -> error "recovery event missing"
   poisonResults <- sequence [intake poison poisonHandler | _ <- [1 .. 4 :: Int]]
+  poisonCalls <- readCalls
+  poisonEffects <- readEffects
   recoveryFailures <- sequence [intake recovery poisonHandler | _ <- [1 .. 2 :: Int]]
+  failedRecoveryCalls <- readCalls
+  failedRecoveryEffects <- readEffects
   recovered <- intake recovery successHandler
+  recoveredCalls <- readCalls
+  recoveredEffects <- readEffects
   duplicate <- intake recovery successHandler
+  duplicateCalls <- readCalls
+  duplicateEffects <- readEffects
   now <- getCurrentTime
   _ <- runFixture (garbageCollectCompleted 0 now) >>= either (fail . show) pure
   rows <- runFixture (listInbox source) >>= either (fail . show) pure
@@ -478,20 +500,29 @@ runPoisonException context fixture = do
         Right (InboxHandlerFailed _ actual) -> actual == attempt
         _ -> False
       cells =
-        [ ("failure-attempts", and (zipWith isFailed [1 .. 3] (take 3 poisonResults))),
+        [ ("handler-count-starts-at-zero", initialCalls == 0),
+          ("failure-attempts", length poisonResults == 4 && and (zipWith isFailed [1 .. 3] (take 3 poisonResults))),
           ("ceiling-stops-retry", case drop 3 poisonResults of [Right (InboxPreviouslyFailed _)] -> True; _ -> False),
+          ("ceiling-stops-handler", poisonCalls == 3),
+          ("failed-effects-roll-back", null poisonEffects && null failedRecoveryEffects),
           ("failed-row-survives-gc", case poisonRows of [row] -> row.status == InboxFailed && row.attemptCount == 3; _ -> False),
-          ("recovery-after-two-failures", and (zipWith isFailed [1, 2] recoveryFailures) && recovered == Right (InboxProcessed ()) && duplicate == Right InboxDuplicate && null recoveryRows)
+          ("recovery-after-two-failures", length recoveryFailures == 2 && and (zipWith isFailed [1, 2] recoveryFailures) && recovered == Right (InboxProcessed ()) && duplicate == Right InboxDuplicate && null recoveryRows),
+          ("recovery-effect-once", failedRecoveryCalls == 5 && recoveredCalls == 6 && duplicateCalls == 6 && recoveredEffects == ["recovery"] && duplicateEffects == ["recovery"])
         ]
-  recordCells context cells
+  recordMessagingCells
+    context
+    (Map.fromList [("handlerCalls", duplicateCalls), ("effects", fromIntegral (length duplicateEffects))])
+    (object ["initialCalls" .= initialCalls, "poisonCalls" .= poisonCalls, "failedRecoveryCalls" .= failedRecoveryCalls, "recoveredCalls" .= recoveredCalls, "duplicateCalls" .= duplicateCalls, "poisonEffects" .= poisonEffects, "failedRecoveryEffects" .= failedRecoveryEffects, "recoveredEffects" .= recoveredEffects, "duplicateEffects" .= duplicateEffects])
+    cells
 
 runPoisonSpecial :: RunContext -> FixtureEnv -> Text.Text -> IO ScenarioReport
 runPoisonSpecial context fixture mode = do
   let KeiroRunner runFixture = fixture.runner
       source = sourceName context ("poison-" <> mode)
       handler :: IntegrationEvent -> Tx.Transaction ()
-      handler _ = do
+      handler event = do
         _ <- Tx.statement () poisonCallStatement
+        Tx.statement event.messageId effectInsertStatement
         if mode == "condemn"
           then Tx.condemn
           else do
@@ -500,6 +531,7 @@ runPoisonSpecial context fixture mode = do
       intake event = runFixture (runInboxTransactionWithRetries Nothing 3 PreferIntegrationMessageId event Nothing handler)
   ensureEffectTable fixture
   _ <- runFixture (KirokuTransaction.runTransaction (Tx.sql "CREATE SEQUENCE IF NOT EXISTS kenshou_fx.poison_calls")) >>= either (fail . show) pure
+  initialCalls <- runFixture (KirokuTransaction.runTransaction (Tx.statement () poisonCallCountStatement)) >>= either (fail . show) pure
   enqueueInline fixture source [("poison", Just "key", 1)]
   events <- map (.event) <$> (runFixture (listOutbox source) >>= either (fail . show) pure)
   event <- case events of
@@ -521,13 +553,15 @@ runPoisonSpecial context fixture mode = do
             [ ("sql-error-has-no-completed-effect", noCompletion),
               ("sql-error-handler-attempted", calls == 1)
             ]
-  recordMessagingCells context (Map.fromList [("handlerCalls", calls), ("inboxRows", fromIntegral (length rows))]) (object ["failureMode" .= mode, "firstClassification" .= show first, "secondClassification" .= fmap show second]) cells
+  recordMessagingCells context (Map.fromList [("handlerCalls", calls), ("inboxRows", fromIntegral (length rows))]) (object ["failureMode" .= mode, "initialCalls" .= initialCalls, "effects" .= effects, "firstClassification" .= show first, "secondClassification" .= fmap show second]) (("handler-count-starts-at-zero", initialCalls == 0) : cells)
 
 poisonCallStatement :: Statement.Statement () Int64
 poisonCallStatement = Statement.preparable "SELECT nextval('kenshou_fx.poison_calls')" Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
 
 poisonCallCountStatement :: Statement.Statement () Int64
-poisonCallCountStatement = Statement.preparable "SELECT last_value FROM kenshou_fx.poison_calls" Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
+-- An unused sequence already exposes its start value; only is_called proves
+-- that a handler advanced it. The count survives a rolled-back transaction.
+poisonCallCountStatement = Statement.preparable "SELECT CASE WHEN is_called THEN last_value ELSE 0 END FROM kenshou_fx.poison_calls" Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
 
 poisonSqlErrorStatement :: Statement.Statement () Int64
 poisonSqlErrorStatement = Statement.preparable "SELECT (1 / 0)::bigint" Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))

@@ -651,7 +651,11 @@ replay. Earlier delegated records and inbox soaks retain their separate
 attestation limits.
 
 `poison-accounting` verifies the default exception path's three-attempt
-ceiling and retention of failed rows. With `inbox.failure-mode=condemn`, two
+ceiling and retention of failed rows. Revision 2 inserts effects before
+failing, counts invocations independently through a nontransactional sequence,
+and requires no failed-attempt effects, one recovered effect and no new handler
+call on redelivery. Its initial-zero guard distinguishes an unused sequence
+from a handler's first call; the same guard protects revision-2 batch checks. With `inbox.failure-mode=condemn`, two
 deliveries each report processed but roll back; a nontransactional sequence
 confirms that the handler ran twice, while no inbox row or effect remains. With
 `inbox.failure-mode=sql-error`, division by zero returns Keiro's
