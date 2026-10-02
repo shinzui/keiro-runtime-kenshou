@@ -412,8 +412,11 @@ policies; stop-the-line does not halt on a rejected row. The producer replay
 probe retains a rejected row through maintenance and zero-retention GC. An
 identical re-enqueue returns `ProducerDuplicateIdentical`, leaves the entire
 row unchanged, and does not add to the outbox backlog.
-The terminal-state probe has passed all four policies with constant and
-exponential backoff at 200 rows. The serialized-order probe passed all three
+The terminal-state probe's revision 2 uses policy-aware broker failure groups.
+All sixteen combinations of four policies, constant/exponential backoff and
+zero/seven keys pass at 200 rows with batch size 17. This repairs the local
+[best-effort fixture mismatch](../findings/52-outbox-best-effort-fixture-propagates-key-failures.md).
+The serialized-order probe passed all three
 ordered policies at 5,000 rows; its per-source broker callback stops dispatch
 after a source failure so later rows are never appended and then marked skipped.
 The `telemetry-contract` scenario publishes one successful, one rejected, and
@@ -544,7 +547,7 @@ and dead-tuple growth, and a process leak verdict. With GC off, the summary
 reports bytes per inserted row. A one-minute, two-message/second local smoke
 exercised seven restarts and passed its business checks; its leak verdict and
 workstation measurements are diagnostic only. The controlled twenty-minute
-reduced soak held its business/table checks but failed on main Haskell thread growth; the four-hour full soak remains open. A clean five-minute
+reduced soak held its business/table checks but failed on main Haskell thread growth; four-hour resource and artifact acceptance remains open. A clean five-minute
 alpha cell control passed all eight business checks after ten restarts, but
 its main-process Haskell thread count rose by ten and its heap probe lacked
 post-major samples. [Finding 3](../findings/3-keiro-steady-restart-harness-threads.md)
@@ -581,11 +584,12 @@ tuples, and process resources remain bounded. A one-minute local wiring smoke
 processed 71 fresh messages, suppressed all 71 early redeliveries, and
 reprocessed all 71 late redeliveries with 142 effects and no classification or
 GC errors. Its short heap verdict is diagnostic only. The clean twenty-minute reduced
-run passed, and the [four-hour full run](../verification/runs/keiro/2026/10/01a0f4f4-7b1a-7232-b0ab-f62d19abb0aa.md)
-now passed all eight checks over 28,821 fresh/early/late deliveries and 57,642
-effects with zero errors or pending rows. Table size/dead tuples stayed flat
-and all six bounded resource probes were stable. Independent Keiro verdict
-replay remains open; no benchmark comparison is inferred from soak metrics.
+run passed, and the [schema-valid four-hour full run](../verification/runs/keiro/2026/10/01a0fa97-bbd6-76a5-a7c0-03c6aa076562.md)
+passed all eight checks over 28,821 fresh/early/late deliveries and 57,642
+effects with zero errors or pending rows. Table size/dead tuples stayed bounded
+and all six resource probes were stable, including 472 eligible post-major
+heap samples. All 27 artifact checks and 11 schemas pass. Independent soak
+VC-1 replay remains open; no benchmark comparison is inferred from soak metrics.
 
 `intake-throughput` measures fresh and redelivered intake through the inbox
 table or delegated account-stream command receipts. It varies batch size,
@@ -727,8 +731,12 @@ DLQ or its archive. It also samples relation and dead-tuple growth and judges
 process resources. A one-minute local wiring smoke with maintenance on handled
 71 jobs and archived all 15 terminal jobs; all nine business checks held. The
 maintenance-off smoke also handled 71 jobs and retained exactly 15 active DLQ
-rows with none archived. Both short leak verdicts were inconclusive. Controlled
-reduced and full runs are still required.
+rows with none archived. Both short leak verdicts were inconclusive. The
+[reduced and full controls](../plans/13-cover-the-keiro-outbox-inbox-and-job-queue.md)
+have since held all nine business checks. The reduced forced-major-GC diagnostic
+passed resource acceptance; the default-collection full run lacks eligible heap
+samples and has legacy verdict schema defects. A repaired-payload full GC
+diagnostic is running; full resource and artifact acceptance remain open.
 
 The queue scenarios provision PGMQ through the harness migration and run
 Keiro's typed job API through its separate runtime pool.

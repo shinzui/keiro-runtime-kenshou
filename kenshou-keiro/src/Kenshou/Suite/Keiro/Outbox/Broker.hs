@@ -13,6 +13,7 @@ module Kenshou.Suite.Keiro.Outbox.Broker
     decide,
     publishCallback,
     publishScripted,
+    publishScriptedWithPolicy,
   )
 where
 
@@ -46,7 +47,7 @@ import Hasql.Session qualified as Session
 import Hasql.Statement qualified as Statement
 import Keiro.Inbox.Kafka qualified as InboxKafka
 import Keiro.Integration.Event (IntegrationEvent (..))
-import Keiro.Outbox (OutboxId, OutboxRow (..), PublishOutcome (..), PublishRejection, mkPublishRejection)
+import Keiro.Outbox (OrderingPolicy (..), OutboxId, OutboxRow (..), PublishOutcome (..), PublishRejection, mkPublishRejection)
 import Keiro.Outbox.Kafka (KafkaProducerRecord (..), outboxRowToKafkaRecord)
 
 data BrokerRecord = BrokerRecord
@@ -162,7 +163,12 @@ publishCallback :: (IOE :> es) => Broker -> BrokerModel -> FaultPlan -> PublishH
 publishCallback broker model plan = publishScripted broker model (decide plan)
 
 publishScripted :: (IOE :> es) => Broker -> BrokerModel -> (OutboxRow -> FaultDecision) -> PublishHook -> Text -> [OutboxRow] -> Eff es [(OutboxId, PublishOutcome)]
-publishScripted broker model choose hooks publisherName rows = liftIO do
+publishScripted = publishScriptedWithPolicy PerKeyHeadOfLine
+
+-- The synthetic callback must use the same failure grouping as the scenario.
+-- BestEffort handles each row independently, including rows sharing a key.
+publishScriptedWithPolicy :: (IOE :> es) => OrderingPolicy -> Broker -> BrokerModel -> (OutboxRow -> FaultDecision) -> PublishHook -> Text -> [OutboxRow] -> Eff es [(OutboxId, PublishOutcome)]
+publishScriptedWithPolicy policy broker model choose hooks publisherName rows = liftIO do
   hooks.beforeBrokerAppend rows
   threadDelay (max 0 model.invocationMicros)
   (_, outcomes) <- foldlM step (Map.empty, []) rows
@@ -170,7 +176,11 @@ publishScripted broker model choose hooks publisherName rows = liftIO do
   pure outcomes
   where
     step (failedGroups, outcomes) row = do
-      let group = maybe (Left row.outboxId) (\key -> Right (row.event.source, key)) row.event.key
+      let group = case policy of
+            BestEffort -> Left row.outboxId
+            PerSourceStream -> Right (row.event.source, Nothing)
+            StopTheLine -> Right ("", Nothing)
+            PerKeyHeadOfLine -> maybe (Left row.outboxId) (\key -> Right (row.event.source, Just key)) row.event.key
           decision = choose row
       if Map.member group failedGroups
         then pure (failedGroups, outcomes <> [(row.outboxId, PublishFailed "earlier record of this group failed")])

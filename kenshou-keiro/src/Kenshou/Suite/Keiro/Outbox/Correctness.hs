@@ -248,6 +248,7 @@ terminalStateMatrix :: Scenario
 terminalStateMatrix =
   failureSkipsSuccessors
     { id = either (error . show) id (parseScenarioId "keiro/outbox/correctness/terminal-state-matrix"),
+      revision = 2,
       summary = "Drains failed, rejected and poison integration events to their terminal states.",
       tier = TierStandard,
       knobs = map terminalKnob OutboxKnobs.outboxKnobs,
@@ -287,16 +288,9 @@ runTerminalStateMatrix context =
         hooks = Broker.PublishHook (const (pure ())) (const (pure ()))
     enqueueInline fixture source entries
     broker <- Broker.newBroker
-    let publishSource [] _ = pure []
-        publishSource (row : rest) blocked
-          | Set.member row.event.source blocked = publishSource rest blocked
-          | otherwise = do
-              outcome <- Broker.publishScripted broker model (Broker.decide plan) hooks "publisher" [row]
-              let failed = any (\(_, result) -> case result of PublishFailed _ -> True; _ -> False) outcome
-              (outcome <>) <$> publishSource rest (if failed then Set.insert row.event.source blocked else blocked)
-        callback claimed = do
+    let callback claimed = do
           started <- liftIO getCurrentTime
-          outcomes <- if options.orderingPolicy == PerSourceStream then publishSource claimed Set.empty else Broker.publishCallback broker model plan hooks "publisher" claimed
+          outcomes <- Broker.publishScriptedWithPolicy options.orderingPolicy broker model (Broker.decide plan) hooks "publisher" claimed
           ended <- liftIO getCurrentTime
           liftIO (modifyIORef' attemptLog (<> [CallbackAttempt started ended claimed outcomes]))
           pure outcomes

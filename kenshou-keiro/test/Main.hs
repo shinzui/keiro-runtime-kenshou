@@ -11,6 +11,7 @@ import Data.Proxy (Proxy (..))
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Data.Text.Encoding qualified as TextEncoding
 import Data.Time (NominalDiffTime, addUTCTime, getCurrentTime)
 import Data.Time.Clock (UTCTime)
 import Data.UUID qualified as UUID
@@ -23,8 +24,8 @@ import Keiki.Core (RegFile (..), step)
 import Keiro.Codec (Codec (..))
 import Keiro.EventStream (SnapshotPolicy (..))
 import Keiro.Inbox (KafkaDeliveryRef (..))
-import Keiro.Integration.Event (IntegrationContentType (..), IntegrationEvent (..))
-import Keiro.Outbox (BackoffSchedule (..), OutboxId (..), OutboxPublishConfigError (..), OutboxPublishOptions (..), OutboxRow (..), OutboxStatus (..))
+import Keiro.Integration.Event (IntegrationContentType (..), IntegrationEvent (..), headerMessageId)
+import Keiro.Outbox (BackoffSchedule (..), OrderingPolicy (..), OutboxId (..), OutboxPublishConfigError (..), OutboxPublishOptions (..), OutboxRow (..), OutboxStatus (..), PublishOutcome (..))
 import Keiro.ProcessManager (ProcessManager (..), deterministicCommandId)
 import Keiro.Router (deterministicRouterCommandId)
 import Keiro.Subscription.Shard.Worker (ShardedWorkerOptions (..))
@@ -397,6 +398,23 @@ main = hspec do
       length outcomes `shouldBe` 2
       records <- Broker.readBroker broker
       records `shouldBe` []
+    mapM_
+      ( \(policy, expected) ->
+          it ("uses the requested failure grouping: " <> show policy) do
+            now <- getCurrentTime
+            broker <- Broker.newBroker
+            let row index message key = (brokerRow now message key) {outboxId = OutboxId (UUID.fromWords 0 0 0 index)}
+                otherSource = row 4 "other-source" (Just "group")
+                rows = [row 1 "poison" (Just "group"), row 2 "same-key" (Just "group"), row 3 "other-key" (Just "other"), otherSource {event = otherSource.event {source = "other-source"}}]
+                choose item = if item.event.messageId == "poison" then Broker.AlwaysFail else Broker.Succeed
+                hooks = Broker.PublishHook (const (pure ())) (const (pure ()))
+            outcomes <- runEff (Broker.publishScriptedWithPolicy policy broker (Broker.BrokerModel 0 0 4) choose hooks "test" rows)
+            map fst outcomes `shouldBe` map (.outboxId) rows
+            [case outcome of { PublishSucceeded -> True; _ -> False } | (_, outcome) <- outcomes] `shouldBe` expected
+            records <- Broker.readBroker broker
+            map (lookup (TextEncoding.encodeUtf8 headerMessageId) . (.headers)) records `shouldBe` [Just (TextEncoding.encodeUtf8 row.event.messageId) | (row, True) <- zip rows expected]
+      )
+      [(BestEffort, [False, True, True, True]), (PerKeyHeadOfLine, [False, False, True, True]), (PerSourceStream, [False, False, False, True]), (StopTheLine, [False, False, False, False])]
     it "assigns offsets independently within every topic partition" do
       now <- getCurrentTime
       broker <- Broker.newBroker

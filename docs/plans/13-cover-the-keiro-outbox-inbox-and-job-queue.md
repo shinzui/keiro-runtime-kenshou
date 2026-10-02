@@ -756,6 +756,29 @@ builds, shared tests, released-cohort link proof, component graph, ADR and
 evidence validation, schemas, and live self-tests. A request for the contract's
 unsupported `metrics.otel-reader=none` is rejected before execution with exit 2.
 
+### Outbox terminal policy fixture repair
+
+The clean sixteen-arm sweep at `39f73ab` exposed [local finding 52](../findings/52-outbox-best-effort-fixture-propagates-key-failures.md):
+the synthetic callback propagated a poison failure to healthy same-key rows
+even under `BestEffort`. Fifteen arms passed, but the exponential/seven-key arm
+`01a0fdab-5460-70f7-8b21-7106d0ed8273` failed `every-row-terminal` and
+`poison-attempt-ceiling`. All original artifacts remain sealed and valid.
+A two-row witness reproduced the fixture mismatch without a database or
+runtime publisher. Terminal-state revision 2 now selects broker failure groups
+using the requested ordering policy. The healthy same-key witness succeeds;
+four regressions distinguish key, source, whole-batch and independent grouping.
+
+All sixteen repaired durable PostgreSQL 18 controls pass under
+`runs/ep13-outbox-terminal-controls-after/`, with 240 schema checks and 256
+artifact size/SHA-256 checks. The matrix covers all four policies, both backoff
+schedules, zero/seven keys, 200 rows and batch size 17 at seed
+`4252662818734786`. The nondefault batch/key combination exercises several
+same-key rows together. The Keiro suite passes 54 examples and the full
+`nix develop -c just verify` gate passes. These dirty local controls establish
+functional coverage; clean evidence and independent outbox VC-1 replay remain
+open. Existing fixture/oracle boundaries apply; no new architecture decision
+or upstream issue follows from this local repair.
+
 ### Remaining non-soak work
 
 Queue throughput revision 2 now implements bounded versus continuous-worker
@@ -872,10 +895,12 @@ as clean controlled comparisons.
 | Queue correctness | `runs/01a0d539-*` through `runs/01a0d53c-*`; FIFO run `runs/01a0d51b-71dc-72be-97b8-e8404c67590a` | Default sweep exited zero; eight direct passes, three scoped expected failures. |
 | Benchmarks | Outbox `runs/01a0d566-56e8-7179-93f1-5bf480c9119c`; inbox `runs/01a0d58e-f76a-739d-821a-c1983474427c`; queue `runs/01a0d571-c677-739f-bd01-9b72c804d995` | Representative durable runs reached benchmark grade; all seven identifiers emit artifacts. |
 | Comparison and overhead | `runs/keiro-producer-local-comparison.json`; `runs/overhead-outbox/overhead-01a0d579-3e04-740b-be98-63ee4c60addf/overhead-report.json`; `runs/overhead-queue/overhead-01a0d57b-8c4b-721b-b04d-08c1b3d43ac8/overhead-report.json` | Comparison inconclusive under sample policy; overhead reports have three valid blocks each. |
-| Full inbox soak | [Released four-hour run](../verification/runs/keiro/2026/10/01a0f4f4-7b1a-7232-b0ab-f62d19abb0aa.md) | All eight checks held; six bounded resource probes stable. Finding 50 qualifies the legacy verdict schema; independent VC-1 remains open. |
+| Full inbox soak | [Schema-valid four-hour run](../verification/runs/keiro/2026/10/01a0fa97-bbd6-76a5-a7c0-03c6aa076562.md) | All eight checks held; six bounded resource probes stable; all 11 schemas and 27 artifact checks pass. Independent soak VC-1 remains open. |
 | Telemetry | Inbox `runs/01a0d593-371a-772a-902b-6d5fa0c5a23f`; queue `runs/01a0d599-6794-76cf-9399-000ff650b6e1` | Enabled arms passed on durable PostgreSQL. Queue pre-handler job reached DLQ without a handler call or process span. |
 
 ## Surprises & Discoveries
+
+- (2026-10-02 UTC) The terminal-state policy sweep exposed a local callback/oracle mismatch under best-effort ordering. [Finding 52](../findings/52-outbox-best-effort-fixture-propagates-key-failures.md) records the isolated witness and policy-aware repair; all sixteen repaired controls pass.
 
 - (2026-10-02 UTC) Full outbox artifact validation exposed [finding 50](../findings/50-verdict-writers-omit-required-assertion-counters.md): shared verdict writers omitted required assertion counters. This is a local harness defect; intact digests and held business checks do not imply schema-valid artifacts. Producer repairs and an emission guard preserve outcomes, while existing sealed evidence retains its limitation.
 
