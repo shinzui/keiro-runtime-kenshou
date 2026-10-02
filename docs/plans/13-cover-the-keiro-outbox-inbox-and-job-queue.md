@@ -435,6 +435,22 @@ transaction/invocation counts and missing failed receipts.
 The full `nix develop -c just verify` gate passes, including all six mutation
 examples in the 66-example CLI suite. The 50-example Keiro suite also passes.
 
+
+The clean repeat at `39f73abfcff10d970a6e0cc4ef199579a32e0cad` passes all three
+batch controls, with all 30 schema and 33 artifact-integrity checks passing.
+The three digest-linked investigations have confirmed VC-1 attestations;
+all six evidence checks pass for each. Table-backed controls directly verify
+that the clean duplicate adds no handler invocation. Earlier batch records
+are not retroactively promoted to this coverage.
+Strict validation of all 184 evidence concepts, reproducible indexes, profile
+rejection fixtures and evidence ledger/CLI checks pass.
+
+| Batch mode | Clean run | Confirmed attestation |
+| --- | --- | --- |
+| `inbox-table-pure-exception` | [01a0fda9-ca87-7026-8e5d-aa6bf68b71b8](../verification/runs/keiro/2026/10/01a0fda9-ca87-7026-8e5d-aa6bf68b71b8.md) | [01a0fdaf-c573-7293-b7bb-08cac1d7e5b6](../verification/attestations/2026/10/01a0fdaf-c573-7293-b7bb-08cac1d7e5b6.md) |
+| `inbox-table-condemn` | [01a0fda9-d66f-75e2-a87a-a52d51fec730](../verification/runs/keiro/2026/10/01a0fda9-d66f-75e2-a87a-a52d51fec730.md) | [01a0fdb1-0abe-76eb-a230-900d6ce60f21](../verification/attestations/2026/10/01a0fdb1-0abe-76eb-a230-900d6ce60f21.md) |
+| `delegated-pure-exception` | [01a0fda9-e1c8-7757-85a3-f0ec3346b694](../verification/runs/keiro/2026/10/01a0fda9-e1c8-7757-85a3-f0ec3346b694.md) | [01a0fdb1-8dc7-7012-ad16-828781429ae8](../verification/attestations/2026/10/01a0fdb1-8dc7-7012-ad16-828781429ae8.md) |
+
 ### Full-soak artifacts and repaired payload
 
 The full outbox result is [digest-linked](../verification/runs/keiro/2026/10/01a0f938-67a3-7207-a457-fcccd988b600.md)
