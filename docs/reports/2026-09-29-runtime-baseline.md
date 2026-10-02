@@ -214,3 +214,5 @@ All 48 schemas and 71 artifacts pass, as do 62 Keiro examples and full repositor
 verification. The standard verification recipe now executes the Keiro package
 tests, which earlier runs invoked separately. This dirty revision-3 control
 adds no historical record or complete job-outcome replay claim.
+
+Queue job-outcome revision 4 now supports independent replay of all 43 checks. The durable exploratory capture passes 49 schema and 72 artifact checks, and eight mutation examples detect altered API, SQL, DLQ and timing evidence. Full verification passes 62 Keiro and 96 CLI examples. Clean publication is pending; historical revision-2/3 captures remain incomplete.

@@ -860,8 +860,7 @@ Drain context exposes the supplied headers, while worker context remains
 absent even when headers were supplied. `logs/queue-physical-outcomes.json`
 seals these observations and is checked against
 `schemas/kenshou.queue-physical-outcomes.v1.schema.json`. This artifact covers
-the physical-placement checks; it does not yet independently replay every
-outcome or timing check.
+the physical-placement checks and is one input to revision-4 replay.
 A thrown worker handler is redelivered after the one-second visibility timeout;
 the second delivery completes, leaving two observed handler effects and no
 source row.
@@ -877,8 +876,17 @@ read; a future-version job makes two deferred reads before the third read
 exhausts its budget. Its database read timestamps must preserve both rounded
 two-second delays. The wrappers preserve original identity, payload, headers,
 read count and enqueue timestamp. The 21 new checks bring the scenario to 43.
-`logs/queue-worker-outcomes.json` seals the new raw observations. Independent
-replay of the complete job-outcome scenario remains open.
+`logs/queue-worker-outcomes.json` seals the new raw observations.
+
+Revision 4 additionally seals API return counts, attempts, typed DLQ entries,
+group rows, and final worker SQL effects in `logs/queue-job-observations.json`.
+The CLI independently reconstructs all 43 checks from the three observation
+files without importing the scenario or its oracles. It requires revision 4,
+fixed fixture inputs and exactly one of each worker boundary case, then checks
+the result summary, failures and exit disposition. Mutations cover altered
+batch identities, decoded/raw DLQ disagreement, residual source rows, extra
+handler calls, missing cases and shortened retry intervals. Older captures
+remain incomplete because they lack the full observation set.
 
 `workers-survive-transient-polling-error` runs a continuous supervised job
 worker and terminates its PostgreSQL polling backend. The current released

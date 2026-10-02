@@ -8,8 +8,7 @@ maintainer: Nadeem Bitar
 build-type: Simple
 tested-with: ghc >=9.12 && <9.13
 extra-source-files:
-  test/fixtures/inbox-matrix-intake.json
-  test/fixtures/inbox-matrix-sql.json
+  test/fixtures/*.json
 
 common warnings
   ghc-options:

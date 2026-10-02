@@ -939,6 +939,29 @@ This dirty control adds no historical run record. Independent replay of the
 complete job-outcome scenario, clean revision-3 publication, broader worker
 fault modes and ordering controls remain open.
 
+### Complete queue outcome replay
+
+Job-outcome revision 4 seals the remaining API return counts, attempt lists,
+typed DLQ metadata, group-header rows, final source rows and independent SQL
+worker effect counts in `logs/queue-job-observations.json`. The CLI reconstructs
+all forty-three checks from that artifact plus the physical and worker captures.
+It links neither the scenario nor its oracle modules, requires the fixed inputs
+and all six worker cases exactly once, and checks the stored failure list,
+summary, blocking status and exit code. Earlier revision-2/3 captures retain
+their incomplete replay status.
+
+The durable PostgreSQL 18 control at seed `8102429385822254` passed all checks:
+`runs/ep13-queue-outcome-replay/01a0fe79-2c47-72e9-9d21-a54662d5b368`.
+All 49 schema and 72 artifact checks passed, and independent replay agrees with
+the complete result. Eight mutation examples cover drain counts and attempts,
+batch identity order, physical placement, typed/raw DLQ divergence, exact SQL
+worker effects, missing/duplicate cases, handler refusal and timestamp bounds.
+Full repository verification passes all 62 Keiro and 96 CLI examples, schemas,
+evidence checks, cohort/link checks and self-tests. The Keiro source archive
+now includes every JSON test fixture. Clean publication is the next evidence
+gate.
+No upstream defect or dependency pin changes.
+
 ### Drain and worker configuration rejection
 
 Consumption-config revision 2 tests ten invalid configurations through both

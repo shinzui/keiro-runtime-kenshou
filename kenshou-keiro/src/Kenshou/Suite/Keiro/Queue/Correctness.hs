@@ -48,7 +48,7 @@ jobOutcomeSemantics :: Scenario
 jobOutcomeSemantics =
   consumptionConfigRejections
     { id = either (error . show) id (parseScenarioId "keiro/queue/correctness/job-outcome-semantics"),
-      revision = 3,
+      revision = 4,
       summary = "Checks job outcomes, batch identity/order, preserved headers and pre-handler refusal.",
       tier = TierStandard,
       run = runJobOutcomeSemantics
@@ -243,7 +243,53 @@ runJobOutcomeSemantics context =
       pure (retryResult, deadResult, throwResult)
     workerDlq <- runJobEff runtime (readDlq workerDeadJob 1) >>= either (fail . show) pure
     boundaryCells <- workerBoundaryChecks context runtime preservedHeaders
+    workerDoneRows <- physicalRows False workerJob
+    workerRetryRows <- physicalRows False workerRetryJob
+    workerDeadRows <- physicalRows False workerDeadJob
+    workerThrowRows <- physicalRows False workerThrowJob
+    workerDoneEffects <- effectCount "worker-done"
+    workerRetryEffects <- effectCount "worker-retry"
+    workerDeadEffects <- effectCount "worker-dead"
+    workerThrowEffects <- effectCount "worker-throw"
+    groupRows <- physicalRows False groupJob
     let (_, (_, _, workerDeadId), _) = workerOutcomes
+        decodedEntry entry = object ["payload" .= either (const Null) String entry.originalPayload, "messageId" .= entry.originalMessageId, "enqueuedAt" .= entry.originalEnqueuedAt, "readCount" .= entry.readCount, "headers" .= entry.originalHeaders, "reason" .= entry.reason]
+        workerResult (observed, count, sent) = object ["terminal" .= observed, "progress" .= count, "sentId" .= either (const Nothing) (Just . unMessageId) sent]
+        (workerRetryResult, workerDeadResult, workerThrowResult) = workerOutcomes
+    encodeFile (context.outDir </> "logs/queue-job-observations.json") $
+      object
+        [ "schema" .= ("kenshou.queue-job-observations/v1" :: Text),
+          "done" .= [fromIntegral done, doneDepth],
+          "retryHandled" .= [retried, beforeRetry, afterRetry],
+          "retryAttempts" .= observedAttempts,
+          "delayHandled" .= [beforeDelay, afterDelay],
+          "dead" .= [fromIntegral dead, deadDepth],
+          "deadLetter" .= deadLettered,
+          "defaultHandled" .= [defaultFirst, defaultEarly, defaultSecond],
+          "defaultAttempts" .= observedDefaultAttempts,
+          "archive" .= [fromIntegral archiveHandled, archiveDepth, archived],
+          "batchDepth" .= batchDepth,
+          "groupHeaderCount" .= groupedHeaders,
+          "groupRows" .= groupRows,
+          "thrownHandled" .= [thrownResult, thrownEarly, thrownRedelivery],
+          "thrownDepth" .= thrownDepth,
+          "malformed" .= [fromIntegral malformedHandled, malformedDepth],
+          "malformedDead" .= malformedDead,
+          "futureHandled" .= [futureHandled, futureEarly, futureSecond],
+          "futureDepth" .= futureDepth,
+          "futureReadCounts" .= [futureFirstReadCount, futureSecondReadCount],
+          "workerDoneCompleted" .= fst workerDelivery,
+          "workerRetry" .= workerResult workerRetryResult,
+          "workerDead" .= workerResult workerDeadResult,
+          "workerThrow" .= workerResult workerThrowResult,
+          "workerDoneRows" .= workerDoneRows,
+          "workerRetryRows" .= workerRetryRows,
+          "workerDeadRows" .= workerDeadRows,
+          "workerThrowRows" .= workerThrowRows,
+          "workerEffects" .= [workerDoneEffects, workerRetryEffects, workerDeadEffects, workerThrowEffects],
+          "drainDecodedDlq" .= map decodedEntry drainDlq,
+          "workerDecodedDlq" .= map decodedEntry workerDlq
+        ]
     encodeFile (context.outDir </> "logs/queue-physical-outcomes.json") $
       object
         [ "schema" .= ("kenshou.queue-physical-outcomes/v1" :: Text),
@@ -279,15 +325,15 @@ runJobOutcomeSemantics context =
         ("archive-preserves-message", archivedRows == [(unMessageId archiveId, String "archive", Just preservedHeaders, 1)]),
         ("malformed-skips-handler", malformedHandlerCalls == 0),
         ("future-skips-handler", futureHandlerCalls == 0),
-        ("group-header", groupedHeaders == 1),
+        ("group-header", groupedHeaders == 1 && length [() | (_, _, Just headers, _) <- groupRows, (parseMaybe (withObject "group headers" (.: "x-pgmq-group")) headers :: Maybe Text) == Just "alpha"] == 1),
         ("drain-handler-exception", thrownResult == 0 && thrownEarly == 0 && thrownDepth == 1 && thrownRedelivery == 1),
         ("malformed-payload", malformedHandled == 1 && malformedDepth == 0 && fst malformedDead == 1 && Text.isPrefixOf "invalid_payload" (snd malformedDead)),
         ("future-payload-retries", futureHandled == 1 && futureEarly == 0 && futureDepth == 1 && futureFirstReadCount == 1 && futureSecond == 1 && futureSecondReadCount == 2),
-        ("worker-done-and-context", fst workerDelivery && snd workerDelivery == Just (Just 0, Nothing)),
-        ("worker-retry", case workerOutcomes of ((Just (effects, _), _, _), _, _) -> effects == 2; _ -> False),
-        ("worker-dead-letter", case workerOutcomes of (_, (Just (effects, (count, reason)), _, _), _) -> effects == 1 && count == 1 && Text.isPrefixOf "poison_pill" reason; _ -> False),
+        ("worker-done-and-context", fst workerDelivery && snd workerDelivery == Just (Just 0, Nothing) && null workerDoneRows && workerDoneEffects == 1),
+        ("worker-retry", null workerRetryRows && workerRetryEffects == 2 && case workerOutcomes of ((Just (effects, _), _, _), _, _) -> effects == 2; _ -> False),
+        ("worker-dead-letter", null workerDeadRows && workerDeadEffects == 1 && case workerOutcomes of (_, (Just (effects, (count, reason)), _, _), _) -> effects == 1 && count == 1 && Text.isPrefixOf "poison_pill" reason; _ -> False),
         ("worker-dead-wrapper", case workerDeadId of Right identifier -> Oracle.deadLetterPreserves "worker-dead" (unMessageId identifier) preservedHeaders workerDlq; Left _ -> False),
-        ("worker-handler-exception-redelivery", case workerOutcomes of (_, _, (Just (effects, _), _, _)) -> effects == 2; _ -> False)
+        ("worker-handler-exception-redelivery", null workerThrowRows && workerThrowEffects == 2 && case workerOutcomes of (_, _, (Just (effects, _), _, _)) -> effects == 2; _ -> False)
       ]
         <> boundaryCells
 

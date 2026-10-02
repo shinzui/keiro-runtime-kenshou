@@ -1,0 +1,152 @@
+{
+  "archive": [
+    1,
+    0,
+    1
+  ],
+  "batchDepth": 3,
+  "dead": [
+    1,
+    0
+  ],
+  "deadLetter": [
+    1,
+    "poison_pill: bad-work"
+  ],
+  "defaultAttempts": [
+    0,
+    1
+  ],
+  "defaultHandled": [
+    1,
+    0,
+    1
+  ],
+  "delayHandled": [
+    0,
+    1
+  ],
+  "done": [
+    1,
+    0
+  ],
+  "drainDecodedDlq": [
+    {
+      "enqueuedAt": "2026-10-02T21:15:50.133036Z",
+      "headers": {
+        "nested": {
+          "value": 1
+        },
+        "probe": "preserved"
+      },
+      "messageId": 1,
+      "payload": "dead",
+      "readCount": 1,
+      "reason": "poison_pill: bad-work"
+    }
+  ],
+  "futureDepth": 1,
+  "futureHandled": [
+    1,
+    0,
+    1
+  ],
+  "futureReadCounts": [
+    1,
+    2
+  ],
+  "groupHeaderCount": 1,
+  "groupRows": [
+    [
+      1,
+      "grouped",
+      {
+        "x-pgmq-group": "alpha"
+      },
+      0
+    ]
+  ],
+  "malformed": [
+    1,
+    0
+  ],
+  "malformedDead": [
+    1,
+    "invalid_payload: Error in $: parsing Text failed, expected String, but encountered Object"
+  ],
+  "retryAttempts": [
+    0,
+    1
+  ],
+  "retryHandled": [
+    1,
+    0,
+    1
+  ],
+  "schema": "kenshou.queue-job-observations/v1",
+  "thrownDepth": 1,
+  "thrownHandled": [
+    0,
+    0,
+    1
+  ],
+  "workerDead": {
+    "progress": 1,
+    "sentId": 1,
+    "terminal": [
+      1,
+      [
+        1,
+        "poison_pill: worker-poison"
+      ]
+    ]
+  },
+  "workerDeadRows": [],
+  "workerDecodedDlq": [
+    {
+      "enqueuedAt": "2026-10-02T21:15:54.879889Z",
+      "headers": {
+        "nested": {
+          "value": 1
+        },
+        "probe": "preserved"
+      },
+      "messageId": 1,
+      "payload": "worker-dead",
+      "readCount": 1,
+      "reason": "poison_pill: worker-poison"
+    }
+  ],
+  "workerDoneCompleted": true,
+  "workerDoneRows": [],
+  "workerEffects": [
+    1,
+    2,
+    1,
+    2
+  ],
+  "workerRetry": {
+    "progress": 2,
+    "sentId": 1,
+    "terminal": [
+      2,
+      [
+        0,
+        ""
+      ]
+    ]
+  },
+  "workerRetryRows": [],
+  "workerThrow": {
+    "progress": 2,
+    "sentId": 1,
+    "terminal": [
+      2,
+      [
+        0,
+        ""
+      ]
+    ]
+  },
+  "workerThrowRows": []
+}

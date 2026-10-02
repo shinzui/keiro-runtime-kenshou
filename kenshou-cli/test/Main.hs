@@ -23,6 +23,7 @@ import Kenshou.Cli.Attest.KeiroInbox (replayDelegatedCells, replayInboxCells)
 import Kenshou.Cli.Attest.KeiroLease (replayLeaseCells)
 import Kenshou.Cli.Attest.KeiroPoison (replayPoisonCells)
 import Kenshou.Cli.Attest.KeiroQueueConfig (replayQueueConfigCells)
+import Kenshou.Cli.Attest.KeiroQueueOutcomes (replayQueueOutcomeCells)
 import Kenshou.Cli.Attest.KeiroTerminal (replayTerminalCells)
 import Kenshou.Cli.Cohort (resolveDefaultCohortIdentity)
 import Kenshou.Cli.Version (appVersionWithGit)
@@ -60,6 +61,73 @@ readInboxFixture path = do
 
 main :: IO ()
 main = hspec do
+  describe "independent queue outcome replay" do
+    let loadFixture = Aeson.eitherDecodeFileStrict' "test/fixtures/queue-job-outcomes.json" >>= either fail pure
+        replace key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)
+        replace _ _ value = value
+        modify key change raw = maybe raw (\value -> replace key (change value) raw) (jsonField key raw)
+        values (Aeson.Array entries) = toList entries
+        values _ = []
+        mapValues change = Aeson.toJSON . map change . values
+        replay raw = case (jsonField "job" raw, jsonField "physical" raw, jsonField "workers" raw) of
+          (Just job, Just physical, Just workers) -> replayQueueOutcomeCells job physical workers
+          _ -> Left "missing fixture section"
+        failures = fmap (map fst . filter (not . snd)) . replay
+        detects label raw = failures raw `shouldSatisfy` either (const False) (elem label)
+        modifyArm name change = modify "workers" (modify "arms" (mapValues (\arm -> if jsonField "case" arm == Just (Aeson.String name) then change arm else arm)))
+        empty = Aeson.toJSON ([] :: [Value])
+    it "reconstructs all forty-three checks without importing scenario oracles" do
+      raw <- loadFixture
+      replay raw `shouldSatisfy` either (const False) (\cells -> length cells == 43 && all snd cells)
+    it "detects altered drain results, attempts and visibility observations" do
+      raw <- loadFixture
+      forM_ [("done", "done-deletes"), ("retryHandled", "retry-delay-and-attempt"), ("retryAttempts", "retry-delay-and-attempt"), ("delayHandled", "enqueue-delay"), ("dead", "dead-letter"), ("defaultHandled", "default-retry-delay"), ("defaultAttempts", "default-retry-delay"), ("archive", "archive-when-dlq-disabled"), ("thrownHandled", "drain-handler-exception"), ("malformed", "malformed-payload"), ("futureHandled", "future-payload-retries"), ("futureReadCounts", "future-payload-retries")] \(key, label) ->
+        detects label (modify "job" (replace key empty) raw)
+    it "binds batch identities, group headers and archived data to physical rows" do
+      raw <- loadFixture
+      detects "batch-id-order-and-payloads" (modify "physical" (modify "batchReturnedIds" (Aeson.toJSON . reverse . values)) raw)
+      detects "batch-ids-and-rows" (modify "job" (replace "batchDepth" (Aeson.Number 2)) raw)
+      detects "archive-preserves-message" (modify "physical" (replace "archiveRows" empty) raw)
+      detects "group-header" (modify "job" (replace "groupRows" empty) raw)
+    it "checks decoded DLQ entries separately from raw wrappers and handler contexts" do
+      raw <- loadFixture
+      forM_ [("drainDecodedDlq", "drain-dead-wrapper"), ("workerDecodedDlq", "worker-dead-wrapper")] \(key, label) ->
+        forM_ ["messageId", "payload", "headers", "readCount", "reason", "enqueuedAt"] \attribute ->
+          detects label (modify "job" (modify key (mapValues (replace attribute Aeson.Null))) raw)
+      forM_ [("drainDeadEntries", "drain-dead-wrapper"), ("workerDeadEntries", "worker-dead-wrapper")] \(key, label) ->
+        detects label (modify "physical" (modify key (mapValues (replace "original_message_id" (Aeson.Number (-1))))) raw)
+      detects "drain-context-preserves-headers" (modify "physical" (replace "deadContextHeaders" empty) raw)
+      detects "worker-done-and-context" (modify "physical" (replace "workerContext" Aeson.Null) raw)
+      detects "malformed-skips-handler" (modify "physical" (replace "malformedHandlerCalls" (Aeson.Number 1)) raw)
+      detects "future-skips-handler" (modify "physical" (replace "futureHandlerCalls" (Aeson.Number 1)) raw)
+    it "requires source queues empty and SQL effects exact after worker completion" do
+      raw <- loadFixture
+      forM_ [("workerDoneRows", "worker-done-and-context"), ("workerRetryRows", "worker-retry"), ("workerDeadRows", "worker-dead-letter"), ("workerThrowRows", "worker-handler-exception-redelivery")] \(key, label) ->
+        detects label (modify "job" (replace key (Aeson.toJSON [object []])) raw)
+      forM_ ["worker-done-and-context", "worker-retry", "worker-dead-letter", "worker-handler-exception-redelivery"] \label ->
+        detects label (modify "job" (replace "workerEffects" (Aeson.toJSON ([0, 0, 0, 0] :: [Int]))) raw)
+    it "rejects missing or duplicated worker cases and altered fixture inputs" do
+      raw <- loadFixture
+      let rejected = either (const True) (const False)
+      failures (modify "workers" (replace "arms" empty) raw) `shouldSatisfy` rejected
+      failures (modify "workers" (modify "arms" (\items -> Aeson.toJSON (take 1 (values items) <> values items))) raw) `shouldSatisfy` rejected
+      failures (modify "physical" (replace "batchPayloads" empty) raw) `shouldSatisfy` rejected
+      failures (modify "job" (replace "schema" (Aeson.String "unknown")) raw) `shouldSatisfy` rejected
+    it "detects unfinished workers, stray handler entry and wrong placement in every arm" do
+      raw <- loadFixture
+      forM_ ["retry", "default", "archive", "malformed", "future", "zero"] \name -> do
+        detects ("worker-" <> name <> "-completed") (modifyArm name (replace "completed" (Aeson.Bool False)) raw)
+        detects ("worker-" <> name <> "-physical-placement") (modifyArm name (replace "mainRows" (Aeson.toJSON [object []])) raw)
+        let changedCalls = if name `elem` ["malformed", "future", "zero"] then Aeson.toJSON [object []] else empty
+        detects ("worker-" <> name <> "-handler-context") (modifyArm name (replace "deliveries" changedCalls) raw)
+      detects "worker-archive-physical-placement" (modifyArm "archive" (replace "archiveRows" empty) raw)
+      forM_ ["malformed", "future", "zero"] \name ->
+        detects ("worker-" <> name <> "-physical-placement") (modifyArm name (modify "dlqRows" (mapValues (modify "message" (replace "read_count" (Aeson.Number 0))))) raw)
+    it "recomputes fractional delay bounds and future-version deferral from timestamps" do
+      raw <- loadFixture
+      forM_ ["retry", "default"] \name ->
+        detects ("worker-" <> name <> "-fractional-delay-rounded-up") (modifyArm name (modify "deliveries" (mapValues (replace "at" (Aeson.String "2026-10-02T00:00:00Z")))) raw)
+      detects "worker-future-deferred-before-ceiling" (modifyArm "future" (replace "readSnapshots" empty) raw)
   describe "independent queue configuration replay" do
     let loadFixture = Aeson.eitherDecodeFileStrict' "test/fixtures/queue-config-rejections.json" >>= either fail pure
         replay = fmap (map fst . filter (not . snd)) . replayQueueConfigCells

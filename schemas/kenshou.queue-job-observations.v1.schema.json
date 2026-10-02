@@ -1,0 +1,515 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/kenshou.queue-job-observations.v1.schema.json",
+  "title": "Queue job API and SQL observations v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "done",
+    "retryHandled",
+    "delayHandled",
+    "dead",
+    "defaultHandled",
+    "archive",
+    "thrownHandled",
+    "malformed",
+    "futureHandled",
+    "futureReadCounts",
+    "workerEffects",
+    "retryAttempts",
+    "defaultAttempts",
+    "batchDepth",
+    "groupHeaderCount",
+    "thrownDepth",
+    "futureDepth",
+    "deadLetter",
+    "malformedDead",
+    "groupRows",
+    "workerDoneRows",
+    "workerRetryRows",
+    "workerDeadRows",
+    "workerThrowRows",
+    "workerRetry",
+    "workerDead",
+    "workerThrow",
+    "drainDecodedDlq",
+    "workerDecodedDlq",
+    "workerDoneCompleted"
+  ],
+  "properties": {
+    "schema": {
+      "const": "kenshou.queue-job-observations/v1"
+    },
+    "done": {
+      "type": "array",
+      "items": {
+        "type": "integer"
+      }
+    },
+    "retryHandled": {
+      "type": "array",
+      "items": {
+        "type": "integer"
+      }
+    },
+    "delayHandled": {
+      "type": "array",
+      "items": {
+        "type": "integer"
+      }
+    },
+    "dead": {
+      "type": "array",
+      "items": {
+        "type": "integer"
+      }
+    },
+    "defaultHandled": {
+      "type": "array",
+      "items": {
+        "type": "integer"
+      }
+    },
+    "archive": {
+      "type": "array",
+      "items": {
+        "type": "integer"
+      }
+    },
+    "thrownHandled": {
+      "type": "array",
+      "items": {
+        "type": "integer"
+      }
+    },
+    "malformed": {
+      "type": "array",
+      "items": {
+        "type": "integer"
+      }
+    },
+    "futureHandled": {
+      "type": "array",
+      "items": {
+        "type": "integer"
+      }
+    },
+    "futureReadCounts": {
+      "type": "array",
+      "items": {
+        "type": "integer"
+      }
+    },
+    "workerEffects": {
+      "type": "array",
+      "items": {
+        "type": "integer"
+      }
+    },
+    "retryAttempts": {
+      "type": "array",
+      "items": {
+        "type": [
+          "integer",
+          "null"
+        ]
+      }
+    },
+    "defaultAttempts": {
+      "type": "array",
+      "items": {
+        "type": [
+          "integer",
+          "null"
+        ]
+      }
+    },
+    "batchDepth": {
+      "type": "integer"
+    },
+    "groupHeaderCount": {
+      "type": "integer"
+    },
+    "thrownDepth": {
+      "type": "integer"
+    },
+    "futureDepth": {
+      "type": "integer"
+    },
+    "deadLetter": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "string"
+        }
+      ],
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "malformedDead": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "string"
+        }
+      ],
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "groupRows": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "prefixItems": [
+          {
+            "type": "integer"
+          },
+          {},
+          {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          {
+            "type": "integer"
+          }
+        ],
+        "minItems": 4,
+        "maxItems": 4
+      }
+    },
+    "workerDoneRows": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "prefixItems": [
+          {
+            "type": "integer"
+          },
+          {},
+          {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          {
+            "type": "integer"
+          }
+        ],
+        "minItems": 4,
+        "maxItems": 4
+      }
+    },
+    "workerRetryRows": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "prefixItems": [
+          {
+            "type": "integer"
+          },
+          {},
+          {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          {
+            "type": "integer"
+          }
+        ],
+        "minItems": 4,
+        "maxItems": 4
+      }
+    },
+    "workerDeadRows": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "prefixItems": [
+          {
+            "type": "integer"
+          },
+          {},
+          {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          {
+            "type": "integer"
+          }
+        ],
+        "minItems": 4,
+        "maxItems": 4
+      }
+    },
+    "workerThrowRows": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "prefixItems": [
+          {
+            "type": "integer"
+          },
+          {},
+          {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          {
+            "type": "integer"
+          }
+        ],
+        "minItems": 4,
+        "maxItems": 4
+      }
+    },
+    "workerRetry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "terminal",
+        "progress",
+        "sentId"
+      ],
+      "properties": {
+        "terminal": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ],
+                  "minItems": 2,
+                  "maxItems": 2
+                }
+              ],
+              "minItems": 2,
+              "maxItems": 2
+            }
+          ]
+        },
+        "progress": {
+          "type": "integer"
+        },
+        "sentId": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      }
+    },
+    "workerDead": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "terminal",
+        "progress",
+        "sentId"
+      ],
+      "properties": {
+        "terminal": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ],
+                  "minItems": 2,
+                  "maxItems": 2
+                }
+              ],
+              "minItems": 2,
+              "maxItems": 2
+            }
+          ]
+        },
+        "progress": {
+          "type": "integer"
+        },
+        "sentId": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      }
+    },
+    "workerThrow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "terminal",
+        "progress",
+        "sentId"
+      ],
+      "properties": {
+        "terminal": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ],
+                  "minItems": 2,
+                  "maxItems": 2
+                }
+              ],
+              "minItems": 2,
+              "maxItems": 2
+            }
+          ]
+        },
+        "progress": {
+          "type": "integer"
+        },
+        "sentId": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      }
+    },
+    "drainDecodedDlq": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "payload",
+          "messageId",
+          "enqueuedAt",
+          "readCount",
+          "headers",
+          "reason"
+        ],
+        "properties": {
+          "payload": {},
+          "messageId": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "enqueuedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "readCount": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "headers": {},
+          "reason": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "workerDecodedDlq": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "payload",
+          "messageId",
+          "enqueuedAt",
+          "readCount",
+          "headers",
+          "reason"
+        ],
+        "properties": {
+          "payload": {},
+          "messageId": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "enqueuedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "readCount": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "headers": {},
+          "reason": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "workerDoneCompleted": {
+      "type": "boolean"
+    }
+  }
+}

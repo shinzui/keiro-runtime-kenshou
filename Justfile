@@ -73,6 +73,7 @@ schemas-check:
     check-jsonschema --schemafile schemas/kenshou.cohort-identity.v1.schema.json kenshou-core/test/fixtures/cohort-identity.golden.json
     check-jsonschema --schemafile schemas/kenshou.queue-lease-observations.v1.schema.json kenshou-cli/test/fixtures/queue-lease-observations.json
     check-jsonschema --schemafile schemas/kenshou.queue-physical-outcomes.v1.schema.json kenshou-keiro/test/fixtures/queue-physical-outcomes.json
+    check-jsonschema --schemafile schemas/kenshou.queue-job-observations.v1.schema.json kenshou-keiro/test/fixtures/queue-job-observations.json
     check-jsonschema --schemafile schemas/kenshou.queue-worker-outcomes.v1.schema.json kenshou-keiro/test/fixtures/queue-worker-outcomes.json
     check-jsonschema --schemafile schemas/kenshou.queue-config-rejections.v1.schema.json kenshou-keiro/test/fixtures/queue-config-rejections.json kenshou-cli/test/fixtures/queue-config-rejections.json
     check-jsonschema --schemafile schemas/kenshou.inbox-matrix-sql.v1.schema.json kenshou-keiro/test/fixtures/inbox-matrix-sql.json

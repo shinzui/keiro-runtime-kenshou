@@ -1,0 +1,606 @@
+{
+  "job": {
+    "archive": [
+      1,
+      0,
+      1
+    ],
+    "batchDepth": 3,
+    "dead": [
+      1,
+      0
+    ],
+    "deadLetter": [
+      1,
+      "poison_pill: bad-work"
+    ],
+    "defaultAttempts": [
+      0,
+      1
+    ],
+    "defaultHandled": [
+      1,
+      0,
+      1
+    ],
+    "delayHandled": [
+      0,
+      1
+    ],
+    "done": [
+      1,
+      0
+    ],
+    "drainDecodedDlq": [
+      {
+        "enqueuedAt": "2026-10-02T21:15:50.133036Z",
+        "headers": {
+          "nested": {
+            "value": 1
+          },
+          "probe": "preserved"
+        },
+        "messageId": 1,
+        "payload": "dead",
+        "readCount": 1,
+        "reason": "poison_pill: bad-work"
+      }
+    ],
+    "futureDepth": 1,
+    "futureHandled": [
+      1,
+      0,
+      1
+    ],
+    "futureReadCounts": [
+      1,
+      2
+    ],
+    "groupHeaderCount": 1,
+    "groupRows": [
+      [
+        1,
+        "grouped",
+        {
+          "x-pgmq-group": "alpha"
+        },
+        0
+      ]
+    ],
+    "malformed": [
+      1,
+      0
+    ],
+    "malformedDead": [
+      1,
+      "invalid_payload: Error in $: parsing Text failed, expected String, but encountered Object"
+    ],
+    "retryAttempts": [
+      0,
+      1
+    ],
+    "retryHandled": [
+      1,
+      0,
+      1
+    ],
+    "schema": "kenshou.queue-job-observations/v1",
+    "thrownDepth": 1,
+    "thrownHandled": [
+      0,
+      0,
+      1
+    ],
+    "workerDead": {
+      "progress": 1,
+      "sentId": 1,
+      "terminal": [
+        1,
+        [
+          1,
+          "poison_pill: worker-poison"
+        ]
+      ]
+    },
+    "workerDeadRows": [],
+    "workerDecodedDlq": [
+      {
+        "enqueuedAt": "2026-10-02T21:15:54.879889Z",
+        "headers": {
+          "nested": {
+            "value": 1
+          },
+          "probe": "preserved"
+        },
+        "messageId": 1,
+        "payload": "worker-dead",
+        "readCount": 1,
+        "reason": "poison_pill: worker-poison"
+      }
+    ],
+    "workerDoneCompleted": true,
+    "workerDoneRows": [],
+    "workerEffects": [
+      1,
+      2,
+      1,
+      2
+    ],
+    "workerRetry": {
+      "progress": 2,
+      "sentId": 1,
+      "terminal": [
+        2,
+        [
+          0,
+          ""
+        ]
+      ]
+    },
+    "workerRetryRows": [],
+    "workerThrow": {
+      "progress": 2,
+      "sentId": 1,
+      "terminal": [
+        2,
+        [
+          0,
+          ""
+        ]
+      ]
+    },
+    "workerThrowRows": []
+  },
+  "physical": {
+    "archivePayload": "archive",
+    "archiveReturnedId": 1,
+    "archiveRows": [
+      [
+        1,
+        "archive",
+        {
+          "nested": {
+            "value": 1
+          },
+          "probe": "preserved"
+        },
+        1
+      ]
+    ],
+    "batchPayloads": [
+      "one",
+      "two",
+      "three"
+    ],
+    "batchReturnedIds": [
+      1,
+      2,
+      3
+    ],
+    "batchRows": [
+      [
+        1,
+        "one",
+        null,
+        0
+      ],
+      [
+        2,
+        "two",
+        null,
+        0
+      ],
+      [
+        3,
+        "three",
+        null,
+        0
+      ]
+    ],
+    "deadContextHeaders": [
+      {
+        "nested": {
+          "value": 1
+        },
+        "probe": "preserved"
+      }
+    ],
+    "deadPayload": "dead",
+    "deadReturnedId": 1,
+    "drainDeadEntries": [
+      {
+        "dead_letter_reason": "poison_pill: bad-work",
+        "dead_letter_reason_code": "poison_pill",
+        "dead_letter_reason_detail": "bad-work",
+        "last_read_at": "2026-10-02T21:15:51.342415Z",
+        "original_enqueued_at": "2026-10-02T21:15:50.133036Z",
+        "original_headers": {
+          "nested": {
+            "value": 1
+          },
+          "probe": "preserved"
+        },
+        "original_message": "dead",
+        "original_message_id": 1,
+        "read_count": 1
+      }
+    ],
+    "futureHandlerCalls": 0,
+    "malformedHandlerCalls": 0,
+    "schema": "kenshou.queue-physical-outcomes/v1",
+    "sentHeaders": {
+      "nested": {
+        "value": 1
+      },
+      "probe": "preserved"
+    },
+    "workerContext": {
+      "attempt": 0,
+      "headers": null
+    },
+    "workerDeadEntries": [
+      {
+        "dead_letter_reason": "poison_pill: worker-poison",
+        "dead_letter_reason_code": "poison_pill",
+        "dead_letter_reason_detail": "worker-poison",
+        "last_read_at": "2026-10-02T21:15:54.885Z",
+        "original_enqueued_at": "2026-10-02T21:15:54.879889Z",
+        "original_headers": {
+          "nested": {
+            "value": 1
+          },
+          "probe": "preserved"
+        },
+        "original_message": "worker-dead",
+        "original_message_id": 1,
+        "read_count": 1
+      }
+    ],
+    "workerDeadPayload": "worker-dead",
+    "workerDeadReturnedId": 1
+  },
+  "workers": {
+    "arms": [
+      {
+        "archiveRows": [],
+        "case": "retry",
+        "completed": true,
+        "deliveries": [
+          {
+            "at": "2026-10-02T14:15:55.396074-07:00",
+            "attempt": 0,
+            "headers": null,
+            "payload": "retry",
+            "queue": "kenshou-01a0fe79-boundary-retry"
+          },
+          {
+            "at": "2026-10-02T14:15:57.445202-07:00",
+            "attempt": 1,
+            "headers": null,
+            "payload": "retry",
+            "queue": "kenshou-01a0fe79-boundary-retry"
+          }
+        ],
+        "dlqRows": [],
+        "headers": {
+          "nested": {
+            "value": 1
+          },
+          "probe": "preserved"
+        },
+        "mainRows": [],
+        "messageId": 1,
+        "payload": "retry",
+        "queue": "kenshou-01a0fe79-boundary-retry",
+        "readSnapshots": [
+          [
+            {
+              "lastReadAt": null,
+              "messageId": 1,
+              "readCount": 0,
+              "visibleAt": "2026-10-02T14:15:55.347391-07:00"
+            }
+          ],
+          [
+            {
+              "lastReadAt": "2026-10-02T14:15:55.393258-07:00",
+              "messageId": 1,
+              "readCount": 1,
+              "visibleAt": "2026-10-02T14:15:57.39783-07:00"
+            }
+          ],
+          []
+        ]
+      },
+      {
+        "archiveRows": [],
+        "case": "default",
+        "completed": true,
+        "deliveries": [
+          {
+            "at": "2026-10-02T14:15:57.514032-07:00",
+            "attempt": 0,
+            "headers": null,
+            "payload": "default",
+            "queue": "kenshou-01a0fe79-boundary-default"
+          },
+          {
+            "at": "2026-10-02T14:15:59.566064-07:00",
+            "attempt": 1,
+            "headers": null,
+            "payload": "default",
+            "queue": "kenshou-01a0fe79-boundary-default"
+          }
+        ],
+        "dlqRows": [],
+        "headers": {
+          "nested": {
+            "value": 1
+          },
+          "probe": "preserved"
+        },
+        "mainRows": [],
+        "messageId": 1,
+        "payload": "default",
+        "queue": "kenshou-01a0fe79-boundary-default",
+        "readSnapshots": [
+          [
+            {
+              "lastReadAt": null,
+              "messageId": 1,
+              "readCount": 0,
+              "visibleAt": "2026-10-02T14:15:57.464609-07:00"
+            }
+          ],
+          [
+            {
+              "lastReadAt": "2026-10-02T14:15:57.511188-07:00",
+              "messageId": 1,
+              "readCount": 1,
+              "visibleAt": "2026-10-02T14:15:59.515669-07:00"
+            }
+          ],
+          []
+        ]
+      },
+      {
+        "archiveRows": [
+          {
+            "headers": {
+              "nested": {
+                "value": 1
+              },
+              "probe": "preserved"
+            },
+            "message": "archive",
+            "messageId": 1,
+            "readCount": 1
+          }
+        ],
+        "case": "archive",
+        "completed": true,
+        "deliveries": [
+          {
+            "at": "2026-10-02T14:15:59.64765-07:00",
+            "attempt": 0,
+            "headers": null,
+            "payload": "archive",
+            "queue": "kenshou-01a0fe79-boundary-archive"
+          }
+        ],
+        "dlqRows": [],
+        "headers": {
+          "nested": {
+            "value": 1
+          },
+          "probe": "preserved"
+        },
+        "mainRows": [],
+        "messageId": 1,
+        "payload": "archive",
+        "queue": "kenshou-01a0fe79-boundary-archive",
+        "readSnapshots": [
+          [
+            {
+              "lastReadAt": null,
+              "messageId": 1,
+              "readCount": 0,
+              "visibleAt": "2026-10-02T14:15:59.596827-07:00"
+            }
+          ],
+          []
+        ]
+      },
+      {
+        "archiveRows": [],
+        "case": "malformed",
+        "completed": true,
+        "deliveries": [],
+        "dlqRows": [
+          {
+            "headers": {
+              "nested": {
+                "value": 1
+              },
+              "probe": "preserved"
+            },
+            "message": {
+              "dead_letter_reason": "invalid_payload: Error in $: parsing Text failed, expected String, but encountered Object",
+              "dead_letter_reason_code": "invalid_payload",
+              "dead_letter_reason_detail": "Error in $: parsing Text failed, expected String, but encountered Object",
+              "last_read_at": "2026-10-02T21:15:59.717728Z",
+              "original_enqueued_at": "2026-10-02T21:15:59.672252Z",
+              "original_headers": {
+                "nested": {
+                  "value": 1
+                },
+                "probe": "preserved"
+              },
+              "original_message": {
+                "boundary": "malformed"
+              },
+              "original_message_id": 1,
+              "read_count": 1
+            },
+            "messageId": 1,
+            "readCount": 0
+          }
+        ],
+        "headers": {
+          "nested": {
+            "value": 1
+          },
+          "probe": "preserved"
+        },
+        "mainRows": [],
+        "messageId": 1,
+        "payload": {
+          "boundary": "malformed"
+        },
+        "queue": "kenshou-01a0fe79-boundary-malformed",
+        "readSnapshots": [
+          [
+            {
+              "lastReadAt": null,
+              "messageId": 1,
+              "readCount": 0,
+              "visibleAt": "2026-10-02T14:15:59.672367-07:00"
+            }
+          ],
+          []
+        ]
+      },
+      {
+        "archiveRows": [],
+        "case": "future",
+        "completed": true,
+        "deliveries": [],
+        "dlqRows": [
+          {
+            "headers": {
+              "nested": {
+                "value": 1
+              },
+              "probe": "preserved"
+            },
+            "message": {
+              "dead_letter_reason": "max_retries_exceeded",
+              "dead_letter_reason_code": "max_retries_exceeded",
+              "dead_letter_reason_detail": null,
+              "last_read_at": "2026-10-02T21:16:03.89417Z",
+              "original_enqueued_at": "2026-10-02T21:15:59.746227Z",
+              "original_headers": {
+                "nested": {
+                  "value": 1
+                },
+                "probe": "preserved"
+              },
+              "original_message": {
+                "boundary": "future"
+              },
+              "original_message_id": 1,
+              "read_count": 3
+            },
+            "messageId": 1,
+            "readCount": 0
+          }
+        ],
+        "headers": {
+          "nested": {
+            "value": 1
+          },
+          "probe": "preserved"
+        },
+        "mainRows": [],
+        "messageId": 1,
+        "payload": {
+          "boundary": "future"
+        },
+        "queue": "kenshou-01a0fe79-boundary-future",
+        "readSnapshots": [
+          [
+            {
+              "lastReadAt": null,
+              "messageId": 1,
+              "readCount": 0,
+              "visibleAt": "2026-10-02T14:15:59.746334-07:00"
+            }
+          ],
+          [
+            {
+              "lastReadAt": "2026-10-02T14:15:59.791861-07:00",
+              "messageId": 1,
+              "readCount": 1,
+              "visibleAt": "2026-10-02T14:16:01.795972-07:00"
+            }
+          ],
+          [
+            {
+              "lastReadAt": "2026-10-02T14:16:01.845863-07:00",
+              "messageId": 1,
+              "readCount": 2,
+              "visibleAt": "2026-10-02T14:16:03.84665-07:00"
+            }
+          ],
+          []
+        ]
+      },
+      {
+        "archiveRows": [],
+        "case": "zero",
+        "completed": true,
+        "deliveries": [],
+        "dlqRows": [
+          {
+            "headers": {
+              "nested": {
+                "value": 1
+              },
+              "probe": "preserved"
+            },
+            "message": {
+              "dead_letter_reason": "max_retries_exceeded",
+              "dead_letter_reason_code": "max_retries_exceeded",
+              "dead_letter_reason_detail": null,
+              "last_read_at": "2026-10-02T21:16:03.970245Z",
+              "original_enqueued_at": "2026-10-02T21:16:03.91898Z",
+              "original_headers": {
+                "nested": {
+                  "value": 1
+                },
+                "probe": "preserved"
+              },
+              "original_message": "zero",
+              "original_message_id": 1,
+              "read_count": 1
+            },
+            "messageId": 1,
+            "readCount": 0
+          }
+        ],
+        "headers": {
+          "nested": {
+            "value": 1
+          },
+          "probe": "preserved"
+        },
+        "mainRows": [],
+        "messageId": 1,
+        "payload": "zero",
+        "queue": "kenshou-01a0fe79-boundary-zero",
+        "readSnapshots": [
+          [
+            {
+              "lastReadAt": null,
+              "messageId": 1,
+              "readCount": 0,
+              "visibleAt": "2026-10-02T14:16:03.919107-07:00"
+            }
+          ],
+          []
+        ]
+      }
+    ],
+    "schema": "kenshou.queue-worker-outcomes/v1"
+  }
+}

@@ -44,6 +44,8 @@ library
     Kenshou.Cli.Attest.KeiroLease
     Kenshou.Cli.Attest.KeiroPoison
     Kenshou.Cli.Attest.KeiroQueueConfig
+    Kenshou.Cli.Attest.KeiroQueueOutcomes
+    Kenshou.Cli.Attest.KeiroQueueWorkers
     Kenshou.Cli.Attest.KeiroTerminal
     Kenshou.Cli.Cohort
     Kenshou.Cli.Command.Cell
