@@ -616,8 +616,13 @@ independently of Keiro's dedupe function. A handler that inserts an effect and
 then throws must roll that effect back, preserve a full failed envelope in
 either persistence mode, stop at its retry ceiling, and survive completed-row
 GC. Sealed `logs/inbox-matrix-sql.json` contains the SQL receipts and effects.
-These observations support inspection; they do not yet supply an independent
-VC-1 replay for this scenario. The effect table has no uniqueness
+Revision 3 also seals `logs/inbox-matrix-intake.json`: the submitted envelopes,
+delivery coordinates, returned result constructors and decoded receipt identities.
+Its independent CLI verifier reconstructs all eleven table-backed checks from
+these observations and the SQL/effect snapshots, ignoring the scenario-computed
+expected rows. It supports all four policies, both persistence modes and the
+deliberate effect mutation. Delegated intake and earlier scenario revisions
+remain incomplete for VC-1 because they lack the required raw observations. The effect table has no uniqueness
 constraint, so the inbox receipt enforces the one-effect result. The
 `inbox.handler-effects=2` mutation arm intentionally writes two rows per
 accepted table-backed delivery. It fails only `effect-count-by-policy` while

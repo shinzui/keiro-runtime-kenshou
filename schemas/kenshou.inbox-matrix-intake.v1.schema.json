@@ -1,0 +1,337 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/kenshou.inbox-matrix-intake.v1.schema.json",
+  "title": "Inbox matrix raw intake observations v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "firstInputs",
+    "republishInputs",
+    "missingInput",
+    "failedInput",
+    "firstResults",
+    "secondResults",
+    "republishResults",
+    "missingResult",
+    "failedResults",
+    "decodedRows"
+  ],
+  "properties": {
+    "schema": {
+      "const": "kenshou.inbox-matrix-intake/v1"
+    },
+    "firstInputs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/delivery"
+      }
+    },
+    "republishInputs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/delivery"
+      }
+    },
+    "missingInput": {
+      "$ref": "#/$defs/delivery"
+    },
+    "failedInput": {
+      "$ref": "#/$defs/delivery"
+    },
+    "firstResults": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/result"
+      }
+    },
+    "secondResults": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/result"
+      }
+    },
+    "republishResults": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/result"
+      }
+    },
+    "missingResult": {
+      "$ref": "#/$defs/result"
+    },
+    "failedResults": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/result"
+      }
+    },
+    "decodedRows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "key",
+          "status"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "InboxProcessing",
+              "InboxCompleted",
+              "InboxFailed"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "delivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "messageId",
+        "source",
+        "destination",
+        "eventType",
+        "contentType",
+        "schemaVersion",
+        "schemaReference",
+        "sourceEventId",
+        "sourceGlobalPosition",
+        "payloadBytes",
+        "occurredAt",
+        "causationId",
+        "correlationId",
+        "traceContext",
+        "attributes",
+        "kafka"
+      ],
+      "properties": {
+        "messageId": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "destination": {
+          "type": "string"
+        },
+        "eventType": {
+          "type": "string"
+        },
+        "contentType": {
+          "type": "string"
+        },
+        "schemaVersion": {
+          "type": "integer"
+        },
+        "schemaReference": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "registry",
+                "subject",
+                "version",
+                "id",
+                "fingerprint"
+              ],
+              "properties": {
+                "registry": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "subject": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "version": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "id": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "fingerprint": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sourceEventId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sourceGlobalPosition": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "payloadBytes": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 255
+          }
+        },
+        "occurredAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "causationId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "correlationId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "traceContext": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "parent",
+                "state"
+              ],
+              "properties": {
+                "parent": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "attributes": {},
+        "kafka": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "topic",
+                "partition",
+                "offset"
+              ],
+              "properties": {
+                "topic": {
+                  "type": "string"
+                },
+                "partition": {
+                  "type": "integer"
+                },
+                "offset": {
+                  "type": "integer"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "result": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tag"
+          ],
+          "properties": {
+            "tag": {
+              "enum": [
+                "processed",
+                "duplicate",
+                "in-progress",
+                "policy-unsatisfied"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tag",
+            "error",
+            "attempt"
+          ],
+          "properties": {
+            "tag": {
+              "const": "handler-failed"
+            },
+            "error": {
+              "type": "string"
+            },
+            "attempt": {
+              "type": "integer"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tag",
+            "error"
+          ],
+          "properties": {
+            "tag": {
+              "const": "previously-failed"
+            },
+            "error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

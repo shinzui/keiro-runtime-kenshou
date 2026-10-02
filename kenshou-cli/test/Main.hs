@@ -2,8 +2,10 @@ module Main (main) where
 
 import Control.Concurrent (forkIO, killThread, threadDelay)
 import Control.Exception (bracket, finally)
+import Control.Monad (forM_)
 import Data.Aeson (Value, object, (.=))
 import Data.Aeson qualified as Aeson
+import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.Foldable (toList)
@@ -16,6 +18,7 @@ import Data.Text.IO qualified as Text
 import Data.Time (addUTCTime, getCurrentTime)
 import Kenshou.Cli (runWithArgs)
 import Kenshou.Cli.Attest (FencingFacts (..), fencingFacts)
+import Kenshou.Cli.Attest.KeiroInbox (replayInboxCells)
 import Kenshou.Cli.Attest.KeiroLease (replayLeaseCells)
 import Kenshou.Cli.Cohort (resolveDefaultCohortIdentity)
 import Kenshou.Cli.Version (appVersionWithGit)
@@ -40,8 +43,56 @@ import System.IO.Temp (withSystemTempDirectory)
 import System.Timeout (timeout)
 import Test.Hspec (describe, expectationFailure, hspec, it, shouldBe, shouldReturn, shouldSatisfy)
 
+jsonField :: Key.Key -> Value -> Maybe Value
+jsonField key (Aeson.Object fields) = KeyMap.lookup key fields
+jsonField _ _ = Nothing
+
+readInboxFixture :: FilePath -> IO (Value, Value)
+readInboxFixture path = do
+  value <- Aeson.eitherDecodeFileStrict' path >>= either fail pure
+  case (jsonField "intake" value, jsonField "sql" value) of
+    (Just intake, Just sql) -> pure (intake, sql)
+    _ -> fail "inbox replay fixture must contain intake and SQL observations"
+
 main :: IO ()
 main = hspec do
+  describe "independent inbox matrix replay" do
+    forM_ [("message-id", "full-envelope"), ("source-event", "dedupe-only")] \(policy, persistence) -> do
+      let fixture = "test/fixtures/inbox-replay-" <> Text.unpack policy <> ".json"
+          replay intake sql = fmap (map fst . filter (not . snd)) (replayInboxCells policy persistence intake sql)
+          replace key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)
+          replace _ _ value = value
+          empty = Aeson.toJSON ([] :: [Value])
+      it ("reconstructs every receipt column independently: " <> Text.unpack policy) do
+        (intake, sql) <- readInboxFixture fixture
+        replay intake sql `shouldBe` Right []
+        forM_ [("successRows", "persistence-shape"), ("failedRows", "failed-receipt-retains-envelope"), ("retainedFailedRows", "failed-receipt-survives-gc")] \(key, label) ->
+          case jsonField key sql of
+            Just (Aeson.Array rows) -> case toList rows of
+              firstRow@(Aeson.Object fields) : rest -> do
+                forM_ (KeyMap.keys fields) \column -> do
+                  let mutate value = replace key (Aeson.toJSON (value : rest)) sql
+                  replay intake (mutate (Aeson.Object (KeyMap.delete column fields))) `shouldBe` Right [label]
+                  replay intake (mutate (replace column (Aeson.String "corrupted") firstRow)) `shouldBe` Right [label]
+                replay intake (replace key (Aeson.toJSON (firstRow : firstRow : rest)) sql) `shouldBe` Right [label]
+                replay intake (replace key empty sql) `shouldBe` Right [label]
+              _ -> expectationFailure "fixture contains no receipt rows"
+            _ -> expectationFailure "fixture is missing receipt observations"
+      it ("rejects changed effects and intake classifications: " <> Text.unpack policy) do
+        (intake, sql) <- readInboxFixture fixture
+        forM_ [("firstResults", "first-delivery-processed"), ("secondResults", "redelivery-duplicate"), ("republishResults", "republish-policy"), ("decodedRows", "one-completed-row-per-key"), ("failedResults", "failed-receipt-ceiling")] \(key, label) ->
+          replay (replace key empty intake) sql `shouldBe` Right [label]
+        replay (replace "missingResult" (object ["tag" .= ("processed" :: Text)]) intake) sql `shouldBe` Right ["missing-policy-field-fails-closed"]
+        let duplicateEffects = case jsonField "effects" sql of
+              Just (Aeson.Array effects) -> Aeson.toJSON (toList effects <> toList effects)
+              _ -> empty
+        replay intake (replace "effects" duplicateEffects (replace "effectsAfterFailure" duplicateEffects sql)) `shouldBe` Right ["effect-count-by-policy"]
+        replay intake (replace "effectsAfterFailure" empty sql) `shouldBe` Right ["failed-handler-rolls-back-effect"]
+        replay (replace "firstInputs" empty intake) sql `shouldSatisfy` either (const True) (const False)
+        replay (replace "missingInput" (object []) intake) sql `shouldSatisfy` either (const True) (const False)
+      it ("ignores scenario-computed expected rows: " <> Text.unpack policy) do
+        (intake, sql) <- readInboxFixture fixture
+        replay intake (replace "expectedSuccessRows" empty (replace "expectedFailedRow" Aeson.Null sql)) `shouldBe` Right []
   describe "independent queue lease replay" do
     it "rechecks SQL leases, handler attempts, effects and drain state" do
       now <- getCurrentTime

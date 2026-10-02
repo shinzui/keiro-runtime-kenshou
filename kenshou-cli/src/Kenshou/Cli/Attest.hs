@@ -10,6 +10,7 @@ import Data.ByteString.Char8 qualified as ByteString.Char8
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Kenshou.Cli.Attest.KeiroInbox (recomputeInbox)
 import Kenshou.Cli.Attest.KeiroLease (recomputeLease)
 import Kenshou.Core.Cohort (CohortIdentity (..), PackageSource (..), ResolvedComponent (..), ResolvedPackage (..))
 import Kenshou.Core.Id (renderScenarioId)
@@ -30,6 +31,7 @@ runOutcomeRecomputer = Recomputer "run-outcome" 1 $ \root -> do
     Right source
       | renderScenarioId source.result.resultScenario == "kafka/consumer/concurrency/static-membership-fencing-is-observable" -> fencingRecomputation root source
       | renderScenarioId source.result.resultScenario == "keiro/queue/concurrency/lease-extension" -> recomputeLease root source
+      | renderScenarioId source.result.resultScenario == "keiro/inbox/correctness/effectively-once-matrix" -> recomputeInbox root source
       | otherwise -> case coreRecomputers of
           (core : _) -> core.recompute root
           [] -> pure (Left "the core outcome oracle is unavailable")

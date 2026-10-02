@@ -215,12 +215,50 @@ in-process publisher restarts every 60 seconds, 20 messages/second, and durable
 PostgreSQL 18. Session `01a0f938-eef5-7567-8d0b-582ee7e0b823` owns cell run
 `01a0f938-eef5-7567-9383-ca0e059e5b85` and nested run
 `01a0f938-67a3-7207-a457-fcccd988b600`. Its 15,300-second wall-clock cap includes
-the finalization allowance; the detached lease lasts 18,000 seconds. No sealed
-outcome is available yet. Resume collection from the repository root with:
+the finalization allowance; the detached lease lasts 18,000 seconds. The cell sealed and its fetched tree verified. The nested result is
+`inconclusive`: all eight business checks held over 288,202 unique messages
+and 240 restarts, with three permitted duplicate broker appends, no backlog,
+and no publisher or maintenance errors. GC retained 605 rows; the steady
+relation-growth check measured 0.114 bytes per inserted row and bounded dead
+tuples. The resource gate remains open: no post-major heap samples were
+eligible, and the Haskell-thread slope interval crossed the growth floor
+(142 to 164 sampled threads, interval -0.889 to 4.726 threads/hour). Native
+bytes, OS threads, descriptors and connections were stable. The informational
+relation-size trend does not override the separate bounded steady-growth
+contract check. This supplies full-duration execution evidence without
+closing resource acceptance, finding 3 attribution, or independent outbox
+VC-1 replay. The collection command is:
 
 ```bash
 kenshou cell resume --session cell-runs/ep13-outbox-full-default
 ```
+
+### Independent inbox matrix replay
+
+Revision 3 preserves the revision-2 business checks and adds a separate
+`logs/inbox-matrix-intake.json` capture of submitted envelopes, Kafka delivery
+coordinates, returned result constructors, and runtime-decoded receipt
+keys/statuses. The raw observation writer contains no expected outcomes.
+`Kenshou.Cli.Attest.KeiroInbox` imports neither Keiro nor the scenario oracle:
+it derives keys, full/dedupe-only receipt shapes, exact effect identities,
+classification checks, failed-handler rollback, retry ceiling, and retained
+failed rows from the two sealed observation files. It ignores the scenario's
+`expectedSuccessRows` and `expectedFailedRow` diagnostics. It supports only
+revision 3 table-backed intake; delegated runs and older revisions explicitly
+remain incomplete for VC-1.
+
+All fourteen revision-3 durable PostgreSQL 18 controls reached their expected
+outcomes under `runs/ep13-inbox-replay/matrix/`: twelve passes and two deliberate
+double-effect failures. Independent replay agreed with the documents for all
+ten table-backed arms, including both failures. All 212 schema checks and 226
+artifact size/SHA-256 checks passed. Six focused replay examples exercise
+every missing and changed receipt column, duplicate/empty row sets, changed
+classifications and effects, incomplete inputs, and poisoned diagnostic
+expectations. These dirty functional runs validate the verifier; clean
+revision-3 records and confirmed attestations remain the next evidence gate.
+The full `nix develop -c just verify` gate passes, including all 40 CLI
+examples and live self-tests. The existing ADR-8 and ADR-18 contracts cover the change; immutable historical
+records are not backfilled with observations they never captured.
 
 ### Queue lease SQL evidence and replay
 

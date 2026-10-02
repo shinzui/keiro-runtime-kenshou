@@ -36,6 +36,7 @@ import Kenshou.Suite.Keiro.Command.Correctness (recordCells)
 import Kenshou.Suite.Keiro.Fixture.Account (AccountSnapshotPolicy (..), accountEventStream, accountStream, accountStreamName)
 import Kenshou.Suite.Keiro.Fixture.Domain (AccountCommand (..), AccountId (..), DepositData (..), OpenAccountData (..))
 import Kenshou.Suite.Keiro.Fixture.Runtime (CommandRunner (..), FixtureEnv (..), KeiroRunner (..), SubmitOutcome (..), submitAccountCommand, withFixtureEnv)
+import Kenshou.Suite.Keiro.Inbox.Observation qualified as Observation
 import Kenshou.Suite.Keiro.Inbox.Oracle qualified as InboxOracle
 import Kenshou.Suite.Keiro.Messaging.Verdict (recordMessagingCells)
 import Kenshou.Suite.Keiro.Outbox.Broker qualified as Broker
@@ -241,7 +242,7 @@ effectivelyOnceMatrix :: Scenario
 effectivelyOnceMatrix =
   envelopeRoundTrip
     { id = either (error . show) id (parseScenarioId "keiro/inbox/correctness/effectively-once-matrix"),
-      revision = 2,
+      revision = 3,
       summary = "Checks deduplication, exact SQL receipt envelopes, and failed-handler rollback under redelivery.",
       tier = TierStandard,
       knobs =
@@ -342,6 +343,22 @@ runTableMatrix context fixture = do
   encodeFile
     (context.outDir </> "logs/inbox-matrix-sql.json")
     (object ["schema" .= ("kenshou.inbox-matrix-sql/v1" :: Text.Text), "successRows" .= sqlRows, "failedRows" .= failedRows, "retainedFailedRows" .= retainedFailures, "effects" .= effects, "effectsAfterFailure" .= afterFailureEffects, "expectedSuccessRows" .= expectedRows, "expectedFailedRow" .= expectedFailed])
+  encodeFile
+    (context.outDir </> "logs/inbox-matrix-intake.json")
+    ( object
+        [ "schema" .= ("kenshou.inbox-matrix-intake/v1" :: Text.Text),
+          "firstInputs" .= zipWith (\index event -> Observation.delivery event (Just (ref index))) [1 .. 16] events,
+          "republishInputs" .= zipWith (\index event -> Observation.delivery event (Just (ref (index + 16)))) [1 .. 16] republish,
+          "missingInput" .= Observation.delivery malformed (if policyName == "kafka-delivery" then Nothing else Just (ref 100)),
+          "failedInput" .= Observation.delivery failedEvent (Just failedRef),
+          "firstResults" .= map Observation.result first,
+          "secondResults" .= map Observation.result second,
+          "republishResults" .= map Observation.result republished,
+          "missingResult" .= Observation.result missing,
+          "failedResults" .= map Observation.result [failedResult, stoppedResult],
+          "decodedRows" .= map Observation.decodedReceipt rows
+        ]
+    )
   recordMessagingCells context (Map.fromList [("effects", fromIntegral (length effects)), ("receipts", fromIntegral (length sqlRows))]) (object ["dedupePolicy" .= policyName, "persistence" .= show persistence]) cells
 
 effectInsertStatement :: Statement.Statement Text.Text ()

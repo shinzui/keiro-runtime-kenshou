@@ -1,0 +1,182 @@
+{
+  "decodedRows": [
+    {
+      "key": "1",
+      "status": "InboxCompleted"
+    }
+  ],
+  "failedInput": {
+    "attributes": {
+      "sequence": 1
+    },
+    "causationId": "00000000-0000-0001-0000-000000000001",
+    "contentType": "application/json",
+    "correlationId": "00000000-0000-0002-0000-000000000001",
+    "destination": "kenshou.outbox.v1",
+    "eventType": "OutboxProbe",
+    "kafka": {
+      "offset": 101,
+      "partition": 0,
+      "topic": "kenshou.matrix"
+    },
+    "messageId": "1",
+    "occurredAt": "2026-10-01T21:07:27.437652Z",
+    "payloadBytes": [
+      49
+    ],
+    "schemaReference": {
+      "fingerprint": "probe-fingerprint",
+      "id": 42,
+      "registry": "kenshou-registry",
+      "subject": "inbox-probe",
+      "version": 3
+    },
+    "schemaVersion": 7,
+    "source": "kenshou-01a0f94b-matrix-failed",
+    "sourceEventId": "00000000-0000-0000-0000-000000000001",
+    "sourceGlobalPosition": 1001,
+    "traceContext": {
+      "parent": "00-12345678901234567890123456789012-1234567890123456-01",
+      "state": "kenshou=probe"
+    }
+  },
+  "failedResults": [
+    {
+      "attempt": 1,
+      "error": "synthetic inbox persistence failure",
+      "tag": "handler-failed"
+    },
+    {
+      "error": "synthetic inbox persistence failure",
+      "tag": "previously-failed"
+    }
+  ],
+  "firstInputs": [
+    {
+      "attributes": {
+        "sequence": 1
+      },
+      "causationId": "00000000-0000-0001-0000-000000000001",
+      "contentType": "application/json",
+      "correlationId": "00000000-0000-0002-0000-000000000001",
+      "destination": "kenshou.outbox.v1",
+      "eventType": "OutboxProbe",
+      "kafka": {
+        "offset": 1,
+        "partition": 0,
+        "topic": "kenshou.matrix"
+      },
+      "messageId": "1",
+      "occurredAt": "2026-10-01T21:07:27.437652Z",
+      "payloadBytes": [
+        49
+      ],
+      "schemaReference": {
+        "fingerprint": "probe-fingerprint",
+        "id": 42,
+        "registry": "kenshou-registry",
+        "subject": "inbox-probe",
+        "version": 3
+      },
+      "schemaVersion": 7,
+      "source": "kenshou-01a0f94b-matrix",
+      "sourceEventId": "00000000-0000-0000-0000-000000000001",
+      "sourceGlobalPosition": 1001,
+      "traceContext": {
+        "parent": "00-12345678901234567890123456789012-1234567890123456-01",
+        "state": "kenshou=probe"
+      }
+    }
+  ],
+  "firstResults": [
+    {
+      "tag": "processed"
+    }
+  ],
+  "missingInput": {
+    "attributes": {
+      "sequence": 1
+    },
+    "causationId": "00000000-0000-0001-0000-000000000001",
+    "contentType": "application/json",
+    "correlationId": "00000000-0000-0002-0000-000000000001",
+    "destination": "kenshou.outbox.v1",
+    "eventType": "OutboxProbe",
+    "kafka": {
+      "offset": 100,
+      "partition": 0,
+      "topic": "kenshou.matrix"
+    },
+    "messageId": "",
+    "occurredAt": "2026-10-01T21:07:27.437652Z",
+    "payloadBytes": [
+      49
+    ],
+    "schemaReference": {
+      "fingerprint": "probe-fingerprint",
+      "id": 42,
+      "registry": "kenshou-registry",
+      "subject": "inbox-probe",
+      "version": 3
+    },
+    "schemaVersion": 7,
+    "source": "kenshou-01a0f94b-matrix",
+    "sourceEventId": "00000000-0000-0000-0000-000000000001",
+    "sourceGlobalPosition": 1001,
+    "traceContext": {
+      "parent": "00-12345678901234567890123456789012-1234567890123456-01",
+      "state": "kenshou=probe"
+    }
+  },
+  "missingResult": {
+    "tag": "policy-unsatisfied"
+  },
+  "republishInputs": [
+    {
+      "attributes": {
+        "sequence": 1
+      },
+      "causationId": "00000000-0000-0001-0000-000000000001",
+      "contentType": "application/json",
+      "correlationId": "00000000-0000-0002-0000-000000000001",
+      "destination": "kenshou.outbox.v1",
+      "eventType": "OutboxProbe",
+      "kafka": {
+        "offset": 17,
+        "partition": 0,
+        "topic": "kenshou.matrix"
+      },
+      "messageId": "1-republished",
+      "occurredAt": "2026-10-01T21:07:27.437652Z",
+      "payloadBytes": [
+        49
+      ],
+      "schemaReference": {
+        "fingerprint": "probe-fingerprint",
+        "id": 42,
+        "registry": "kenshou-registry",
+        "subject": "inbox-probe",
+        "version": 3
+      },
+      "schemaVersion": 7,
+      "source": "kenshou-01a0f94b-matrix",
+      "sourceEventId": "00000000-0000-0000-0000-000000000001",
+      "sourceGlobalPosition": 1001,
+      "traceContext": {
+        "parent": "00-12345678901234567890123456789012-1234567890123456-01",
+        "state": "kenshou=probe"
+      }
+    }
+  ],
+  "republishResults": [
+    {
+      "tag": "processed"
+    }
+  ],
+  "schema": "kenshou.inbox-matrix-intake/v1",
+  "secondResults": [
+    {
+      "tag": "duplicate"
+    }
+  ]
+}

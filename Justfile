@@ -73,6 +73,7 @@ schemas-check:
     check-jsonschema --schemafile schemas/kenshou.cohort-identity.v1.schema.json kenshou-core/test/fixtures/cohort-identity.golden.json
     check-jsonschema --schemafile schemas/kenshou.queue-lease-observations.v1.schema.json kenshou-cli/test/fixtures/queue-lease-observations.json
     check-jsonschema --schemafile schemas/kenshou.inbox-matrix-sql.v1.schema.json kenshou-keiro/test/fixtures/inbox-matrix-sql.json
+    check-jsonschema --schemafile schemas/kenshou.inbox-matrix-intake.v1.schema.json kenshou-keiro/test/fixtures/inbox-matrix-intake.json
     check-jsonschema --schemafile schemas/kenshou.payload.v1.schema.json kenshou-remote/test/golden/payload.json
     check-jsonschema --schemafile schemas/kenshou.payload-identity.v1.schema.json kenshou-remote/test/golden/payload-identity.json
     for lock in nix/cohort-locks/*.lock.json; do check-jsonschema --schemafile schemas/kenshou.cohort-nix-lock.v1.schema.json "$lock" || exit; done
