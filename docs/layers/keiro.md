@@ -866,6 +866,20 @@ A thrown worker handler is redelivered after the one-second visibility timeout;
 the second delivery completes, leaving two observed handler effects and no
 source row.
 
+Revision 3 adds six worker controls with SQL handler-entry and physical-row
+observations. Explicit retry and policy-default retry use a 1.2-second delay;
+the second handler entry must occur at least two seconds after the first, with
+attempts zero then one and absent arbitrary headers. Dead with DLQ routing
+disabled preserves one archive row and leaves the pre-provisioned DLQ empty.
+Malformed payloads, future-version payloads and a zero retry budget must never
+enter the handler. Malformed and zero-budget jobs dead-letter on their first
+read; a future-version job makes two deferred reads before the third read
+exhausts its budget. Its database read timestamps must preserve both rounded
+two-second delays. The wrappers preserve original identity, payload, headers,
+read count and enqueue timestamp. The 21 new checks bring the scenario to 43.
+`logs/queue-worker-outcomes.json` seals the new raw observations. Independent
+replay of the complete job-outcome scenario remains open.
+
 `workers-survive-transient-polling-error` runs a continuous supervised job
 worker and terminates its PostgreSQL polling backend. The current released
 cohort stops after the first termination with an unexpected row-count error;

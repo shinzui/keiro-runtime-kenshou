@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/kenshou.queue-worker-outcomes.v1.schema.json",
+  "title": "Queue worker boundary outcomes v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "arms"
+  ],
+  "properties": {
+    "schema": {
+      "const": "kenshou.queue-worker-outcomes/v1"
+    },
+    "arms": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "case",
+          "queue",
+          "messageId",
+          "payload",
+          "headers",
+          "completed",
+          "mainRows",
+          "archiveRows",
+          "dlqRows",
+          "deliveries",
+          "readSnapshots"
+        ],
+        "properties": {
+          "case": {
+            "enum": [
+              "retry",
+              "default",
+              "archive",
+              "malformed",
+              "future",
+              "zero"
+            ]
+          },
+          "queue": {
+            "type": "string"
+          },
+          "messageId": {
+            "type": "integer"
+          },
+          "payload": {},
+          "headers": {},
+          "completed": {
+            "type": "boolean"
+          },
+          "mainRows": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "archiveRows": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "dlqRows": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "deliveries": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "readSnapshots": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

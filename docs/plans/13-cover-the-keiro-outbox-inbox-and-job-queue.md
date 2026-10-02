@@ -907,6 +907,38 @@ examples, cohort/link checks, evidence checks, schemas and self-tests.
 No new upstream defect or dependency pin is introduced. Revision-2 publication is linked below;
 worker decoder-refusal coverage and the remaining worker/fault matrix stay open.
 
+### Worker outcome boundary acceptance
+
+Job-outcome revision 3 adds six worker controls and twenty-one checks, bringing
+the combined drain/worker scenario to forty-three. Explicit and policy-default
+retries use a fractional 1.2-second delay; SQL handler-entry timestamps must
+show at least the rounded two seconds between attempts zero and one. The
+archive control consumes with DLQ routing disabled and requires exactly one
+preserved archive row and an empty pre-provisioned DLQ. Malformed, future-version
+and zero-budget jobs must never enter the handler. Malformed and zero-budget
+jobs dead-letter at read count one; the future-version job is deferred twice
+before its third read exhausts a two-attempt budget. SQL read timestamps verify
+both deferred intervals. Terminal wrappers preserve identity, payload, headers,
+read count and enqueue time.
+
+The observations are sealed in `logs/queue-worker-outcomes.json` under
+`schemas/kenshou.queue-worker-outcomes.v1.schema.json`. A durable PostgreSQL 18
+control at seed `8102429385822254` passes all forty-three checks in
+`runs/ep13-worker-boundaries/01a0fe5d-2649-77e8-8d74-55b0335d94e7`; all 48 schema
+and 71 artifact checks pass. Five mutation examples reject unwanted handler
+entry, wrong contexts, altered archive/DLQ data, early retries, missing future
+read observations and residual source rows. All 62 Keiro package examples pass.
+The standard `just verify` recipe now runs the Keiro package tests explicitly;
+previously it built that test executable but its test recipe selected only
+shared packages. Earlier Keiro test counts in this plan came from separate
+package test commands. Adding the package to the shared gate keeps these oracle
+regressions in future normal verification runs.
+Full repository verification, all 88 CLI examples, and the added Keiro gate
+command pass; no new upstream defect or dependency pin is introduced.
+This dirty control adds no historical run record. Independent replay of the
+complete job-outcome scenario, clean revision-3 publication, broader worker
+fault modes and ordering controls remain open.
+
 ### Drain and worker configuration rejection
 
 Consumption-config revision 2 tests ten invalid configurations through both

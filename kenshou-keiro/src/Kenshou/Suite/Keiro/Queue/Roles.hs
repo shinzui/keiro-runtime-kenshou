@@ -2,7 +2,7 @@ module Kenshou.Suite.Keiro.Queue.Roles (roles) where
 
 import Control.Concurrent (threadDelay)
 import Control.Monad (when)
-import Data.Aeson (object, withObject, (.!=), (.:), (.:?), (.=))
+import Data.Aeson (Value, object, withObject, (.!=), (.:), (.:?), (.=))
 import Data.Aeson.Types (parseMaybe)
 import Data.IORef (atomicModifyIORef', newIORef)
 import Data.Int (Int64)
@@ -15,7 +15,7 @@ import Hasql.Encoders qualified as Encoders
 import Hasql.Pool qualified as Pool
 import Hasql.Session qualified as Session
 import Hasql.Statement qualified as Statement
-import Keiro.PGMQ.Codec (aesonJobCodec)
+import Keiro.PGMQ.Codec (JobCodec (..), JobDecodeError (..), aesonJobCodec)
 import Keiro.PGMQ.Dlq (redriveDlq)
 import Keiro.PGMQ.Job (Job (..), JobContext (..), JobOrdering (..), JobOutcome (..), JobPolling (..), JobTuning (..), RetryDelay (..), RetryPolicy (..), defaultJobTuning, defaultRetryPolicy, jobProcessorWithContext, runJobOnceWithContext, runJobWorkers)
 import Keiro.PGMQ.Runtime (JobRuntime (..), queueRef, runJobEff, withJobRuntime)
@@ -50,6 +50,9 @@ redrive context = case context.init.postgres of
 effectInsertStatement :: Statement.Statement Text ()
 effectInsertStatement = Statement.preparable "INSERT INTO kenshou_fx.queue_effects (payload) VALUES ($1)" (Encoders.param (Encoders.nonNullable Encoders.text)) Decoders.noResult
 
+boundaryInsertStatement :: Statement.Statement Value ()
+boundaryInsertStatement = Statement.preparable "INSERT INTO kenshou_fx.queue_boundary_deliveries (observation) VALUES ($1)" (Encoders.param (Encoders.nonNullable Encoders.jsonb)) Decoders.noResult
+
 fifoStartStatement :: Statement.Statement Text Int64
 fifoStartStatement = Statement.preparable "INSERT INTO kenshou_fx.queue_fifo_spans (payload, started_at) VALUES ($1, clock_timestamp()) RETURNING id" (Encoders.param (Encoders.nonNullable Encoders.text)) (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
 
@@ -72,7 +75,14 @@ worker context = case context.init.postgres of
               leasing = mode == Just ("lease" :: Text) || mode == Just "lease-drain" || gatedLease
               fifo = mode == Just ("fifo" :: Text)
               deadWorker = mode == Just ("dead-worker-hold" :: Text) || mode == Just "dead-recovery"
-              policy = if holding then RetryPolicy 3 (RetryDelay 60) True else defaultRetryPolicy
+              boundary = maybe False (Text.isPrefixOf "boundary-") mode
+              policy
+                | holding = RetryPolicy 3 (RetryDelay 60) True
+                | mode == Just "boundary-zero" = RetryPolicy 0 (RetryDelay 1.2) True
+                | mode == Just "boundary-future" = RetryPolicy 2 (RetryDelay 1.2) True
+                | mode == Just "boundary-archive" = defaultRetryPolicy {useDeadLetter = False}
+                | boundary = defaultRetryPolicy {defaultRetryDelay = RetryDelay 1.2}
+                | otherwise = defaultRetryPolicy
               tuning
                 | holding = defaultJobTuning {visibilityTimeout = 3, polling = if pollingMode == Just ("long-poll" :: Text) then LongPoll 5 100 else PollEvery 1}
                 | leasing = defaultJobTuning {visibilityTimeout = 2, polling = PollEvery 0.2}
@@ -80,9 +90,14 @@ worker context = case context.init.postgres of
                 | fifo = defaultJobTuning {visibilityTimeout = 10, batchSize = 8, polling = PollEvery 0.1, ordering = FifoHeads}
                 | deadWorker = defaultJobTuning {visibilityTimeout = 3, polling = PollEvery 0.1}
                 | mode == Just "pool-long-poll" = defaultJobTuning {polling = LongPoll 5 100}
+                | boundary = defaultJobTuning {polling = PollEvery 0.05}
                 | otherwise = defaultJobTuning
-              job = Job "queue-poll-probe" (queueRef queue) (aesonJobCodec @Text) (if fifo then FifoHeads else Unordered) policy
+              codec = if mode == Just "boundary-future" then JobCodec (const (object ["boundary" .= ("future" :: Text)])) (const (Left (JobPayloadFromFuture 2 1))) else aesonJobCodec @Text
+              job = Job "queue-poll-probe" (queueRef queue) codec (if fifo then FifoHeads else Unordered) policy
               handler jobContext payload = do
+                when boundary $ liftIO do
+                  recorded <- Pool.use runtime.runtimePool (Session.statement (object ["queue" .= queue, "payload" .= payload, "attempt" .= jobContext.attempt, "headers" .= jobContext.headers]) boundaryInsertStatement)
+                  either (fail . show) pure recorded
                 when (leasing && extend == Just True) (jobContext.extendLease 10)
                 liftIO do
                   if holding
@@ -139,6 +154,9 @@ worker context = case context.init.postgres of
                 when (mode == Just "throw-once" && jobContext.attempt == Just 0) (liftIO (fail "fixture worker handler failure"))
                 pure $ case mode of
                   Just "retry-once" | jobContext.attempt == Just 0 -> Retry (RetryDelay 1)
+                  Just "boundary-retry" | jobContext.attempt == Just 0 -> Retry (RetryDelay 1.2)
+                  Just "boundary-default" | jobContext.attempt == Just 0 -> RetryDefault
+                  Just "boundary-archive" -> Dead "worker-poison"
                   Just "dead" -> Dead "worker-poison"
                   Just "dead-drain" -> Dead "drain-poison"
                   Just "dead-worker-hold" -> Dead "worker-poison"

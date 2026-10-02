@@ -1,0 +1,360 @@
+{
+  "arms": [
+    {
+      "archiveRows": [],
+      "case": "retry",
+      "completed": true,
+      "deliveries": [
+        {
+          "at": "2026-10-02T13:45:17.806692-07:00",
+          "attempt": 0,
+          "headers": null,
+          "payload": "retry",
+          "queue": "kenshou-01a0fe5d-boundary-retry"
+        },
+        {
+          "at": "2026-10-02T13:45:19.859747-07:00",
+          "attempt": 1,
+          "headers": null,
+          "payload": "retry",
+          "queue": "kenshou-01a0fe5d-boundary-retry"
+        }
+      ],
+      "dlqRows": [],
+      "headers": {
+        "nested": {
+          "value": 1
+        },
+        "probe": "preserved"
+      },
+      "mainRows": [],
+      "messageId": 1,
+      "payload": "retry",
+      "queue": "kenshou-01a0fe5d-boundary-retry",
+      "readSnapshots": [
+        [
+          {
+            "lastReadAt": null,
+            "messageId": 1,
+            "readCount": 0,
+            "visibleAt": "2026-10-02T13:45:17.758083-07:00"
+          }
+        ],
+        [
+          {
+            "lastReadAt": "2026-10-02T13:45:17.803783-07:00",
+            "messageId": 1,
+            "readCount": 1,
+            "visibleAt": "2026-10-02T13:45:19.808929-07:00"
+          }
+        ],
+        []
+      ]
+    },
+    {
+      "archiveRows": [],
+      "case": "default",
+      "completed": true,
+      "deliveries": [
+        {
+          "at": "2026-10-02T13:45:19.927392-07:00",
+          "attempt": 0,
+          "headers": null,
+          "payload": "default",
+          "queue": "kenshou-01a0fe5d-boundary-default"
+        },
+        {
+          "at": "2026-10-02T13:45:21.976333-07:00",
+          "attempt": 1,
+          "headers": null,
+          "payload": "default",
+          "queue": "kenshou-01a0fe5d-boundary-default"
+        }
+      ],
+      "dlqRows": [],
+      "headers": {
+        "nested": {
+          "value": 1
+        },
+        "probe": "preserved"
+      },
+      "mainRows": [],
+      "messageId": 1,
+      "payload": "default",
+      "queue": "kenshou-01a0fe5d-boundary-default",
+      "readSnapshots": [
+        [
+          {
+            "lastReadAt": null,
+            "messageId": 1,
+            "readCount": 0,
+            "visibleAt": "2026-10-02T13:45:19.877096-07:00"
+          }
+        ],
+        [
+          {
+            "lastReadAt": "2026-10-02T13:45:19.924272-07:00",
+            "messageId": 1,
+            "readCount": 1,
+            "visibleAt": "2026-10-02T13:45:21.929278-07:00"
+          }
+        ],
+        [
+          {
+            "lastReadAt": "2026-10-02T13:45:21.975927-07:00",
+            "messageId": 1,
+            "readCount": 2,
+            "visibleAt": "2026-10-02T13:45:51.975927-07:00"
+          }
+        ],
+        []
+      ]
+    },
+    {
+      "archiveRows": [
+        {
+          "headers": {
+            "nested": {
+              "value": 1
+            },
+            "probe": "preserved"
+          },
+          "message": "archive",
+          "messageId": 1,
+          "readCount": 1
+        }
+      ],
+      "case": "archive",
+      "completed": true,
+      "deliveries": [
+        {
+          "at": "2026-10-02T13:45:22.05803-07:00",
+          "attempt": 0,
+          "headers": null,
+          "payload": "archive",
+          "queue": "kenshou-01a0fe5d-boundary-archive"
+        }
+      ],
+      "dlqRows": [],
+      "headers": {
+        "nested": {
+          "value": 1
+        },
+        "probe": "preserved"
+      },
+      "mainRows": [],
+      "messageId": 1,
+      "payload": "archive",
+      "queue": "kenshou-01a0fe5d-boundary-archive",
+      "readSnapshots": [
+        [
+          {
+            "lastReadAt": null,
+            "messageId": 1,
+            "readCount": 0,
+            "visibleAt": "2026-10-02T13:45:22.009158-07:00"
+          }
+        ],
+        []
+      ]
+    },
+    {
+      "archiveRows": [],
+      "case": "malformed",
+      "completed": true,
+      "deliveries": [],
+      "dlqRows": [
+        {
+          "headers": {
+            "nested": {
+              "value": 1
+            },
+            "probe": "preserved"
+          },
+          "message": {
+            "dead_letter_reason": "invalid_payload: Error in $: parsing Text failed, expected String, but encountered Object",
+            "dead_letter_reason_code": "invalid_payload",
+            "dead_letter_reason_detail": "Error in $: parsing Text failed, expected String, but encountered Object",
+            "last_read_at": "2026-10-02T20:45:22.137916Z",
+            "original_enqueued_at": "2026-10-02T20:45:22.08512Z",
+            "original_headers": {
+              "nested": {
+                "value": 1
+              },
+              "probe": "preserved"
+            },
+            "original_message": {
+              "boundary": "malformed"
+            },
+            "original_message_id": 1,
+            "read_count": 1
+          },
+          "messageId": 1,
+          "readCount": 0
+        }
+      ],
+      "headers": {
+        "nested": {
+          "value": 1
+        },
+        "probe": "preserved"
+      },
+      "mainRows": [],
+      "messageId": 1,
+      "payload": {
+        "boundary": "malformed"
+      },
+      "queue": "kenshou-01a0fe5d-boundary-malformed",
+      "readSnapshots": [
+        [
+          {
+            "lastReadAt": null,
+            "messageId": 1,
+            "readCount": 0,
+            "visibleAt": "2026-10-02T13:45:22.085308-07:00"
+          }
+        ],
+        []
+      ]
+    },
+    {
+      "archiveRows": [],
+      "case": "future",
+      "completed": true,
+      "deliveries": [],
+      "dlqRows": [
+        {
+          "headers": {
+            "nested": {
+              "value": 1
+            },
+            "probe": "preserved"
+          },
+          "message": {
+            "dead_letter_reason": "max_retries_exceeded",
+            "dead_letter_reason_code": "max_retries_exceeded",
+            "dead_letter_reason_detail": null,
+            "last_read_at": "2026-10-02T20:45:26.276769Z",
+            "original_enqueued_at": "2026-10-02T20:45:22.168011Z",
+            "original_headers": {
+              "nested": {
+                "value": 1
+              },
+              "probe": "preserved"
+            },
+            "original_message": {
+              "boundary": "future"
+            },
+            "original_message_id": 1,
+            "read_count": 3
+          },
+          "messageId": 1,
+          "readCount": 0
+        }
+      ],
+      "headers": {
+        "nested": {
+          "value": 1
+        },
+        "probe": "preserved"
+      },
+      "mainRows": [],
+      "messageId": 1,
+      "payload": {
+        "boundary": "future"
+      },
+      "queue": "kenshou-01a0fe5d-boundary-future",
+      "readSnapshots": [
+        [
+          {
+            "lastReadAt": null,
+            "messageId": 1,
+            "readCount": 0,
+            "visibleAt": "2026-10-02T13:45:22.168191-07:00"
+          }
+        ],
+        [
+          {
+            "lastReadAt": "2026-10-02T13:45:22.218427-07:00",
+            "messageId": 1,
+            "readCount": 1,
+            "visibleAt": "2026-10-02T13:45:24.222244-07:00"
+          }
+        ],
+        [
+          {
+            "lastReadAt": "2026-10-02T13:45:24.272929-07:00",
+            "messageId": 1,
+            "readCount": 2,
+            "visibleAt": "2026-10-02T13:45:26.27325-07:00"
+          }
+        ],
+        [
+          {
+            "lastReadAt": "2026-10-02T13:45:26.276769-07:00",
+            "messageId": 1,
+            "readCount": 3,
+            "visibleAt": "2026-10-02T13:45:56.276769-07:00"
+          }
+        ],
+        []
+      ]
+    },
+    {
+      "archiveRows": [],
+      "case": "zero",
+      "completed": true,
+      "deliveries": [],
+      "dlqRows": [
+        {
+          "headers": {
+            "nested": {
+              "value": 1
+            },
+            "probe": "preserved"
+          },
+          "message": {
+            "dead_letter_reason": "max_retries_exceeded",
+            "dead_letter_reason_code": "max_retries_exceeded",
+            "dead_letter_reason_detail": null,
+            "last_read_at": "2026-10-02T20:45:26.357876Z",
+            "original_enqueued_at": "2026-10-02T20:45:26.311275Z",
+            "original_headers": {
+              "nested": {
+                "value": 1
+              },
+              "probe": "preserved"
+            },
+            "original_message": "zero",
+            "original_message_id": 1,
+            "read_count": 1
+          },
+          "messageId": 1,
+          "readCount": 0
+        }
+      ],
+      "headers": {
+        "nested": {
+          "value": 1
+        },
+        "probe": "preserved"
+      },
+      "mainRows": [],
+      "messageId": 1,
+      "payload": "zero",
+      "queue": "kenshou-01a0fe5d-boundary-zero",
+      "readSnapshots": [
+        [
+          {
+            "lastReadAt": null,
+            "messageId": 1,
+            "readCount": 0,
+            "visibleAt": "2026-10-02T13:45:26.311463-07:00"
+          }
+        ],
+        []
+      ]
+    }
+  ],
+  "schema": "kenshou.queue-worker-outcomes/v1"
+}

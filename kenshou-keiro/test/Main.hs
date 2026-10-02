@@ -5,6 +5,7 @@ import Data.Aeson (Value (..), object, (.=))
 import Data.Aeson qualified as Aeson
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString qualified as ByteString
+import Data.Foldable (toList)
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.List (intersect, sort)
 import Data.Map.Strict qualified as Map
@@ -64,6 +65,7 @@ import Kenshou.Suite.Keiro.Queue.Bench qualified as QueueBench
 import Kenshou.Suite.Keiro.Queue.Concurrency qualified as QueueConcurrency
 import Kenshou.Suite.Keiro.Queue.Metrics qualified as QueueMetrics
 import Kenshou.Suite.Keiro.Queue.Oracle qualified as QueueOracle
+import Kenshou.Suite.Keiro.Queue.WorkerOracle qualified as WorkerOracle
 import Kenshou.Suite.Keiro.Shard.Knobs qualified as ShardKnobs
 import Kenshou.Suite.Keiro.Shard.Oracle qualified as ShardOracle
 import Kenshou.Suite.Keiro.Timer.Knobs qualified as TimerKnobs
@@ -87,6 +89,48 @@ import Test.Hspec.Hedgehog (hedgehog)
 
 main :: IO ()
 main = hspec do
+  describe "worker outcome boundaries" do
+    let loadFixture = Aeson.eitherDecodeFileStrict' "test/fixtures/queue-worker-outcomes.json" >>= either fail pure
+        field key (Object fields) = KeyMap.lookup key fields
+        field _ _ = Nothing
+        replace key value (Object fields) = Object (KeyMap.insert key value fields)
+        replace _ _ value = value
+        items key value = case field key value of Just (Array values) -> toList values; _ -> []
+        changeArm label change raw = replace "arms" (Aeson.toJSON [if field "case" arm == Just (String label) then change arm else arm | arm <- items "arms" raw]) raw
+        failures = fmap (map fst . filter (not . snd)) . WorkerOracle.workerOutcomeCells
+        empty = Aeson.toJSON ([] :: [Value])
+    it "requires all six worker controls and holds twenty-one observed checks" do
+      raw <- loadFixture
+      WorkerOracle.workerOutcomeCells raw `shouldSatisfy` either (const False) (\cells -> length cells == 21 && all snd cells)
+      failures (replace "arms" empty raw) `shouldSatisfy` either (const True) (const False)
+      let arms = items "arms" raw
+      failures (replace "arms" (Aeson.toJSON (take 1 arms <> arms)) raw) `shouldSatisfy` either (const True) (const False)
+    it "rejects handler entry on decoder refusal or a zero retry budget" do
+      raw <- loadFixture
+      forM_ ["malformed", "future", "zero"] \label ->
+        failures (changeArm label (replace "deliveries" (Aeson.toJSON [object []])) raw) `shouldBe` Right ["worker-" <> label <> "-handler-context"]
+    it "rejects wrong archive contents and duplicated or malformed dead-letter wrappers" do
+      raw <- loadFixture
+      let changeRows key change arm = replace key (Aeson.toJSON (map change (items key arm))) arm
+      forM_ [("messageId", Number 999), ("message", String "wrong"), ("headers", Null), ("readCount", Number 2)] \(key, value) ->
+        failures (changeArm "archive" (changeRows "archiveRows" (replace key value)) raw) `shouldBe` Right ["worker-archive-physical-placement"]
+      forM_ ["malformed", "future", "zero"] \label -> do
+        failures (changeArm label (\arm -> replace "dlqRows" (Aeson.toJSON (items "dlqRows" arm <> items "dlqRows" arm)) arm) raw) `shouldSatisfy` either (const False) (elem ("worker-" <> label <> "-physical-placement"))
+        let alter row = replace "message" (replace "original_headers" Null (maybe Null id (field "message" row))) row
+        failures (changeArm label (changeRows "dlqRows" alter) raw) `shouldBe` Right ["worker-" <> label <> "-physical-placement"]
+    it "rejects wrong worker contexts and retries earlier than the rounded delay" do
+      raw <- loadFixture
+      forM_ ["retry", "default"] \label -> do
+        let altered arm = replace "deliveries" (Aeson.toJSON (map (replace "headers" (object [])) (items "deliveries" arm))) arm
+            early arm = case items "deliveries" arm of
+              first : second : rest -> replace "deliveries" (Aeson.toJSON (first : replace "at" (maybe Null id (field "at" first)) second : rest)) arm
+              _ -> arm
+        failures (changeArm label altered raw) `shouldBe` Right ["worker-" <> label <> "-handler-context"]
+        failures (changeArm label early raw) `shouldBe` Right ["worker-" <> label <> "-fractional-delay-rounded-up"]
+    it "requires observed deferred future reads and an empty source queue" do
+      raw <- loadFixture
+      failures (changeArm "future" (replace "readSnapshots" empty) raw) `shouldBe` Right ["worker-future-deferred-before-ceiling"]
+      failures (changeArm "zero" (replace "mainRows" (Aeson.toJSON [object []])) raw) `shouldBe` Right ["worker-zero-physical-placement"]
   describe "queue physical outcome oracles" do
     let rows = [(41, String "one", Nothing, 0), (42, String "two", Nothing, 0), (43, String "three", Nothing, 0)]
         payloads = ["one", "two", "three"]
@@ -105,15 +149,15 @@ main = hspec do
       now <- getCurrentTime
       let headers = object ["probe" .= ("preserved" :: Text), "nested" .= object ["value" .= (1 :: Int)]]
           entry = DlqEntry (MessageId 99) "poison_pill: rejected" (Right "work") (Just 42) (Just now) (Just 1) (Just headers) (object ["original_headers" .= headers, "original_message" .= ("work" :: Text), "original_message_id" .= (42 :: Int), "read_count" .= (1 :: Int), "dead_letter_reason" .= ("poison_pill: rejected" :: Text)])
-          check = QueueOracle.deadLetterPreserves "work" 42 headers
-      check [entry] `shouldBe` True
-      check [] `shouldBe` False
-      check [entry, entry] `shouldBe` False
+          preserves = QueueOracle.deadLetterPreserves "work" 42 headers
+      preserves [entry] `shouldBe` True
+      preserves [] `shouldBe` False
+      preserves [entry, entry] `shouldBe` False
       case entry.rawBody of
         Object body -> forM_ [("original_message", String "other"), ("original_message_id", Number 43), ("read_count", Number 2), ("dead_letter_reason", String "invalid_payload")] \(key, value) ->
-          check [entry {rawBody = Object (KeyMap.insert key value body)}] `shouldBe` False
+          preserves [entry {rawBody = Object (KeyMap.insert key value body)}] `shouldBe` False
         _ -> error "DLQ fixture must have an object body"
-      forM_ [entry {originalPayload = Right "other"}, entry {originalMessageId = Just 43}, entry {originalEnqueuedAt = Nothing}, entry {readCount = Just 2}, entry {originalHeaders = Nothing}, entry {originalHeaders = Just (object [])}, entry {Dlq.reason = "invalid_payload"}, entry {rawBody = object []}] \bad -> check [bad] `shouldBe` False
+      forM_ [entry {originalPayload = Right "other"}, entry {originalMessageId = Just 43}, entry {originalEnqueuedAt = Nothing}, entry {readCount = Just 2}, entry {originalHeaders = Nothing}, entry {originalHeaders = Just (object [])}, entry {Dlq.reason = "invalid_payload"}, entry {rawBody = object []}] \bad -> preserves [bad] `shouldBe` False
 
   describe "delegated inbox receipt identity" do
     it "pins UTF-8 byte lengths and separates every identity field" do

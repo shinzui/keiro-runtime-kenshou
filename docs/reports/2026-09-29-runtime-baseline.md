@@ -204,3 +204,13 @@ with all six checks passing. Job-outcome semantics has an explicit incomplete
 attestation: five checks pass, but its full business oracle is not independently
 replayable. The [child plan](../plans/13-cover-the-keiro-outbox-inbox-and-job-queue.md#clean-queue-contract-evidence)
 links both runs and attestations. These records preserve the coverage gap.
+
+Job-outcome revision 3 adds six worker controls and 21 checks, for 43 held
+checks in the durable PostgreSQL investigation. Explicit/default fractional
+retries respect the rounded two-second delay; the archive path preserves one
+row; malformed, future-version and zero-budget jobs never enter the handler.
+The future-version job defers twice before read three exhausts its budget.
+All 48 schemas and 71 artifacts pass, as do 62 Keiro examples and full repository
+verification. The standard verification recipe now executes the Keiro package
+tests, which earlier runs invoked separately. This dirty revision-3 control
+adds no historical record or complete job-outcome replay claim.

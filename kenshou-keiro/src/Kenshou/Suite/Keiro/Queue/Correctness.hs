@@ -36,6 +36,7 @@ import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tie
 import Kenshou.Suite.Keiro.Command.Correctness (recordCells)
 import Kenshou.Suite.Keiro.Outbox.Workload (sourceName)
 import Kenshou.Suite.Keiro.Queue.Oracle qualified as Oracle
+import Kenshou.Suite.Keiro.Queue.WorkerOutcomes (workerBoundaryChecks)
 import Pgmq.Types (MessageHeaders (..), MessageId (..), queueNameToText)
 import System.FilePath ((</>))
 import System.Timeout (timeout)
@@ -47,7 +48,7 @@ jobOutcomeSemantics :: Scenario
 jobOutcomeSemantics =
   consumptionConfigRejections
     { id = either (error . show) id (parseScenarioId "keiro/queue/correctness/job-outcome-semantics"),
-      revision = 2,
+      revision = 3,
       summary = "Checks job outcomes, batch identity/order, preserved headers and pre-handler refusal.",
       tier = TierStandard,
       run = runJobOutcomeSemantics
@@ -241,6 +242,7 @@ runJobOutcomeSemantics context =
       throwResult <- runArm 3 workerThrowJob "throw-once" "worker-throw" 2 (const True)
       pure (retryResult, deadResult, throwResult)
     workerDlq <- runJobEff runtime (readDlq workerDeadJob 1) >>= either (fail . show) pure
+    boundaryCells <- workerBoundaryChecks context runtime preservedHeaders
     let (_, (_, _, workerDeadId), _) = workerOutcomes
     encodeFile (context.outDir </> "logs/queue-physical-outcomes.json") $
       object
@@ -263,8 +265,7 @@ runJobOutcomeSemantics context =
           "malformedHandlerCalls" .= malformedHandlerCalls,
           "futureHandlerCalls" .= futureHandlerCalls
         ]
-    recordCells
-      context
+    recordCells context $
       [ ("done-deletes", done == 1 && doneDepth == (0 :: Int64)),
         ("retry-delay-and-attempt", retried == 1 && beforeRetry == 0 && afterRetry == 1 && observedAttempts == [Just 0, Just 1]),
         ("enqueue-delay", beforeDelay == 0 && afterDelay == 1),
@@ -288,6 +289,7 @@ runJobOutcomeSemantics context =
         ("worker-dead-wrapper", case workerDeadId of Right identifier -> Oracle.deadLetterPreserves "worker-dead" (unMessageId identifier) preservedHeaders workerDlq; Left _ -> False),
         ("worker-handler-exception-redelivery", case workerOutcomes of (_, _, (Just (effects, _), _, _)) -> effects == 2; _ -> False)
       ]
+        <> boundaryCells
 
 maxRetriesBeforeHandler :: Scenario
 maxRetriesBeforeHandler =
