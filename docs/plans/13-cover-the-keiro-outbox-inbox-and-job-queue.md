@@ -1084,8 +1084,33 @@ spans. Five mutation examples reject incomplete/duplicated/substituted work,
 missing kill evidence, false FIFO guarantees and unsafe legacy parameters.
 Full repository verification passes, including all 63 Keiro and 101 CLI
 examples, cohort/link checks, evidence checks, schemas and self-tests. Clean
-publication, scripted retry ordering and the remaining lease-overlap and
+publication is confirmed below; scripted retry ordering and the remaining lease-overlap and
 fault-mode controls remain open. No dependency pin or upstream finding changes.
+
+### Clean queue ordering control evidence
+
+Nine revision-3 investigations pass on durable PostgreSQL 18 at clean
+source/attester `e45115a45c16006a9ff994e5c6bd1db537c10c72`, seed `8102429385822254`.
+Eight cover four ordering modes with and without a killed worker (four groups
+of six jobs); the ninth uses the full default FIFO-heads size, 32 groups of
+50 jobs with a killed worker. All 1,792 jobs finish, including recovery from
+five abandoned heads. All 74 schema checks and 173 artifact checks pass.
+Each investigation has a confirmed independent VC-1 attestation with all six
+checks passing. Unordered inversions remain required negative controls;
+legacy-mode strict ordering remains observational. These captures precede
+scripted retries and do not close overlap/visibility or fault-mode coverage.
+
+| Control | Investigation | Attestation |
+| --- | --- | --- |
+| fifo-heads-kill-false | [01a0fe9f-5ea1-77d0-a6f4-89cae4a1a0b7](../verification/runs/keiro/2026/10/01a0fe9f-5ea1-77d0-a6f4-89cae4a1a0b7.md) | [confirmed](../verification/attestations/2026/10/01a0feb6-f031-75c4-b835-f451d81f1f2b.md) |
+| fifo-heads-kill-true | [01a0fe9f-803f-7277-b21c-51d077489598](../verification/runs/keiro/2026/10/01a0fe9f-803f-7277-b21c-51d077489598.md) | [confirmed](../verification/attestations/2026/10/01a0feb7-e87a-74fe-b541-1bd45c32e945.md) |
+| unordered-kill-false | [01a0fe9f-c833-75d4-9eb4-5492feb7b372](../verification/runs/keiro/2026/10/01a0fe9f-c833-75d4-9eb4-5492feb7b372.md) | [confirmed](../verification/attestations/2026/10/01a0feb8-f1ca-7754-acf6-1784f1649400.md) |
+| unordered-kill-true | [01a0fe9f-e781-713e-ac30-6e1a6b470469](../verification/runs/keiro/2026/10/01a0fe9f-e781-713e-ac30-6e1a6b470469.md) | [confirmed](../verification/attestations/2026/10/01a0feb9-f443-726d-ae46-dad36e42544d.md) |
+| fifo-throughput-kill-false | [01a0fea0-2dff-7539-a5dd-99cd23df4ad1](../verification/runs/keiro/2026/10/01a0fea0-2dff-7539-a5dd-99cd23df4ad1.md) | [confirmed](../verification/attestations/2026/10/01a0febb-0ad0-773c-8fed-fa5668335c81.md) |
+| fifo-throughput-kill-true | [01a0fea0-4e03-7436-8a2a-31e761c6bfbc](../verification/runs/keiro/2026/10/01a0fea0-4e03-7436-8a2a-31e761c6bfbc.md) | [confirmed](../verification/attestations/2026/10/01a0febc-18fc-7042-bd48-cb689f3c3502.md) |
+| fifo-round-robin-kill-false | [01a0fea0-94f4-7333-9337-c569ca712593](../verification/runs/keiro/2026/10/01a0fea0-94f4-7333-9337-c569ca712593.md) | [confirmed](../verification/attestations/2026/10/01a0febd-1952-76b1-9deb-4bf1679aa4c7.md) |
+| fifo-round-robin-kill-true | [01a0fea0-b4ba-771e-9843-90751d25ec3e](../verification/runs/keiro/2026/10/01a0fea0-b4ba-771e-9843-90751d25ec3e.md) | [confirmed](../verification/attestations/2026/10/01a0febe-4bb9-7026-b319-ddf175dbc0f9.md) |
+| fifo-heads-default | [01a0fea0-fb8d-72b9-8bf0-52dbbf49602a](../verification/runs/keiro/2026/10/01a0fea0-fb8d-72b9-8bf0-52dbbf49602a.md) | [confirmed](../verification/attestations/2026/10/01a0febf-58e2-7475-9739-11de68956ce8.md) |
 
 ### Remaining non-soak work
 

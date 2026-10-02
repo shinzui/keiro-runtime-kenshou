@@ -496,7 +496,7 @@ Cross-plan baseline handoff gates remain open:
 - [ ] Close finding attribution and reporting gaps with an existing or new
   owner record or a documented non-bug disposition. Unresolved investigations
   keep this gate open and must be explicit in the working report. The register
-  contains 53 numbered findings,
+  contains 54 numbered findings,
   32 distinct owner bug records and ten improvement requests; a count of
   reports is not a count of repairs or verified fixes.
 - [ ] Supply independent replayable verdict checks for the selected evidence
@@ -507,7 +507,11 @@ Cross-plan baseline handoff gates remain open:
   and confirmed records. Preserve incomplete attestations and add new
   attestations when verification becomes possible.
 
-The historical bundle currently contains 161 run/comparison records: 155 sealed
+Nine clean queue ordering investigations now have confirmed independent replay,
+including the full 1,600-job FIFO-heads case. They cover ordering modes and worker
+kills; scripted retries and overlap/visibility remain separate EP-13 gates.
+
+The historical bundle currently contains 170 run/comparison records: 164 sealed
 individual runs and six comparisons. The
 [working baseline report](../reports/2026-09-29-runtime-baseline.md) and child
 plans hold the detailed runs and findings. Owner projects can use this as-is
