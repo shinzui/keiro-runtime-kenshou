@@ -182,6 +182,46 @@ fixture, shared integration checks and live self-tests.
 Existing ADR-8, ADR-15 and ADR-18 govern these assertions and evidence limits;
 no new architecture boundary or cohort pin is introduced.
 
+The clean revision-2 repeat at harness `b96c37f` passed the same fourteen
+expected outcomes, 202 schema checks and 216 artifact integrity checks.
+Every run records `dirty=false`; the twelve positive arms and two deliberate
+effect mutations are selected as digest-linked investigations. These local
+correctness observations supply no performance baseline. The interrupted
+`clean-final/` attempt and the earlier `clean-matrix/` repeat with a generated
+untracked session journal are excluded from this clean selection. The accepted
+local summary is `runs/ep13-inbox-sql/clean-final-retry/summary.json`.
+Independent inbox VC-1 replay remains open.
+
+| Arm | Recorded run | Outcome |
+| --- | --- | --- |
+| `inbox-table-message-id-full-envelope-1` | [01a0f942-dc98-707d-8de6-0d7d8389856a](../verification/runs/keiro/2026/10/01a0f942-dc98-707d-8de6-0d7d8389856a.md) | passed |
+| `inbox-table-message-id-dedupe-only-1` | [01a0f942-e805-7151-9a4c-9dd95620fb72](../verification/runs/keiro/2026/10/01a0f942-e805-7151-9a4c-9dd95620fb72.md) | passed |
+| `inbox-table-source-event-full-envelope-1` | [01a0f942-f322-7548-ba6b-1ad3f05d6059](../verification/runs/keiro/2026/10/01a0f942-f322-7548-ba6b-1ad3f05d6059.md) | passed |
+| `inbox-table-source-event-dedupe-only-1` | [01a0f942-fe40-77b1-8169-46c17dcb13cd](../verification/runs/keiro/2026/10/01a0f942-fe40-77b1-8169-46c17dcb13cd.md) | passed |
+| `inbox-table-kafka-delivery-full-envelope-1` | [01a0f943-0955-752f-b3f2-4ec0a65fc47a](../verification/runs/keiro/2026/10/01a0f943-0955-752f-b3f2-4ec0a65fc47a.md) | passed |
+| `inbox-table-kafka-delivery-dedupe-only-1` | [01a0f943-1468-7471-a61c-60357e756018](../verification/runs/keiro/2026/10/01a0f943-1468-7471-a61c-60357e756018.md) | passed |
+| `inbox-table-custom-full-envelope-1` | [01a0f943-1f76-72ea-8ef2-0c2581cf68d2](../verification/runs/keiro/2026/10/01a0f943-1f76-72ea-8ef2-0c2581cf68d2.md) | passed |
+| `inbox-table-custom-dedupe-only-1` | [01a0f943-2a97-742b-a83f-78ac6dd17d3f](../verification/runs/keiro/2026/10/01a0f943-2a97-742b-a83f-78ac6dd17d3f.md) | passed |
+| `inbox-table-message-id-full-envelope-2` | [01a0f943-357d-7779-ab5f-8ace4bbee25f](../verification/runs/keiro/2026/10/01a0f943-357d-7779-ab5f-8ace4bbee25f.md) | expected effect failure |
+| `inbox-table-message-id-dedupe-only-2` | [01a0f943-4083-763c-abb8-77a3c3465554](../verification/runs/keiro/2026/10/01a0f943-4083-763c-abb8-77a3c3465554.md) | expected effect failure |
+| `delegated-message-id-full-envelope-1` | [01a0f943-4b8a-75f6-8a12-8d612c0b67e9](../verification/runs/keiro/2026/10/01a0f943-4b8a-75f6-8a12-8d612c0b67e9.md) | passed |
+| `delegated-source-event-full-envelope-1` | [01a0f943-5693-7089-a3d5-159cda5ec785](../verification/runs/keiro/2026/10/01a0f943-5693-7089-a3d5-159cda5ec785.md) | passed |
+| `delegated-kafka-delivery-full-envelope-1` | [01a0f943-6182-75cb-b7f9-ac8dda0764cd](../verification/runs/keiro/2026/10/01a0f943-6182-75cb-b7f9-ac8dda0764cd.md) | passed |
+| `delegated-custom-full-envelope-1` | [01a0f943-6cab-772b-9acb-4f36aa43e9c1](../verification/runs/keiro/2026/10/01a0f943-6cab-772b-9acb-4f36aa43e9c1.md) | passed |
+
+The full four-hour outbox revision-3 soak was submitted on alpha at
+2026-10-01 20:47 UTC using clean released payload `16ec2d6`, default collection,
+in-process publisher restarts every 60 seconds, 20 messages/second, and durable
+PostgreSQL 18. Session `01a0f938-eef5-7567-8d0b-582ee7e0b823` owns cell run
+`01a0f938-eef5-7567-9383-ca0e059e5b85` and nested run
+`01a0f938-67a3-7207-a457-fcccd988b600`. Its 15,300-second wall-clock cap includes
+the finalization allowance; the detached lease lasts 18,000 seconds. No sealed
+outcome is available yet. Resume collection from the repository root with:
+
+```bash
+kenshou cell resume --session cell-runs/ep13-outbox-full-default
+```
+
 ### Queue lease SQL evidence and replay
 
 Revision 3 uses the existing `worker` and `drain` execution shapes with
