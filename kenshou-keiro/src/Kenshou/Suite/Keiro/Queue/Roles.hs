@@ -4,8 +4,9 @@ import Control.Concurrent (threadDelay)
 import Control.Monad (when)
 import Data.Aeson (Value, object, withObject, (.!=), (.:), (.:?), (.=))
 import Data.Aeson.Types (parseMaybe)
+import Data.Functor.Contravariant (contramap)
 import Data.IORef (atomicModifyIORef', newIORef)
-import Data.Int (Int64)
+import Data.Int (Int32, Int64)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
@@ -53,11 +54,14 @@ effectInsertStatement = Statement.preparable "INSERT INTO kenshou_fx.queue_effec
 boundaryInsertStatement :: Statement.Statement Value ()
 boundaryInsertStatement = Statement.preparable "INSERT INTO kenshou_fx.queue_boundary_deliveries (observation) VALUES ($1)" (Encoders.param (Encoders.nonNullable Encoders.jsonb)) Decoders.noResult
 
-fifoStartStatement :: Statement.Statement Text Int64
-fifoStartStatement = Statement.preparable "INSERT INTO kenshou_fx.queue_fifo_spans (payload, started_at) VALUES ($1, clock_timestamp()) RETURNING id" (Encoders.param (Encoders.nonNullable Encoders.text)) (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
+fifoStartStatement :: Statement.Statement (Text, Int32) Int64
+fifoStartStatement = Statement.preparable "INSERT INTO kenshou_fx.queue_fifo_spans (payload, attempt, started_at, outcome) VALUES ($1, $2, clock_timestamp(), 'running') RETURNING id" (contramap fst (Encoders.param (Encoders.nonNullable Encoders.text)) <> contramap snd (Encoders.param (Encoders.nonNullable Encoders.int4))) (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
 
-fifoFinishStatement :: Statement.Statement Int64 ()
-fifoFinishStatement = Statement.preparable "UPDATE kenshou_fx.queue_fifo_spans SET finished_at = clock_timestamp() WHERE id = $1" (Encoders.param (Encoders.nonNullable Encoders.int8)) Decoders.noResult
+fifoFinishStatement :: Statement.Statement (Int64, Text) ()
+fifoFinishStatement = Statement.preparable "UPDATE kenshou_fx.queue_fifo_spans SET finished_at = clock_timestamp(), outcome = $2 WHERE id = $1" (contramap fst (Encoders.param (Encoders.nonNullable Encoders.int8)) <> contramap snd (Encoders.param (Encoders.nonNullable Encoders.text))) Decoders.noResult
+
+fifoGateStatement :: Statement.Statement () Bool
+fifoGateStatement = Statement.preparable "SELECT released FROM kenshou_fx.queue_fifo_gate" Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.bool)))
 
 worker :: RoleContext -> IO ()
 worker context = case context.init.postgres of
@@ -80,6 +84,7 @@ worker context = case context.init.postgres of
                 Just "fifo-throughput" -> FifoThroughput
                 Just "fifo-round-robin" -> FifoRoundRobin
                 _ -> FifoHeads
+              retryHeads = parseMaybe (withObject "FIFO retries" (\o -> o .:? "retryHeads" .!= False)) context.init.args == Just True
               fifoBatch = if fifoOrdering `elem` [FifoThroughput, FifoRoundRobin] then 1 else maybe 8 id (parseMaybe (withObject "FIFO batch" (.: "batchSize")) context.init.args)
               deadWorker = mode == Just ("dead-worker-hold" :: Text) || mode == Just "dead-recovery"
               boundary = maybe False (Text.isPrefixOf "boundary-") mode
@@ -102,6 +107,10 @@ worker context = case context.init.postgres of
               codec = if mode == Just "boundary-future" then JobCodec (const (object ["boundary" .= ("future" :: Text)])) (const (Left (JobPayloadFromFuture 2 1))) else aesonJobCodec @Text
               job = Job "queue-poll-probe" (queueRef queue) codec (if fifo then fifoOrdering else Unordered) policy
               handler jobContext payload = do
+                let retryHead = fifo && retryHeads && Text.isSuffixOf ":0" payload && jobContext.attempt == Just 0
+                    awaitGate = do
+                      released <- Pool.use runtime.runtimePool (Session.statement () fifoGateStatement) >>= either (fail . show) pure
+                      if released then pure () else threadDelay 10000 >> awaitGate
                 when boundary $ liftIO do
                   recorded <- Pool.use runtime.runtimePool (Session.statement (object ["queue" .= queue, "payload" .= payload, "attempt" .= jobContext.attempt, "headers" .= jobContext.headers]) boundaryInsertStatement)
                   either (fail . show) pure recorded
@@ -131,11 +140,11 @@ worker context = case context.init.postgres of
                                 else
                                   if fifo
                                     then do
-                                      started <- Pool.use runtime.runtimePool (Session.statement payload fifoStartStatement)
+                                      started <- Pool.use runtime.runtimePool (Session.statement (payload, maybe (-1) fromIntegral jobContext.attempt) fifoStartStatement)
                                       spanId <- either (fail . show) pure started
-                                      when (payload == "0:0") (threadDelay 5000000)
+                                      when (payload == "0:0" && jobContext.attempt == Just 0) awaitGate
                                       threadDelay 10000
-                                      finished <- Pool.use runtime.runtimePool (Session.statement spanId fifoFinishStatement)
+                                      finished <- Pool.use runtime.runtimePool (Session.statement (spanId, if retryHead then "retry" else "done") fifoFinishStatement)
                                       either (fail . show) pure finished
                                       count <- atomicModifyIORef' counter (\value -> (value + 1, value + 1))
                                       now <- getCurrentTime
@@ -159,16 +168,19 @@ worker context = case context.init.postgres of
                                       now <- getCurrentTime
                                       context.send (WrkProgress (fromIntegral count) now)
                 when (mode == Just "throw-once" && jobContext.attempt == Just 0) (liftIO (fail "fixture worker handler failure"))
-                pure $ case mode of
-                  Just "retry-once" | jobContext.attempt == Just 0 -> Retry (RetryDelay 1)
-                  Just "boundary-retry" | jobContext.attempt == Just 0 -> Retry (RetryDelay 1.2)
-                  Just "boundary-default" | jobContext.attempt == Just 0 -> RetryDefault
-                  Just "boundary-archive" -> Dead "worker-poison"
-                  Just "dead" -> Dead "worker-poison"
-                  Just "dead-drain" -> Dead "drain-poison"
-                  Just "dead-worker-hold" -> Dead "worker-poison"
-                  Just "dead-recovery" -> Dead "worker-poison"
-                  _ -> Done
+                pure $
+                  if retryHead
+                    then Retry (RetryDelay 1)
+                    else case mode of
+                      Just "retry-once" | jobContext.attempt == Just 0 -> Retry (RetryDelay 1)
+                      Just "boundary-retry" | jobContext.attempt == Just 0 -> Retry (RetryDelay 1.2)
+                      Just "boundary-default" | jobContext.attempt == Just 0 -> RetryDefault
+                      Just "boundary-archive" -> Dead "worker-poison"
+                      Just "dead" -> Dead "worker-poison"
+                      Just "dead-drain" -> Dead "drain-poison"
+                      Just "dead-worker-hold" -> Dead "worker-poison"
+                      Just "dead-recovery" -> Dead "worker-poison"
+                      _ -> Done
           result <-
             if draining
               then do

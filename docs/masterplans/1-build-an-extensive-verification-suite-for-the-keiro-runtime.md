@@ -509,7 +509,8 @@ Cross-plan baseline handoff gates remain open:
 
 Nine clean queue ordering investigations now have confirmed independent replay,
 including the full 1,600-job FIFO-heads case. They cover ordering modes and worker
-kills; scripted retries and overlap/visibility remain separate EP-13 gates.
+kills. Revision 4 adds validated scripted retries and independent replay; its
+clean publication and overlap/visibility remain separate EP-13 gates.
 
 The historical bundle currently contains 170 run/comparison records: 164 sealed
 individual runs and six comparisons. The

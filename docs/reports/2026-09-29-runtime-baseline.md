@@ -239,3 +239,11 @@ five killed heads, all four ordering modes and the full 1,600-job FIFO default.
 All 74 schemas and 173 artifact checks pass. The complete links and limits are
 in [the messaging plan](../plans/13-cover-the-keiro-outbox-inbox-and-job-queue.md#clean-queue-ordering-control-evidence).
 These records do not claim scripted-retry or overlap/visibility coverage.
+
+Revision-4 queue ordering adds explicit head retries and an independently
+replayable attempt ledger. Ten durable controls pass, with 102 schema and
+212 artifact checks; the prior revision-3 controls still replay. The full
+verification gate and the default 1,600-job retry control pass. These local
+controls do not yet add published records; overlap/visibility coverage remains
+open. The first worker is paused before admitting other groups to prevent
+prefetch from consuming the intended progress witness.

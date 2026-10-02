@@ -1112,6 +1112,43 @@ scripted retries and do not close overlap/visibility or fault-mode coverage.
 | fifo-round-robin-kill-true | [01a0fea0-b4ba-771e-9843-90751d25ec3e](../verification/runs/keiro/2026/10/01a0fea0-b4ba-771e-9843-90751d25ec3e.md) | [confirmed](../verification/attestations/2026/10/01a0febe-4bb9-7026-b319-ddf175dbc0f9.md) |
 | fifo-heads-default | [01a0fea0-fb8d-72b9-8bf0-52dbbf49602a](../verification/runs/keiro/2026/10/01a0fea0-fb8d-72b9-8bf0-52dbbf49602a.md) | [confirmed](../verification/attestations/2026/10/01a0febf-58e2-7475-9739-11de68956ce8.md) |
 
+### Scripted retry ordering evidence
+
+The FIFO ordering scenario is revision 4 and defaults `queue.retry-heads` to
+true. Every group head returns a one-second Retry once, except the killed
+head, which is recovered through visibility expiry. Each raw SQL attempt
+records its payload, zero-based attempt, handler start/finish and disposition.
+Schema `kenshou.queue-ordering-observations/v2` includes all attempts and its
+successful/abandoned projection. Independent replay supports both revision
+3/v1 and revision 4/v2, binds the retry knob, checks projection consistency,
+and derives exact head attempt patterns and the minimum retry delay. Per-group
+ordering uses a successor's first attempt start, so an early failed attempt
+cannot be hidden by a later correctly ordered completion.
+
+The controller gates the first handler in SQL and pauses its entire process
+before admitting the competing group. That prevents its background reader
+from prefetching the other group's retry into a blocked serial inbox. Once
+another group completes, the controller kills the held worker or releases its
+gate and resumes it. The exploratory unpaused round-robin/kill run
+`01a0fea6-a35b-70bd-af52-be914770b2fa` exposed this fixture race: the competing
+head's attempt 1 never entered its handler, and the held head was redelivered
+at its ten-second visibility expiry before the schedule assertion. That
+attempt remains failed and excluded; no upstream defect is inferred from it.
+
+All ten corrected controls under `runs/ep13-ordering-retries-gated/` pass on
+durable PostgreSQL 18, seed `8102429385822254`: four modes with and without a
+worker kill and two FIFO-heads controls with retries disabled. All 240 jobs
+complete, all 102 schema checks and 212 artifact checks pass. Independent
+replay agrees with these ten and the eight prior revision-3 controls. Five
+new mutation examples reject missing/extra retries, wrong attempt numbers,
+early redelivery, early successor starts and inconsistent attempt captures.
+The full repository gate passes, including 63 Keiro and 106 CLI examples.
+The full default control `01a0fee0-b358-726b-957d-40aadb403218` also passes:
+1,600 completed jobs, 31 explicit head retries and one abandoned/killed head,
+with 10 schema and 21 artifact checks and independent replay agreement.
+These local implementation controls do not add published baseline records.
+Clean publication and the overlap/visibility and fault-mode gates remain open.
+
 ### Remaining non-soak work
 
 Queue throughput revision 2 now implements bounded versus continuous-worker

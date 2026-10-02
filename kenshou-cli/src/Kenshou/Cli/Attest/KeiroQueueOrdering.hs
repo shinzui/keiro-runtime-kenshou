@@ -7,9 +7,10 @@ import Data.Aeson.Key (Key)
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Aeson.Types (Parser, parseEither)
 import Data.List (sortOn)
+import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Data.Time (UTCTime)
+import Data.Time (UTCTime, addUTCTime)
 import Kenshou.Core.Outcome (Outcome (..), outcomeExitCode)
 import Kenshou.Evidence.Attest (Recomputation (..))
 import Kenshou.Evidence.Source (RunResultView (..), RunSource (..))
@@ -36,9 +37,15 @@ replayOrderingCells = either (Left . Text.pack) Right . parseEither replay
       scheduled <- get "blockedAtKill" raw :: Parser Bool
       depth <- get "queueDepth" raw :: Parser Int
       spans <- get "spans" raw :: Parser [(Text, UTCTime, Maybe UTCTime)]
-      unless (schema == "kenshou.queue-ordering-observations/v1" && mode `elem` ["fifo-heads", "unordered", "fifo-throughput", "fifo-round-robin"] && groups >= 2 && groups <= 32 && count >= 2 && count <= 50 && workers >= 2 && workers <= 8 && batch >= 1 && batch <= 32 && (mode `notElem` ["fifo-throughput", "fifo-round-robin"] || batch == 1)) (fail "invalid ordering capture parameters")
-      let payload groupIndex sequenceIndex = Text.pack (show groupIndex <> ":" <> show sequenceIndex)
-          finished = [(item, started, ended) | (item, started, Just ended) <- spans]
+      unless (schema `elem` ["kenshou.queue-ordering-observations/v1", "kenshou.queue-ordering-observations/v2"] && mode `elem` ["fifo-heads", "unordered", "fifo-throughput", "fifo-round-robin"] && groups >= 2 && groups <= 32 && count >= 2 && count <= 50 && workers >= 2 && workers <= 8 && batch >= 1 && batch <= 32 && (mode `notElem` ["fifo-throughput", "fifo-round-robin"] || batch == 1)) (fail "invalid ordering capture parameters")
+      let withAttempts = schema == "kenshou.queue-ordering-observations/v2"
+      retries <- if withAttempts then get "retryHeads" raw else pure False
+      attempts <- if withAttempts then get "attemptSpans" raw else pure [] :: Parser [(Text, Int, UTCTime, Maybe UTCTime, Text)]
+      unless (not withAttempts || (spans == [(item, started, ended) | (item, _, started, ended, disposition) <- attempts, disposition == "done" || ended == Nothing] && all (\(_, attempt, started, ended, disposition) -> attempt >= 0 && case (disposition, ended) of ("running", Nothing) -> True; ("done", Just finish) -> finish >= started; ("retry", Just finish) -> finish >= started; _ -> False) attempts)) (fail "inconsistent ordering attempt capture")
+      let firstStarts = Map.fromListWith min [(item, started) | (item, _, started, _, _) <- attempts]
+          payload :: Int -> Int -> Text
+          payload groupIndex sequenceIndex = Text.pack (show groupIndex <> ":" <> show sequenceIndex)
+          finished = [(item, Map.findWithDefault started item firstStarts, ended) | (item, started, Just ended) <- spans]
           expected = [payload groupIndex sequenceIndex | groupIndex <- [0 .. groups - 1], sequenceIndex <- [0 .. count - 1]]
           complete = sortOn id [item | (item, _, _) <- finished] == sortOn id expected && depth == 0
           groupOrdered groupIndex =
@@ -51,8 +58,17 @@ replayOrderingCells = either (Left . Text.pack) Right . parseEither replay
           otherProgress = case [ended | (item, _, ended) <- finished, item == "0:0"] of
             [headEnd] -> any (\(item, _, ended) -> item `elem` expected && not ("0:" `Text.isPrefixOf` item) && ended < headEnd) finished
             _ -> False
+          headPattern groupIndex =
+            let observed = sortOn fst [(attempt, disposition) | (item, attempt, _, _, disposition) <- attempts, item == payload groupIndex 0]
+                wanted = if killed && groupIndex == 0 then [(0, "running"), (1, "done")] else if retries then [(0, "retry"), (1, "done")] else [(0, "done")]
+             in observed == wanted
+          retryCount = length [() | (_, _, _, _, "retry") <- attempts]
+          patterns = all headPattern [0 .. groups - 1] && retryCount == (if retries then groups - (if killed then 1 else 0) else 0)
+          delays = and [case [nextStart | (nextItem, nextAttempt, nextStart, _, _) <- attempts, nextItem == item && nextAttempt == attempt + 1] of [nextStart] -> nextStart >= addUTCTime 1 finish; _ -> False | (item, attempt, _, Just finish, "retry") <- attempts]
           contracts =
             [("schedule-realised", scheduled && (not killed || abandoned == 1)), ("all-jobs-completed", complete), ("other-groups-progress", otherProgress)]
+              <> [("scripted-head-retries", patterns) | withAttempts]
+              <> [("head-retry-delay", delays) | withAttempts]
               <> [("strict-group-order", strict) | mode == "fifo-heads"]
               <> [("unordered-control-reorders", not strict) | mode == "unordered"]
       pure (contracts, [("strict-group-order", strict) | mode /= "fifo-heads"])
@@ -64,7 +80,8 @@ recomputeQueueOrdering root source = do
   spec <- readDocument (root <> "/run-spec.json")
   result <- readDocument (root <> "/run-result.json")
   captured <- readDocument (root <> "/logs/queue-ordering-observations.json")
-  let names = ["schedule-realised", "all-jobs-completed", "other-groups-progress", "strict-group-order"] <> ["unordered-control-reorders" | either (const False) ((== Just (String "unordered")) . field "ordering") captured]
+  let isV2 = either (const False) ((== Just (String "kenshou.queue-ordering-observations/v2")) . field "schema") captured
+      names = ["schedule-realised", "all-jobs-completed", "other-groups-progress", "strict-group-order"] <> [name | isV2, name <- ["scripted-head-retries", "head-retry-delay"]] <> ["unordered-control-reorders" | either (const False) ((== Just (String "unordered")) . field "ordering") captured]
   verdicts <- forM names \name -> do
     value <- readDocument (root <> "/verdicts/" <> Text.unpack name <> ".json")
     pure (name, value)
@@ -72,12 +89,13 @@ recomputeQueueOrdering root source = do
     specification <- spec
     document <- result
     raw <- captured
-    unless (field "scenarioRevision" specification == Just (Number 3) && field "scenarioRevision" document == Just (Number 3)) (Left "ordering replay requires scenario revision 3")
+    let revision = if isV2 then Number 4 else Number 3
+    unless (field "scenarioRevision" specification == Just revision && field "scenarioRevision" document == Just revision) (Left "ordering replay requires revision 3/v1 or 4/v2 captures")
     knobs <- maybe (Left "missing ordering knobs") Right (field "knobs" specification)
     let matches (key, knob) = field key raw == field knob knobs
         mode = field "ordering" raw
         requestedBatch = if mode `elem` [Just (String "fifo-throughput"), Just (String "fifo-round-robin")] then Just (Number 1) else field "queue.batch-size" knobs
-    unless (all matches [("ordering", "queue.ordering"), ("groups", "queue.groups"), ("jobsPerGroup", "queue.jobs-per-group"), ("workers", "queue.workers"), ("killWorker", "queue.kill-worker")] && field "batchSize" raw == requestedBatch) (Left "ordering capture differs from the resolved specification")
+    unless (all matches [("ordering", "queue.ordering"), ("groups", "queue.groups"), ("jobsPerGroup", "queue.jobs-per-group"), ("workers", "queue.workers"), ("killWorker", "queue.kill-worker")] && field "batchSize" raw == requestedBatch && (not isV2 || matches ("retryHeads", "queue.retry-heads"))) (Left "ordering capture differs from the resolved specification")
     (contracts, observations) <- replayOrderingCells raw
     documents <- traverse (\(name, value) -> (name,) <$> value) verdicts
     let expected = [(name, held, True) | (name, held) <- contracts] <> [(name, held, False) | (name, held) <- observations]

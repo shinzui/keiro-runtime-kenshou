@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/kenshou.queue-ordering-observations.v2.schema.json",
+  "title": "Queue ordering and head retry observations v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "ordering",
+    "batchSize",
+    "groups",
+    "jobsPerGroup",
+    "workers",
+    "killWorker",
+    "blockedAtKill",
+    "timedOut",
+    "queueDepth",
+    "spans",
+    "retryHeads",
+    "attemptSpans"
+  ],
+  "properties": {
+    "schema": {
+      "const": "kenshou.queue-ordering-observations/v2"
+    },
+    "ordering": {
+      "enum": [
+        "fifo-heads",
+        "unordered",
+        "fifo-throughput",
+        "fifo-round-robin"
+      ]
+    },
+    "batchSize": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "groups": {
+      "type": "integer",
+      "minimum": 2
+    },
+    "jobsPerGroup": {
+      "type": "integer",
+      "minimum": 2
+    },
+    "workers": {
+      "type": "integer",
+      "minimum": 2
+    },
+    "killWorker": {
+      "type": "boolean"
+    },
+    "blockedAtKill": {
+      "type": "boolean"
+    },
+    "timedOut": {
+      "type": "boolean"
+    },
+    "queueDepth": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "spans": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "minItems": 3,
+        "maxItems": 3,
+        "prefixItems": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "string",
+            "format": "date-time"
+          },
+          {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        ]
+      }
+    },
+    "retryHeads": {
+      "type": "boolean"
+    },
+    "attemptSpans": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "minItems": 5,
+        "maxItems": 5,
+        "prefixItems": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "integer"
+          },
+          {
+            "type": "string",
+            "format": "date-time"
+          },
+          {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          {
+            "enum": [
+              "running",
+              "retry",
+              "done"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

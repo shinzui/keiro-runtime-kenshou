@@ -15,7 +15,7 @@ import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.IO qualified as Text
-import Data.Time (addUTCTime, getCurrentTime)
+import Data.Time (UTCTime, addUTCTime, getCurrentTime)
 import Kenshou.Cli (runWithArgs)
 import Kenshou.Cli.Attest (FencingFacts (..), fencingFacts)
 import Kenshou.Cli.Attest.KeiroBatch (replayBatchCells)
@@ -111,6 +111,48 @@ main = hspec do
         failures (replace "groups" (Aeson.Number 0) raw) `shouldSatisfy` rejected
         failures (replace "spans" Aeson.Null raw) `shouldSatisfy` rejected
         failures (replace "ordering" (Aeson.String "fifo-round-robin") (replace "batchSize" (Aeson.Number 8) raw)) `shouldSatisfy` rejected
+  describe "independent queue ordering retry replay" do
+    let loadFixture = Aeson.eitherDecodeFileStrict' "test/fixtures/queue-ordering-retry-controls.json" >>= either fail pure :: IO [Value]
+        replace key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)
+        replace _ _ value = value
+        rows :: Value -> [(Text, Int, UTCTime, Maybe UTCTime, Text)]
+        rows raw = case jsonField "attemptSpans" raw of
+          Just value -> case Aeson.fromJSON value of Aeson.Success entries -> entries; Aeson.Error _ -> []
+          Nothing -> []
+        changeRows change raw =
+          let changed = change (rows raw :: [(Text, Int, UTCTime, Maybe UTCTime, Text)])
+           in replace "attemptSpans" (Aeson.toJSON changed) (replace "spans" (Aeson.toJSON [(item, started, ended) | (item, _, started, ended, disposition) <- changed, disposition == "done" || ended == Nothing]) raw)
+        failures = fmap (map fst . filter (not . snd) . fst) . replayOrderingCells
+        detects label raw = failures raw `shouldSatisfy` either (const False) (elem label)
+    it "replays all ten retry, kill and no-retry controls" do
+      controls <- loadFixture
+      length controls `shouldBe` 10
+      forM_ controls \raw -> failures raw `shouldBe` Right []
+    it "detects missing or extra retries and incorrect attempt numbers" do
+      controls <- loadFixture
+      forM_ [raw | raw <- controls, jsonField "retryHeads" raw == Just (Aeson.Bool True)] \raw -> do
+        detects "scripted-head-retries" (changeRows (filter (\(_, _, _, _, disposition) -> disposition /= "retry")) raw)
+        detects "scripted-head-retries" (changeRows (\entries -> entries <> take 1 [entry | entry@(_, _, _, _, "retry") <- entries]) raw)
+        detects "scripted-head-retries" (changeRows (map (\(item, attempt, start, finish, disposition) -> (item, if disposition == "retry" then 7 else attempt, start, finish, disposition))) raw)
+    it "rejects retry delivery before the requested delay expires" do
+      controls <- loadFixture
+      forM_ [raw | raw <- controls, jsonField "retryHeads" raw == Just (Aeson.Bool True)] \raw -> do
+        let ends = [(item, finish) | (item, _, _, Just finish, "retry") <- rows raw]
+            early (item, attempt, start, finish, disposition) = (item, attempt, if attempt == 1 then maybe start id (lookup item ends) else start, finish, disposition)
+        detects "head-retry-delay" (changeRows (map early) raw)
+    it "includes first attempts when deciding predecessor ordering" do
+      controls <- loadFixture
+      forM_ [raw | raw <- controls, jsonField "ordering" raw == Just (Aeson.String "fifo-heads"), jsonField "retryHeads" raw == Just (Aeson.Bool True)] \raw -> do
+        let headStarts = [start | ("2:0", 0, start, _, _) <- rows raw]
+        case headStarts of
+          [headStart] -> detects "strict-group-order" (changeRows (map (\(item, attempt, start, finish, disposition) -> (item, attempt, if item == "2:1" then headStart else start, finish, disposition))) raw)
+          _ -> expectationFailure "fixture lacks retried group head"
+    it "refuses inconsistent projections or impossible attempt timestamps" do
+      controls <- loadFixture
+      forM_ controls \raw -> do
+        let rejected = either (const True) (const False)
+        failures (replace "spans" (Aeson.toJSON ([] :: [Value])) raw) `shouldSatisfy` rejected
+        failures (changeRows (map (\(item, attempt, start, finish, disposition) -> (item, attempt, start, fmap (const (addUTCTime (-1) start)) finish, disposition))) raw) `shouldSatisfy` rejected
   describe "independent queue outcome replay" do
     let loadFixture = Aeson.eitherDecodeFileStrict' "test/fixtures/queue-job-outcomes.json" >>= either fail pure
         replace key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)

@@ -4,7 +4,7 @@ import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (mapConcurrently, withAsync)
 import Control.Concurrent.STM (atomically)
 import Control.Exception (bracket)
-import Control.Monad (replicateM)
+import Control.Monad (replicateM, when)
 import Data.Aeson (ToJSON (..), encodeFile, object, withObject, (.:), (.=))
 import Data.Aeson.Types (parseMaybe)
 import Data.Int (Int64)
@@ -362,7 +362,7 @@ fifoHeadsStrictOrder :: Scenario
 fifoHeadsStrictOrder =
   workersSurviveTransientPollingError
     { id = either (error . show) id (parseScenarioId "keiro/queue/concurrency/fifo-heads-strict-order"),
-      revision = 3,
+      revision = 4,
       summary = "Checks FIFO-head ordering against unordered and legacy controls with competing workers.",
       knobs =
         [ KnobSpec (knobName "queue.ordering") "Queue ordering contract under test" KnobText (VText "fifo-heads") (OneOf (VText "fifo-heads" :| [VText "unordered", VText "fifo-throughput", VText "fifo-round-robin"])) [VText "unordered", VText "fifo-throughput", VText "fifo-round-robin"],
@@ -370,6 +370,7 @@ fifoHeadsStrictOrder =
           KnobSpec (knobName "queue.groups") "Number of FIFO groups" KnobInt (VInt 32) (IntRange 2 32) [],
           KnobSpec (knobName "queue.jobs-per-group") "Jobs in each FIFO group" KnobInt (VInt 50) (IntRange 2 50) [],
           KnobSpec (knobName "queue.workers") "Competing worker processes" KnobInt (VInt 4) (IntRange 2 8) [],
+          KnobSpec (knobName "queue.retry-heads") "Retry every group head once before completion" KnobBool (VBool True) AnyValue [VBool False],
           KnobSpec (knobName "queue.kill-worker") "Kill the worker holding group zero's head" KnobBool (VBool True) AnyValue [VBool False]
         ],
       knownDefect = Nothing,
@@ -384,28 +385,31 @@ runFifoHeadsStrictOrder context =
           jobsPerGroup = fromIntegral (knobInt context.knobs (knobName "queue.jobs-per-group")) :: Int
           workers = fromIntegral (knobInt context.knobs (knobName "queue.workers")) :: Int
           killWorker = knobBool context.knobs (knobName "queue.kill-worker")
+          retryHeads = knobBool context.knobs (knobName "queue.retry-heads")
           expected = groups * jobsPerGroup
           orderingLabel = knobText context.knobs (knobName "queue.ordering")
           ordering = case orderingLabel of "unordered" -> Unordered; "fifo-throughput" -> FifoThroughput; "fifo-round-robin" -> FifoRoundRobin; _ -> FifoHeads
           batch = if ordering `elem` [FifoThroughput, FifoRoundRobin] then 1 else knobInt context.knobs (knobName "queue.batch-size")
           queue = sourceName context "fifo-heads"
           job = Job "queue-poll-probe" (queueRef queue) (aesonJobCodec @Text) ordering defaultRetryPolicy
-          spansStatement = Statement.preparable "SELECT payload, started_at, finished_at FROM kenshou_fx.queue_fifo_spans ORDER BY id" Encoders.noParams (Decoders.rowList ((,,) <$> Decoders.column (Decoders.nonNullable Decoders.text) <*> Decoders.column (Decoders.nonNullable Decoders.timestamptz) <*> Decoders.column (Decoders.nullable Decoders.timestamptz)))
+          spansStatement = Statement.preparable "SELECT payload, started_at, finished_at FROM kenshou_fx.queue_fifo_spans WHERE outcome = 'done' OR finished_at IS NULL ORDER BY id" Encoders.noParams (Decoders.rowList ((,,) <$> Decoders.column (Decoders.nonNullable Decoders.text) <*> Decoders.column (Decoders.nonNullable Decoders.timestamptz) <*> Decoders.column (Decoders.nullable Decoders.timestamptz)))
           readSpans = Pool.use runtime.runtimePool (Session.statement () spansStatement) >>= either (fail . show) pure
+          attemptsStatement = Statement.preparable "SELECT payload, attempt, started_at, finished_at, outcome FROM kenshou_fx.queue_fifo_spans ORDER BY id" Encoders.noParams (Decoders.rowList ((,,,,) <$> Decoders.column (Decoders.nonNullable Decoders.text) <*> Decoders.column (Decoders.nonNullable Decoders.int4) <*> Decoders.column (Decoders.nonNullable Decoders.timestamptz) <*> Decoders.column (Decoders.nullable Decoders.timestamptz) <*> Decoders.column (Decoders.nonNullable Decoders.text)))
+          readAttempts = Pool.use runtime.runtimePool (Session.statement () attemptsStatement) >>= either (fail . show) pure
           depthStatement = Statement.preparable ("SELECT count(*) FROM pgmq.q_" <> queueNameToText job.jobQueue.physicalName) Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
           readDepth = Pool.use runtime.runtimePool (Session.statement () depthStatement) >>= either (fail . show) pure
           waitComplete = do
             spans <- readSpans
             depth <- readDepth
             if length [() | (_, _, Just _) <- spans] >= expected && depth == 0 then pure spans else threadDelay 100000 >> waitComplete
-      Pool.use runtime.runtimePool (Session.script "CREATE SCHEMA IF NOT EXISTS kenshou_fx; CREATE TABLE IF NOT EXISTS kenshou_fx.queue_fifo_spans (id bigserial PRIMARY KEY, payload text NOT NULL, started_at timestamptz NOT NULL, finished_at timestamptz)") >>= either (fail . show) pure
+      Pool.use runtime.runtimePool (Session.script "CREATE SCHEMA IF NOT EXISTS kenshou_fx; CREATE TABLE kenshou_fx.queue_fifo_spans (id bigserial PRIMARY KEY, payload text NOT NULL, attempt integer NOT NULL, started_at timestamptz NOT NULL, finished_at timestamptz, outcome text NOT NULL); CREATE TABLE kenshou_fx.queue_fifo_gate (released boolean NOT NULL); INSERT INTO kenshou_fx.queue_fifo_gate VALUES (false)") >>= either (fail . show) pure
       let enqueueCoordinate (groupIndex, sequenceIndex) = enqueueToGroup job (Text.pack (show groupIndex)) (Text.pack (show groupIndex <> ":" <> show sequenceIndex))
       setup <- runJobEff runtime do
         ensureJobQueue job
         enqueueCoordinate (0, 0)
       _ <- either (fail . show) pure setup
       let startWorker index = do
-            child <- roleProcess check "keiro/queue-worker" index (object ["queue" .= queue, "mode" .= ("fifo" :: Text), "ordering" .= orderingLabel, "batchSize" .= batch]) >>= spawn supervisor
+            child <- roleProcess check "keiro/queue-worker" index (object ["queue" .= queue, "mode" .= ("fifo" :: Text), "ordering" .= orderingLabel, "batchSize" .= batch, "retryHeads" .= retryHeads]) >>= spawn supervisor
             awaitReady child 10000
             sendCommand child CtlStart
             awaitMark child "running" 30000
@@ -415,6 +419,9 @@ runFifoHeadsStrictOrder context =
             if any (\(payload, _, _) -> payload == "0:0") spans then pure () else threadDelay 10000 >> waitHead
       first <- startWorker 0
       _ <- maybe (fail "FIFO head did not start") pure =<< timeout 10000000 waitHead
+      -- Pause ingestion as well as the gated handler: the worker inbox must not
+      -- prefetch the competing group's retry while its first handler is held.
+      signalChild supervisor first Stop
       secondSetup <- runJobEff runtime (enqueueCoordinate (1, 0))
       _ <- either (fail . show) pure secondSetup
       peers <- traverse startWorker [1 .. workers - 1]
@@ -423,25 +430,31 @@ runFifoHeadsStrictOrder context =
             if any (\(payload, _, finished) -> payload == "1:0" && finished /= Nothing) spans
               then pure (any (\(payload, _, finished) -> payload == "0:0" && finished == Nothing) spans)
               else threadDelay 10000 >> waitOtherGroup
-      blockedAtKill <-
-        if killWorker
-          then do
-            observed <- maybe False id <$> timeout 10000000 waitOtherGroup
-            killChild supervisor first
-            pure observed
-          else pure True
+      blockedAtKill <- maybe False id <$> timeout 10000000 waitOtherGroup
+      when killWorker (killChild supervisor first)
       let coordinates = [(groupIndex, sequenceIndex) | sequenceIndex <- [0 .. jobsPerGroup - 1], groupIndex <- [0 .. groups - 1], (groupIndex, sequenceIndex) /= (0, 0), (groupIndex, sequenceIndex) /= (1, 0)]
       restSetup <- runJobEff runtime (traverse enqueueCoordinate coordinates)
       _ <- either (fail . show) pure restSetup
+      when (not killWorker) do
+        when (ordering == Unordered) do
+          let waitSuccessor = do
+                current <- readSpans
+                if any (\(payload, _, finished) -> payload == "0:1" && finished /= Nothing) current then pure () else threadDelay 10000 >> waitSuccessor
+          _ <- timeout 10000000 waitSuccessor
+          pure ()
+        Pool.use runtime.runtimePool (Session.script "UPDATE kenshou_fx.queue_fifo_gate SET released = true") >>= either (fail . show) pure
+        signalChild supervisor first Cont
       let children = if killWorker then peers else first : peers
       maybeSpans <- timeout 120000000 waitComplete
       spans <- maybe readSpans pure maybeSpans
+      attempts <- readAttempts
       depth <- readDepth
       mapM_ (killChild supervisor) children
       let parsePayload payload = case Text.splitOn ":" payload of
             [groupText, sequenceText] -> (,) <$> readMaybe (Text.unpack groupText) <*> readMaybe (Text.unpack sequenceText)
             _ -> Nothing
-          parsed = [(groupIndex, sequenceIndex, started, finished) | (payload, started, Just finished) <- spans, Just (groupIndex, sequenceIndex) <- [parsePayload payload]]
+          firstStarts = Map.fromListWith min [(payload, started) | (payload, _, started, _, _) <- attempts]
+          parsed = [(groupIndex, sequenceIndex, Map.findWithDefault started payload firstStarts, finished) | (payload, started, Just finished) <- spans, Just (groupIndex, sequenceIndex) <- [parsePayload payload]]
           byGroup = Map.fromListWith (<>) [(groupIndex, [(sequenceIndex, started, finished)]) | (groupIndex, sequenceIndex, started, finished) <- parsed]
           ordered groupIndex = maybe False (fifoGroupOrder jobsPerGroup) (Map.lookup groupIndex byGroup)
           blockedHead = [finished | (0, 0, _, finished) <- parsed]
@@ -452,17 +465,27 @@ runFifoHeadsStrictOrder context =
           strict = all ordered [0 .. groups - 1]
           expectedPayloads = Set.fromList [Text.pack (show groupIndex <> ":" <> show sequenceIndex) | groupIndex <- [0 .. groups - 1], sequenceIndex <- [0 .. jobsPerGroup - 1]]
           complete = length [() | (_, _, Just _) <- spans] == expected && length parsed == expected && Set.fromList [payload | (payload, _, Just _) <- spans] == expectedPayloads && depth == 0
+          retryPattern groupIndex =
+            let payload = Text.pack (show groupIndex <> ":0")
+                observed = sortOn fst [(attempt, disposition) | (item, attempt, _, _, disposition) <- attempts, item == payload]
+                expectedAttempts = if killWorker && groupIndex == 0 then [(0, "running"), (1, "done")] else if retryHeads then [(0, "retry"), (1, "done")] else [(0, "done")]
+             in observed == expectedAttempts
+          retryCount = length [() | (_, _, _, _, disposition) <- attempts, disposition == "retry"]
+          expectedRetries = if retryHeads then groups - (if killWorker then 1 else 0) else 0
+          retryDelays = and [case [nextStart | (nextPayload, nextAttempt, nextStart, _, _) <- attempts, nextPayload == payload && nextAttempt == attempt + 1] of [nextStart] -> nextStart >= addUTCTime 1 finished; _ -> False | (payload, attempt, _, Just finished, disposition) <- attempts, disposition == "retry"]
           cells =
             [ ("schedule-realised", blockedAtKill && (not killWorker || abandonedHead == 1)),
               ("all-jobs-completed", complete),
-              ("other-groups-progress", otherProgress)
+              ("other-groups-progress", otherProgress),
+              ("scripted-head-retries", all retryPattern [0 .. groups - 1] && retryCount == expectedRetries),
+              ("head-retry-delay", retryDelays)
             ]
               <> [("strict-group-order", strict) | ordering == FifoHeads]
               <> [("unordered-control-reorders", not strict) | ordering == Unordered]
           observations = [("strict-group-order", strict) | ordering /= FifoHeads]
           timedOut = maybe True (const False) maybeSpans
       encodeFile (context.outDir </> "logs/queue-ordering-observations.json") $
-        object ["schema" .= ("kenshou.queue-ordering-observations/v1" :: Text), "ordering" .= orderingLabel, "batchSize" .= batch, "groups" .= groups, "jobsPerGroup" .= jobsPerGroup, "workers" .= workers, "killWorker" .= killWorker, "blockedAtKill" .= blockedAtKill, "timedOut" .= timedOut, "queueDepth" .= depth, "spans" .= spans]
+        object ["schema" .= ("kenshou.queue-ordering-observations/v2" :: Text), "ordering" .= orderingLabel, "batchSize" .= batch, "groups" .= groups, "jobsPerGroup" .= jobsPerGroup, "workers" .= workers, "killWorker" .= killWorker, "blockedAtKill" .= blockedAtKill, "timedOut" .= timedOut, "queueDepth" .= depth, "spans" .= spans, "retryHeads" .= retryHeads, "attemptSpans" .= attempts]
       recordMessagingObservations context (Map.fromList [("groups", fromIntegral groups), ("jobs", fromIntegral (length parsed)), ("workers", fromIntegral workers), ("queueDepth", depth), ("abandonedHeads", fromIntegral abandonedHead)]) (object ["timedOut" .= timedOut, "groupSizes" .= fmap length byGroup, "killWorker" .= killWorker, "ordering" .= orderingLabel, "effectiveBatchSize" .= batch]) cells observations
 
 fifoGroupOrder :: Int -> [(Int, UTCTime, UTCTime)] -> Bool
