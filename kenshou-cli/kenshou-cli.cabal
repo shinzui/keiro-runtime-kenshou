@@ -94,6 +94,7 @@ library
     terminal-size >=0.3.4 && <0.4,
     text >=2.1 && <2.2,
     time,
+    uuid,
 
 executable kenshou
   import: warnings

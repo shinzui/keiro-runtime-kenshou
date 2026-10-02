@@ -18,7 +18,7 @@ import Data.Text.IO qualified as Text
 import Data.Time (addUTCTime, getCurrentTime)
 import Kenshou.Cli (runWithArgs)
 import Kenshou.Cli.Attest (FencingFacts (..), fencingFacts)
-import Kenshou.Cli.Attest.KeiroInbox (replayInboxCells)
+import Kenshou.Cli.Attest.KeiroInbox (replayDelegatedCells, replayInboxCells)
 import Kenshou.Cli.Attest.KeiroLease (replayLeaseCells)
 import Kenshou.Cli.Cohort (resolveDefaultCohortIdentity)
 import Kenshou.Cli.Version (appVersionWithGit)
@@ -56,6 +56,44 @@ readInboxFixture path = do
 
 main :: IO ()
 main = hspec do
+  describe "independent delegated inbox replay" do
+    forM_ ["message-id", "source-event", "kafka-delivery", "custom"] \policy -> do
+      let fixture = "test/fixtures/inbox-delegated-" <> Text.unpack policy <> ".json"
+          replay value = fmap (map fst . filter (not . snd)) (replayDelegatedCells policy value)
+          replace key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)
+          replace _ _ value = value
+          empty = Aeson.toJSON ([] :: [Value])
+          loadFixture = Aeson.eitherDecodeFileStrict' fixture >>= either fail pure
+      it ("reconstructs receipts and rejects changed classifications: " <> Text.unpack policy) do
+        observed <- loadFixture
+        replay observed `shouldBe` Right []
+        forM_ [("seedResults", "seeded-account-targets"), ("firstResults", "delegated-first-delivery"), ("secondResults", "delegated-redelivery"), ("republishResults", "delegated-republish-policy"), ("afterRefusalIds", "delegated-refusals-leave-stream-unchanged")] \(key, label) ->
+          replay (replace key empty observed) `shouldBe` Right [label]
+        forM_ [("noOpResult", "delegated-no-op-refused"), ("rejectedResult", "delegated-rejection-refused"), ("missingResult", "delegated-missing-policy-field-fails-closed")] \(key, label) ->
+          replay (replace key (object ["tag" .= ("processed" :: Text)]) observed) `shouldBe` Right [label]
+        replay (replace "decodedRows" (Aeson.toJSON [object ["key" .= ("unexpected" :: Text), "status" .= ("InboxCompleted" :: Text)]]) observed) `shouldBe` Right ["delegated-skips-inbox-table"]
+      it ("detects missing, duplicated and substituted stream receipts: " <> Text.unpack policy) do
+        observed <- loadFixture
+        case jsonField "streamIds" observed of
+          Just (Aeson.Array streams) -> case toList streams of
+            first : second : rest -> do
+              let mutate values = replay (replace "streamIds" (Aeson.toJSON values) observed)
+              mutate (first : rest) `shouldBe` Right ["delegated-stream-receipts"]
+              mutate (first : second : second : rest) `shouldBe` Right ["delegated-stream-receipts"]
+              mutate (first : empty : rest) `shouldBe` Right ["delegated-stream-receipts"]
+              case second of
+                Aeson.Array receipts -> do
+                  mutate (first : Aeson.toJSON (reverse (toList receipts)) : rest) `shouldBe` Right ["delegated-stream-receipts"]
+                  mutate (first : Aeson.toJSON (map (const (Aeson.String "00000000-0000-0000-0000-000000000000")) (toList receipts)) : rest) `shouldBe` Right ["delegated-stream-receipts"]
+                _ -> expectationFailure "stream observation is not an array"
+              replay (replace "streamIds" empty observed) `shouldBe` Right ["delegated-stream-receipts", "delegated-refusals-leave-stream-unchanged"]
+            _ -> expectationFailure "fixture has fewer than two stream observations"
+          _ -> expectationFailure "fixture has no stream observations"
+      it ("rejects incomplete or altered workload arguments: " <> Text.unpack policy) do
+        observed <- loadFixture
+        forM_ ["firstInputs", "republishInputs", "missingInput", "targets", "consumer", "operation"] \key ->
+          replay (replace key empty observed) `shouldSatisfy` either (const True) (const False)
+        replayDelegatedCells "unsupported" observed `shouldSatisfy` either (const True) (const False)
   describe "independent inbox matrix replay" do
     forM_ [("message-id", "full-envelope"), ("source-event", "dedupe-only")] \(policy, persistence) -> do
       let fixture = "test/fixtures/inbox-replay-" <> Text.unpack policy <> ".json"

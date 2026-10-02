@@ -184,15 +184,11 @@ runDelegatedMatrix context fixture = do
   second <- traverse (\(index, event, _) -> intake (account index) event (Just (ref index))) coordinates
   republished <- traverse (\(index, _, event) -> intake (account index) event (Just (ref (index + 16)))) coordinates
   missing <- intake (account 1) malformed (if policyName == "kafka-delivery" then Nothing else Just (ref 100))
-  streamChecks <-
+  streams <-
     traverse
-      ( \(index, event, republishedEvent) -> do
+      ( \(index, _, _) -> do
           recorded <- runFixture (readStreamForward (accountStreamName (account index)) (StreamVersion 0) 10) >>= either (fail . show) pure
-          let firstMarker = marker (account index) event (ref index)
-              secondMarker = marker (account index) republishedEvent (ref (index + 16))
-              ids = map (.eventId) (Vector.toList recorded)
-              openingId = EventId (UUID.fromWords 0 1 0 (fromIntegral index))
-          pure (ids == (if doubled then [openingId, firstMarker, secondMarker] else [openingId, firstMarker]))
+          pure (map (.eventId) (Vector.toList recorded))
       )
       coordinates
   rows <- runFixture (listInbox source) >>= either (fail . show) pure
@@ -213,19 +209,53 @@ runDelegatedMatrix context fixture = do
       )
       >>= either (fail . show) pure
   afterRefusals <- runFixture (readStreamForward negativeName (StreamVersion 0) 10) >>= either (fail . show) pure
-  let processed = \case Right (InboxProcessed _) -> True; _ -> False
+  let expectedIds (index, event, republishedEvent) =
+        [EventId (UUID.fromWords 0 1 0 (fromIntegral index)), marker (account index) event (ref index)]
+          <> [marker (account index) republishedEvent (ref (index + 16)) | doubled]
+      streamName (StreamName name) = name
+      eventId (EventId uuid) = UUID.toText uuid
+      seedResult = \case
+        SubmitAppended (StreamVersion version) -> object ["tag" .= ("appended" :: Text.Text), "version" .= version]
+        other -> object ["tag" .= show other]
+      commandResult = \case
+        Left (DelegatedCommandWithoutReceipt target) -> object ["tag" .= ("without-receipt" :: Text.Text), "target" .= streamName target]
+        Left (DelegatedCommandFailed target err) -> object ["tag" .= ("command-failed" :: Text.Text), "target" .= streamName target, "error" .= show err]
+        Right DelegatedDuplicate -> object ["tag" .= ("duplicate" :: Text.Text)]
+        Right (DelegatedFresh _) -> object ["tag" .= ("fresh" :: Text.Text)]
+      afterIds = map (.eventId) (Vector.toList afterRefusals)
+      processed = \case Right (InboxProcessed _) -> True; _ -> False
       cells =
         [ ("seeded-account-targets", length seeded == 16 && all (== SubmitAppended (StreamVersion 1)) seeded),
           ("delegated-first-delivery", length first == 16 && all processed first),
           ("delegated-redelivery", length second == 16 && all (== Right InboxDuplicate) second),
           ("delegated-republish-policy", length republished == 16 && all (if doubled then processed else (== Right InboxDuplicate)) republished),
-          ("delegated-stream-receipts", and streamChecks),
+          ("delegated-stream-receipts", streams == map expectedIds coordinates),
           ("delegated-missing-policy-field-fails-closed", case missing of Left (DedupePolicyUnsatisfied _) -> True; _ -> False),
           ("delegated-skips-inbox-table", null rows),
           ("delegated-no-op-refused", noOp == Left (DelegatedCommandWithoutReceipt negativeName)),
           ("delegated-rejection-refused", rejected == Left (DelegatedCommandFailed negativeName CommandRejected)),
-          ("delegated-refusals-leave-stream-unchanged", Vector.length afterRefusals == if doubled then 3 else 2)
+          ("delegated-refusals-leave-stream-unchanged", take 1 streams == [afterIds])
         ]
+  encodeFile (context.outDir </> "logs/inbox-delegated-observations.json") $
+    object
+      [ "schema" .= ("kenshou.inbox-delegated-observations/v1" :: Text.Text),
+        "consumer" .= ("kenshou-consumer" :: Text.Text),
+        "operation" .= ("deposit" :: Text.Text),
+        "targets" .= [streamName (accountStreamName (account index)) | (index, _, _) <- coordinates],
+        "firstInputs" .= [Observation.delivery event (Just (ref index)) | (index, event, _) <- coordinates],
+        "republishInputs" .= [Observation.delivery event (Just (ref (index + 16))) | (index, _, event) <- coordinates],
+        "missingInput" .= Observation.delivery malformed (if policyName == "kafka-delivery" then Nothing else Just (ref 100)),
+        "seedResults" .= map seedResult seeded,
+        "firstResults" .= map Observation.result first,
+        "secondResults" .= map Observation.result second,
+        "republishResults" .= map Observation.result republished,
+        "missingResult" .= Observation.result missing,
+        "streamIds" .= map (map eventId) streams,
+        "decodedRows" .= map Observation.decodedReceipt rows,
+        "noOpResult" .= commandResult noOp,
+        "rejectedResult" .= commandResult rejected,
+        "afterRefusalIds" .= map eventId afterIds
+      ]
   recordMessagingCells context (Map.singleton "accounts" 16) (object ["dedupePolicy" .= policyName, "idempotence" .= ("delegated" :: Text.Text)]) cells
 
 effectTxnCountStatement :: Statement.Statement () Int64
@@ -242,7 +272,7 @@ effectivelyOnceMatrix :: Scenario
 effectivelyOnceMatrix =
   envelopeRoundTrip
     { id = either (error . show) id (parseScenarioId "keiro/inbox/correctness/effectively-once-matrix"),
-      revision = 4,
+      revision = 5,
       summary = "Checks deduplication, exact SQL receipt envelopes, and failed-handler rollback under redelivery.",
       tier = TierStandard,
       knobs =

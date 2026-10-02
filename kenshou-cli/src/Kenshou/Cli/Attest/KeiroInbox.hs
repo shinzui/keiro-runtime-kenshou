@@ -1,4 +1,4 @@
-module Kenshou.Cli.Attest.KeiroInbox (replayInboxCells, recomputeInbox) where
+module Kenshou.Cli.Attest.KeiroInbox (replayInboxCells, replayDelegatedCells, recomputeInbox) where
 
 import Control.Exception (IOException, try)
 import Control.Monad (unless)
@@ -7,12 +7,14 @@ import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Aeson.Types (Parser, parseEither)
 import Data.ByteString qualified as ByteString
-import Data.List (sort)
+import Data.List (sort, zipWith4)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
 import Data.Time (UTCTime)
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
+import Data.UUID qualified as UUID
+import Data.UUID.V5 qualified as UUIDV5
 import Data.Word (Word8)
 import Kenshou.Core.Outcome (Outcome (..), outcomeExitCode)
 import Kenshou.Evidence.Attest (Recomputation (..))
@@ -92,6 +94,75 @@ replayInboxCells policy persistence rawIntake rawSql = parse $ do
       ("failed-handler-rolls-back-effect", sort effects == sort afterFailure),
       ("failed-receipt-ceiling", ceilingHeld),
       ("failed-receipt-survives-gc", sameRows [expectedFailure] retained)
+    ]
+
+-- The verifier repeats the frozen wire recipe independently of both Keiro and
+-- the scenario oracle. mori://shinzui/keiro, keiro/src/Keiro/Inbox/Delegated.hs
+-- (artifact-level URI pending).
+replayDelegatedCells :: Text -> Value -> Either Text [(Text, Bool)]
+replayDelegatedCells policy raw = parse $ do
+  unless (policy `elem` ["message-id", "source-event", "kafka-delivery", "custom"]) (fail "unsupported delegated inbox policy")
+  observed <- asObject raw
+  expectSchema observed "kenshou.inbox-delegated-observations/v1"
+  consumer <- observed .: "consumer"
+  operation <- observed .: "operation"
+  unless (consumer == "kenshou-consumer" && operation == "deposit") (fail "unsupported delegated operation")
+  inputs <- observed .: "firstInputs"
+  republished <- observed .: "republishInputs"
+  malformed <- observed .: "missingInput"
+  ids <- traverse (get "messageId") inputs :: Parser [Text]
+  unless (sort ids == sort [Text.pack (show n) | n <- [1 .. 16 :: Int]]) (fail "delegated replay requires all sixteen messages")
+  firstInput <- case inputs of
+    value : _ -> pure value
+    [] -> fail "missing delegated inputs"
+  source <- get "source" firstInput :: Parser Text
+  sources <- traverse (get "source") inputs :: Parser [Text]
+  let coordinate n = object ["topic" .= ("kenshou.delegated" :: Text), "partition" .= (0 :: Int), "offset" .= (n :: Int)]
+      replace key value (Object fields) = Object (KeyMap.insert key value fields)
+      replace _ _ value = value
+      republish index messageId value = replace "kafka" (coordinate (index + 16)) (replace "messageId" (String (messageId <> "-republished")) value)
+      missing = case policy of
+        "source-event" -> replace "messageId" (String "malformed") (replace "sourceEventId" Null (replace "sourceGlobalPosition" Null firstInput))
+        "custom" -> replace "messageId" (String "malformed") (replace "payloadBytes" (toJSON ([] :: [Word8])) firstInput)
+        _ -> replace "messageId" (String "") firstInput
+      missingKafka = if policy == "kafka-delivery" then Null else coordinate 100
+      targets = ["account-" <> source <> "-account-" <> Text.pack (show n) | n <- [1 .. 16 :: Int]]
+      negativeTarget = "account-" <> source <> "-account-1"
+  coordinates <- traverse (get "kafka") inputs :: Parser [Value]
+  actualTargets <- observed .: "targets"
+  unless (all (== source) sources && not (Text.null source) && coordinates == map coordinate [1 .. 16] && republished == zipWith3 republish [1 .. 16] ids inputs && malformed == replace "kafka" missingKafka missing && actualTargets == targets) (fail "captured delegated schedule differs from revision 5")
+  keys <- traverse (dedupeKey policy) inputs
+  republishKeys <- traverse (dedupeKey policy) republished
+  let marker target key =
+        UUID.toText (UUIDV5.generateNamed UUIDV5.namespaceURL (ByteString.unpack (foldMap encode ["keiro/inbox-delegated/1", consumer, source, key, target, operation])))
+      encode value =
+        let bytes = TextEncoding.encodeUtf8 value
+         in TextEncoding.encodeUtf8 (Text.pack (show (ByteString.length bytes)) <> ":") <> bytes
+      doubled = policy `elem` ["message-id", "kafka-delivery"]
+      expectedStreams = zipWith4 (\index target key again -> [UUID.toText (UUID.fromWords 0 1 0 index), marker target key] <> [marker target again | doubled]) [1 ..] targets keys republishKeys
+      tagged tag = object ["tag" .= (tag :: Text)]
+  seeded <- observed .: "seedResults"
+  first <- observed .: "firstResults"
+  second <- observed .: "secondResults"
+  again <- observed .: "republishResults"
+  missingResult <- observed .: "missingResult"
+  streams <- observed .: "streamIds" :: Parser [[Text]]
+  rows <- observed .: "decodedRows" :: Parser [Value]
+  noOp <- observed .: "noOpResult"
+  rejected <- observed .: "rejectedResult"
+  after <- observed .: "afterRefusalIds"
+  let invalidIdentity = either (const True) (const False) (parseEither (dedupeKey policy) malformed)
+  pure
+    [ ("seeded-account-targets", seeded == replicate 16 (object ["tag" .= ("appended" :: Text), "version" .= (1 :: Int)])),
+      ("delegated-first-delivery", first == replicate 16 (tagged "processed")),
+      ("delegated-redelivery", second == replicate 16 (tagged "duplicate")),
+      ("delegated-republish-policy", again == replicate 16 (tagged (if doubled then "processed" else "duplicate"))),
+      ("delegated-stream-receipts", streams == expectedStreams),
+      ("delegated-missing-policy-field-fails-closed", invalidIdentity && missingResult == tagged "policy-unsatisfied"),
+      ("delegated-skips-inbox-table", null rows),
+      ("delegated-no-op-refused", noOp == object ["tag" .= ("without-receipt" :: Text), "target" .= negativeTarget]),
+      ("delegated-rejection-refused", rejected == object ["tag" .= ("command-failed" :: Text), "target" .= negativeTarget, "error" .= ("CommandRejected" :: Text)]),
+      ("delegated-refusals-leave-stream-unchanged", take 1 streams == [after])
     ]
 
 receipt :: Text -> Bool -> Bool -> Value -> Parser Value
@@ -209,22 +280,29 @@ recomputeInbox :: FilePath -> RunSource -> IO (Either Text Recomputation)
 recomputeInbox root source = do
   intake <- readDocument (root </> "logs/inbox-matrix-intake.json")
   sql <- readDocument (root </> "logs/inbox-matrix-sql.json")
+  delegated <- readDocument (root </> "logs/inbox-delegated-observations.json")
   spec <- readDocument (root </> "run-spec.json")
   result <- readDocument (root </> "run-result.json")
   pure do
-    captured <- intake
-    observed <- sql
     specification <- spec
     document <- result
-    -- Revision 4 strengthens only delegated intake; the table-backed workload
-    -- and captured observations remain identical to revision 3.
-    unless (field "scenarioRevision" document `elem` [Just (Number 3), Just (Number 4)]) (Left "inbox replay supports only scenario revisions 3 and 4")
+    -- Revisions 4 and 5 strengthen delegated intake only. Table observations
+    -- and workload remain compatible with revision 3.
+    let revision = field "scenarioRevision" document
+    unless (revision `elem` map (Just . Number) [3, 4, 5]) (Left "inbox replay supports only scenario revisions 3 through 5")
     knobs <- maybe (Left "missing inbox knobs") Right (field "knobs" specification)
     mode <- either (Left . Text.pack) Right (parseEither (get "inbox.idempotence") knobs)
-    unless (mode == ("inbox-table" :: Text)) (Left "delegated inbox replay is unavailable")
     policy <- either (Left . Text.pack) Right (parseEither (get "inbox.dedupe-policy") knobs)
     persistence <- either (Left . Text.pack) Right (parseEither (get "inbox.persistence") knobs)
-    cells <- replayInboxCells policy persistence captured observed
+    cells <- case mode :: Text of
+      "inbox-table" -> do
+        captured <- intake
+        observed <- sql
+        replayInboxCells policy persistence captured observed
+      "delegated" -> do
+        unless (revision == Just (Number 5) && persistence == "full-envelope") (Left "delegated replay requires revision 5 and full-envelope persistence")
+        delegated >>= replayDelegatedCells policy
+      _ -> Left "unsupported inbox idempotence mode"
     let failures = [label | (label, False) <- cells]
         outcome = if null failures then Passed else Failed
         summary = object ["checks" .= length cells, "failures" .= failures]
@@ -234,7 +312,7 @@ recomputeInbox root source = do
             && field "exitCode" document == Just (toJSON (outcomeExitCode outcome))
             && source.result.resultKnownDefect == Nothing
             && (source.result.resultSummaries >>= field "verdicts" >>= field "keiro/inbox/correctness/effectively-once-matrix") == Just summary
-    pure Recomputation {agreesWithDocuments = agrees, outcome = Just outcome, comparisonVerdict = Nothing, detail = "recomputed eleven inbox checks from captured intake arguments, result constructors, SQL receipts and durable effects"}
+    pure Recomputation {agreesWithDocuments = agrees, outcome = Just outcome, comparisonVerdict = Nothing, detail = "recomputed inbox checks from captured intake arguments, result constructors and durable receipt/effect observations"}
 
 readDocument :: FilePath -> IO (Either Text Value)
 readDocument path = do

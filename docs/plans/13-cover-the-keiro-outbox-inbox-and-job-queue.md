@@ -246,8 +246,9 @@ it derives keys, full/dedupe-only receipt shapes, exact effect identities,
 classification checks, failed-handler rollback, retry ceiling, and retained
 failed rows from the two sealed observation files. It ignores the scenario's
 `expectedSuccessRows` and `expectedFailedRow` diagnostics. It supports only
-revisions 3 and 4 table-backed intake; delegated runs and older revisions explicitly
-remain incomplete for VC-1.
+revisions 3 through 5 table-backed intake. Delegated revision 5 has the separate
+raw-observation replay described below; older delegated runs remain incomplete
+for VC-1.
 
 All fourteen revision-3 durable PostgreSQL 18 controls reached their expected
 outcomes under `runs/ep13-inbox-replay/matrix/`: twelve passes and two deliberate
@@ -303,6 +304,27 @@ verifier explicitly accepts both revisions. The package suites pass 50 Keiro
 and 40 CLI examples; the full `nix develop -c just verify` gate also passes.
 These dirty local controls strengthen coverage without
 adding selected clean records or claiming delegated VC-1 replay.
+
+Revision 5 now seals `logs/inbox-delegated-observations.json`, with the actual
+delivery arguments, resolved targets, result constructors, seed versions,
+stream event IDs, decoded inbox rows and post-refusal stream IDs. The CLI
+verifier reconstructs all ten delegated cells from those observations and the
+frozen UUIDv5 recipe without importing the runtime or the scenario oracle.
+It requires the complete sixteen-message schedule and accepts only revision 5
+delegated observations. Refusal checks now compare exact before/after IDs.
+The schema and four captured fixtures are part of the regular validation gate.
+
+All fourteen durable PostgreSQL 18 controls under
+`runs/ep13-delegated-replay/matrix/` preserve twelve passes and the two deliberate
+effect-count failures. All fourteen outcomes independently replay, including
+all four delegated policies. All 216 schema and 230 artifact integrity checks
+pass, and a separate Python UUIDv5 reconstruction matches all 96 delegated
+receipts. These are exploratory local controls; clean selected revision-5
+records and delegated VC-1 attestations are still pending.
+The focused suites pass 50 Keiro and 52 CLI examples, including changed
+classifications, missing or duplicated observations, reordered/substituted
+receipt IDs and malformed-schedule mutations. The full
+`nix develop -c just verify` gate passes, including the new observation schema.
 
 ### Full-soak artifacts and repaired payload
 

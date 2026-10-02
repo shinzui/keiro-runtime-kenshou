@@ -621,8 +621,9 @@ delivery coordinates, returned result constructors and decoded receipt identitie
 Its independent CLI verifier reconstructs all eleven table-backed checks from
 these observations and the SQL/effect snapshots, ignoring the scenario-computed
 expected rows. It supports all four policies, both persistence modes and the
-deliberate effect mutation. Delegated intake and earlier scenario revisions
-remain incomplete for VC-1 because they lack the required raw observations. The effect table has no uniqueness
+deliberate effect mutation, for scenario revisions 3 through 5. Older table
+revisions remain incomplete for VC-1 because they lack the required raw
+observations. The effect table has no uniqueness
 constraint, so the inbox receipt enforces the one-effect result. The
 `inbox.handler-effects=2` mutation arm intentionally writes two rows per
 accepted table-backed delivery. It fails only `effect-count-by-policy` while
@@ -638,6 +639,17 @@ stays empty. A zero-event command and a rejected command return their typed
 delegated errors without changing the target stream. All four delegated arms
 passed on durable PostgreSQL. Each also rejects a delivery missing its
 policy-required identity without adding a receipt.
+Revision 4 derives expected receipt IDs with an independent UTF-8 UUIDv5
+recipe and exercises Unicode names and source-position fallback. Revision 5
+also seals `logs/inbox-delegated-observations.json`, containing delivery
+arguments, resolved targets, returned constructors, seed versions and the
+actual before/after stream IDs. The CLI independently reconstructs all ten
+delegated checks from this file. It rejects incomplete or changed schedules
+and detects missing, reordered or substituted receipts; the refusal check
+compares exact stream IDs. Only revision 5 delegated evidence supports this
+replay. Earlier delegated records and inbox soaks retain their separate
+attestation limits.
+
 `poison-accounting` verifies the default exception path's three-attempt
 ceiling and retention of failed rows. With `inbox.failure-mode=condemn`, two
 deliveries each report processed but roll back; a nontransactional sequence

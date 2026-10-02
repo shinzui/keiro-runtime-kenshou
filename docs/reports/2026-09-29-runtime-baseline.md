@@ -104,4 +104,7 @@ the active queue soak; formal full-soak artifact acceptance remains pending.
 The revision-4 delegated inbox controls now derive expected receipt IDs without
 runtime helpers and cover Unicode names and source-position fallback. All four
 local delegated arms pass; they do not add clean selected records or delegated
-VC-1 attestations.
+VC-1 attestations. Revision 5 adds raw delegated observations and independent
+replay of all ten delegated checks. All fourteen local matrix outcomes replay,
+with 216 schema and 230 artifact checks passing; clean revision-5 records and
+delegated attestations are still pending.

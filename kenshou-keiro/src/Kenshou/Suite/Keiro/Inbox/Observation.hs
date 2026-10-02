@@ -35,10 +35,10 @@ delivery event kafka =
     trace context = object ["parent" .= context.traceparent, "state" .= context.tracestate]
     coordinate ref = object ["topic" .= ref.topic, "partition" .= ref.partition, "offset" .= ref.offset]
 
-result :: Either InboxError (InboxResult ()) -> Value
+result :: Either InboxError (InboxResult a) -> Value
 result = \case
   Left (DedupePolicyUnsatisfied _) -> tagged "policy-unsatisfied" []
-  Right (InboxProcessed ()) -> tagged "processed" []
+  Right (InboxProcessed _) -> tagged "processed" []
   Right InboxDuplicate -> tagged "duplicate" []
   Right InboxInProgress -> tagged "in-progress" []
   Right (InboxPreviouslyFailed message) -> tagged "previously-failed" ["error" .= message]
