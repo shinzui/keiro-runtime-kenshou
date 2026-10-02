@@ -36,6 +36,7 @@ import Keiro.Subscription.Shard.Worker (ShardedWorkerOptions (..))
 import Keiro.Timer (TimerWorkerOptions (..))
 import Keiro.Workflow (WorkflowId (..), WorkflowRunOptions (..), deterministicJournalId)
 import Keiro.Workflow.Resume (WorkflowResumeOptions (..))
+import Kenshou.Check.Verdict (InvariantClass (..))
 import Kenshou.Core.Context (Environment (..), RunContext (..), newRunState)
 import Kenshou.Core.Dimension (emptyDimensions)
 import Kenshou.Core.Id (mkSeed, newRunId, parseScenarioId)
@@ -56,6 +57,7 @@ import Kenshou.Suite.Keiro.Fixture.Transfer
 import Kenshou.Suite.Keiro.Fixture.Workload qualified as Workload
 import Kenshou.Suite.Keiro.Inbox.Oracle qualified as InboxOracle
 import Kenshou.Suite.Keiro.Messaging.Metrics qualified as MessagingMetrics
+import Kenshou.Suite.Keiro.Messaging.Verdict (recordMessagingCellsClassified, recordMessagingObservations)
 import Kenshou.Suite.Keiro.Outbox.Broker qualified as Broker
 import Kenshou.Suite.Keiro.Outbox.Knobs qualified as OutboxKnobs
 import Kenshou.Suite.Keiro.Outbox.Oracle qualified as OutboxOracle
@@ -192,6 +194,28 @@ main = hspec do
               _ -> expectationFailure "verdict must be a JSON object"
         )
         [("held", 0), ("violated", 1)]
+  describe "messaging observational verdicts" do
+    it "keeps implementation observations visible without hiding contract failures" $ withSystemTempDirectory "kenshou-observations" \directory -> do
+      runId <- newRunId
+      state <- newRunState
+      let scenario = either (error . show) id (parseScenarioId "keiro/fixture/correctness/observations")
+          knobs = either (error . show) id (resolveKnobs [] [])
+          seed = either (error . show) id (mkSeed 0)
+          runContext = RunContext runId scenario knobs emptyDimensions seed zeroPhases (Environment Nothing mempty) (minimalRunSpec scenario).environment Nothing directory nullLogger state
+      report <- recordMessagingObservations runContext mempty (object []) [("coverage", True)] [("ordering", False)]
+      report.outcome `shouldBe` Outcome.Passed
+      report.failures `shouldBe` []
+      verdict <- Aeson.eitherDecodeFileStrict' (directory <> "/verdicts/ordering.json") >>= either fail pure
+      case verdict of
+        Object fields -> do
+          KeyMap.lookup "status" fields `shouldBe` Just (String "violated")
+          KeyMap.lookup "class" fields `shouldBe` Just (String "implementation")
+        _ -> expectationFailure "missing observational verdict"
+      failed <- recordMessagingObservations runContext mempty (object []) [("coverage", False)] [("ordering", False)]
+      failed.failures `shouldBe` ["coverage"]
+      failed.outcome `shouldBe` Outcome.Failed
+      classified <- recordMessagingCellsClassified runContext mempty (object []) [("legacy-blocking", Implementation, False)]
+      classified.outcome `shouldBe` Outcome.Failed
   describe "inbox SQL receipt oracle" do
     it "rejects altered or missing columns, duplicate rows, and vacuous evidence" do
       now <- getCurrentTime

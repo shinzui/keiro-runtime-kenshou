@@ -230,3 +230,5 @@ has a [confirmed attestation](../verification/attestations/2026/10/01a0fe98-468b
 with all six checks passing. It holds all 43 business checks, 49 schema checks
 and 72 artifact checks at clean source/attester `69cb25c`, closing complete
 independent replay for this new outcome capture.
+
+Eight durable ordering controls pass across four queue modes with and without a killed worker. All 192 jobs complete, 66 schema checks and 154 artifact checks pass, and independent replay agrees with every result. FIFO-heads preserves order; unordered exhibits both required negative-control inversions. Legacy-mode order remains observational. These exploratory captures add no published baseline record.

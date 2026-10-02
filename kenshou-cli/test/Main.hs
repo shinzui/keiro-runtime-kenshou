@@ -23,6 +23,7 @@ import Kenshou.Cli.Attest.KeiroInbox (replayDelegatedCells, replayInboxCells)
 import Kenshou.Cli.Attest.KeiroLease (replayLeaseCells)
 import Kenshou.Cli.Attest.KeiroPoison (replayPoisonCells)
 import Kenshou.Cli.Attest.KeiroQueueConfig (replayQueueConfigCells)
+import Kenshou.Cli.Attest.KeiroQueueOrdering (replayOrderingCells)
 import Kenshou.Cli.Attest.KeiroQueueOutcomes (replayQueueOutcomeCells)
 import Kenshou.Cli.Attest.KeiroTerminal (replayTerminalCells)
 import Kenshou.Cli.Cohort (resolveDefaultCohortIdentity)
@@ -61,6 +62,55 @@ readInboxFixture path = do
 
 main :: IO ()
 main = hspec do
+  describe "independent queue ordering replay" do
+    let loadFixture = Aeson.eitherDecodeFileStrict' "test/fixtures/queue-ordering-controls.json" >>= either fail pure :: IO [Value]
+        replace key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)
+        replace _ _ value = value
+        spans raw = case jsonField "spans" raw of Just (Aeson.Array values) -> toList values; _ -> []
+        failures = fmap (map fst . filter (not . snd) . fst) . replayOrderingCells
+        detects label raw = failures raw `shouldSatisfy` either (const False) (elem label)
+    it "replays all eight controls, keeping unordered violations observational" do
+      controls <- loadFixture
+      length controls `shouldBe` 8
+      forM_ controls \raw -> do
+        failures raw `shouldBe` Right []
+        if jsonField "ordering" raw == Just (Aeson.String "unordered")
+          then fmap snd (replayOrderingCells raw) `shouldBe` Right [("strict-group-order", False)]
+          else pure ()
+    it "rejects dropped, duplicated and substituted completions even for legacy modes" do
+      controls <- loadFixture
+      forM_ controls \raw -> do
+        let rows = spans raw
+            completed row = case row of Aeson.Array values -> last (toList values) /= Aeson.Null; _ -> False
+            done = filter completed rows
+            abandoned = filter (not . completed) rows
+        forM_ [drop 1 done, done <> take 1 done, take 1 done <> drop 1 (reverse done)] \changed ->
+          detects "all-jobs-completed" (replace "spans" (Aeson.toJSON (abandoned <> changed)) raw)
+        detects "all-jobs-completed" (replace "queueDepth" (Aeson.Number 1) raw)
+    it "requires a realised worker kill and competing-group progress" do
+      controls <- loadFixture
+      forM_ controls \raw -> do
+        detects "schedule-realised" (replace "blockedAtKill" (Aeson.Bool False) raw)
+        detects "other-groups-progress" (replace "spans" (Aeson.toJSON ([] :: [Value])) raw)
+        if jsonField "killWorker" raw == Just (Aeson.Bool True)
+          then do
+            let complete row = case row of Aeson.Array values -> last (toList values) /= Aeson.Null; _ -> False
+            detects "schedule-realised" (replace "spans" (Aeson.toJSON (filter complete (spans raw))) raw)
+          else pure ()
+    it "does not accept unordered reordering as a FIFO-head contract pass" do
+      controls <- loadFixture
+      forM_ [raw | raw <- controls, jsonField "ordering" raw == Just (Aeson.String "unordered")] \raw ->
+        detects "strict-group-order" (replace "ordering" (Aeson.String "fifo-heads") raw)
+      forM_ [raw | raw <- controls, jsonField "ordering" raw == Just (Aeson.String "fifo-heads")] \raw ->
+        detects "unordered-control-reorders" (replace "ordering" (Aeson.String "unordered") raw)
+    it "refuses unknown ordering, incomplete captures and unsafe legacy batches" do
+      controls <- loadFixture
+      forM_ controls \raw -> do
+        let rejected = either (const True) (const False)
+        failures (replace "ordering" (Aeson.String "unknown") raw) `shouldSatisfy` rejected
+        failures (replace "groups" (Aeson.Number 0) raw) `shouldSatisfy` rejected
+        failures (replace "spans" Aeson.Null raw) `shouldSatisfy` rejected
+        failures (replace "ordering" (Aeson.String "fifo-round-robin") (replace "batchSize" (Aeson.Number 8) raw)) `shouldSatisfy` rejected
   describe "independent queue outcome replay" do
     let loadFixture = Aeson.eitherDecodeFileStrict' "test/fixtures/queue-job-outcomes.json" >>= either fail pure
         replace key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)

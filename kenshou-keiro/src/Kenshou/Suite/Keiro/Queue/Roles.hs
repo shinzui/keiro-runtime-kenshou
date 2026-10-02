@@ -74,6 +74,13 @@ worker context = case context.init.postgres of
               gatedLease = mode == Just ("lease-gated" :: Text) || mode == Just "lease-drain-gated"
               leasing = mode == Just ("lease" :: Text) || mode == Just "lease-drain" || gatedLease
               fifo = mode == Just ("fifo" :: Text)
+              orderingLabel = parseMaybe (withObject "FIFO ordering" (\o -> o .:? "ordering" .!= ("fifo-heads" :: Text))) context.init.args
+              fifoOrdering = case orderingLabel of
+                Just "unordered" -> Unordered
+                Just "fifo-throughput" -> FifoThroughput
+                Just "fifo-round-robin" -> FifoRoundRobin
+                _ -> FifoHeads
+              fifoBatch = if fifoOrdering `elem` [FifoThroughput, FifoRoundRobin] then 1 else maybe 8 id (parseMaybe (withObject "FIFO batch" (.: "batchSize")) context.init.args)
               deadWorker = mode == Just ("dead-worker-hold" :: Text) || mode == Just "dead-recovery"
               boundary = maybe False (Text.isPrefixOf "boundary-") mode
               policy
@@ -87,13 +94,13 @@ worker context = case context.init.postgres of
                 | holding = defaultJobTuning {visibilityTimeout = 3, polling = if pollingMode == Just ("long-poll" :: Text) then LongPoll 5 100 else PollEvery 1}
                 | leasing = defaultJobTuning {visibilityTimeout = 2, polling = PollEvery 0.2}
                 | mode == Just "throw-once" = defaultJobTuning {visibilityTimeout = 1, polling = PollEvery 0.2}
-                | fifo = defaultJobTuning {visibilityTimeout = 10, batchSize = 8, polling = PollEvery 0.1, ordering = FifoHeads}
+                | fifo = defaultJobTuning {visibilityTimeout = 10, batchSize = fifoBatch, polling = PollEvery 0.1, ordering = fifoOrdering}
                 | deadWorker = defaultJobTuning {visibilityTimeout = 3, polling = PollEvery 0.1}
                 | mode == Just "pool-long-poll" = defaultJobTuning {polling = LongPoll 5 100}
                 | boundary = defaultJobTuning {polling = PollEvery 0.05}
                 | otherwise = defaultJobTuning
               codec = if mode == Just "boundary-future" then JobCodec (const (object ["boundary" .= ("future" :: Text)])) (const (Left (JobPayloadFromFuture 2 1))) else aesonJobCodec @Text
-              job = Job "queue-poll-probe" (queueRef queue) codec (if fifo then FifoHeads else Unordered) policy
+              job = Job "queue-poll-probe" (queueRef queue) codec (if fifo then fifoOrdering else Unordered) policy
               handler jobContext payload = do
                 when boundary $ liftIO do
                   recorded <- Pool.use runtime.runtimePool (Session.statement (object ["queue" .= queue, "payload" .= payload, "attempt" .= jobContext.attempt, "headers" .= jobContext.headers]) boundaryInsertStatement)

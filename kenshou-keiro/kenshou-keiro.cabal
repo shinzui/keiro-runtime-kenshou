@@ -211,6 +211,7 @@ test-suite kenshou-keiro-test
     keiro,
     keiro-core,
     keiro-pgmq,
+    kenshou-check,
     kenshou-core,
     kenshou-keiro,
     kiroku-store,

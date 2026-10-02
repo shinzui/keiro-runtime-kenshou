@@ -1,4 +1,4 @@
-module Kenshou.Suite.Keiro.Messaging.Verdict (recordMessagingCells, recordMessagingCellsClassified) where
+module Kenshou.Suite.Keiro.Messaging.Verdict (recordMessagingCells, recordMessagingCellsClassified, recordMessagingObservations) where
 
 import Data.Aeson (Value, object, (.=))
 import Data.Int (Int64)
@@ -17,14 +17,25 @@ recordMessagingCells context counts parameters cells =
   recordMessagingCellsClassified context counts parameters [(label, Contract, held) | (label, held) <- cells]
 
 recordMessagingCellsClassified :: RunContext -> Map Text Int64 -> Value -> [(Text, InvariantClass, Bool)] -> IO ScenarioReport
-recordMessagingCellsClassified context counts parameters cells = do
+recordMessagingCellsClassified context counts parameters cells =
+  recordSelectedCells context counts parameters [(label, classification, True, held) | (label, classification, held) <- cells]
+
+-- Observations report properties the selected mode does not promise. Only the
+-- explicit contract cells decide the scenario; ordinary classified cells keep
+-- their historical blocking behavior.
+recordMessagingObservations :: RunContext -> Map Text Int64 -> Value -> [(Text, Bool)] -> [(Text, Bool)] -> IO ScenarioReport
+recordMessagingObservations context counts parameters contracts observations =
+  recordSelectedCells context counts parameters ([(label, Contract, True, held) | (label, held) <- contracts] <> [(label, Implementation, False, held) | (label, held) <- observations])
+
+recordSelectedCells :: RunContext -> Map Text Int64 -> Value -> [(Text, InvariantClass, Bool, Bool)] -> IO ScenarioReport
+recordSelectedCells context counts parameters cells = do
   checkedAt <- getCurrentTime
   mapM_ (writeCell checkedAt) cells
-  let failed = [label | (label, _, False) <- cells]
+  let failed = [label | (label, _, True, False) <- cells]
   putSummary context Verdicts (renderScenarioId context.scenario) (object ["checks" .= length cells, "failures" .= failed])
   pure $ if null failed then passed else failedWith failed "messaging scenario checks failed"
   where
-    writeCell checkedAt (label, classification, held) = do
+    writeCell checkedAt (label, classification, _, held) = do
       _ <-
         writeVerdict
           (context.outDir </> "verdicts")

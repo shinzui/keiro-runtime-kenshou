@@ -1052,6 +1052,41 @@ This closes complete outcome replay for the new drain/worker capture. Older
 revision-2/3 captures and their incomplete attestations retain their recorded
 limitations; broader fault, ordering and soak replay work remains open.
 
+### Queue ordering comparison controls
+
+FIFO ordering revision 3 adds `queue.ordering` and `queue.batch-size`. The
+existing four-process fixture runs FIFO-heads, unordered, FIFO-throughput and
+FIFO-round-robin modes; legacy modes explicitly use batch one. All modes must
+complete every canonical group/sequence payload exactly once, empty the source
+queue, realise the requested worker-kill schedule, and show another group
+completing before the blocked head. FIFO-heads additionally requires strict
+per-group start/finish order. Unordered additionally requires an observed
+inversion as the negative control. Other modes retain the same order verdict
+as a nonblocking implementation observation, not a stronger promise.
+
+The explicit `recordMessagingObservations` entry point writes both kinds of
+verdict while only contract cells decide the result. Existing classified
+messaging checks keep their prior deciding behavior. A focused test proves
+that observational failure stays visible, contract failure still blocks, and
+existing classified behavior is preserved. SQL handler spans, the observed
+schedule and final depth are sealed in `logs/queue-ordering-observations.json`.
+
+The eight durable PostgreSQL 18 controls (four modes with and without a killed
+worker) pass at seed `8102429385822254`, four groups and six jobs per group:
+`runs/ep13-ordering-controls/`. All 192 jobs complete, all 66 schema checks and
+154 artifact checks pass. FIFO-heads holds order in both arms; unordered
+violates it in both, as required. Both legacy modes happen to hold order in
+these controls, recorded only as observations. Four killed arms each retain
+one abandoned head span and recover all work. The 63 Keiro examples pass.
+Independent CLI replay agrees with all eight saved results and checks each
+order verdict's stored status, class and blocking disposition against the SQL
+spans. Five mutation examples reject incomplete/duplicated/substituted work,
+missing kill evidence, false FIFO guarantees and unsafe legacy parameters.
+Full repository verification passes, including all 63 Keiro and 101 CLI
+examples, cohort/link checks, evidence checks, schemas and self-tests. Clean
+publication, scripted retry ordering and the remaining lease-overlap and
+fault-mode controls remain open. No dependency pin or upstream finding changes.
+
 ### Remaining non-soak work
 
 Queue throughput revision 2 now implements bounded versus continuous-worker

@@ -996,3 +996,17 @@ connections were stable. The signal and reproduction steps are recorded in
 `docs/findings/1-keiro-write-side-worker-heap-growth.md`; a longer isolated
 subscription run is needed to determine whether this is retained runtime
 state or a true leak.
+
+
+The FIFO ordering fixture revision 3 accepts `queue.ordering=fifo-heads`,
+`unordered`, `fifo-throughput` or `fifo-round-robin`, plus a read batch knob.
+Legacy modes always use batch one, reported as `effectiveBatchSize`. Every
+mode checks exact completed job identities, no residual rows, competing-group
+progress and its worker-kill schedule. Strict order decides FIFO-heads; an
+observed inversion decides the unordered negative control. Other modes emit
+order as an implementation observation. `queue-ordering-observations.json`
+seals the SQL spans and schedule. The CLI independently replays exact coverage,
+order, competing-group progress and the schedule, binds capture parameters to
+the resolved run specification and verifies the order verdict's status/class.
+These controls do not yet cover
+scripted retry ordering or every permitted visibility-expiry overlap.
