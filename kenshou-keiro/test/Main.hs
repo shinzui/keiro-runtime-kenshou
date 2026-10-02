@@ -81,6 +81,20 @@ import Test.Hspec.Hedgehog (hedgehog)
 
 main :: IO ()
 main = hspec do
+  describe "delegated inbox receipt identity" do
+    it "pins UTF-8 byte lengths and separates every identity field" do
+      let receipt = InboxOracle.expectedDelegatedId
+          expected = receipt "consumer/顧客" "orders:source" "dedupe:Ω" "account/foo" "deposit"
+      expected `shouldBe` EventId (read "cf1c93ec-9db7-5752-8004-15bd7ca6b23e")
+      mapM_
+        (`shouldNotBe` expected)
+        [ receipt "consumer/顧客2" "orders:source" "dedupe:Ω" "account/foo" "deposit",
+          receipt "consumer/顧客" "orders:source2" "dedupe:Ω" "account/foo" "deposit",
+          receipt "consumer/顧客" "orders:source" "dedupe:Ω2" "account/foo" "deposit",
+          receipt "consumer/顧客" "orders:source" "dedupe:Ω" "account/foo2" "deposit",
+          receipt "consumer/顧客" "orders:source" "dedupe:Ω" "account/foo" "deposit2"
+        ]
+      receipt "a:b" "c" "" "target" "op" `shouldNotBe` receipt "a" "b:c" "" "target" "op"
   describe "shared Keiro verdict protocol" do
     it "writes required assertion counters for held and violated checks" $ withSystemTempDirectory "kenshou-keiro-verdict" \directory -> do
       runId <- newRunId

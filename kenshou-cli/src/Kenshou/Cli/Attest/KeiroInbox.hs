@@ -216,7 +216,9 @@ recomputeInbox root source = do
     observed <- sql
     specification <- spec
     document <- result
-    unless (field "scenarioRevision" document == Just (Number 3)) (Left "inbox replay supports only scenario revision 3")
+    -- Revision 4 strengthens only delegated intake; the table-backed workload
+    -- and captured observations remain identical to revision 3.
+    unless (field "scenarioRevision" document `elem` [Just (Number 3), Just (Number 4)]) (Left "inbox replay supports only scenario revisions 3 and 4")
     knobs <- maybe (Left "missing inbox knobs") Right (field "knobs" specification)
     mode <- either (Left . Text.pack) Right (parseEither (get "inbox.idempotence") knobs)
     unless (mode == ("inbox-table" :: Text)) (Left "delegated inbox replay is unavailable")

@@ -18,7 +18,7 @@ import Hasql.Encoders qualified as Encoders
 import Hasql.Statement qualified as Statement
 import Hasql.Transaction qualified as Tx
 import Keiro.Command (CommandError (..), CommandResult (..), defaultRunCommandOptions, runCommand)
-import Keiro.Inbox (DelegatedOutcome (..), InboxDedupePolicy (..), InboxError (..), InboxPersistence (..), InboxResult (..), InboxRow (..), InboxStatus (..), KafkaDeliveryRef (..), dedupeKeyFor, garbageCollectCompleted, listInbox, mkDelegatedRetryContext, runInboxDelegated, runInboxDelegatedBatch, runInboxDelegatedWithRetries, runInboxTransactionBatch, runInboxTransactionWith, runInboxTransactionWithRetries, runInboxTransactionWithRetriesWith)
+import Keiro.Inbox (DelegatedOutcome (..), InboxDedupePolicy (..), InboxError (..), InboxPersistence (..), InboxResult (..), InboxRow (..), InboxStatus (..), KafkaDeliveryRef (..), garbageCollectCompleted, listInbox, mkDelegatedRetryContext, runInboxDelegated, runInboxDelegatedBatch, runInboxDelegatedWithRetries, runInboxTransactionBatch, runInboxTransactionWith, runInboxTransactionWithRetries, runInboxTransactionWithRetriesWith)
 import Keiro.Inbox.Delegated (DelegatedCommandError (..), delegatedCommand, delegatedEventId)
 import Keiro.Inbox.Kafka (KafkaDecodeError (..), KafkaInboundRecord (..), integrationEventFromKafka)
 import Keiro.Integration.Event (IntegrationEvent (..), headerContentType, headerDestination, headerEventType, headerMessageId, headerSchemaVersion, headerSource)
@@ -44,7 +44,7 @@ import Kenshou.Suite.Keiro.Outbox.Workload (enqueueInline, sourceName)
 import Kiroku.Store (defaultConnectionSettings)
 import Kiroku.Store.Read (readStreamForward)
 import Kiroku.Store.Transaction qualified as KirokuTransaction
-import Kiroku.Store.Types (EventId (..), RecordedEvent (..), StreamVersion (..))
+import Kiroku.Store.Types (EventId (..), RecordedEvent (..), StreamName (..), StreamVersion (..))
 import System.FilePath ((</>))
 
 scenarios :: [Scenario]
@@ -143,7 +143,7 @@ runTransactionalBatch context fixture = do
 runDelegatedMatrix :: RunContext -> FixtureEnv -> IO ScenarioReport
 runDelegatedMatrix context fixture = do
   let KeiroRunner runFixture = fixture.runner
-      source = sourceName context "delegated-matrix"
+      source = sourceName context "delegated-matrix-顧客"
       policyName = knobText context.knobs (knobName "inbox.dedupe-policy")
       account index = AccountId (source <> "-account-" <> Text.pack (show index))
       policy event = case policyName of
@@ -153,9 +153,9 @@ runDelegatedMatrix context fixture = do
         _ -> PreferIntegrationMessageId
       ref :: Int -> KafkaDeliveryRef
       ref index = KafkaDeliveryRef "kenshou.delegated" 0 (fromIntegral index)
-      marker target event deliveryRef = do
-        dedupe <- dedupeKeyFor (policy event) event deliveryRef
-        pure (delegatedEventId "kenshou-consumer" event.source dedupe (accountStreamName target) "deposit")
+      marker target event deliveryRef =
+        let StreamName targetName = accountStreamName target
+         in InboxOracle.expectedDelegatedId "kenshou-consumer" event.source (InboxOracle.expectedKey policyName event deliveryRef) targetName "deposit"
       intake target event deliveryRef =
         runFixture
           ( runInboxDelegated Nothing (policy event) event deliveryRef \dedupe delivered -> do
@@ -168,7 +168,7 @@ runDelegatedMatrix context fixture = do
           >>= either (fail . show) pure
   enqueueInline fixture source [(Text.pack (show index), Just "key", index) | index <- [1 .. 16 :: Int]]
   original <- map (.event) <$> (runFixture (listOutbox source) >>= either (fail . show) pure)
-  let events = zipWith (\index event -> event {sourceEventId = Just (EventId (UUID.fromWords 0 0 0 (fromIntegral index)))}) [1 .. 16 :: Int] original
+  let events = zipWith InboxOracle.richEvent [1 .. 16 :: Int] original
       republish = [event {messageId = event.messageId <> "-republished"} | event <- events]
       doubled = policyName == "message-id" || policyName == "kafka-delivery"
       coordinates = zip3 [1 .. 16 :: Int] events republish
@@ -188,9 +188,9 @@ runDelegatedMatrix context fixture = do
     traverse
       ( \(index, event, republishedEvent) -> do
           recorded <- runFixture (readStreamForward (accountStreamName (account index)) (StreamVersion 0) 10) >>= either (fail . show) pure
-          firstMarker <- either (fail . show) pure (marker (account index) event (Just (ref index)))
-          secondMarker <- either (fail . show) pure (marker (account index) republishedEvent (Just (ref (index + 16))))
-          let ids = map (.eventId) (Vector.toList recorded)
+          let firstMarker = marker (account index) event (ref index)
+              secondMarker = marker (account index) republishedEvent (ref (index + 16))
+              ids = map (.eventId) (Vector.toList recorded)
               openingId = EventId (UUID.fromWords 0 1 0 (fromIntegral index))
           pure (ids == (if doubled then [openingId, firstMarker, secondMarker] else [openingId, firstMarker]))
       )
@@ -242,7 +242,7 @@ effectivelyOnceMatrix :: Scenario
 effectivelyOnceMatrix =
   envelopeRoundTrip
     { id = either (error . show) id (parseScenarioId "keiro/inbox/correctness/effectively-once-matrix"),
-      revision = 3,
+      revision = 4,
       summary = "Checks deduplication, exact SQL receipt envelopes, and failed-handler rollback under redelivery.",
       tier = TierStandard,
       knobs =

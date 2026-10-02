@@ -97,3 +97,11 @@ The [revision-2 inbox persistence matrix](../plans/13-cover-the-keiro-outbox-inb
 The [revision-3 inbox matrix](../plans/13-cover-the-keiro-outbox-inbox-and-job-queue.md#independent-inbox-matrix-replay) adds ten clean table-backed investigations and ten confirmed VC-1 attestations. Independent reconstruction covers every receipt column, effect identity, intake classification, failed-handler rollback and retained failed receipt. Eight positive arms pass; the two deliberate double-effect controls remain failed and independently confirmed as such. Delegated intake and inbox soaks retain their separate replay gaps.
 
 The [four-hour default-collection outbox run](../verification/runs/keiro/2026/10/01a0f938-67a3-7207-a457-fcccd988b600.md) held all eight business checks over 288,202 unique messages and 240 publisher restarts. Three permitted duplicate appends remained within budget, backlog/errors were zero, and steady table/dead-tuple bounds held. The overall result is inconclusive: no eligible post-major heap points and a thread slope interval crossing its growth floor. Native bytes, OS threads, descriptors and connections were stable. This does not close finding 3 or independent outbox VC-1 replay. Finding 50 additionally records that all eight legacy verdict files omit required assertion counters; that artifact qualification also applies to earlier inbox soaks using the writer. Source repairs do not rewrite sealed evidence. The full queue/DLQ soak is now active on alpha under the same legacy payload qualification.
+
+The repaired clean Linux payload at `0eda7ac` is published with all 41 released
+package identities consistent. A same-seed full inbox rerun is prepared behind
+the active queue soak; formal full-soak artifact acceptance remains pending.
+The revision-4 delegated inbox controls now derive expected receipt IDs without
+runtime helpers and cover Unicode names and source-position fallback. All four
+local delegated arms pass; they do not add clean selected records or delegated
+VC-1 attestations.

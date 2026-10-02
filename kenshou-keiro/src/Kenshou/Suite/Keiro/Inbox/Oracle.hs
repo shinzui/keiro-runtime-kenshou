@@ -1,4 +1,4 @@
-module Kenshou.Suite.Keiro.Inbox.Oracle (receiptStatement, expectedReceipt, receiptsMatch, richEvent, expectedKey) where
+module Kenshou.Suite.Keiro.Inbox.Oracle (receiptStatement, expectedReceipt, receiptsMatch, richEvent, expectedKey, expectedDelegatedId) where
 
 import Data.Aeson (Value, object, (.=))
 import Data.ByteString qualified as ByteString
@@ -7,6 +7,7 @@ import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
 import Data.UUID qualified as UUID
+import Data.UUID.V5 qualified as UUIDV5
 import Hasql.Decoders qualified as D
 import Hasql.Encoders qualified as E
 import Hasql.Statement qualified as Statement
@@ -46,6 +47,18 @@ expectedKey policy event kafka = case policy of
   "kafka-delivery" -> kafka.topic <> ":" <> Text.pack (show kafka.partition) <> ":" <> Text.pack (show kafka.offset)
   "custom" -> TextEncoding.decodeUtf8 event.payloadBytes
   _ -> error "unknown inbox matrix policy"
+
+-- Independently encode the frozen delegated receipt contract, rather than
+-- deriving both the observed and expected identity through the runtime.
+-- mori://shinzui/keiro, keiro/src/Keiro/Inbox/Delegated.hs (artifact URI pending).
+expectedDelegatedId :: Text -> Text -> Text -> Text -> Text -> EventId
+expectedDelegatedId consumer source key target operation =
+  EventId (UUIDV5.generateNamed UUIDV5.namespaceURL (ByteString.unpack seed))
+  where
+    seed = foldMap encode ["keiro/inbox-delegated/1", consumer, source, key, target, operation]
+    encode field =
+      let bytes = TextEncoding.encodeUtf8 field
+       in TextEncoding.encodeUtf8 (Text.pack (show (ByteString.length bytes)) <> ":") <> bytes
 
 -- Failed receipts retain the full envelope even in dedupe-only mode.
 expectedReceipt :: Bool -> Bool -> Text -> IntegrationEvent -> KafkaDeliveryRef -> Value
