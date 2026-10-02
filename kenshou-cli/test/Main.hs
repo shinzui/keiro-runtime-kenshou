@@ -18,6 +18,7 @@ import Data.Text.IO qualified as Text
 import Data.Time (addUTCTime, getCurrentTime)
 import Kenshou.Cli (runWithArgs)
 import Kenshou.Cli.Attest (FencingFacts (..), fencingFacts)
+import Kenshou.Cli.Attest.KeiroBatch (replayBatchCells)
 import Kenshou.Cli.Attest.KeiroInbox (replayDelegatedCells, replayInboxCells)
 import Kenshou.Cli.Attest.KeiroLease (replayLeaseCells)
 import Kenshou.Cli.Attest.KeiroPoison (replayPoisonCells)
@@ -57,6 +58,45 @@ readInboxFixture path = do
 
 main :: IO ()
 main = hspec do
+  describe "independent inbox batch replay" do
+    forM_ [("inbox-table", "pure-exception"), ("inbox-table", "condemn"), ("delegated", "pure-exception")] \(mode, failure) -> do
+      let fixture = "test/fixtures/inbox-batch-" <> Text.unpack mode <> "-" <> Text.unpack failure <> ".json"
+          replay raw = fmap (map fst . filter (not . snd)) (replayBatchCells mode failure raw)
+          replace key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)
+          replace _ _ value = value
+          change key value raw = replace "observations" (replace key value (maybe Aeson.Null id (jsonField "observations" raw))) raw
+          empty = Aeson.toJSON ([] :: [Value])
+          loadFixture = Aeson.eitherDecodeFileStrict' fixture >>= either fail pure
+      it ("replays ordered batches and rejects incomplete arguments: " <> Text.unpack mode <> "/" <> Text.unpack failure) do
+        raw <- loadFixture
+        replay raw `shouldBe` Right []
+        forM_ ["batches", "observations"] \key ->
+          replay (replace key empty raw) `shouldSatisfy` either (const True) (const False)
+        replay (replace "failureMode" (Aeson.String "unsupported") raw) `shouldSatisfy` either (const True) (const False)
+        case jsonField "batches" raw of
+          Just (Aeson.Array batches) ->
+            replay (replace "batches" (Aeson.toJSON (reverse (toList batches))) raw) `shouldSatisfy` either (const True) (const False)
+          _ -> expectationFailure "fixture has no batch schedule"
+      it ("detects classification, invocation and committed-effect mutations: " <> Text.unpack mode <> "/" <> Text.unpack failure) do
+        raw <- loadFixture
+        if mode == "delegated"
+          then do
+            replay (change "firstResults" empty raw) `shouldBe` Right ["delegated-batch-positional"]
+            replay (change "secondResults" empty raw) `shouldBe` Right ["delegated-batch-memory-is-call-local"]
+            replay (change "callsAfterBatch" empty raw) `shouldBe` Right ["delegated-batch-retries-failed-key"]
+            replay (change "callsAfterNext" empty raw) `shouldBe` Right ["delegated-batch-memory-is-call-local"]
+          else do
+            replay (change "initialCalls" (Aeson.Number 1) raw) `shouldBe` Right ["handler-count-starts-at-zero"]
+            replay (change "firstResults" empty raw) `shouldBe` Right ["clean-batch-positional"]
+            replay (change "secondResults" empty raw) `shouldBe` Right ["fallback-isolates-poison"]
+            replay (change "initialHandlerCalls" (Aeson.Number 1) raw) `shouldBe` Right ["handler-count-starts-at-zero"]
+            replay (change "cleanHandlerCalls" (Aeson.Number 3) raw) `shouldBe` Right ["clean-batch-skips-duplicate-handler"]
+            replay (change "cleanTransactionCount" (Aeson.Number 2) raw) `shouldBe` Right ["clean-batch-one-transaction"]
+            replay (change "effects" empty raw) `shouldBe` Right ["effects-once"]
+            replay (change "effects" (Aeson.toJSON (["clean-a", "clean-b", "good-c", "good-d", "good-c"] :: [Text])) raw) `shouldBe` Right ["effects-once"]
+            if failure == "condemn"
+              then replay (change "poisonCalls" (Aeson.Number 1) raw) `shouldBe` Right ["poison-receipt"]
+              else replay (replace "rows" empty raw) `shouldBe` Right ["poison-receipt"]
   describe "independent inbox poison replay" do
     forM_ [("inbox-table", "pure-exception"), ("inbox-table", "condemn"), ("inbox-table", "sql-error"), ("delegated", "pure-exception")] \(mode, failure) -> do
       let fixture = "test/fixtures/inbox-poison-" <> Text.unpack mode <> "-" <> Text.unpack failure <> ".json"

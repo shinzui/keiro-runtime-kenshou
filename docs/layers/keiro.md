@@ -655,7 +655,8 @@ ceiling and retention of failed rows. Revision 2 inserts effects before
 failing, counts invocations independently through a nontransactional sequence,
 and requires no failed-attempt effects, one recovered effect and no new handler
 call on redelivery. Its initial-zero guard distinguishes an unused sequence
-from a handler's first call; the same guard protects revision-2 batch checks. With `inbox.failure-mode=condemn`, two
+from a handler's first call; the same guard was added to batch checks in
+revision 2. With `inbox.failure-mode=condemn`, two
 deliveries each report processed but roll back; a nontransactional sequence
 confirms that the handler ran twice, while no inbox row or effect remains. With
 `inbox.failure-mode=sql-error`, division by zero returns Keiro's
@@ -678,6 +679,11 @@ With `inbox.idempotence=delegated`, the batch runner returns results in
 delivery order, suppresses a repeated successful key within the call, and
 retries a key whose first handler invocation threw. A second batch invokes
 the handler again for the same key, showing that batch memory is call local.
+Revision 3 directly counts table-backed handler entries: the clean batch's
+duplicate must add no invocation. It seals ordered batches, result constructors,
+handler counts/traces, effects, transaction counts and receipt rows in
+`logs/inbox-batch-observations.json`. Independent CLI replay checks the entire
+schedule and every batch verdict; earlier batch revisions lack this evidence.
 The delegated arm leaves the inbox table empty.
 The `race-one-key` no-kill arm starts four real consumer processes against a
 slow transactional handler. Its durable run observed one processed delivery,

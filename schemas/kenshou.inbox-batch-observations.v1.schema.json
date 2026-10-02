@@ -1,0 +1,427 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "idempotence",
+    "failureMode",
+    "batches",
+    "rows",
+    "observations"
+  ],
+  "properties": {
+    "schema": {
+      "const": "kenshou.inbox-batch-observations/v1"
+    },
+    "idempotence": {
+      "enum": [
+        "inbox-table",
+        "delegated"
+      ]
+    },
+    "failureMode": {
+      "enum": [
+        "pure-exception",
+        "condemn"
+      ]
+    },
+    "batches": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/delivery"
+        }
+      }
+    },
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "source",
+          "messageId",
+          "key",
+          "status",
+          "attemptCount"
+        ],
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "messageId": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "InboxProcessing",
+              "InboxCompleted",
+              "InboxFailed"
+            ]
+          },
+          "attemptCount": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    "observations": {
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/kenshou.inbox-batch-observations.v1.schema.json",
+  "title": "Inbox batch raw positional intake and durable effect observations v1",
+  "$defs": {
+    "delivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "messageId",
+        "source",
+        "destination",
+        "eventType",
+        "contentType",
+        "schemaVersion",
+        "schemaReference",
+        "sourceEventId",
+        "sourceGlobalPosition",
+        "payloadBytes",
+        "occurredAt",
+        "causationId",
+        "correlationId",
+        "traceContext",
+        "attributes",
+        "kafka"
+      ],
+      "properties": {
+        "messageId": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "destination": {
+          "type": "string"
+        },
+        "eventType": {
+          "type": "string"
+        },
+        "contentType": {
+          "type": "string"
+        },
+        "schemaVersion": {
+          "type": "integer"
+        },
+        "schemaReference": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "registry",
+                "subject",
+                "version",
+                "id",
+                "fingerprint"
+              ],
+              "properties": {
+                "registry": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "subject": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "version": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "id": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "fingerprint": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sourceEventId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sourceGlobalPosition": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "payloadBytes": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 255
+          }
+        },
+        "occurredAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "causationId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "correlationId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "traceContext": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "parent",
+                "state"
+              ],
+              "properties": {
+                "parent": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "attributes": {},
+        "kafka": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "topic",
+                "partition",
+                "offset"
+              ],
+              "properties": {
+                "topic": {
+                  "type": "string"
+                },
+                "partition": {
+                  "type": "integer"
+                },
+                "offset": {
+                  "type": "integer"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "result": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tag"
+          ],
+          "properties": {
+            "tag": {
+              "enum": [
+                "processed",
+                "duplicate",
+                "in-progress",
+                "policy-unsatisfied"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tag",
+            "error",
+            "attempt"
+          ],
+          "properties": {
+            "tag": {
+              "const": "handler-failed"
+            },
+            "error": {
+              "type": "string"
+            },
+            "attempt": {
+              "type": "integer"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tag",
+            "error"
+          ],
+          "properties": {
+            "tag": {
+              "const": "previously-failed"
+            },
+            "error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "idempotence": {
+            "const": "delegated"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "observations": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "firstResults",
+              "secondResults",
+              "callsAfterBatch",
+              "callsAfterNext"
+            ],
+            "properties": {
+              "firstResults": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/result"
+                }
+              },
+              "secondResults": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/result"
+                }
+              },
+              "callsAfterBatch": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "callsAfterNext": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "observations": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "firstResults",
+              "secondResults",
+              "initialCalls",
+              "cleanTransactionCount",
+              "poisonCalls",
+              "effects",
+              "initialHandlerCalls",
+              "cleanHandlerCalls"
+            ],
+            "properties": {
+              "firstResults": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/result"
+                }
+              },
+              "secondResults": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/result"
+                }
+              },
+              "initialCalls": {
+                "type": "integer"
+              },
+              "cleanTransactionCount": {
+                "type": "integer"
+              },
+              "poisonCalls": {
+                "type": "integer"
+              },
+              "effects": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "initialHandlerCalls": {
+                "type": "integer"
+              },
+              "cleanHandlerCalls": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

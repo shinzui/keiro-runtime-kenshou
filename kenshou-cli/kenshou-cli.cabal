@@ -39,6 +39,7 @@ library
   exposed-modules:
     Kenshou.Cli
     Kenshou.Cli.Attest
+    Kenshou.Cli.Attest.KeiroBatch
     Kenshou.Cli.Attest.KeiroInbox
     Kenshou.Cli.Attest.KeiroLease
     Kenshou.Cli.Attest.KeiroPoison

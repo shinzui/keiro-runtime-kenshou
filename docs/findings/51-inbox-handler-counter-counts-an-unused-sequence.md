@@ -46,8 +46,10 @@ Historical sealed runs are not rewritten or promoted to stronger coverage.
 Revision-2 observations do not add independent poison/batch VC-1 replay.
 Poison revision 3 subsequently seals raw invocation, effect and receipt
 observations and supports independent replay for all four poison modes.
-The eight replay mutation examples pass, including the initial-zero and
-missing-handler-call controls. Batch replay remains separate work.
+The eight poison replay mutation examples pass, including the initial-zero and
+missing-handler-call controls. Batch revision 3 adds raw observations and
+independent replay, plus a separate sequence proving the clean duplicate
+does not invoke its handler.
 
 Validation: all seven repaired arms pass under
 `runs/ep13-poison-effects/after/`. Each before/after matrix passes 55 schema

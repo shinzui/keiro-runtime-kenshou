@@ -1,0 +1,208 @@
+{
+  "batches": [
+    [
+      {
+        "attributes": {
+          "sequence": 1
+        },
+        "causationId": null,
+        "contentType": "application/json",
+        "correlationId": null,
+        "destination": "kenshou.outbox.v1",
+        "eventType": "OutboxProbe",
+        "kafka": null,
+        "messageId": "clean",
+        "occurredAt": "2026-10-02T17:15:59.56333Z",
+        "payloadBytes": [
+          99,
+          108,
+          101,
+          97,
+          110
+        ],
+        "schemaReference": null,
+        "schemaVersion": 1,
+        "source": "kenshou-01a0fd9d-delegated-batch",
+        "sourceEventId": null,
+        "sourceGlobalPosition": null,
+        "traceContext": null
+      },
+      {
+        "attributes": {
+          "sequence": 1
+        },
+        "causationId": null,
+        "contentType": "application/json",
+        "correlationId": null,
+        "destination": "kenshou.outbox.v1",
+        "eventType": "OutboxProbe",
+        "kafka": null,
+        "messageId": "clean",
+        "occurredAt": "2026-10-02T17:15:59.56333Z",
+        "payloadBytes": [
+          99,
+          108,
+          101,
+          97,
+          110
+        ],
+        "schemaReference": null,
+        "schemaVersion": 1,
+        "source": "kenshou-01a0fd9d-delegated-batch",
+        "sourceEventId": null,
+        "sourceGlobalPosition": null,
+        "traceContext": null
+      },
+      {
+        "attributes": {
+          "sequence": 2
+        },
+        "causationId": null,
+        "contentType": "application/json",
+        "correlationId": null,
+        "destination": "kenshou.outbox.v1",
+        "eventType": "OutboxProbe",
+        "kafka": null,
+        "messageId": "poison",
+        "occurredAt": "2026-10-02T17:15:59.566934Z",
+        "payloadBytes": [
+          112,
+          111,
+          105,
+          115,
+          111,
+          110
+        ],
+        "schemaReference": null,
+        "schemaVersion": 1,
+        "source": "kenshou-01a0fd9d-delegated-batch",
+        "sourceEventId": null,
+        "sourceGlobalPosition": null,
+        "traceContext": null
+      },
+      {
+        "attributes": {
+          "sequence": 2
+        },
+        "causationId": null,
+        "contentType": "application/json",
+        "correlationId": null,
+        "destination": "kenshou.outbox.v1",
+        "eventType": "OutboxProbe",
+        "kafka": null,
+        "messageId": "poison",
+        "occurredAt": "2026-10-02T17:15:59.566934Z",
+        "payloadBytes": [
+          112,
+          111,
+          105,
+          115,
+          111,
+          110
+        ],
+        "schemaReference": null,
+        "schemaVersion": 1,
+        "source": "kenshou-01a0fd9d-delegated-batch",
+        "sourceEventId": null,
+        "sourceGlobalPosition": null,
+        "traceContext": null
+      },
+      {
+        "attributes": {
+          "sequence": 3
+        },
+        "causationId": null,
+        "contentType": "application/json",
+        "correlationId": null,
+        "destination": "kenshou.outbox.v1",
+        "eventType": "OutboxProbe",
+        "kafka": null,
+        "messageId": "tail",
+        "occurredAt": "2026-10-02T17:15:59.569308Z",
+        "payloadBytes": [
+          116,
+          97,
+          105,
+          108
+        ],
+        "schemaReference": null,
+        "schemaVersion": 1,
+        "source": "kenshou-01a0fd9d-delegated-batch",
+        "sourceEventId": null,
+        "sourceGlobalPosition": null,
+        "traceContext": null
+      }
+    ],
+    [
+      {
+        "attributes": {
+          "sequence": 1
+        },
+        "causationId": null,
+        "contentType": "application/json",
+        "correlationId": null,
+        "destination": "kenshou.outbox.v1",
+        "eventType": "OutboxProbe",
+        "kafka": null,
+        "messageId": "clean",
+        "occurredAt": "2026-10-02T17:15:59.56333Z",
+        "payloadBytes": [
+          99,
+          108,
+          101,
+          97,
+          110
+        ],
+        "schemaReference": null,
+        "schemaVersion": 1,
+        "source": "kenshou-01a0fd9d-delegated-batch",
+        "sourceEventId": null,
+        "sourceGlobalPosition": null,
+        "traceContext": null
+      }
+    ]
+  ],
+  "failureMode": "pure-exception",
+  "idempotence": "delegated",
+  "observations": {
+    "callsAfterBatch": [
+      "clean",
+      "poison",
+      "poison",
+      "tail"
+    ],
+    "callsAfterNext": [
+      "clean",
+      "poison",
+      "poison",
+      "tail",
+      "clean"
+    ],
+    "firstResults": [
+      {
+        "tag": "processed"
+      },
+      {
+        "tag": "duplicate"
+      },
+      {
+        "attempt": 1,
+        "error": "synthetic delegated batch poison",
+        "tag": "handler-failed"
+      },
+      {
+        "tag": "processed"
+      },
+      {
+        "tag": "processed"
+      }
+    ],
+    "secondResults": [
+      {
+        "tag": "processed"
+      }
+    ]
+  },
+  "rows": [],
+  "schema": "kenshou.inbox-batch-observations/v1"
+}

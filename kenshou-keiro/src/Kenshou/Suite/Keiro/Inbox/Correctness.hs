@@ -54,7 +54,7 @@ batchFastPathAndFallback :: Scenario
 batchFastPathAndFallback =
   envelopeRoundTrip
     { id = either (error . show) id (parseScenarioId "keiro/inbox/correctness/batch-fast-path-and-fallback"),
-      revision = 2,
+      revision = 3,
       summary = "Checks one-transaction batch intake and isolated fallback after a poisoned handler.",
       knobs =
         [ KnobSpec (knobName "inbox.failure-mode") "Batch poison mode" KnobText (VText "pure-exception") (OneOf (VText "pure-exception" :| [VText "condemn"])) [VText "condemn"],
@@ -97,6 +97,8 @@ runDelegatedBatch context fixture = do
   nextCall <- intake [clean]
   afterNextCall <- readIORef calls
   rows <- runFixture (listInbox source) >>= either (fail . show) pure
+  writeBatchObservation context [[clean, clean, poison, poison, tailEvent], [clean]] rows $
+    object ["firstResults" .= map Observation.result results, "secondResults" .= map Observation.result nextCall, "callsAfterBatch" .= afterBatch, "callsAfterNext" .= afterNextCall]
   recordCells
     context
     [ ("delegated-batch-positional", case results of [Right (InboxProcessed ()), Right InboxDuplicate, Right (InboxHandlerFailed _ 1), Right (InboxProcessed ()), Right (InboxProcessed ())] -> True; _ -> False),
@@ -110,16 +112,22 @@ runTransactionalBatch context fixture = do
   let KeiroRunner runFixture = fixture.runner
       source = sourceName context "batch"
       condemning = knobText context.knobs (knobName "inbox.failure-mode") == "condemn"
-      handler event
-        | event.messageId == "poison" && condemning = do
+      handler event = do
+        _ <- Tx.statement () batchCallStatement
+        if event.messageId == "poison" && condemning
+          then do
             _ <- Tx.statement () poisonCallStatement
             Tx.condemn
-        | event.messageId == "poison" = pure $! error "synthetic batch poison"
-        | otherwise = Tx.statement event.messageId effectInsertStatement
+          else
+            if event.messageId == "poison"
+              then pure $! error "synthetic batch poison"
+              else Tx.statement event.messageId effectInsertStatement
       runBatch events = runFixture (runInboxTransactionBatch Nothing 3 PreferIntegrationMessageId PersistFullEnvelope [(event, Nothing) | event <- events] handler) >>= either (fail . show) pure
   ensureEffectTable fixture
   _ <- runFixture (KirokuTransaction.runTransaction (Tx.sql "CREATE SEQUENCE IF NOT EXISTS kenshou_fx.poison_calls")) >>= either (fail . show) pure
   initialCalls <- runFixture (KirokuTransaction.runTransaction (Tx.statement () poisonCallCountStatement)) >>= either (fail . show) pure
+  _ <- runFixture (KirokuTransaction.runTransaction (Tx.sql "CREATE SEQUENCE kenshou_fx.batch_calls")) >>= either (fail . show) pure
+  initialHandlerCalls <- runFixture (KirokuTransaction.runTransaction (Tx.statement () batchCallCountStatement)) >>= either (fail . show) pure
   enqueueInline fixture source [("clean-a", Just "key", 1), ("clean-b", Just "key", 2), ("good-c", Just "key", 3), ("poison", Just "key", 4), ("good-d", Just "key", 5)]
   events <- map (.event) <$> (runFixture (listOutbox source) >>= either (fail . show) pure)
   let byId name = case [event | event <- events, event.messageId == name] of
@@ -128,20 +136,36 @@ runTransactionalBatch context fixture = do
       clean = [byId "clean-a", byId "clean-b", byId "clean-a"]
       poisoned = [byId "good-c", byId "poison", byId "good-d"]
   cleanResults <- runBatch clean
+  cleanHandlerCalls <- runFixture (KirokuTransaction.runTransaction (Tx.statement () batchCallCountStatement)) >>= either (fail . show) pure
   cleanTxnCount <- runFixture (KirokuTransaction.runTransaction (Tx.statement () effectTxnCountStatement)) >>= either (fail . show) pure
   fallbackResults <- runBatch poisoned
   effects <- runFixture (KirokuTransaction.runTransaction (Tx.statement () effectReadStatement)) >>= either (fail . show) pure
   rows <- runFixture (listInbox source) >>= either (fail . show) pure
   poisonCalls <- runFixture (KirokuTransaction.runTransaction (Tx.statement () poisonCallCountStatement)) >>= either (fail . show) pure
   let cells =
-        [ ("handler-count-starts-at-zero", initialCalls == 0),
+        [ ("handler-count-starts-at-zero", initialCalls == 0 && initialHandlerCalls == 0),
+          ("clean-batch-skips-duplicate-handler", cleanHandlerCalls == 2),
           ("clean-batch-positional", cleanResults == [Right (InboxProcessed ()), Right (InboxProcessed ()), Right InboxDuplicate]),
           ("clean-batch-one-transaction", cleanTxnCount == (1 :: Int64)),
           ("fallback-isolates-poison", if condemning then fallbackResults == [Right (InboxProcessed ()), Right (InboxProcessed ()), Right (InboxProcessed ())] else case fallbackResults of [Right (InboxProcessed ()), Right (InboxHandlerFailed _ 1), Right (InboxProcessed ())] -> True; _ -> False),
           ("effects-once", all (\name -> length (filter (== name) effects) == 1) ["clean-a", "clean-b", "good-c", "good-d"] && length effects == 4),
           ("poison-receipt", if condemning then null [row | row <- rows, row.event.messageId == "poison"] && poisonCalls == 2 else case [row | row <- rows, row.event.messageId == "poison"] of [row] -> row.status == InboxFailed && row.attemptCount == 1; _ -> False)
         ]
+  writeBatchObservation context [clean, poisoned] rows $
+    object ["firstResults" .= map Observation.result cleanResults, "secondResults" .= map Observation.result fallbackResults, "initialCalls" .= initialCalls, "initialHandlerCalls" .= initialHandlerCalls, "cleanHandlerCalls" .= cleanHandlerCalls, "cleanTransactionCount" .= cleanTxnCount, "poisonCalls" .= poisonCalls, "effects" .= effects]
   recordCells context cells
+
+writeBatchObservation :: RunContext -> [[IntegrationEvent]] -> [InboxRow] -> Value -> IO ()
+writeBatchObservation context batches rows observations =
+  encodeFile (context.outDir </> "logs/inbox-batch-observations.json") $
+    object
+      [ "schema" .= ("kenshou.inbox-batch-observations/v1" :: Text.Text),
+        "idempotence" .= knobText context.knobs (knobName "inbox.idempotence"),
+        "failureMode" .= knobText context.knobs (knobName "inbox.failure-mode"),
+        "batches" .= map (map (\event -> Observation.delivery event Nothing)) batches,
+        "rows" .= map Observation.poisonReceipt rows,
+        "observations" .= observations
+      ]
 
 runDelegatedMatrix :: RunContext -> FixtureEnv -> IO ScenarioReport
 runDelegatedMatrix context fixture = do
@@ -260,6 +284,12 @@ runDelegatedMatrix context fixture = do
         "afterRefusalIds" .= map eventId afterIds
       ]
   recordMessagingCells context (Map.singleton "accounts" 16) (object ["dedupePolicy" .= policyName, "idempotence" .= ("delegated" :: Text.Text)]) cells
+
+batchCallStatement :: Statement.Statement () Int64
+batchCallStatement = Statement.preparable "SELECT nextval('kenshou_fx.batch_calls')" Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
+
+batchCallCountStatement :: Statement.Statement () Int64
+batchCallCountStatement = Statement.preparable "SELECT CASE WHEN is_called THEN last_value ELSE 0 END FROM kenshou_fx.batch_calls" Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
 
 effectTxnCountStatement :: Statement.Statement () Int64
 effectTxnCountStatement = Statement.preparable "SELECT count(DISTINCT txid) FROM kenshou_fx.inbox_effects" Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))

@@ -389,8 +389,8 @@ failed receipts and altered retry schedules. Targeted tests pass with 50
 Keiro and 60 CLI examples. The full `nix develop -c just verify` gate passes,
 including the schema fixtures, evidence checks and live self-tests.
 These dirty controls are not historical records.
-Earlier poison revisions and all batch revisions remain outside independent
-replay coverage.
+Earlier poison revisions remain outside independent replay coverage; batch
+revision 3 is covered separately below.
 
 
 The clean repeat at `e09f9fb58ba35651d11f979b922d275458e6d0f3` passes all four
@@ -398,7 +398,7 @@ poison modes on durable PostgreSQL 18, with 34 schema and 38 artifact-integrity
 checks. All four are digest-linked investigation records with confirmed VC-1
 attestations: all six evidence checks pass, including clean run/verifier
 worktrees and independent reconstruction from raw observations. Older poison
-records and batch replay retain their separate coverage limits.
+records retain their separate coverage limits.
 Strict validation of the 177-concept bundle, reproducible indexes, negative
 profile fixtures, and evidence ledger/CLI checks all pass.
 
@@ -408,6 +408,31 @@ profile fixtures, and evidence ledger/CLI checks all pass.
 | `inbox-table-condemn` | [01a0fd91-bbb6-73eb-98dc-f08211a23ae7](../verification/runs/keiro/2026/10/01a0fd91-bbb6-73eb-98dc-f08211a23ae7.md) | [01a0fd98-bc9c-7380-9d30-ccf52ca6c465](../verification/attestations/2026/10/01a0fd98-bc9c-7380-9d30-ccf52ca6c465.md) |
 | `inbox-table-sql-error` | [01a0fd91-c724-736c-966c-e72a6da6920b](../verification/runs/keiro/2026/10/01a0fd91-c724-736c-966c-e72a6da6920b.md) | [01a0fd99-a014-70c8-91a5-f52e88de4558](../verification/attestations/2026/10/01a0fd99-a014-70c8-91a5-f52e88de4558.md) |
 | `delegated-pure-exception` | [01a0fd91-d2ca-7637-9dc6-83f1ff82d85e](../verification/runs/keiro/2026/10/01a0fd91-d2ca-7637-9dc6-83f1ff82d85e.md) | [01a0fd9a-1280-7234-984f-28677dca06d0](../verification/attestations/2026/10/01a0fd9a-1280-7234-984f-28677dca06d0.md) |
+
+### Independent batch intake replay
+
+Batch revision 3 now counts every table-backed handler entry using a fresh
+nontransactional sequence. Both counters must start at zero, and the clean
+three-delivery batch with a repeated key must enter its handler exactly twice.
+This directly checks duplicate suppression alongside positional constructors,
+one committed transaction, isolated poison fallback and exactly-once effects.
+
+Both table-backed failure modes and delegated batching seal
+`logs/inbox-batch-observations.json`: ordered delivery batches, returned
+constructors, invocation counts/traces, SQL transaction counts, effects and
+receipt rows. `Kenshou.Cli.Attest.KeiroBatch` independently reconstructs all
+seven table-backed or four delegated checks, requires the complete positional
+schedule, and compares failures, blocking flag, exit code and verdict summary.
+Earlier batch revisions remain outside independent replay coverage.
+
+All three durable PostgreSQL 18 controls under `runs/ep13-batch-replay/matrix/`
+pass; all 30 schema and 33 artifact-integrity checks pass, and independent
+offline replay agrees with each result. These dirty functional controls do not
+add historical evidence records. Six mutation examples cover reordered or
+missing inputs, wrong result constructors, extra committed effects, incorrect
+transaction/invocation counts and missing failed receipts.
+The full `nix develop -c just verify` gate passes, including all six mutation
+examples in the 66-example CLI suite. The 50-example Keiro suite also passes.
 
 ### Full-soak artifacts and repaired payload
 
