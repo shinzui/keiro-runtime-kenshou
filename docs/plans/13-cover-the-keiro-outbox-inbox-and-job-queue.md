@@ -938,8 +938,9 @@ regressions in future normal verification runs.
 Full repository verification, all 88 CLI examples, and the added Keiro gate
 command pass; no new upstream defect or dependency pin is introduced.
 This dirty control adds no historical run record. Independent replay of the
-complete job-outcome scenario, clean revision-3 publication, broader worker
-fault modes and ordering controls remain open.
+complete job-outcome scenario was subsequently implemented in revision 4
+and cleanly published below. Broader worker fault modes and ordering controls
+remain open.
 
 ### Complete queue outcome replay
 
@@ -960,8 +961,7 @@ batch identity order, physical placement, typed/raw DLQ divergence, exact SQL
 worker effects, missing/duplicate cases, handler refusal and timestamp bounds.
 Full repository verification passes all 62 Keiro and 96 CLI examples, schemas,
 evidence checks, cohort/link checks and self-tests. The Keiro source archive
-now includes every JSON test fixture. Clean publication is the next evidence
-gate.
+now includes every JSON test fixture. Clean publication and confirmed attestation are linked below.
 No upstream defect or dependency pin changes.
 
 ### Drain and worker configuration rejection
@@ -1039,6 +1039,18 @@ its matched four-hour diagnostic at 21:24 UTC. Session
 seed `5023798347134724` and 5,000 ms forced major GC. Collection remains bounded
 by the 04:30 UTC October 3 deadline in
 `.dev/sequence-outbox-full-counter-repair-gc.py`; no outbox outcome is claimed.
+
+### Clean complete queue outcome evidence
+
+The revision-4 [clean job-outcome run](../verification/runs/keiro/2026/10/01a0fe8b-e5b1-7781-9b6c-5a6eee2b2a98.md)
+passes all forty-three checks on durable PostgreSQL 18, seed
+`8102429385822254`, clean source `69cb25c6d536389a15d40f65f13584c78d1923a0`.
+All 49 schemas and 72 artifact integrity checks pass. The digest-linked
+investigation has a [confirmed independent VC-1 attestation](../verification/attestations/2026/10/01a0fe98-468b-721d-8858-c8a0bf96c613.md)
+with all six evidence checks passing and the same clean attester revision.
+This closes complete outcome replay for the new drain/worker capture. Older
+revision-2/3 captures and their incomplete attestations retain their recorded
+limitations; broader fault, ordering and soak replay work remains open.
 
 ### Remaining non-soak work
 
