@@ -135,7 +135,8 @@ The non-soak baseline is in place. The remaining work is to deepen specific scen
 - [x] (2026-10-01) Full inbox soak sealed with passing business/resource observations and was digest-linked; finding 50 qualifies its legacy verdict schema, and the first timed-out attempt remains excluded.
 - [x] (2026-10-01) Implemented revision-3 process-isolated outbox soak with per-incarnation diagnosis and message-specific crash duplicate budgets.
 - [x] (2026-10-02 UTC) Collected and digest-linked the repaired-payload four-hour inbox run: all eight business checks and six bounded resource probes pass, with 27 artifact checks and all 11 schemas valid. This closes inbox full-soak artifact acceptance; independent soak VC-1 remains open. The follow-on queue GC diagnostic is submitted.
-- [ ] Finish queue and outbox full-soak resource acceptance, schema-valid full-soak artifacts, process isolation acceptance, remaining matrix arms, and independent evidence verification.
+- [x] (2026-10-02 UTC) Collected and digest-linked the repaired four-hour queue GC diagnostic: nine business checks, six bounded resource probes, twelve schemas and 29 artifact checks pass. This closes its artifact and diagnostic heap-data gaps; independent soak replay and default-GC limits remain explicit. The matched full outbox diagnostic is submitted.
+- [ ] Finish outbox full-soak resource/artifact acceptance, process isolation acceptance, remaining matrix arms, and independent evidence verification.
 
 The five Keiro owner reports for worker exits, read-attempt accounting, stale outbox claims, pool starvation, and missing process spans now have local finding records [34](../findings/34-keiro-job-worker-exits-after-polling-backend-termination.md), [35](../findings/35-keiro-long-poll-consumes-read-attempt-without-handler.md), [36](../findings/36-keiro-stale-outbox-publisher-finalizes-new-claim.md), [37](../findings/37-keiro-long-poll-processors-starve-runtime-pool.md), and [38](../findings/38-keiro-pre-handler-dead-letter-lacks-process-span.md). Each finding has its canonical owner URI; the MasterPlan register counts those records separately from the scenarios that cite them.
 
@@ -558,20 +559,21 @@ the inbox collector completed and released its lease. Session
 `01a0fd9d-fcda-74af-b190-c2b7d4a1f282` owns cell run
 `01a0fd9d-fcda-74af-b73c-20bcb13da0f2` under a five-hour lease. Collection has
 five bounded consecutive retries and a 23:15 UTC deadline. State is
-`.dev/ep13-queue-full-counter-repair-gc-state.json`; no queue diagnostic outcome
-is claimed. Manual collection is:
+`.dev/ep13-queue-full-counter-repair-gc-state.json`; the passing collected
+result and outbox submission are recorded in the full diagnostic handoff below.
+The retained recovery command is:
 
 ```bash
 kenshou cell resume --session .dev/ep13-queue-full-counter-repair-gc
 ```
 
 The matching full outbox GC diagnostic was queued at 18:41 UTC on October 2.
-It waits for verified queue collection and lease release before submitting
-`01a0fdea-68ff-704b-bc96-176ee5235120` on alpha. Its plan is
+It submitted at 21:24 UTC after verified queue collection and lease release,
+as nested run `01a0fdea-68ff-704b-bc96-176ee5235120` on alpha. Its plan is
 `.dev/ep13-outbox-full-counter-repair-gc-plan.json`; the bounded collector is
 `.dev/sequence-outbox-full-counter-repair-gc.py`, with state in
-`.dev/ep13-outbox-full-counter-repair-gc-state.json`. The session directory will
-be `.dev/ep13-outbox-full-counter-repair-gc/` once submitted. It uses the same
+`.dev/ep13-outbox-full-counter-repair-gc-state.json`. The session directory is
+`.dev/ep13-outbox-full-counter-repair-gc/`. It uses the same
 clean repaired-counter payload as the inbox and queue retries, source
 `0eda7ac8a63735c7198c5ff16f66b9c9ff19e1df`, payload SHA-256
 `479ab16385e0704b1dd1624969dd6b38bd57b13a848a31a5e541fbb133c86800`.
@@ -585,8 +587,8 @@ workload knobs, only the diagnostic major-GC interval changes from zero to
 addresses the heap-data gap and legacy verdict artifacts; it cannot supply
 default-GC performance evidence or independently close finding 3. The launcher
 stops if queue collection fails, never replaces an existing session, uses a
-five-hour lease and bounds repeated collection errors. No submission or
-outcome is claimed while its phase is `waiting-for-queue`.
+five-hour lease and bounds repeated collection errors. Submission identifiers
+are recorded in the full diagnostic handoff below; its outcome remains pending.
 
 ### Queue lease SQL evidence and replay
 
@@ -1005,6 +1007,38 @@ complete scenario replay by that record.
 | --- | --- | --- |
 | `job-outcome-semantics` | [01a0fe5c-975b-71ce-b045-dab92a4e703d](../verification/runs/keiro/2026/10/01a0fe5c-975b-71ce-b045-dab92a4e703d.md) | [incomplete: 01a0fe65-efa1-721b-94ff-58ecbfa8a54c](../verification/attestations/2026/10/01a0fe65-efa1-721b-94ff-58ecbfa8a54c.md) |
 | `consumption-config-rejections` | [01a0fe5c-b24c-7705-8fb7-4ad4b6a95a2c](../verification/runs/keiro/2026/10/01a0fe5c-b24c-7705-8fb7-4ad4b6a95a2c.md) | [confirmed: 01a0fe67-67a6-70c6-86cb-683ab6c43ce4](../verification/attestations/2026/10/01a0fe67-67a6-70c6-86cb-683ab6c43ce4.md) |
+
+### Full queue diagnostic and outbox handoff
+
+The repaired-payload four-hour queue diagnostic was collected at 21:24 UTC on
+2026-10-02. Its [digest-linked investigation](../verification/runs/keiro/2026/10/01a0fd67-a9cb-7001-9322-69251c14d682.md)
+passes all nine business checks: all 72,051 accepted jobs were handled exactly
+once, the source queue drained, all 3,603 terminal jobs reached the archive,
+and worker/maintenance errors remained zero. Peak source depth was one.
+The main relation stayed at 212,992 bytes; the DLQ grew from 81,920 to 90,112
+bytes within the bounded comparison-window policy. Sampled dead tuples stayed
+within their business bounds.
+
+All six bounded resource probes are stable, including 481 eligible post-major
+heap points. Haskell threads stayed at 140, OS threads at nine, descriptors at
+32 and PostgreSQL connections at three. The generic relation-growth diagnostic
+reports growth and dead-tuple uncertainty; these are supporting unbounded
+probes, while the scenario's explicit relation bounds pass. All 29 artifact
+sizes/digests and all twelve schemas (three top-level plus nine verdicts) pass.
+This closes the queue full-soak artifact gap from finding 50 and the heap-data
+gap for the matched forced-GC diagnostic. It does not establish default-GC
+performance or independent soak VC-1 replay. Source `0eda7ac`, the released
+cohort, seed `8102429385822254`, durable PostgreSQL 18 and workload parameters
+match the planned control; only forced major GC differs from the earlier run.
+
+The collector released the queue lease before the outbox launcher submitted
+its matched four-hour diagnostic at 21:24 UTC. Session
+`01a0fe81-29ec-721b-9256-d03e17c85ef0` owns cell
+`01a0fe81-29ec-721b-94fb-62c134640b1e`, nested run
+`01a0fdea-68ff-704b-bc96-176ee5235120`, with the existing repaired payload,
+seed `5023798347134724` and 5,000 ms forced major GC. Collection remains bounded
+by the 04:30 UTC October 3 deadline in
+`.dev/sequence-outbox-full-counter-repair-gc.py`; no outbox outcome is claimed.
 
 ### Remaining non-soak work
 

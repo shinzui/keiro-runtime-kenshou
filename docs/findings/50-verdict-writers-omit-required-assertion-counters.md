@@ -54,7 +54,9 @@ heap/resource outcome and this artifact qualification remain explicit.
 The repaired-payload [full inbox rerun](../verification/runs/keiro/2026/10/01a0fa97-bbd6-76a5-a7c0-03c6aa076562.md)
 passes all 11 schemas, including eight verdict documents with required
 assertion counters, and all 27 artifact checks. Inbox full-soak artifact
-acceptance is closed; repaired full outbox/queue evidence remains pending.
+acceptance is closed. The repaired [full queue GC diagnostic](../verification/runs/keiro/2026/10/01a0fd67-a9cb-7001-9322-69251c14d682.md)
+also passes all twelve schemas and 29 artifact checks, closing the queue
+artifact gap. Repaired full outbox evidence remains pending.
 
 Validation: the Keiro regression failed before the production change and passed
 afterward. All 49 Keiro and 35 core check examples pass. All ten held/violated

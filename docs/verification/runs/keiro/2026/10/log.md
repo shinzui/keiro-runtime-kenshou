@@ -1,6 +1,7 @@
 # runs/keiro/2026/10 Update Log
 
 ## 2026-10-02
+* **Addition**: Recorded run 01a0fd67-a9cb-7001-9322-69251c14d682 (keiro/queue/soak/queue-and-dlq-growth, passed).
 * **Addition**: Recorded run 01a0fe5c-b24c-7705-8fb7-4ad4b6a95a2c (keiro/queue/correctness/consumption-config-rejections, passed).
 * **Addition**: Recorded run 01a0fe5c-975b-71ce-b045-dab92a4e703d (keiro/queue/correctness/job-outcome-semantics, passed).
 * **Addition**: Recorded run 01a0fdd5-ab18-7415-aa33-951954eba2ea (keiro/outbox/correctness/terminal-state-matrix, passed).

@@ -80,6 +80,7 @@
 - [keiro/inbox/correctness/effectively-once-matrix passed on released](01a0fca8-d813-73af-beca-3d86c9dc0742.md) - Recorded keiro/inbox/correctness/effectively-once-matrix run against cohort released with digest-pinned data.
 - [keiro/inbox/correctness/effectively-once-matrix passed on released](01a0fca8-e4ac-7080-8e46-92bed3d81a9d.md) - Recorded keiro/inbox/correctness/effectively-once-matrix run against cohort released with digest-pinned data.
 - [keiro/inbox/correctness/effectively-once-matrix passed on released](01a0fca8-f079-7212-855b-2cc7f53c84dc.md) - Recorded keiro/inbox/correctness/effectively-once-matrix run against cohort released with digest-pinned data.
+- [keiro/queue/soak/queue-and-dlq-growth passed on released](01a0fd67-a9cb-7001-9322-69251c14d682.md) - Recorded keiro/queue/soak/queue-and-dlq-growth run against cohort released with digest-pinned data.
 - [keiro/inbox/correctness/poison-accounting passed on released](01a0fd91-addb-737e-ad23-0a042e72cede.md) - Recorded keiro/inbox/correctness/poison-accounting run against cohort released with digest-pinned data.
 - [keiro/inbox/correctness/poison-accounting passed on released](01a0fd91-bbb6-73eb-98dc-f08211a23ae7.md) - Recorded keiro/inbox/correctness/poison-accounting run against cohort released with digest-pinned data.
 - [keiro/inbox/correctness/poison-accounting passed on released](01a0fd91-c724-736c-966c-e72a6da6920b.md) - Recorded keiro/inbox/correctness/poison-accounting run against cohort released with digest-pinned data.
