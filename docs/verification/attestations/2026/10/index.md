@@ -79,4 +79,6 @@
 - [Attestation of 01a0ff60-fbb2-7730-b648-368c972d5429 — confirmed](01a0ff71-4098-7115-ab36-5565a6b92111.md) - The kenshou attester checked the linked data and recorded confirmed.
 - [Attestation of 01a0ff62-350c-75c2-8d48-e31e753d5bfd — confirmed](01a0ff72-2370-76fd-877c-b3e94970271f.md) - The kenshou attester checked the linked data and recorded confirmed.
 - [Attestation of 01a0ff63-0ecd-76dc-ad80-a31f0db1622a — confirmed](01a0ff73-0c80-76dc-a640-2231cea2bdfb.md) - The kenshou attester checked the linked data and recorded confirmed.
+- [Attestation of 01a0ff82-6476-7751-8075-eb86501b5c97 — confirmed](01a0ff89-c5f5-708f-a622-48a947c324ff.md) - The kenshou attester checked the linked data and recorded confirmed.
+- [Attestation of 01a0ff82-ad76-7587-8de5-927552849f59 — confirmed](01a0ff8a-8e80-7483-992e-1bc52bf6a2f7.md) - The kenshou attester checked the linked data and recorded confirmed.
 

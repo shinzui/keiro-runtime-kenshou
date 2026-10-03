@@ -531,9 +531,10 @@ Nine clean queue ordering investigations now have confirmed independent replay,
 including the full 1,600-job FIFO-heads case. They cover ordering modes and worker
 kills. Eleven clean revision-4 investigations add confirmed scripted-retry
 replay. Revision 5 adds validated SQL lease and handler-overlap evidence with
-independent replay; its clean publication and remaining fault/soak work stay open.
+independent replay. Representative clean ordering and producer-identity controls
+are independently confirmed; remaining EP-13 acceptance stays open.
 
-The historical bundle currently contains 188 run/comparison records: 182 sealed
+The historical bundle currently contains 190 run/comparison records: 184 sealed
 individual runs and six comparisons. The
 [working baseline report](../reports/2026-09-29-runtime-baseline.md) and child
 plans hold the detailed runs and findings. Owner projects can use this as-is

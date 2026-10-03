@@ -1398,8 +1398,24 @@ Focused validation passes 121 CLI examples. The first recomputation used
 the wrong verdict filename prefix; the
 corrected reader agrees with both original captures without rewriting them.
 The full repository verification gate passes, including 121 CLI examples.
-Clean publication remains a separate evidence step; the two local captures
-do not change the published baseline record count.
+Representative clean publication is confirmed below; the two exploratory
+captures remain excluded from the published baseline record count.
+
+### Clean SQL lease and producer identity evidence
+
+Two representative investigations at clean source/attester `4140899ab7d36d431a242aa9c28e9d1f228af7f9`
+have confirmed independent VC-1 attestations, with six passing evidence checks
+each. The revision-5 default ordering run completes all 1,600 jobs with SQL-bound
+leases, scripted retries and a worker kill. Producer-identity revision 2 passes
+all nine checks using full retained SQL rows and independently derived IDs.
+Both use durable PostgreSQL 18 and seed `8102429385822254`; all 24 schemas and
+36 artifact checks pass. The already-validated local variant matrices remain
+linked above; they were not repeated merely to increase published run counts.
+
+| Control | Investigation | Attestation |
+| --- | --- | --- |
+| ordering-default | [01a0ff82-6476-7751-8075-eb86501b5c97](../verification/runs/keiro/2026/10/01a0ff82-6476-7751-8075-eb86501b5c97.md) | [confirmed](../verification/attestations/2026/10/01a0ff89-c5f5-708f-a622-48a947c324ff.md) |
+| producer-identity | [01a0ff82-ad76-7587-8de5-927552849f59](../verification/runs/keiro/2026/10/01a0ff82-ad76-7587-8de5-927552849f59.md) | [confirmed](../verification/attestations/2026/10/01a0ff8a-8e80-7483-992e-1bc52bf6a2f7.md) |
 
 ### Remaining non-soak work
 
