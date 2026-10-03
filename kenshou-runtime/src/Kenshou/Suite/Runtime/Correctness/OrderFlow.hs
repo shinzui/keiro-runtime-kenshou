@@ -5,13 +5,16 @@ module Kenshou.Suite.Runtime.Correctness.OrderFlow
 where
 
 import Data.Aeson (object, toJSON, (.=))
+import Data.Aeson qualified as Aeson
 import Data.Aeson.Key qualified as Key
+import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Int (Int64)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Kenshou.Check.Process (readChildMessages)
 import Kenshou.Check.Scenario (finishWithVerdicts)
 import Kenshou.Check.Verdict (InvariantClass (..))
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
@@ -19,6 +22,7 @@ import Kenshou.Core.Dimension
 import Kenshou.Core.Id (Seed, parseScenarioId)
 import Kenshou.Core.Knob (KnobValue (..), knobText)
 import Kenshou.Core.Phase (zeroPhases)
+import Kenshou.Core.Role (WorkerMessage (..))
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..))
 import Kenshou.Suite.Runtime.Driver (DriverReport (..), GeneratedOrder (..), generateOrder)
 import Kenshou.Suite.Runtime.Knobs (quiescenceDeadlineFrom, runtimeKnobName, runtimeKnobsWith)
@@ -28,12 +32,12 @@ import Kenshou.Suite.Runtime.System.Config (SystemConfig (..))
 import Kenshou.Suite.Runtime.System.Context (runtimeRequirements)
 import Kenshou.Suite.Runtime.System.Schema (StatusCounts (..))
 import Kenshou.Suite.Runtime.System.Warehouse (isDiscontinued)
-import Kenshou.Suite.Runtime.Topology (QuiescenceReport (..), RunningSystem (..), awaitQuiescence, consumerSessionsEnded, driverReports, systemSpecFrom, withReferenceSystem)
+import Kenshou.Suite.Runtime.Topology (QuiescenceReport (..), RunningSystem (..), awaitQuiescence, consumerSessionsEnded, driverReports, processesOf, systemSpecFrom, withReferenceSystem)
 import System.Directory (doesFileExist)
 import System.FilePath ((</>))
 
 scenarios :: [Scenario]
-scenarios = [singleOrderRoundtrip, happyPath, mixedOutcomes, completionExpiryRace, duplicateSubmission]
+scenarios = [singleOrderRoundtrip, happyPath, mixedOutcomes, completionExpiryRace, duplicateSubmission, hotAccountContention]
 
 -- | What a scenario expects of the terminal mix, beyond I1 to I4.
 data MixExpectation
@@ -47,6 +51,8 @@ data MixExpectation
   | -- | Every order completes, and every submission beyond the first per
     -- order is recognised as a duplicate.
     DuplicatesRecognised
+  | -- | Every order completes; contention on the hot accounts is reported.
+    HotAccounts
 
 singleOrderRoundtrip :: Scenario
 singleOrderRoundtrip =
@@ -118,6 +124,26 @@ duplicateSubmission =
     ]
     DuplicatesRecognised
 
+-- | One stream each for the escrow, the merchant and the loyalty pool, at
+-- the default rate. Per-stream optimistic concurrency serialises every
+-- order through them (finding 66); the scenario keeps that limitation
+-- visible. Correctness must still hold once the backlog drains, and the
+-- contention is reported as an implementation property.
+hotAccountContention :: Scenario
+hotAccountContention =
+  orderFlowScenario
+    "hot-account-contention"
+    1
+    "Runs 3,600 orders at 20 per second through single escrow, merchant and loyalty-pool streams; I1 to I4 must hold after the backlog drains, and retry exhaustion on the hot streams is reported."
+    TierExtended
+    [ ("runtime.hot-account-buckets", VInt 1),
+      ("runtime.refuse-fraction", VDouble 0),
+      ("runtime.expire-fraction", VDouble 0),
+      ("runtime.orders", VInt 3600),
+      ("runtime.quiescence-deadline-seconds", VInt 900)
+    ]
+    HotAccounts
+
 orderFlowScenario :: Text -> Int -> Text -> Tier -> [(Text, KnobValue)] -> MixExpectation -> Scenario
 orderFlowScenario name revision summary tier overrides expectation =
   Scenario
@@ -174,6 +200,19 @@ runOrderFlow expectation context = withReferenceSystem context (systemSpecFrom c
       (\(role, index) -> (role,) <$> doesFileExist (context.outDir </> "logs" </> logLabel role index))
       [(role, index) | role <- longRunningRoles, index <- [0 .. max 1 config.processesPerRole - 1]]
   drivers <- driverReports system
+  -- Shop dispatch retries whose command exhausted its conflict retries,
+  -- per hot stream.
+  shopDispatchers <- processesOf system "a-dispatch"
+  retryMessages <- concat <$> traverse readChildMessages shopDispatchers
+  let exhausted =
+        Map.fromListWith
+          (+)
+          [ (Text.takeWhile (/= '"') (Text.drop 1 (snd (Text.breakOn "\"" problem))), 1 :: Int)
+          | WrkCustom "dispatch-retry" payload <- retryMessages,
+            Aeson.Object fields <- [payload],
+            Just (Aeson.String problem) <- [KeyMap.lookup "problem" fields],
+            "RetryExhausted" `Text.isInfixOf` problem
+          ]
   let observed = Map.fromList report.shopOrders.byStatus
       expectedOrders = fromIntegral (if config.orders > 0 then config.orders else config.durationSeconds * max 1 config.ratePerSecond) :: Int64
       completedOnly = Map.singleton "completed" expectedOrders
@@ -181,9 +220,12 @@ runOrderFlow expectation context = withReferenceSystem context (systemSpecFrom c
       (mixHeld, predicted) = case expectation of
         AllCompleted -> (observed == completedOnly, toJSON completedOnly)
         DuplicatesRecognised -> (observed == completedOnly, toJSON completedOnly)
+        HotAccounts -> (observed == completedOnly, toJSON completedOnly)
         SeedPredicted -> let mix = predictedMix context.seed config in (observed == mix, toJSON mix)
         CompletedOrExpired -> (all (`elem` ["completed", "expired"]) (Map.keys observed) && sum (Map.elems observed) == expectedOrders, toJSON ("completed or expired" :: Text))
       extraCells = case expectation of
+        HotAccounts ->
+          [(Implementation, "hot-account-retries-absent", Map.null exhausted, object ["retryExhaustedByStream" .= exhausted, "secondsToDrainAfterDrivers" .= report.secondsAfterDrivers, "reference" .= ("finding 66" :: Text)])]
         DuplicatesRecognised ->
           let copies = fromIntegral (length submissions * max 1 config.submissionRounds)
               accepted = sum [value.accepted | value <- submissions]

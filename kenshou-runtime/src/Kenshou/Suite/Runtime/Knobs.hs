@@ -32,6 +32,7 @@ runtimeKnobs =
     integer "runtime.duration-seconds" "Driver duration when runtime.orders is 0." 0 0 172800,
     decimal "runtime.refuse-fraction" "Fraction of orders for a discontinued SKU." 0.05 0 0.5,
     decimal "runtime.expire-fraction" "Fraction of orders whose pick never confirms." 0.02 0 0.5,
+    integer "runtime.hot-account-buckets" "Buckets of each hot shop account; 1 keeps a single hot escrow, merchant and loyalty-pool stream." 16 1 64,
     integer "runtime.router-fanout" "Referrers credited by the loyalty router per completed order." 3 0 16,
     integer "runtime.cooling-off-ms" "Durable workflow sleep before a pick is requested." 200 0 600000,
     integer "runtime.fulfilment-deadline-seconds" "Deadline timer after which a fulfilment expires." 30 1 86400,
@@ -102,6 +103,7 @@ systemConfigFrom knobs =
       processesPerRole = int "runtime.processes-per-role",
       replicatedDrivers = text "runtime.driver-partitioning" == "replicated",
       submissionRounds = int "runtime.submission-rounds",
+      hotAccountBuckets = int "runtime.hot-account-buckets",
       -- Declared only by the trace-continuity scenario.
       traceSabotage = case Map.lookup (runtimeKnobName "trace.sabotage") (resolvedKnobsMap knobs) of
         Just (VText value) -> value

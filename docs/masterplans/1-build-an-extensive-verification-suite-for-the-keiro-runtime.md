@@ -531,7 +531,7 @@ Cross-plan baseline handoff gates remain open:
 - [ ] Close finding attribution and reporting gaps with an existing or new
   owner record or a documented non-bug disposition. Unresolved investigations
   keep this gate open and must be explicit in the working report. The register
-  contains 59 numbered findings (1–56 and 63–65),
+  contains 60 numbered findings (1–56 and 63–66),
   34 distinct owner bug records and ten improvement requests; a count of
   reports is not a count of repairs or verified fixes.
 - [ ] Supply independent replayable verdict checks for the selected evidence
@@ -734,6 +734,8 @@ disposition changes.
 - EP-15's operator cross-check (2026-10-03) found that `keiro-ops --json pgmq dlq read` renders `dlq_message_id` with pgmq-core's derived `Show` ([finding 65](../findings/65-keiro-ops-dlq-message-id-uses-derived-show.md)). This is a shape defect in the documented automation surface, not a value disagreement. It is still present at keiro HEAD; it is filed as `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-9`.
 - EP-15's I7 work (2026-10-03) found that the released runtime propagates a trace on its own only from a Kafka record to shibuya's consumer span and from `enqueueTraced` to the job span. It does not propagate across the event store, an outbox row, or a workflow resume. Keiro's outbox publish span is a root span covering a whole batch. Producer identity includes the trace class (`mori://shinzui/keiro/okf/adrs/concepts/ADR-42`), so a handler must take the outbox trace from its source event rather than from its current span. EP-13, EP-14 and EP-7 telemetry assertions that assume end-to-end traces should expect these gaps.
 - EP-15 added two exports to EP-5's `Kenshou.Check.Process` on 2026-10-03: `childExitCode` and `reapChild`, so a supervisor loop can replace a process that died on its own. The change is additive; EP-5's existing callers are unaffected.
+- EP-15's first assembled-runtime cell session (2026-10-03, `cell-runs/ep15-runtime-3`) found that cell `alpha` cannot inject most of EP-15's whole-runtime faults. It has no PostgreSQL server control, no broker process control, and its external Redpanda broker has a single lane, so there is no second proxied lane. Of the faults run there, only `partition-database` took effect: its proxy runs on the driver. `postmaster-restart`, `broker-restart`, `partition-broker` and both known-defect scenarios (`ack-retry-under-database-outage`, `batch-enqueue-publish-under-broker-restart`) are now placement `local`, so cell plans exclude them instead of reporting them errored. Follow-ups: EP-16 provides a cell PostgreSQL server-control hook, broker process control and a second broker lane; EP-17 wires the cell fault hook to the kenshou fault injectors.
+- The same session showed the reference system's original single `escrow`, `merchant` and `loyalty-pool` streams serialising the shop dispatcher at the default 20 orders/s: 572–841 orders still placed 300 s after the drivers, and 61–240 `account-escrow` retry exhaustions per run ([finding 66](../findings/66-hot-ledger-account-serialises-the-shop-dispatcher.md)). This is a documented limitation of per-stream optimistic concurrency, not a Keiro defect. The default topology now buckets those accounts and snapshots ledger accounts; `hot-account-contention` keeps the single-stream case visible.
 
 ## Decision Log
 

@@ -52,6 +52,11 @@ provenance:
       at: 2026-10-03T15:03:18Z
       mode: "implement"
       note: "Live alpha broker acceptance passed after matched role upgrade; finding-40 rerun exposed payload rpk dependency"
+    - model: "claude-opus-5-5"
+      harness: "claude-code"
+      at: 2026-10-03T23:26:27Z
+      mode: "update"
+      note: "Recorded the cell fault-capability follow-up from EP-15's first assembled-runtime cell session"
 ---
 
 # Provide leased verification cells in load-testing-infra
@@ -128,6 +133,12 @@ You can see it working with the fixture payloads this plan ships: two terminals 
 - [x] (2026-10-03) Registered READY `cell-image-broker-5r6zs0ly52rc` and the matched `cell-image-driver-93hma4y1rg7z` at `mori://shinzui/load-testing-infra` revision `d6c0ec2`; the broker image build was the first real check of the prefetched Redpanda image hash and it passed. A Pulumi preview and then the upgrade lease (`d523783`) created `cell-alpha-broker` (n2-standard-4, `10.0.0.5`) and replaced only the driver; PostgreSQL and monitoring kept their images while their peer metadata and the internal firewall gained the broker in place. The first three fixture runs all sealed `infrastructure-failure` with `reset-failed` (`01a10211-a82b-7eca-919b-63c1507771fb`, `01a10215-48da-7340-b863-9c8f09d044e2`, `01a10218-c353-7554-9c0c-ea2686a2a43d`; verified manifests `424f104b…`, `de93f49e…`, `287ce013…`): the older PostgreSQL and monitoring agents rejected the descriptor's new `broker` field and crash-looped, so every reset timed out after three minutes. With the user's approval, matched `cell-image-postgres18-50swxf7hr6zw` and `cell-image-monitoring-i48ghmb62lbm` were registered (`e4087a3`) and replaced only those two VMs (`46adc94`), with no quarantine.
 - [x] (2026-10-03) Accepted the live broker role on alpha under one lease (`01a10240-97d6-7f1c-a857-5f0d1efad0b9`, sequences 1–3); all three runs sealed `completed`, entry exit 0, and passed `cellctl verify`. Cold-reset Kafka fixture `01a10240-add3-71a8-9271-0f28e4bb83e6` (manifest SHA-256 `8a9e4546704d0516dbb289d96dd7579c029726e44e60082904f90d4ffd76514d`) produced, consumed and matched 1,000 records, deleted its topic, and reported Redpanda `v26.2.1`. Its reset evidence lists four PostgreSQL steps and the five broker steps, all `ok`, with `dataWiped: true`, two shards and `topics: []`. All 20 health gates passed across four observation windows, including `broker.json`. The warm-reset probe `01a10242-6733-7856-a955-97c483863759` (`73b0e2b1f6b473f98eb1f99e21d515fb9f6c8a0ea72dd449eba3148c2ee814b0`) found `brokerTopics: []`. The probe `01a10244-321c-7606-834f-5683a2707969` (`f54405a65c44de72f95e2ee2dd2ea1d2c259856d3a94d205fc701535079007b7`), submitted without `reset.broker`, received `broker: null`, `brokerTopics: null`, PostgreSQL-only reset steps, and 15 gates over three windows. Alpha and the builder were stopped afterward.
 - [x] (2026-10-03) Reran the finding-40 Kafka plan through `kenshou cell` from a clean worktree at kenshou `b9881d1` with released payload bundle `d762e4e64d5bf71fe70b78cff823ec97f264d5965124e06a0c12379119374ec1`. Route preparation admitted nested run `01a10213-b750-723b-b7bc-b131783b7071` to alpha with no refusal. Cell run `01a10247-5864-74db-9978-1c73f6b232fe` received a verified broker reset and broker environment, sealed `completed`, and verified (manifest `ccb902b17373ae45e2607fc65d69d3463005393bcb788c542cddca3df8da77b1`). The nested Kenshou run errored before its BUG-5 probe: the payload carries no `rpk`, and the driver image's `rpk` 26.1.7 rejects `group list --format json`. This is a Kenshou payload defect recorded in finding 40, not broker-role evidence. A cell reproduction of BUG-5 still needs a payload that ships its own `rpk`.
+- [ ] (follow-up from EP-15, 2026-10-03) Give cells the fault capabilities that EP-15's whole-runtime matrix needs. Each should be advertised through the environment probe, as `postgres.control-hook` and `fault-hook` already are:
+  - a PostgreSQL server-control hook (stop, fast or immediate, and start the cell's server while a run holds it);
+  - broker process control (kill and start the broker role);
+  - a second proxied broker listener (lane), so one context's clients can be partitioned from the broker while the other stays connected.
+
+  Alpha has none of these. `postmaster-restart`, `broker-restart`, `partition-broker` and the two Kafka known-defect scenarios are placement `local` until they exist. See [finding 66](../findings/66-hot-ledger-account-serialises-the-shop-dispatcher.md) and `cell-runs/ep15-runtime-3` (session `01a103ce-04ab-72f6-b47a-25d67a40f01d`).
 - [ ] Deliver leased, resettable multi-instance verification cells with the generic agent, payload delivery, health gates, immutable result publication, broker, and collector roles; verify the cell protocol in Validation and Acceptance.
 
 ## Surprises & Discoveries

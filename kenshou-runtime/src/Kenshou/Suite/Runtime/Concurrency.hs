@@ -42,6 +42,11 @@ data FaultEvidence = FaultEvidence
     detail :: !Value
   }
 
+-- Placement: a scenario whose fault needs PostgreSQL server control, broker
+-- process control or a second proxied broker lane is @local@. A cell
+-- offers none of these yet, so routing it there would only report the
+-- fault as not applied.
+
 -- | One whole-runtime fault scenario. Every scenario shares 'faultScenario's
 -- procedure; the plan supplies only its identity, knobs and schedule.
 data FaultPlan = FaultPlan

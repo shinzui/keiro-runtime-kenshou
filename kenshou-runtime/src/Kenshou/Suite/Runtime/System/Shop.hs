@@ -24,10 +24,13 @@ where
 
 import Control.Monad (forM, forM_)
 import Data.Aeson qualified as Aeson
+import Data.Bits (xor)
+import Data.Char (ord)
 import Data.Int (Int64)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.UUID qualified as UUID
+import Data.Word (Word32)
 import Effectful ((:>))
 import Hasql.Decoders qualified as Decoders
 import Hasql.Encoders qualified as Encoders
@@ -59,10 +62,26 @@ customerAccount (CustomerId customer) = AccountId customer
 loyaltyAccount :: Text -> AccountId
 loyaltyAccount referrer = AccountId ("loyalty-" <> referrer)
 
-escrowAccount, merchantAccount, loyaltyPoolAccount :: AccountId
-escrowAccount = AccountId "escrow"
-merchantAccount = AccountId "merchant"
-loyaltyPoolAccount = AccountId "loyalty-pool"
+-- | Every order touches the escrow, the merchant and, when it completes,
+-- the loyalty pool. One stream each would serialise every order through
+-- three hot aggregates, so each is split into buckets chosen by the order:
+-- concurrent orders rarely append to the same stream, and the oracle sums
+-- each family of buckets. @runtime.hot-account-buckets=1@ keeps one hot
+-- stream each, for the contention scenario.
+escrowAccount, merchantAccount, loyaltyPoolAccount :: Int -> OrderId -> AccountId
+escrowAccount = bucketAccount "escrow"
+merchantAccount = bucketAccount "merchant"
+loyaltyPoolAccount = bucketAccount "loyalty-pool"
+
+bucketAccount :: Text -> Int -> OrderId -> AccountId
+bucketAccount family buckets order = AccountId (family <> "-" <> Text.pack (show (bucketOf buckets order)))
+
+-- | A stable bucket for an order (FNV-1a over its identifier).
+bucketOf :: Int -> OrderId -> Int
+bucketOf buckets order = fromIntegral (Text.foldl' step 2166136261 (orderText order) `mod` fromIntegral (max 1 buckets))
+  where
+    step :: Word32 -> Char -> Word32
+    step hash character = (hash `xor` fromIntegral (ord character)) * 16777619
 
 openingCustomerBalance, openingLoyaltyPool :: Int64
 openingCustomerBalance = 100000000
@@ -96,8 +115,8 @@ data PaymentInput = PaymentInput
 
 -- | The payment process manager. Its own stream is the one-state saga log;
 -- every reaction is a pair of ledger commands under the order's reference.
-paymentManager :: ProcessManager PaymentInput (HsPred '[] SagaCommand) '[] SagaState SagaCommand SagaEvent LedgerPhi LedgerRegs LedgerState AccountCommand AccountEvent
-paymentManager =
+paymentManager :: Int -> ProcessManager PaymentInput (HsPred '[] SagaCommand) '[] SagaState SagaCommand SagaEvent LedgerPhi LedgerRegs LedgerState AccountCommand AccountEvent
+paymentManager buckets =
   ProcessManager
     { name = "shop-payment",
       correlate = \input -> orderText input.orderId,
@@ -112,10 +131,11 @@ paymentManager =
                in [ PMCommand (accountCommandStream source) (ledger (debitTransfer source reference destination input.amountCents 0)),
                     PMCommand (accountCommandStream destination) (ledger (creditTransfer destination reference source input.amountCents))
                   ]
+            escrow = escrowAccount buckets input.orderId
             (stage, commands) = case input.step of
-              PaymentHold -> ("hold", movement "hold" customer escrowAccount)
-              PaymentCapture -> ("capture", movement "capture" escrowAccount merchantAccount)
-              PaymentRefund -> ("refund", movement "refund" escrowAccount customer)
+              PaymentHold -> ("hold", movement "hold" customer escrow)
+              PaymentCapture -> ("capture", movement "capture" escrow (merchantAccount buckets input.orderId))
+              PaymentRefund -> ("refund", movement "refund" escrow customer)
          in ProcessManagerAction
               { command = ObserveSaga (ObserveSagaData input.orderId stage input.sourceEventId),
                 commands,
@@ -133,8 +153,8 @@ data LoyaltyInput = LoyaltyInput
 -- | The loyalty router resolves its targets from the seeded referral table at
 -- dispatch time. It holds no state; its deterministic identifiers come from
 -- the router name, the order and the source event.
-loyaltyRouter :: (Store :> es) => Router LoyaltyInput LedgerPhi LedgerRegs LedgerState AccountCommand AccountEvent es
-loyaltyRouter =
+loyaltyRouter :: (Store :> es) => Int -> Router LoyaltyInput LedgerPhi LedgerRegs LedgerState AccountCommand AccountEvent es
+loyaltyRouter buckets =
   Router
     { name = "shop-loyalty",
       key = \input -> orderText input.orderId,
@@ -143,12 +163,13 @@ loyaltyRouter =
         let bonus = loyaltyBonus input.amountCents
             reference = transferRef input.orderId "loyalty"
             total = bonus * fromIntegral (length referrers)
+            pool = loyaltyPoolAccount buckets input.orderId
         pure $
           if null referrers
             then []
             else
-              PMCommand (accountCommandStream loyaltyPoolAccount) (ledger (debitTransfer loyaltyPoolAccount reference (AccountId "loyalty-referrers") total 0))
-                : [ PMCommand (accountCommandStream (loyaltyAccount referrer)) (ledger (creditTransfer (loyaltyAccount referrer) reference loyaltyPoolAccount bonus))
+              PMCommand (accountCommandStream pool) (ledger (debitTransfer pool reference (AccountId "loyalty-referrers") total 0))
+                : [ PMCommand (accountCommandStream (loyaltyAccount referrer)) (ledger (creditTransfer (loyaltyAccount referrer) reference pool bonus))
                   | referrer <- referrers
                   ],
       targetEventStream = ledgerEventStream,
@@ -164,14 +185,14 @@ shopProducer = either (error . show) id (mkIntegrationProducer (IntegrationProdu
 -- | Each delivery runs in a span that continues the trace recorded in the
 -- event's metadata, so the commands and the outbox row it produces join the
 -- order's trace.
-handleShopDelivery :: Signals -> ContextStore -> TopicPrefix -> RecordedEvent -> IO (Either Text ())
-handleShopDelivery signals context prefix recorded = case orderCodec.decode recorded.eventType recorded.payload of
+handleShopDelivery :: Int -> Signals -> ContextStore -> TopicPrefix -> RecordedEvent -> IO (Either Text ())
+handleShopDelivery buckets signals context prefix recorded = case orderCodec.decode recorded.eventType recorded.payload of
   Left problem -> pure (Left ("undecodable order event: " <> problem))
   Right event -> withEventTrace signals "dispatch shop-dispatch" recorded do
     options <- commandOptions signals
     let trace = draftTraceContext signals recorded
     let runPayment input = do
-          result <- runProcessManagerOnce options paymentManager recorded input
+          result <- runProcessManagerOnce options (paymentManager buckets) recorded input
           pure case result of
             Left problem -> ["payment manager state: " <> Text.pack (show problem)]
             Right value -> commandProblems value.commandResults
@@ -189,7 +210,7 @@ handleShopDelivery signals context prefix recorded = case orderCodec.decode reco
         pure (payment <> producerProblems enqueued)
       OrderCompleted d -> withOrder d.orderId \customer amount -> do
         payment <- runPayment (PaymentInput sourceId d.orderId PaymentCapture customer amount)
-        loyalty <- runRouterOnce options loyaltyRouter recorded (LoyaltyInput d.orderId customer amount)
+        loyalty <- runRouterOnce options (loyaltyRouter buckets) recorded (LoyaltyInput d.orderId customer amount)
         pure (payment <> commandProblems loyalty.commandResults)
       OrderRejected d -> withOrder d.orderId \customer amount -> runPayment (PaymentInput sourceId d.orderId PaymentRefund customer amount)
       OrderExpired d -> withOrder d.orderId \customer amount -> runPayment (PaymentInput sourceId d.orderId PaymentRefund customer amount)
@@ -246,13 +267,17 @@ dispatchOrderCommand options row command =
 
 -- | Create the application tables, open every account with its opening
 -- balance and record the referral graph. Safe to repeat.
-seedShop :: ContextStore -> Int -> Int -> IO ()
-seedShop context customers fanout = do
+seedShop :: ContextStore -> Int -> Int -> Int -> IO ()
+seedShop context customers fanout buckets = do
   runContextOrThrow context (ensureLedgerReadModels >> ensureShopTables)
   let accounts =
         [(AccountId ("customer-" <> Text.pack (show n)), openingCustomerBalance) | n <- [0 .. customers - 1]]
           <> [(AccountId ("loyalty-customer-" <> Text.pack (show n)), 0) | n <- [0 .. customers - 1]]
-          <> [(escrowAccount, 0), (merchantAccount, 0), (loyaltyPoolAccount, openingLoyaltyPool)]
+          <> concat
+            [ [(bucket "escrow", 0), (bucket "merchant", 0), (bucket "loyalty-pool", openingLoyaltyPool `div` fromIntegral (max 1 buckets))]
+            | k <- [0 .. max 1 buckets - 1],
+              let bucket family = AccountId (family <> "-" <> Text.pack (show k))
+            ]
   results <- forM accounts \(account@(AccountId name), balance) ->
     runContextOrThrow context $
       dispatchOnce defaultRunCommandOptions ledgerEventStream (accountStream account) (deterministicEventId ("open/" <> name)) (ledger (openAccount account balance)) (ledgerProjections (accountCommandStream account))

@@ -127,6 +127,16 @@ You can see it working when `kenshou run runtime/order-flow/correctness/happy-pa
   - `batch-enqueue-publish-under-broker-restart` `01a10383-e0c8-7629-a7dd-e3d75b336f6c` recorded `not-reproduced`.
 
   Still open in Milestone 3: the cell-only `memory-limit` and `disk-full` scenarios, the watchdog's stall classification in `pool-starvation`, and default-rate runs of the matrix on a quiet cell.
+- [x] (2026-10-03) First assembled-runtime cell session on alpha (`cell-runs/ep15-runtime-3`, session `01a103ce-04ab-72f6-b47a-25d67a40f01d`, payload bundle `c5b73c97…` from `c84540a`, default 20 orders/s, one cold reset per run). It ran after fixing two infrastructure defects: `cell run --start` left the broker VM stopped (EP-17), and two external PostgreSQL contexts of one run collided on the shared server (kernel, `c84540a`).
+  - All seven correctness scenarios passed: `single-order-roundtrip`, `keiro-ops-cross-check`, `completion-expiry-race`, `duplicate-submission`, `happy-path`, `mixed-outcomes`, `trace-continuity`. Nested runs are `01a10398-1258-756e-9d0c-4d7a42de7b83` through `01a10398-1258-756e-b7da-d1321e8765fd`.
+  - The fault slices failed quiescence, and the cause was capacity, not the faults: the hot `escrow` stream serialised the shop dispatcher ([finding 66](../findings/66-hot-ledger-account-serialises-the-shop-dispatcher.md)).
+  - Most faults could not apply on alpha (no PostgreSQL server control, no broker process control, one broker lane); only `partition-database`'s took effect.
+  - I stopped the session after twelve of twenty slices and stopped alpha.
+
+  Response:
+  - The shop's `escrow`, `merchant` and `loyalty-pool` accounts are now split into `runtime.hot-account-buckets` (default 16) streams chosen by the order, and ledger accounts snapshot every 50 events. A local 3,600-order run at 20/s then passed with no retry exhaustion (`01a1040e-0055-73b4-b703-1dcbbc99a3c2`), and the double-capture sabotage still fails I2 and I3 (`01a1040c-25b4-760c-8d86-4114d5b55d18`).
+  - `runtime/order-flow/correctness/hot-account-contention` (extended tier) keeps one bucket at the default rate. It judges I1–I4 after the backlog drains and reports retry exhaustion per stream.
+  - `postmaster-restart`, `broker-restart`, `partition-broker` and both known-defect scenarios are placement `local` until EP-16/EP-17 provide cell fault hooks.
 - [ ] Finish Milestone 2: the final I4 clause that every subscription checkpoint reaches the store position, the zero-lag consumer-group clause, planner variants on `happy-path`, and the telemetry arms of every scenario.
 - [ ] Deliver the rest of the failure matrix: `sigkill-storm`, `paused-lease-holder`, `rolling-restart`, the PostgreSQL, broker, network and resource scenarios, the two known-defect scenarios, and a cell run of `sigkill-role` at the default rate. Then the gated soaks, benchmarks and whole-runtime telemetry comparison; verify the assembled-runtime acceptance in Validation and Acceptance.
 
@@ -285,6 +295,14 @@ You can see it working when `kenshou run runtime/order-flow/correctness/happy-pa
 
 - Decision: A role's run-time behaviour changes through control messages: a `latency` message sets the extra handling delay of the warehouse consumer and pick handler. The knob does not do this.
   Rationale: The slow-consumer scenario needs the delay for a bounded window and then a drain, which a static knob cannot express. A restarted process starts without delay, as a recovered deployment would.
+  Date: 2026-10-03
+
+- Decision: The reference system splits its hot shop accounts into buckets chosen by the order (`runtime.hot-account-buckets`, default 16), and ledger accounts snapshot every 50 events. A dedicated scenario keeps the single-stream case.
+  Rationale: Every order touched the same escrow, merchant and loyalty-pool streams, so per-stream optimistic concurrency capped the whole system near the default rate (finding 66). Services avoid hot aggregates in the same way, and the oracle sums each bucket family. The limitation is real cohort behaviour, so `hot-account-contention` keeps it visible instead of designing it away silently.
+  Date: 2026-10-03
+
+- Decision: Fault scenarios whose fault needs capabilities no cell offers are placement `local`.
+  Rationale: On alpha they could only report their fault as not applied, which reads as errored or failed evidence. Local placement keeps cell plans honest until EP-16 and EP-17 add the hooks.
   Date: 2026-10-03
 
 - Decision: Knob values whose wiring does not exist yet (`runtime.inbox-idempotence=delegated`, `runtime.publish-mode=batch-enqueue`, `runtime.arrival=poisson`) are withheld from the allowed lists until they are implemented.

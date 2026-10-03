@@ -75,7 +75,9 @@ data SystemConfig = SystemConfig
     -- | How many times each driver submits its sequence.
     submissionRounds :: !Int,
     -- | A trace-continuity sabotage control; @none@ outside those runs.
-    traceSabotage :: !Text
+    traceSabotage :: !Text,
+    -- | Buckets of each hot shop account (escrow, merchant, loyalty pool).
+    hotAccountBuckets :: !Int
   }
   deriving stock (Generic, Eq, Show)
   deriving anyclass (FromJSON, ToJSON)

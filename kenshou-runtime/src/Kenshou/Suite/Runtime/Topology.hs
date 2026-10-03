@@ -140,7 +140,7 @@ withReferenceSystem context spec action =
         laneAddresses index = [address | BrokerAddress address <- (either (const (NonEmpty.head environment.lanes)) id (laneAt environment index)).laneBrokers]
         shop = ContextStore resources.shop.store
         warehouse = ContextStore resources.warehouse.store
-    seedShop shop customerCount config.routerFanout
+    seedShop shop customerCount config.routerFanout config.hotAccountBuckets
     withJobRuntime config.warehouseDatabase Nothing \jobs -> seedWarehouse warehouse jobs skuCount
     withCheck context \check -> withSupervisor check \supervisor -> do
       children <- newIORef Map.empty

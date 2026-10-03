@@ -62,7 +62,9 @@ data LedgerAmountError = NegativeOpeningBalance | NonPositiveTransfer | AmountEx
   deriving stock (Eq, Show)
 
 ledgerEventStream :: ValidatedLedgerStream
-ledgerEventStream = accountEventStream SnapNever
+-- Snapshots bound the cost of loading a long-lived account (a customer, or
+-- a bucket of the escrow, merchant or loyalty pool) as its history grows.
+ledgerEventStream = accountEventStream (SnapEvery 50)
 
 -- | Balances come from the fixture's own projection; the entries table keeps
 -- the transfer reference of every movement so later oracles can count

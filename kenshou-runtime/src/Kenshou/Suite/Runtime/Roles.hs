@@ -325,7 +325,7 @@ dispatchLoop env store subscription category handle = case shardOptions env cate
 
 shopDispatchRole :: RoleEnv -> IO ()
 shopDispatchRole env = withContextStore env.config.shopDatabase env.config.poolSize \store ->
-  dispatchLoop env store "shop-dispatch" "order" \delivery -> handleShopDelivery env.telemetry.signals store (prefixOf env.config) delivery.event
+  dispatchLoop env store "shop-dispatch" "order" \delivery -> handleShopDelivery env.config.hotAccountBuckets env.telemetry.signals store (prefixOf env.config) delivery.event
 
 withWarehouseEnv :: RoleEnv -> (WarehouseEnv -> IO a) -> IO a
 withWarehouseEnv env action =

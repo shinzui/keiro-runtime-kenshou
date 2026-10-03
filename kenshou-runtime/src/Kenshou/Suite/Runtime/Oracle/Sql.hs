@@ -162,9 +162,9 @@ shopTotalsTx =
     Statement.preparable
       ( "WITH b AS (SELECT account_id, balance FROM kenshou_keiro.account_balance) SELECT "
           <> "(SELECT coalesce(sum(balance), 0) FROM b)::bigint, "
-          <> "(SELECT coalesce(sum(balance), 0) FROM b WHERE account_id = 'escrow')::bigint, "
-          <> "(SELECT coalesce(sum(balance), 0) FROM b WHERE account_id = 'merchant')::bigint, "
-          <> "(SELECT coalesce(sum(balance), 0) FROM b WHERE account_id = 'loyalty-pool')::bigint, "
+          <> "(SELECT coalesce(sum(balance), 0) FROM b WHERE account_id LIKE 'escrow-%')::bigint, "
+          <> "(SELECT coalesce(sum(balance), 0) FROM b WHERE account_id LIKE 'merchant-%')::bigint, "
+          <> "(SELECT coalesce(sum(balance), 0) FROM b WHERE account_id LIKE 'loyalty-pool-%')::bigint, "
           <> "(SELECT coalesce(sum(balance), 0) FROM b WHERE account_id LIKE 'loyalty-customer-%')::bigint, "
           <> "(SELECT coalesce(sum(amount_cents), 0) FROM shop.orders WHERE status = 'completed')::bigint, "
           <> "(SELECT count(*) FROM shop.orders WHERE status = 'completed')::bigint, "
