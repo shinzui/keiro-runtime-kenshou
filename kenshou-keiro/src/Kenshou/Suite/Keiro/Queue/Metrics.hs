@@ -16,7 +16,8 @@ import Control.Concurrent.Async (Async, async, cancel, poll)
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar)
 import Control.Exception (bracket, mask, throwIO)
 import Control.Monad (forM, forM_, forever, when)
-import Data.Aeson (ToJSON (..), Value, eitherDecode, encode, object, (.=))
+import Data.Aeson (ToJSON (..), Value (..), eitherDecode, encode, object, (.=))
+import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString.Lazy qualified as LBS
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.Map.Strict qualified as Map
@@ -31,7 +32,7 @@ import Kenshou.Telemetry.Endpoint (Endpoint (..), EndpointKind (..), reserveFree
 import Network.HTTP.Client (defaultManagerSettings, httpLbs, newManager, parseRequest, responseBody, responseStatus)
 import Network.HTTP.Types.Status (statusCode)
 import Shibuya.App (Master, getAllMetricsIO)
-import Shibuya.Core.Metrics (InFlightInfo (..), MetricsMap, ProcessorId (..), ProcessorMetrics (..), ProcessorState (..), StreamStats (..))
+import Shibuya.Core.Metrics (MetricsMap, ProcessorId (..), ProcessorMetrics (..), ProcessorState (..), StreamStats (..))
 import Shibuya.Metrics.Server qualified as Server
 import System.Directory (createDirectoryIfMissing)
 import System.FilePath ((</>))
@@ -164,7 +165,16 @@ metricsMatch :: Map.Map ProcessorId WorkerCounts -> MetricsMap -> Bool
 metricsMatch expected observed = not (Map.null expected) && fmap countsOf observed == expected
 
 countsOf :: ProcessorMetrics -> WorkerCounts
-countsOf metrics = WorkerCounts metrics.stats.received metrics.stats.processed metrics.stats.failed (case metrics.state of Processing info _ -> info.inFlight; _ -> 0)
+countsOf metrics = WorkerCounts metrics.stats.received metrics.stats.processed metrics.stats.failed (inFlightOf metrics.state)
+
+-- | Reads the in-flight count through the state's JSON form. The released
+-- shibuya-core 0.9.0.3 and the head revision 6461c74 share a version number
+-- but give 'Processing' two and three fields, so a constructor pattern
+-- cannot compile on both cohorts.
+inFlightOf :: ProcessorState -> Int
+inFlightOf state = case toJSON state of
+  Object fields | Just (Number count) <- KeyMap.lookup "inFlight" fields -> truncate count
+  _ -> 0
 
 prometheusMatch :: Map.Map ProcessorId WorkerCounts -> Text -> Bool
 prometheusMatch expected body = not (Map.null expected) && all matches (Map.toList expected)
