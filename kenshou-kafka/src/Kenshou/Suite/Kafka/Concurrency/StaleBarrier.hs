@@ -10,6 +10,7 @@ import Data.Maybe (mapMaybe)
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Data.Time (diffUTCTime, getCurrentTime)
 import Effectful (runEff)
 import Effectful.Error.Static (runError)
 import Kafka.Consumer.Types (ConsumerGroupId (..), Offset (..))
@@ -33,7 +34,7 @@ scenarios :: [Scenario]
 scenarios =
   [ Scenario
       { id = either (error . Text.unpack) id (parseScenarioId "kafka/adapter/concurrency/stale-barrier-after-partition-roundtrip"),
-        revision = 1,
+        revision = 2,
         summary = "Checks that a retry barrier is cleared when a partition leaves and returns to a consumer.",
         tier = TierStandard,
         placement = PlaceEither,
@@ -69,7 +70,7 @@ runStaleBarrier context = do
         installed = knobText context.knobs (key "kafka.rebalance-handler") == "installed"
     [topic] <- createTopics env [TopicSpec "stale-barrier" 2 mempty]
     firstOffsets <- forM [0, 1] \partition -> produceAt env topic partition [partition * 1000 .. partition * 1000 + 299]
-    (retriedBoth, moved, drained, returningAssignment, newOffsets, handled, errors) <- withCheck context \check -> withSupervisor check \supervisor -> do
+    (retriedBoth, moved, drained, drainSeconds, returningAssignment, newOffsets, handled, errors) <- withCheck context \check -> withSupervisor check \supervisor -> do
       let shared = ["brokers" .= fmap unBrokerAddress (firstBrokers env), "topic" .= unTopicName topic, "group" .= unConsumerGroupId group, "autoCommitMillis" .= (1000 :: Int)]
           aArgs = object (shared <> ["retryOffset" .= (50 :: Int), "retryDelayMillis" .= (200 :: Int), "installRebalanceHandler" .= installed])
           bArgs = object shared
@@ -86,11 +87,17 @@ runStaleBarrier context = do
       awaitReady b 10000
       sendCommand b CtlStart
       movedPartition <- awaitAssigned b 30
+      -- The contract is that B drains the moved partition, not a drain rate.
+      -- The deadline is generous because released consumers have been seen
+      -- to trickle at about three records per second after their first poll
+      -- batch; the measured duration stays in the verdict.
+      drainStarted <- getCurrentTime
       reached <- case movedPartition of
         Nothing -> pure False
-        Just partition -> waitUntil 30 do
+        Just partition -> waitUntil 90 do
           snapshot <- describeGroup env group
           pure (any (\item -> item.partition == PartitionId partition && item.lag == Just 0) snapshot.offsets)
+      drainEnded <- getCurrentTime
       previousAssignments <- case movedPartition of
         Nothing -> pure 0
         Just partition -> assignmentCount a partition
@@ -111,7 +118,7 @@ runStaleBarrier context = do
       stopIfAlive supervisor a
       aRows <- readChildMessages a
       bRows <- readChildMessages b
-      pure (retried, movedPartition, reached, returned, later, complete, [problem | WrkError problem <- aRows <> bRows])
+      pure (retried, movedPartition, reached, realToFrac (diffUTCTime drainEnded drainStarted) :: Double, returned, later, complete, [problem | WrkError problem <- aRows <> bRows])
     _ <- deleteRunGroups env
     _ <- deleteRunTopics env
     let firstProduced = all (\offsets -> fmap unOffset offsets == [0 .. 299]) firstOffsets
@@ -124,7 +131,7 @@ runStaleBarrier context = do
             <> ["roundtrip-later-produce" | moved /= Nothing && not laterProduced]
             <> ["roundtrip-new-records" | not handled]
             <> ["roundtrip-consumer-exit" | not (null errors)]
-    putSummary context Verdicts "staleBarrier" (object ["handlerInstalled" .= installed, "retriedBothPartitions" .= retriedBoth, "movedPartition" .= moved, "movedPartitionDrained" .= drained, "returnedAssignment" .= returningAssignment, "laterOffsets" .= fmap unOffset newOffsets, "newRecordsHandled" .= handled, "workerErrors" .= errors])
+    putSummary context Verdicts "staleBarrier" (object ["handlerInstalled" .= installed, "retriedBothPartitions" .= retriedBoth, "movedPartition" .= moved, "movedPartitionDrained" .= drained, "movedPartitionDrainSeconds" .= drainSeconds, "returnedAssignment" .= returningAssignment, "laterOffsets" .= fmap unOffset newOffsets, "newRecordsHandled" .= handled, "workerErrors" .= errors])
     pure $ if null failures then passed else failedWith failures ("moved=" <> Text.pack (show moved) <> " drained=" <> Text.pack (show drained) <> " handled=" <> Text.pack (show handled) <> " errors=" <> Text.pack (show errors))
 
 produceAt :: KafkaEnv -> TopicName -> Int -> [Int] -> IO [Offset]

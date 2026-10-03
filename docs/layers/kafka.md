@@ -350,6 +350,15 @@ rebalance callback installed, A handled all 100 new records at offsets
 only `roundtrip-new-records`: the stale barrier discarded the new records.
 This demonstrates why callers must install the callback.
 
+Revision 2 waits up to 90 seconds, instead of 30, for B to drain the
+moved partition and records `movedPartitionDrainSeconds`. In clean local
+runs on 2026-10-03, B handled roughly 150–200 records in its first second
+and then about three records per second, with occasional bursts. The same
+profile appeared with an unproxied lane, so the harness proxy does not
+cause it. One released-cohort repetition (seed 62) missed the old 30-second
+deadline by six records. The drain rate is an open, unattributed
+observation tracked in the Kafka ExecPlan, not a pass criterion.
+
 `kafka/adapter/concurrency/partitioned-consumer-becomes-zombie` uses two
 broker-proxy lanes and blackholes A's lane for twice its session timeout.
 In a reduced 2,000-record run, B took over A's partitions, every
