@@ -7,13 +7,14 @@ module Kenshou.Core.Env.Postgres
     EnvError (..),
     withPostgresEnv,
     withPostgresEnvKeeping,
+    withPostgresEnvNamed,
   )
 where
 
 import Control.Exception (finally)
 import Control.Monad (unless)
 import Data.Aeson (ToJSON (..), object, (.=))
-import Data.Char (isAlphaNum)
+import Data.Char (isAlphaNum, toLower)
 import Data.IORef
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
@@ -70,7 +71,13 @@ withPostgresEnv :: Logger -> FilePath -> RunId -> PostgresRequirement -> Postgre
 withPostgresEnv = withPostgresEnvKeeping False
 
 withPostgresEnvKeeping :: Bool -> Logger -> FilePath -> RunId -> PostgresRequirement -> PostgresSpec -> Dimensions -> (PostgresEnv -> IO value) -> IO (Either EnvError value)
-withPostgresEnvKeeping keepEnvironment logger runDirectory runId requirement postgresSpec dimensions action = case postgresSpec of
+withPostgresEnvKeeping keepEnvironment = withPostgresEnvNamed keepEnvironment Nothing
+
+-- | Like 'withPostgresEnvKeeping', for a named context of a scenario. On an
+-- external server several contexts share one server, so the context name
+-- becomes part of every database name the run creates there.
+withPostgresEnvNamed :: Bool -> Maybe Text -> Logger -> FilePath -> RunId -> PostgresRequirement -> PostgresSpec -> Dimensions -> (PostgresEnv -> IO value) -> IO (Either EnvError value)
+withPostgresEnvNamed keepEnvironment contextName logger runDirectory runId requirement postgresSpec dimensions action = case postgresSpec of
   PostgresEphemeral extraSettings -> withSelectedBinaries dimensions.pgVersion $ do
     createDirectoryIfMissing True (runDirectory </> "logs")
     uid <- getRealUserID
@@ -105,7 +112,7 @@ withPostgresEnvKeeping keepEnvironment logger runDirectory runId requirement pos
           Left err -> pure (Left err)
           Right () -> do
             unless (null (filter ((/= "shared_preload_libraries") . fst) requirement.settings)) $ logAt logger Warning "external PostgreSQL settings cannot be applied" []
-            withExternalDatabases keepEnvironment maintenanceConnection runId requirement action
+            withExternalDatabases keepEnvironment maintenanceConnection runId contextName requirement action
   where
     setup databaseRef database = do
       migration <- migrateIfNeeded (Pg.connectionString database) requirement
@@ -141,11 +148,12 @@ withPostgresEnvKeeping keepEnvironment logger runDirectory runId requirement pos
           current <- readIORef databaseRef
           Pg.restart current >>= either (ioError . userError . show) (writeIORef databaseRef)
 
-withExternalDatabases :: Bool -> Text -> RunId -> PostgresRequirement -> (PostgresEnv -> IO value) -> IO (Either EnvError value)
-withExternalDatabases keepEnvironment maintenanceConnection runId requirement action = do
+withExternalDatabases :: Bool -> Text -> RunId -> Maybe Text -> PostgresRequirement -> (PostgresEnv -> IO value) -> IO (Either EnvError value)
+withExternalDatabases keepEnvironment maintenanceConnection runId contextName requirement action = do
   counter <- newIORef (0 :: Int)
   created <- newIORef []
-  let prefix = Text.take 13 (Text.filter (/= '-') (renderRunId runId))
+  let context = maybe "" (\name -> "_" <> Text.take 16 (Text.map (\character -> if isAlphaNum character then toLower character else '_') name)) contextName
+      prefix = Text.take 13 (Text.filter (/= '-') (renderRunId runId)) <> context
       templateName = "kenshou_" <> prefix <> "_template"
       runName = "kenshou_" <> prefix
       remember name = modifyIORef' created (name :)

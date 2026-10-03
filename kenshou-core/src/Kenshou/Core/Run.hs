@@ -23,7 +23,7 @@ import Kenshou.Core.Cohort (CohortIdentity (..), PlanHash (..))
 import Kenshou.Core.Compat (comparisonKey, compatInputs, seriesKey)
 import Kenshou.Core.Context
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..))
-import Kenshou.Core.Env.Postgres (EnvError (..), PgSettingsSnapshot, PostgresEnv (..), withPostgresEnvKeeping)
+import Kenshou.Core.Env.Postgres (EnvError (..), PgSettingsSnapshot, PostgresEnv (..), withPostgresEnvKeeping, withPostgresEnvNamed)
 import Kenshou.Core.Fingerprint (HostFingerprint (..), collectHostFingerprint, hostValue, kenshouValue, runtimeValue)
 import Kenshou.Core.Id (renderRunId, unSeed)
 import Kenshou.Core.Log (Severity (Warning), withLogger)
@@ -109,7 +109,7 @@ runScenario config scenario spec context
     withExtras ((name, requirement) : rest) postgresSpecs accumulated action = case Map.lookup name postgresSpecs of
       Nothing -> pure (Left (EnvError ("extra PostgreSQL specification is missing: " <> name)))
       Just postgresSpec -> do
-        provisioned <- withPostgresEnvKeeping config.keepEnvironment context.logger context.outDir spec.runId requirement postgresSpec spec.dimensions \postgres ->
+        provisioned <- withPostgresEnvNamed config.keepEnvironment (Just name) context.logger context.outDir spec.runId requirement postgresSpec spec.dimensions \postgres ->
           withExtras rest postgresSpecs (Map.insert name postgres accumulated) action
         pure (provisioned >>= id)
 

@@ -15,7 +15,7 @@ import Kenshou.Core.Cohort
 import Kenshou.Core.Compat (comparisonKey, compatInputs, seriesKey)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (PostgresRequirement (..), SchemaComponent (..))
-import Kenshou.Core.Env.Postgres (EnvError (..), PgSettingsSnapshot (..), PostgresEnv (..), ServerControl (..), StopMode (..), withPostgresEnv)
+import Kenshou.Core.Env.Postgres (EnvError (..), PgSettingsSnapshot (..), PostgresEnv (..), ServerControl (..), StopMode (..), withPostgresEnv, withPostgresEnvNamed)
 import Kenshou.Core.Id
 import Kenshou.Core.Knob
 import Kenshou.Core.Log (nullLogger)
@@ -328,6 +328,19 @@ postgresEnvironmentSpec = describe "PostgreSQL environments" do
       remaining <- psqlTest server.adminConnectionString "select count(*) from pg_database where datname like 'kenshou_01997f3a5b7c7%'"
       pure (inner, remaining)
     outer `shouldBe` Right (Right (Right "t"), Right "0")
+
+  it "keeps two named contexts of one run apart on a shared external server" $ withSystemTempDirectory "kenshou-pg-shared" \directory -> do
+    runId <- expectRight (parseRunId "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e56")
+    let dimensions = Dimensions Nothing Nothing (Just PgFsyncOff) (Just Pg18)
+        requirement = PostgresRequirement [] [] False
+    outer <- withPostgresEnv nullLogger directory runId requirement (PostgresEphemeral []) dimensions \server -> do
+      let external = PostgresExternal (ConnLiteral server.adminConnectionString)
+      nested <- withPostgresEnvNamed False (Just "shop") nullLogger directory runId requirement external dimensions \shop ->
+        withPostgresEnvNamed False (Just "warehouse") nullLogger directory runId requirement external dimensions \warehouse ->
+          pure (shop.databaseName /= warehouse.databaseName)
+      remaining <- psqlTest server.adminConnectionString "select count(*) from pg_database where datname like 'kenshou_01997f3a5b7c7%'"
+      pure (nested, remaining)
+    outer `shouldBe` Right (Right (Right True), Right "0")
 
   it "selects PostgreSQL 17 and applies a composed Kiroku/PGMQ plan" do
     available <- lookupEnv "KENSHOU_PG17_BIN"
