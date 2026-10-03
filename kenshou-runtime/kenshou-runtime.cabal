@@ -39,36 +39,61 @@ library
   hs-source-dirs: src
   exposed-modules:
     Kenshou.Suite.Runtime
+    Kenshou.Suite.Runtime.Correctness.OrderFlow
     Kenshou.Suite.Runtime.Correctness.WireRoundtrip
+    Kenshou.Suite.Runtime.Driver
+    Kenshou.Suite.Runtime.Knobs
     Kenshou.Suite.Runtime.Oracle.Pure
+    Kenshou.Suite.Runtime.Roles
     Kenshou.Suite.Runtime.System.Broker
+    Kenshou.Suite.Runtime.System.Config
     Kenshou.Suite.Runtime.System.Context
     Kenshou.Suite.Runtime.System.Contracts
+    Kenshou.Suite.Runtime.System.Dispatch
     Kenshou.Suite.Runtime.System.Fulfilment
+    Kenshou.Suite.Runtime.System.Intake
     Kenshou.Suite.Runtime.System.KafkaBridge
     Kenshou.Suite.Runtime.System.Ledger
     Kenshou.Suite.Runtime.System.Model
     Kenshou.Suite.Runtime.System.Order
     Kenshou.Suite.Runtime.System.SagaLog
+    Kenshou.Suite.Runtime.System.Schema
+    Kenshou.Suite.Runtime.System.Shop
+    Kenshou.Suite.Runtime.System.Store
+    Kenshou.Suite.Runtime.System.Warehouse
     Kenshou.Suite.Runtime.System.Wire
+    Kenshou.Suite.Runtime.Topology
 
   build-depends:
     aeson,
+    async,
     base,
     bytestring,
     containers,
+    contravariant,
+    directory,
     effectful,
+    filepath,
+    hasql,
+    hasql-transaction,
     hw-kafka-client,
     kafka-effectful,
     keiki,
     keiro,
     keiro-core,
+    keiro-pgmq,
+    kenshou-check,
     kenshou-core,
     kenshou-kafka,
     kenshou-keiro,
     kiroku-store,
+    shibuya-core,
+    shibuya-kafka-adapter,
+    splitmix,
+    stm,
     text,
     time,
+    uuid,
 
 test-suite kenshou-runtime-test
   import: warnings
@@ -76,12 +101,14 @@ test-suite kenshou-runtime-test
   hs-source-dirs: test
   main-is: Main.hs
   build-depends:
+    aeson,
     base,
     containers,
     hspec,
     hw-kafka-client,
     keiro,
     keiro-core,
+    kenshou-core,
     kenshou-runtime,
     text,
     time,

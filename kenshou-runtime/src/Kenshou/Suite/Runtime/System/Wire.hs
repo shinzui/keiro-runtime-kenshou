@@ -2,8 +2,11 @@ module Kenshou.Suite.Runtime.System.Wire
   ( WireError (..),
     shopEventDraft,
     warehouseEventDraft,
+    KeyCheck (..),
     decodeShopEvent,
     decodeWarehouseEvent,
+    decodeShopEventWith,
+    decodeWarehouseEventWith,
   )
 where
 
@@ -56,15 +59,27 @@ draft destination key eventType occurredAt message =
       attributes = Nothing
     }
 
+-- | Whether the delivery path exposes the broker record key. The shibuya
+-- Kafka envelope does not, so consumers built on it decode with
+-- 'KeyUnavailable' and rely on the payload's order identifier alone.
+data KeyCheck = RequireKey | KeyUnavailable
+  deriving stock (Eq, Show)
+
 decodeShopEvent :: TopicPrefix -> IntegrationEvent -> Either WireError ShopMessage
-decodeShopEvent prefix event = do
-  checkEnvelope (shopTopic prefix) "order.placed.v1" event
-  message <- either (Left . InvalidBusinessPayload) Right (decodeJsonIntegrationEvent event)
-  checkKey (orderKey message.orderId) event
-  pure message
+decodeShopEvent = decodeShopEventWith RequireKey
 
 decodeWarehouseEvent :: TopicPrefix -> IntegrationEvent -> Either WireError WarehouseMessage
-decodeWarehouseEvent prefix event = do
+decodeWarehouseEvent = decodeWarehouseEventWith RequireKey
+
+decodeShopEventWith :: KeyCheck -> TopicPrefix -> IntegrationEvent -> Either WireError ShopMessage
+decodeShopEventWith keyCheck prefix event = do
+  checkEnvelope (shopTopic prefix) "order.placed.v1" event
+  message <- either (Left . InvalidBusinessPayload) Right (decodeJsonIntegrationEvent event)
+  checkKeyWith keyCheck (orderKey message.orderId) event
+  pure message
+
+decodeWarehouseEventWith :: KeyCheck -> TopicPrefix -> IntegrationEvent -> Either WireError WarehouseMessage
+decodeWarehouseEventWith keyCheck prefix event = do
   checkDestination (warehouseTopic prefix) event
   checkVersion event
   if event.eventType `elem` ["fulfilment.shipped.v1", "fulfilment.refused.v1", "fulfilment.expired.v1"]
@@ -72,12 +87,13 @@ decodeWarehouseEvent prefix event = do
     else Left (UnsupportedEventType event.eventType)
   message <- either (Left . InvalidBusinessPayload) Right (decodeJsonIntegrationEvent event)
   if warehouseEventType message == event.eventType
-    then checkKey (orderKey message.orderId) event >> Right message
+    then checkKeyWith keyCheck (orderKey message.orderId) event >> Right message
     else Left (PayloadEventTypeMismatch event.eventType)
 
-checkKey :: Maybe Text -> IntegrationEvent -> Either WireError ()
-checkKey expected event
+checkKeyWith :: KeyCheck -> Maybe Text -> IntegrationEvent -> Either WireError ()
+checkKeyWith keyCheck expected event
   | event.key == expected = Right ()
+  | keyCheck == KeyUnavailable && event.key == Nothing = Right ()
   | otherwise = Left (UnexpectedKey event.key)
 
 checkEnvelope :: Text -> Text -> IntegrationEvent -> Either WireError ()
