@@ -169,6 +169,13 @@ PostgreSQL backends during an effect pause and restarts the PostgreSQL server.
 The worker survives and two other
 workers finish the cohort. The default 100-instance durable run passed exact
 journals, at-least-once effects, and zero consumed retry attempts.
+`keiro/workflow/correctness/replay-and-journal-identity` completes every
+fixture workflow kind through its suspensions and checks each generation's
+journal: deterministic step identifiers, unique indexed steps, one closing
+marker, and the `#<g>` stream suffix after rotation. It then redeploys a
+probe with reordered steps and one renamed step. Replay is by name: the
+reordered steps return their journaled values without running, the renamed
+step runs, and the old entry stays in the index.
 `keiro/workflow/concurrency/sleep-fire-crash-window` kills a timer worker
 after a sleep completion is journaled and before the timer is marked fired.
 It requires the timer to be requeued and fired at two attempts, one

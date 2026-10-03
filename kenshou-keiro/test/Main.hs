@@ -79,6 +79,7 @@ import Kenshou.Suite.Keiro.Workflow.Definitions qualified as WorkflowDefinitions
 import Kenshou.Suite.Keiro.Workflow.Effects qualified as WorkflowEffects
 import Kenshou.Suite.Keiro.Workflow.Knobs qualified as WorkflowKnobs
 import Kenshou.Suite.Keiro.Workflow.Oracle qualified as WorkflowOracle
+import Kenshou.Suite.Keiro.Workflow.ReplayIdentity qualified as WorkflowReplayIdentity
 import Kenshou.Suite.Keiro.Workflow.TerminalRace qualified as WorkflowTerminalRace
 import Kiroku.Store.Subscription.Types (SubscriptionTarget (..))
 import Kiroku.Store.Types (EventId (..), EventType (..), GlobalPosition (..), RecordedEvent (..), StreamId (..), StreamVersion (..))
@@ -451,6 +452,22 @@ main = hspec do
       WorkflowTerminalRace.postMarkerBounded [stepAt "s0"] `shouldBe` False
       WorkflowTerminalRace.unjournaledEffectsBounded (Set.fromList ["s0"]) (Set.fromList ["s0", "s1"]) `shouldBe` True
       WorkflowTerminalRace.unjournaledEffectsBounded (Set.fromList ["s0"]) (Set.fromList ["s0", "s1", "s2"]) `shouldBe` False
+    it "rejects doctored generation journals" do
+      now <- getCurrentTime
+      let name = WorkflowDefinitions.linearName
+          wid = WorkflowId "identity"
+          idOf = deterministicJournalId name wid 0
+          stepAt stepName = (idOf stepName, Workflow.StepRecorded stepName Aeson.Null now)
+          completed = (idOf "__workflow_completed__", Workflow.WorkflowCompleted now)
+          index = Map.fromList [("s0", Aeson.Null), ("s1", Aeson.Null)]
+          check = WorkflowReplayIdentity.generationIdentity name wid 0 index
+      check [stepAt "s0", stepAt "s1", completed] `shouldBe` True
+      check [stepAt "s0", stepAt "s1"] `shouldBe` True
+      check [(idOf "s9", snd (stepAt "s0")), stepAt "s1", completed] `shouldBe` False
+      check [stepAt "s0", stepAt "s0", stepAt "s1", completed] `shouldBe` False
+      check [stepAt "s0", stepAt "s1", stepAt "s2", completed] `shouldBe` False
+      check [stepAt "s0", completed, stepAt "s1"] `shouldBe` False
+      check [stepAt "s0", stepAt "s1", completed, completed] `shouldBe` False
   describe "workflow knobs" do
     it "maps resolved defaults to short lease and polling options" do
       case resolveKnobs WorkflowKnobs.workflowKnobs [] of

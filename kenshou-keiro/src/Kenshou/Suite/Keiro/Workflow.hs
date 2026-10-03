@@ -13,6 +13,7 @@ import Kenshou.Suite.Keiro.Workflow.ExactDiscovery qualified as ExactDiscovery
 import Kenshou.Suite.Keiro.Workflow.LinearSmoke qualified as LinearSmoke
 import Kenshou.Suite.Keiro.Workflow.ParkedPassBench qualified as ParkedPassBench
 import Kenshou.Suite.Keiro.Workflow.PatchSmoke qualified as PatchSmoke
+import Kenshou.Suite.Keiro.Workflow.ReplayIdentity qualified as ReplayIdentity
 import Kenshou.Suite.Keiro.Workflow.ResumeRace qualified as ResumeRace
 import Kenshou.Suite.Keiro.Workflow.Roles qualified as Roles
 import Kenshou.Suite.Keiro.Workflow.RotationSmoke qualified as RotationSmoke
@@ -22,7 +23,7 @@ import Kenshou.Suite.Keiro.Workflow.TerminalRace qualified as TerminalRace
 import Kenshou.Suite.Keiro.Workflow.Wake qualified as Wake
 
 scenarios :: [Scenario]
-scenarios = LinearSmoke.scenarios <> CrashSmoke.scenarios <> CrashBackoff.scenarios <> DatabaseFaults.scenarios <> DirectRace.scenarios <> ResumeRace.scenarios <> StepBoundary.scenarios <> Wake.scenarios <> ParkedPassBench.scenarios <> SleepSmoke.scenarios <> AwakeableSmoke.scenarios <> RotationSmoke.scenarios <> ExactDiscovery.scenarios <> PatchSmoke.scenarios <> ChildSmoke.scenarios <> CrashWindows.scenarios <> TerminalRace.scenarios
+scenarios = LinearSmoke.scenarios <> CrashSmoke.scenarios <> CrashBackoff.scenarios <> DatabaseFaults.scenarios <> DirectRace.scenarios <> ResumeRace.scenarios <> StepBoundary.scenarios <> Wake.scenarios <> ParkedPassBench.scenarios <> SleepSmoke.scenarios <> AwakeableSmoke.scenarios <> RotationSmoke.scenarios <> ExactDiscovery.scenarios <> PatchSmoke.scenarios <> ChildSmoke.scenarios <> CrashWindows.scenarios <> TerminalRace.scenarios <> ReplayIdentity.scenarios
 
 roles :: [WorkerRole]
 roles = Roles.roles
