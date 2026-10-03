@@ -2,6 +2,7 @@ module Kenshou.Suite.Runtime (bundle) where
 
 import Kenshou.Core.Bundle (LayerBundle (..))
 import Kenshou.Core.Id (Layer (Runtime))
+import Kenshou.Suite.Runtime.Concurrency.Postgres qualified as Postgres
 import Kenshou.Suite.Runtime.Concurrency.Workers qualified as Workers
 import Kenshou.Suite.Runtime.Correctness.Ops qualified as Ops
 import Kenshou.Suite.Runtime.Correctness.OrderFlow qualified as OrderFlow
@@ -10,4 +11,4 @@ import Kenshou.Suite.Runtime.Correctness.WireRoundtrip qualified as WireRoundtri
 import Kenshou.Suite.Runtime.Roles qualified as Roles
 
 bundle :: LayerBundle
-bundle = LayerBundle Runtime (WireRoundtrip.scenarios <> OrderFlow.scenarios <> Ops.scenarios <> Telemetry.scenarios <> Workers.scenarios) Roles.roles
+bundle = LayerBundle Runtime (WireRoundtrip.scenarios <> OrderFlow.scenarios <> Ops.scenarios <> Telemetry.scenarios <> Workers.scenarios <> Postgres.scenarios) Roles.roles

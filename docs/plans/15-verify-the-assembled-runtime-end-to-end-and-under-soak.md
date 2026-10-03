@@ -95,6 +95,11 @@ You can see it working when `kenshou run runtime/order-flow/correctness/happy-pa
     - victim `b-consumer`, `01a10323-c8fc-74a2-a450-ec653ef663e7`, passed with 392 consumer redeliveries, all inside declared windows;
     - victim `a-dispatch`, `01a10327-3368-72f2-8a32-a235e8515b1d`, passed.
   - **Default rate:** run `01a10318-b8c7-7570-b17c-f6a0aa8408b1` failed quiescence with 707 orders still placed. The workstation's load average was 17–27 on ten cores, and both consumers' throughput fell below the arrival rate. It is not correctness evidence.
+- [x] (2026-10-03) `runtime/postgres/concurrency/backend-kill` and `postmaster-restart`. `RunningSystem` now carries both contexts' `PostgresEnv`. A plan's overrides now apply to every declared knob, including the fault knobs.
+  - `backend-kill` terminates the role processes' backends in one context every period, selected by their `application_name` prefix. `fault.target` chooses ordinary pooled backends, LISTEN connections, or both, and `fault.context` chooses `a`, `b` or `both`.
+  - `postmaster-restart` stops one context's server through the kernel's `ServerControl` (`fault.restart-mode` immediate or fast), holds the outage and starts it again. Defaults: two restarts, 30 s apart, with a 10 s outage.
+  - Both record a `fault/…` window with target `*`.
+  - Local runs at 5 orders/s, warehouse context (functional evidence only): `backend-kill` `01a10332-dde2-7792-be9e-ad60cde31d7e` passed. It terminated 43–44 backends per pass; 10 role processes exited and were replaced; 1,098 warehouse dispatch replays were all inside windows. `postmaster-restart` `01a10335-d46c-74fe-b346-d558d145144d` passed with two immediate restarts and 40 supervised role restarts, quiescent 42 s after the drivers.
 - [ ] Finish Milestone 2: the final I4 clause that every subscription checkpoint reaches the store position, the zero-lag consumer-group clause, planner variants on `happy-path`, and the telemetry arms of every scenario.
 - [ ] Deliver the rest of the failure matrix: `sigkill-storm`, `paused-lease-holder`, `rolling-restart`, the PostgreSQL, broker, network and resource scenarios, the two known-defect scenarios, and a cell run of `sigkill-role` at the default rate. Then the gated soaks, benchmarks and whole-runtime telemetry comparison; verify the assembled-runtime acceptance in Validation and Acceptance.
 

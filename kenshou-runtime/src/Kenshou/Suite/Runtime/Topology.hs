@@ -67,6 +67,9 @@ data RunningSystem = RunningSystem
   { config :: !SystemConfig,
     shop :: !ContextStore,
     warehouse :: !ContextStore,
+    -- | The two PostgreSQL environments, for fault injection.
+    shopPostgres :: !PostgresEnv,
+    warehousePostgres :: !PostgresEnv,
     broker :: !RuntimeBroker,
     check :: !CheckEnv,
     supervisor :: !Supervisor,
@@ -128,7 +131,7 @@ withReferenceSystem context spec action =
       invocations <- newIORef 0
       lifecycle <- newMVar False
       restarts <- newIORef []
-      let system = RunningSystem config shop warehouse resources.broker check supervisor children invocations lifecycle restarts
+      let system = RunningSystem config shop warehouse resources.shop.postgres resources.warehouse.postgres resources.broker check supervisor children invocations lifecycle restarts
           startRole role = do
             started <- forM [0 .. max 1 config.processesPerRole - 1] \index -> do
               process <- roleProcess check (roleNameText role) index (toJSON (RoleArgs config index))

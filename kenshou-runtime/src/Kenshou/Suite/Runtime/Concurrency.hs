@@ -24,6 +24,7 @@ import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), ResolvedKnobs, knobInt, knobText)
+import Kenshou.Core.Knob qualified as Knob
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (KnownDefect, Placement (..), Scenario (..), ScenarioReport, Tier (..))
 import Kenshou.Suite.Runtime.Knobs (quiescenceDeadlineFrom, runtimeKnobName, runtimeKnobsWith)
@@ -68,7 +69,7 @@ faultScenario plan =
       summary = plan.summary,
       tier = plan.tier,
       placement = plan.placement,
-      knobs = runtimeKnobsWith (defaults <> plan.overrides) <> sharedFaultKnobs <> plan.extraKnobs,
+      knobs = fmap override (runtimeKnobsWith [] <> sharedFaultKnobs <> plan.extraKnobs),
       dimensions =
         DimensionSupport
           { tracing = Supported (Support (TracingOff :| []) TracingOff),
@@ -83,6 +84,9 @@ faultScenario plan =
     }
   where
     defaults = [("runtime.orders", VInt 0), ("runtime.duration-seconds", VInt 180), ("runtime.quiescence-deadline-seconds", VInt 300)]
+    -- A plan's overrides win over the shared defaults, for every declared
+    -- knob, including the fault knobs.
+    override spec = maybe spec (\value -> spec {Knob.def = value}) (lookup spec.name [(runtimeKnobName name, value) | (name, value) <- plan.overrides <> defaults])
 
 sharedFaultKnobs :: [KnobSpec]
 sharedFaultKnobs =

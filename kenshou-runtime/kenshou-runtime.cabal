@@ -40,6 +40,7 @@ library
   exposed-modules:
     Kenshou.Suite.Runtime
     Kenshou.Suite.Runtime.Concurrency
+    Kenshou.Suite.Runtime.Concurrency.Postgres
     Kenshou.Suite.Runtime.Concurrency.Workers
     Kenshou.Suite.Runtime.Correctness.Ops
     Kenshou.Suite.Runtime.Correctness.OrderFlow
