@@ -31,7 +31,7 @@ import Kenshou.Core.Knob (knobInt, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
 import Kenshou.Env.Kafka
-import Kenshou.Suite.Kafka.Fixture (firstBrokers, intKnob)
+import Kenshou.Suite.Kafka.Fixture (firstBrokers, intKnob, sabotageDropFirst, sabotageKnob)
 import Kiroku.Store.Types (EventId (..), GlobalPosition (..))
 
 scenarios :: [Scenario]
@@ -42,7 +42,7 @@ scenarios =
         summary = "Round-trips Keiro integration events and delivery references through Kafka headers and payloads.",
         tier = TierSmoke,
         placement = PlaceEither,
-        knobs = [intKnob "kafka.messages" "Integration events" 200 2 5000],
+        knobs = [intKnob "kafka.messages" "Integration events" 200 2 5000, sabotageKnob "drop-first-fact"],
         dimensions = allTelemetryArms noDimensions,
         phases = zeroPhases,
         requires = kafkaEnvironment,
@@ -64,7 +64,7 @@ runRecords context = do
     snapshot <- describeGroup env (groupName env "keiro-records")
     _ <- deleteRunGroups env
     _ <- deleteRunTopics env
-    let decoded = fmap integrationEventFromKafka inbound
+    let decoded = sabotageDropFirst context (fmap integrationEventFromKafka inbound)
         successful = [(event, ref) | Right (event, ref) <- decoded]
         exactEvents = sortOn (.messageId) (fmap fst successful) == sortOn (.messageId) events
         expectedOffsets = Map.fromList [(event.messageId, unOffset offset) | (event, offset) <- zip events offsets]

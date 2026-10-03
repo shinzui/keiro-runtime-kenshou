@@ -30,5 +30,9 @@ data KafkaEnv = KafkaEnv
     prefix :: Text,
     control :: Maybe BrokerControl,
     brokerVersion :: Text,
-    workDir :: FilePath
+    workDir :: FilePath,
+    -- | Unproxied addresses used by the fixture's own administration (topic,
+    -- group and offset requests). Lane faults never apply to them, so an
+    -- oracle can still sample offsets while a client lane is partitioned.
+    adminBrokers :: [BrokerAddress]
   }

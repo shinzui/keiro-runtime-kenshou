@@ -19,7 +19,7 @@ import Kenshou.Core.Role (ControlMessage (..), WorkerMessage (..))
 import Kenshou.Core.Role.Spawn (WorkerHandle (..), withWorker)
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
 import Kenshou.Env.Kafka
-import Kenshou.Suite.Kafka.Fixture (firstBrokers, intKnob, produceValues)
+import Kenshou.Suite.Kafka.Fixture (firstBrokers, intKnob, produceValues, sabotageDropFirst, sabotageKnob)
 import Kenshou.Suite.Kafka.Roles (adapterConsumerRole)
 import System.FilePath ((</>))
 
@@ -31,7 +31,7 @@ scenarios =
         summary = "Checks that AckDeadLetter drops poison records with exactly one warning each.",
         tier = TierSmoke,
         placement = PlaceEither,
-        knobs = [intKnob "kafka.poison-count" "Dead-lettered messages" 5 1 50],
+        knobs = [intKnob "kafka.poison-count" "Dead-lettered messages" 5 1 50, sabotageKnob "drop-first-fact"],
         dimensions = allTelemetryArms noDimensions,
         phases = zeroPhases,
         requires = kafkaEnvironment,
@@ -71,7 +71,7 @@ runDeadLetter context = do
     _ <- deleteRunGroups env
     deletedTopics <- deleteRunTopics env
     let warnings = filter (Text.isInfixOf "dead-lettered message DROPPED") (Text.lines (Text.pack logText))
-        okIds = either (const []) (.ok) summary
+        okIds = sabotageDropFirst context (either (const []) (.ok) summary)
         droppedIds = either (const []) (.dropped) summary
         summaryText = either Text.pack (\s -> Text.pack (show (length s.ok, length s.dropped))) summary
         lagZero = length snapshot.offsets == 1 && all ((== Just 0) . (.lag)) snapshot.offsets

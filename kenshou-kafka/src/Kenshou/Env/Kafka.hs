@@ -19,6 +19,15 @@ module Kenshou.Env.Kafka
     awaitGroup,
     deleteRunTopics,
     deleteRunGroups,
+    adminAddresses,
+    KafkaEnvUnavailable (..),
+    unavailableReason,
+    requestLanes,
+    laneAt,
+    laneProxy,
+    requireControl,
+    groupLag,
+    topicLag,
   )
 where
 
@@ -29,6 +38,7 @@ import Data.List (isPrefixOf)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
+import Kenshou.Env.Kafka.Access
 import Kenshou.Env.Kafka.Admin
 import Kenshou.Env.Kafka.External (withExternalBrokers)
 import Kenshou.Env.Kafka.Naming (groupName, runPrefix, topicName)
