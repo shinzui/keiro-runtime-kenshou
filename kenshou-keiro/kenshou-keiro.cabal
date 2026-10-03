@@ -66,6 +66,7 @@ library
     Kenshou.Suite.Keiro.Inbox.Oracle
     Kenshou.Suite.Keiro.Inbox.Roles
     Kenshou.Suite.Keiro.Inbox.Soak
+    Kenshou.Suite.Keiro.Inbox.SoakWorker
     Kenshou.Suite.Keiro.Inbox.Telemetry
     Kenshou.Suite.Keiro.Messaging.Metrics
     Kenshou.Suite.Keiro.Messaging.RelationGrowth

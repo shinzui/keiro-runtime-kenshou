@@ -1,6 +1,8 @@
 module Kenshou.Suite.Keiro.Messaging.Metrics
   ( withMessagingTelemetry,
+    withMessagingTelemetryAt,
     probeMessagingMetrics,
+    probeMessagingMetricsAt,
     prometheusMatch,
   )
 where
@@ -24,15 +26,20 @@ import Kiroku.Store (ConnectionSettingsM (..), GlobalPosition (..), KirokuStore 
 import Kiroku.Store.Subscription.EventPublisher (publisherPosition)
 import Network.HTTP.Client (defaultManagerSettings, httpLbs, newManager, parseRequest, responseBody, responseStatus)
 import Network.HTTP.Types.Status (statusCode)
+import System.Directory (createDirectoryIfMissing)
+import System.FilePath ((</>))
 import Text.Read (readMaybe)
 
 -- Keep the native server and its store alive until telemetry has stopped its
 -- scraper. Collection uses the same store callbacks in every enabled arm.
 withMessagingTelemetry :: RunContext -> TelemetrySpec -> (FixtureEnv -> TelemetryHandles -> [Endpoint] -> IO a) -> IO a
-withMessagingTelemetry context spec action = do
+withMessagingTelemetry context = withMessagingTelemetryAt (requirePostgres context).connectionString (putSummary context Telemetry "messaging-store-metrics")
+
+withMessagingTelemetryAt :: Text -> (Value -> IO ()) -> TelemetrySpec -> (FixtureEnv -> TelemetryHandles -> [Endpoint] -> IO a) -> IO a
+withMessagingTelemetryAt connection report spec action = do
   storeVar <- newTVarIO Nothing
   collector <- if spec.metrics == MetricsOff then pure Nothing else Just <$> newKirokuMetricsWith (readTVar storeVar >>= maybe (pure (GlobalPosition 0)) (publisherPosition . (.publisher))) (pure 0)
-  let settings = (defaultConnectionSettings (requirePostgres context).connectionString) {eventHandler = fmap (\metrics -> metricsEventHandler metrics Nothing) collector}
+  let settings = (defaultConnectionSettings connection) {eventHandler = fmap (\metrics -> metricsEventHandler metrics Nothing) collector}
   withStore settings \store -> do
     atomically (writeTVar storeVar (Just store))
     let run endpoints = withTelemetry spec \telemetry -> do
@@ -40,7 +47,7 @@ withMessagingTelemetry context spec action = do
           runtimeTelemetry <- keiroTelemetry telemetry
           result <- action (FixtureEnv store (keiroRunner store) runtimeTelemetry) telemetry endpoints
           snapshot <- traverse snapshotMetrics collector
-          putSummary context Telemetry "messaging-store-metrics" (object ["enabled" .= telemetry.metricsLive, "snapshot" .= snapshot, "endpoints" .= endpoints])
+          report (object ["enabled" .= telemetry.metricsLive, "snapshot" .= snapshot, "endpoints" .= endpoints])
           -- Allow the separate scraper to observe the final stable state.
           when (spec.metrics == MetricsServeScraped) (threadDelay (2 * spec.scrapeMs * 1000))
           pure result
@@ -54,14 +61,24 @@ withMessagingTelemetry context spec action = do
 -- Expected values come from the fixture's durable business checks, not from a
 -- second read of the metric under test. Keep each response in the sealed run.
 probeMessagingMetrics :: RunContext -> TelemetryHandles -> [Endpoint] -> Text -> [(Text, Double)] -> IO Bool
-probeMessagingMetrics context telemetry native phase expected
+probeMessagingMetrics context = probeMessagingMetricsUsing (artifactPath context LogsDir)
+
+probeMessagingMetricsAt :: FilePath -> TelemetryHandles -> [Endpoint] -> Text -> [(Text, Double)] -> IO Bool
+probeMessagingMetricsAt directory = probeMessagingMetricsUsing path
+  where
+    path name = do
+      createDirectoryIfMissing True (directory </> "logs")
+      pure (directory </> "logs" </> name)
+
+probeMessagingMetricsUsing :: (FilePath -> IO FilePath) -> TelemetryHandles -> [Endpoint] -> Text -> [(Text, Double)] -> IO Bool
+probeMessagingMetricsUsing artifact telemetry native phase expected
   | not telemetry.servesEndpoints = pure (null native && telemetry.metricEndpoint == Nothing)
   | otherwise = do
       manager <- newManager defaultManagerSettings
       results <- forM (native <> maybe [] pure telemetry.metricEndpoint) \endpoint -> do
         request <- parseRequest (Text.unpack endpoint.url)
         response <- httpLbs request manager
-        path <- artifactPath context LogsDir (Text.unpack (endpoint.name <> "-" <> phase) <> if endpoint.kind == JsonDocument then ".json" else ".prom")
+        path <- artifact (Text.unpack (endpoint.name <> "-" <> phase) <> if endpoint.kind == JsonDocument then ".json" else ".prom")
         LBS.writeFile path response.responseBody
         let body = Text.decodeUtf8' (LBS.toStrict response.responseBody)
             correct = case endpoint.name of

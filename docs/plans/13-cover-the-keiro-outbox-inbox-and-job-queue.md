@@ -1579,6 +1579,47 @@ following [ADR-7](../adr/0007-record-measurements-independently-of-the-feature-u
 and [ADR-10](../adr/0010-judge-heap-leaks-on-live-bytes-after-major-collections.md).
 It does not add a new scenario family or change the leak thresholds.
 
+### Inbox process diagnosis and outbox process telemetry
+
+Inbox soak revision 3 adds `inbox.worker-isolation=process`, with separate fresh
+and scheduled-redelivery consumers. Both own telemetry and resource samples,
+while the controller retains the seeded schedule and receipt GC. A single
+response mark is replaced on each delivery; SQL classification rows provide
+counter expectations. Native store and OTel responses are checked before
+workers stop. Both consumer leak reports contribute to the scenario outcome.
+
+Two one-minute durable controls under `runs/ep13-inbox-process-smoke` hold every
+business check. Process `01a0ffa9-6a1f-7297-b508-2a6ce21676bb` passes all nine
+checks; in-process `01a0ffa9-6a1f-777b-9c45-b07bd7c2fdbc` passes eight. Each
+processes 141 fresh and late deliveries, suppresses 141 early deliveries, and
+retains exactly 282 effects with no classification/GC errors or pending work.
+Both overall results are inconclusive; all six bounded main probes and both
+process-worker reports are stable. All 23 schemas and 92 artifacts validate.
+The twenty-minute process run is in progress.
+
+Outbox soak revision 4 removes the process arm's telemetry-off restriction.
+Child publishers own their providers, native endpoints and output directories.
+On graceful completion, counters must match SQL broker records for that exact
+incarnation. Shutdown budgets include configured final scrape and provider
+flush times. The one-minute scraped crash control
+`01a0ffae-6ded-765c-a4b1-a8e08e188acb` under
+`runs/ep13-outbox-process-telemetry` holds all eleven business checks across
+three kills: 141 unique messages produce 144 broker records with exactly three
+crash-budgeted duplicates, zero backlog and zero publisher/maintenance errors.
+The two gracefully stopped publishers complete 270 successful endpoint scrapes.
+Its overall failure is a short main-heap growth signal; the continuous publisher
+is stable and short incarnations remain insufficient-data. All 14 schemas and
+93 artifact checks pass. This is functional telemetry/crash evidence, not a
+new full-soak resource claim.
+
+The full repository verification gate passes for these changes. The completed
+twenty-minute queue process control `01a0ff9f-1064-7507-8640-9d362911debb` holds
+all ten checks over 6,051 exactly-once jobs and 303 archived dead jobs, with
+13 schemas and 63 artifact checks passing. Its overall result is failed:
+main and both worker heaps have positive second-half growth under in-memory
+tracing. The bounded trace probe's lazy state is being isolated as a harness
+cause; resource acceptance is not closed and thresholds are unchanged.
+
 ### Acceptance reconciliation and finite remaining work
 
 This table reconciles the original acceptance criteria with the implemented

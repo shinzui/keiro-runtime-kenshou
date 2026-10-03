@@ -585,9 +585,12 @@ two child publishers, one continuously surviving control, and externally
 injected process-group SIGKILL after a recorded broker-append boundary. Each
 extra append must match that message's own crash marks. Series and leak reports
 are separate per incarnation; short incarnations retain insufficient-data
-verdicts. This arm currently requires tracing and metrics off and rejects
-other combinations. The `in-process` default retains the cooperative restart
-control. Clean matched twenty-minute forced-GC controls now hold all applicable
+verdicts. Revision 4 supports the declared telemetry arms in child publishers:
+each process owns its tracer, Keiro counters and native store endpoints.
+Gracefully stopped publishers compare published counters with their SQL broker
+record count and save endpoint responses under `children/<instance>/`.
+Killed incarnations retain their partial artifacts. The `in-process` default
+retains the cooperative restart control. Clean matched twenty-minute forced-GC controls now hold all applicable
 business checks over 24,202 unique messages and 20 restarts each. The process
 main and continuous surviving publisher have stable bounded resources, but
 short killed incarnations retain insufficient-data verdicts. The matched
@@ -619,6 +622,23 @@ effects with zero errors or pending rows. Table size/dead tuples stayed bounded
 and all six resource probes were stable, including 472 eligible post-major
 heap samples. All 27 artifact checks and 11 schemas pass. Independent soak
 VC-1 replay remains open; no benchmark comparison is inferred from soak metrics.
+
+Inbox soak revision 3 adds `inbox.worker-isolation=process`. One child consumes
+fresh messages and a second consumes the scheduled early and late redeliveries.
+The controller keeps the seeded schedule and receipt GC; worker acknowledgements
+replace a single bounded state entry. SQL observations record each worker's
+classifications for independent metric checks. Each child owns its native store
+and OpenTelemetry endpoints, records RTS/OS samples under `series/children/`,
+and has a separate leak report contributing to the overall result. Both arms
+wrap delivery in consumer spans. `in-process` remains the default.
+
+```bash
+nix develop -c cabal run kenshou -- run keiro/inbox/soak/dedupe-window-reduced --dim pg.durability=durable --dim telemetry.tracing=sdk-inmemory --dim telemetry.metrics=serve-scraped --set inbox.worker-isolation=process --set metrics.scrape-interval-ms=1000 --set diagnose.major-gc-interval-ms=5000 --out runs/inbox-process-reduced
+```
+
+Allow the default twenty-minute window plus the final scheduled redeliveries
+(up to roughly three minutes). Forced-GC resource controls are diagnostic and
+are excluded from performance comparisons.
 
 `intake-throughput` measures fresh and redelivered intake through the inbox
 table or delegated account-stream command receipts. It varies batch size,

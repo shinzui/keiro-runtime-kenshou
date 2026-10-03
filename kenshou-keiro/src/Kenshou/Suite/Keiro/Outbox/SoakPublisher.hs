@@ -21,6 +21,10 @@ import Data.IORef (atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Hasql.Decoders qualified as Decoders
+import Hasql.Encoders qualified as Encoders
+import Hasql.Statement qualified as Statement
+import Hasql.Transaction qualified as Tx
 import Keiro.Integration.Event (IntegrationEvent (..))
 import Keiro.Outbox (OutboxPublishOptions (..), OutboxPublishSummary (..), OutboxRow (..), defaultPublishOptions, publishClaimedOutbox)
 import Kenshou.Check.Process (awaitMark, awaitReady, childPid, killChild, readChildMessages, roleProcess, sendCommand, spawn, stopGracefully, withSupervisor)
@@ -30,10 +34,13 @@ import Kenshou.Core.Id (unSeed)
 import Kenshou.Core.Knob (knobInt, mkKnobName)
 import Kenshou.Core.Role (ControlMessage (..), PostgresConnInfo (..), RoleContext (..), WorkerInit (..), WorkerMessage (..), WorkerRole (..), mkRoleName)
 import Kenshou.Diagnose.Leak (LeakReport (..), LeakSpec, ProbeReport (..), analyseSeriesDirectory)
-import Kenshou.Suite.Keiro.Fixture.Runtime (FixtureEnv (..), KeiroRunner (..), withFixtureEnv)
+import Kenshou.Suite.Keiro.Fixture.Runtime (FixtureEnv (..), KeiroRunner (..), KeiroTelemetry (..))
+import Kenshou.Suite.Keiro.Messaging.Metrics (probeMessagingMetricsAt, withMessagingTelemetryAt)
 import Kenshou.Suite.Keiro.Messaging.SoakDiagnosis (processLeakSpec, soakLeakSpec, withRoleSamples)
 import Kenshou.Suite.Keiro.Outbox.Broker qualified as Broker
-import Kiroku.Store (defaultConnectionSettings)
+import Kenshou.Telemetry (TelemetryHandles (..), telemetrySpecFromWorker)
+import Kiroku.Store.Transaction (runTransaction)
+import System.Directory (createDirectoryIfMissing)
 import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
 
@@ -94,7 +101,8 @@ withProcessPublishers context killInterval action = withCheck context \check -> 
     -- but before its SIGKILL is recorded would create an unbudgeted duplicate.
     action (withMVar current (const (cancel killer)))
   active <- readMVar current
-  exits <- traverse (\child -> stopGracefully supervisor child 30000) [active, second]
+  let grace = 30000 + 2 * fromIntegral (integer "metrics.scrape-interval-ms") + 4 * fromIntegral (integer "otel.shutdown-timeout-ms")
+  exits <- traverse (\child -> stopGracefully supervisor child grace) [active, second]
   mapM_ collectErrors [active, second]
   indices <- reverse <$> readIORef history
   errors <- readIORef errorCount
@@ -134,37 +142,55 @@ runPublisher context = case context.init.postgres of
   Just postgres -> do
     context.send WrkReady
     context.receive >>= \case
-      Just CtlStart -> withFixtureEnv (defaultConnectionSettings postgres.connectionString) \fixture -> Broker.withTableBroker postgres.connectionString \broker -> withRoleSamples context do
-        stopped <- newIORef False
-        armed <- newIORef False
-        let KeiroRunner runFixture = fixture.runner
-            batch = fromIntegral (integer "outbox.batch-size")
-            options = defaultPublishOptions {batchSize = batch, publishingTimeout = 10}
-            receive =
-              context.receive >>= \case
-                Just (CtlStop _) -> writeIORef stopped True
-                Nothing -> writeIORef stopped True
-                Just (CtlCustom "arm-crash" _) -> writeIORef armed True >> receive
-                Just _ -> receive
-            hooks = Broker.PublishHook (const (pure ())) \rows -> do
-              park <- readIORef armed
-              when park do
-                context.send (WrkCustom "crash-window" (object ["rows" .= length rows, "messageIds" .= map ((.messageId) . (.event)) rows]))
-                forever (threadDelay 1000000)
-            publish = Broker.publishScripted broker (Broker.BrokerModel 0 0 4) (const Broker.Succeed) hooks context.init.instanceName
-            loop !published = do
-              stop <- readIORef stopped
-              unless stop do
-                result <- runFixture (publishClaimedOutbox publish options Nothing)
-                case result of
-                  Left err -> context.send (WrkError (Text.pack (show err))) >> threadDelay 100000 >> loop published
-                  Right summary -> do
-                    when (summary.claimed == 0) (threadDelay 20000)
-                    loop (published + summary.published)
-        withAsync receive \receiver -> do
-          link receiver
-          context.send (WrkCustom "started" (object []))
-          loop 0
+      Just CtlStart -> do
+        let label = Text.replace "/" "-" context.init.instanceName
+            directory = context.init.outDir </> "children" </> Text.unpack label
+            report value = do
+              createDirectoryIfMissing True (directory </> "logs")
+              LazyByteString.writeFile (directory </> "logs" </> "messaging-store-metrics.json") (encode value)
+        spec <- either (fail . Text.unpack) pure (telemetrySpecFromWorker context directory)
+        withMessagingTelemetryAt postgres.connectionString report spec \fixture telemetry endpoints ->
+          Broker.withTableBroker postgres.connectionString \broker -> withRoleSamples context do
+            stopped <- newIORef False
+            armed <- newIORef False
+            let KeiroRunner runFixture = fixture.runner
+                batch = fromIntegral (integer "outbox.batch-size")
+                options = defaultPublishOptions {batchSize = batch, publishingTimeout = 10, tracer = fixture.telemetry.keiroTracer}
+                receive =
+                  context.receive >>= \case
+                    Just (CtlStop _) -> writeIORef stopped True
+                    Nothing -> writeIORef stopped True
+                    Just (CtlCustom "arm-crash" _) -> writeIORef armed True >> receive
+                    Just _ -> receive
+                hooks = Broker.PublishHook (const (pure ())) \rows -> do
+                  park <- readIORef armed
+                  when park do
+                    context.send (WrkCustom "crash-window" (object ["rows" .= length rows, "messageIds" .= map ((.messageId) . (.event)) rows]))
+                    forever (threadDelay 1000000)
+                publish = Broker.publishScripted broker (Broker.BrokerModel 0 0 4) (const Broker.Succeed) hooks context.init.instanceName
+                loop !published = do
+                  stop <- readIORef stopped
+                  if stop
+                    then pure published
+                    else do
+                      result <- runFixture (publishClaimedOutbox publish options fixture.telemetry.keiroMetrics)
+                      case result of
+                        Left err -> context.send (WrkError (Text.pack (show err))) >> threadDelay 100000 >> loop published
+                        Right summary -> do
+                          when (summary.claimed == 0) (threadDelay 20000)
+                          loop (published + summary.published)
+            published <- withAsync receive \receiver -> do
+              link receiver
+              context.send (WrkCustom "started" (object []))
+              loop 0
+            let count = Statement.preparable "SELECT count(*) FROM kenshou_fx.broker_log WHERE publisher=$1" (Encoders.param (Encoders.nonNullable Encoders.text)) (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
+            appended <- runFixture (runTransaction (Tx.statement context.init.instanceName count)) >>= either (fail . show) pure
+            _ <- telemetry.flushTelemetry
+            sums <- telemetry.readMetricSums
+            let matched = fromIntegral published == appended && (not telemetry.metricsLive || sum [value | (key, value) <- sums, key == "keiro.outbox.published"] == fromIntegral appended)
+            served <- probeMessagingMetricsAt directory telemetry endpoints "complete" [("keiro_outbox_published{job=\"kenshou\"}", fromIntegral appended)]
+            unless (matched && served) (context.send (WrkError "outbox publisher telemetry disagrees with its SQL broker records"))
+            context.send (WrkCustom "telemetry-checked" (object ["published" .= published, "brokerRecords" .= appended, "matched" .= (matched && served)]))
         context.send (WrkDone Nothing)
       _ -> pure ()
   where
