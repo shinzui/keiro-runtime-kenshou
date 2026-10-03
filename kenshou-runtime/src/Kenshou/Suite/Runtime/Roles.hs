@@ -36,8 +36,8 @@ import Kenshou.Suite.Runtime.System.Contracts (TopicPrefix (..))
 import Kenshou.Suite.Runtime.System.Intake (IntakeOutcome (..), IntakeSide, consumeEnvelope, shopIntakeSide, sweepIntake, warehouseIntakeSide)
 import Kenshou.Suite.Runtime.System.KafkaBridge (ConsumerExit (..), ConsumerSpec (..), publishToBrokers, runKafkaInboxConsumer)
 import Kenshou.Suite.Runtime.System.Shop (handleShopDelivery)
-import Kenshou.Suite.Runtime.System.Store (ContextStore (..), runContext, withContextStore)
-import Kenshou.Suite.Runtime.System.Warehouse (WarehouseEnv (..), fireDeadline, fulfilmentRegistry, handlePick, handleWarehouseDelivery, pickJob, pickTuning)
+import Kenshou.Suite.Runtime.System.Store (ContextEff, ContextStore (..), runContext, withContextStore)
+import Kenshou.Suite.Runtime.System.Warehouse (WarehouseEnv (..), cancelOrphanedAwakeables, fireDeadline, fulfilmentRegistry, handlePick, handleWarehouseDelivery, pickJob, pickTuning)
 import Kiroku.Store (runStoreIO)
 import Kiroku.Store.Subscription.Types (RetryPolicy (..), SubscriptionName (..), SubscriptionTarget (..))
 import Kiroku.Store.Types (CategoryName (..))
@@ -90,14 +90,14 @@ roles =
     runtimeRole "a-dispatch" "Shop sharded subscription: payment manager, loyalty router and order producer." shopDispatchRole,
     runtimeRole "a-publisher" "Publishes the shop outbox to Kafka with per-record acknowledgement." (publisherRole (.shopDatabase)),
     runtimeRole "a-consumer" "Consumes warehouse outcomes into the shop inbox and order commands." (consumerRole shopIntakeSide (.shopDatabase) (.warehouseTopic) (.shopConsumerGroup)),
-    runtimeRole "a-maintenance" "Reclaims stale shop outbox claims." (maintenanceRole (.shopDatabase)),
+    runtimeRole "a-maintenance" "Reclaims stale shop outbox claims." (maintenanceRole (.shopDatabase) (pure ())),
     runtimeRole "b-consumer" "Consumes shop orders into the warehouse inbox and fulfilment commands." (consumerRole warehouseIntakeSide (.warehouseDatabase) (.shopTopic) (.warehouseConsumerGroup)),
     runtimeRole "b-dispatch" "Warehouse sharded subscription: stock manager, workflow start, timers and producer." warehouseDispatchRole,
     runtimeRole "b-resume" "Advances fulfilment workflows." resumeRole,
     runtimeRole "b-timer" "Fires workflow sleeps and fulfilment deadlines." timerRole,
     runtimeRole "b-jobs" "Processes pick jobs and confirms picks through awakeables." jobsRole,
     runtimeRole "b-publisher" "Publishes the warehouse outbox to Kafka with per-record acknowledgement." (publisherRole (.warehouseDatabase)),
-    runtimeRole "b-maintenance" "Reclaims stale warehouse outbox claims." (maintenanceRole (.warehouseDatabase))
+    runtimeRole "b-maintenance" "Reclaims stale warehouse outbox claims and cancels awakeables left by terminal workflows." (maintenanceRole (.warehouseDatabase) (void (cancelOrphanedAwakeables Nothing)))
   ]
 
 roleName :: Text -> RoleName
@@ -308,10 +308,10 @@ orderingPolicyFrom = \case
   "best-effort" -> BestEffort
   _ -> PerKeyHeadOfLine
 
-maintenanceRole :: (SystemConfig -> Text) -> RoleEnv -> IO ()
-maintenanceRole database env = withContextStore (database env.config) env.config.poolSize \store ->
+maintenanceRole :: (SystemConfig -> Text) -> ContextEff () -> RoleEnv -> IO ()
+maintenanceRole database extra env = withContextStore (database env.config) env.config.poolSize \store ->
   untilStopped env 1000000 do
-    result <- runContext store (outboxMaintenancePass (OutboxMaintenanceOptions 10 (realToFrac (timeouts env).publishingTimeoutSeconds)) Nothing)
+    result <- runContext store (outboxMaintenancePass (OutboxMaintenanceOptions 10 (realToFrac (timeouts env).publishingTimeoutSeconds)) Nothing >> extra)
     case result of
       Left problem -> env.context.send (WrkCustom "maintenance-pass-failed" (object ["problem" .= show problem]))
       Right _ -> bump env

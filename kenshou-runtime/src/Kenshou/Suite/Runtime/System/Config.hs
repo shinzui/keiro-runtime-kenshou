@@ -66,7 +66,11 @@ data SystemConfig = SystemConfig
     maxConcurrentAdvances :: !Int,
     queueBatchSize :: !Int,
     orderingPolicy :: !Text,
-    processesPerRole :: !Int
+    processesPerRole :: !Int,
+    -- | Every driver submits every order instead of its own share.
+    replicatedDrivers :: !Bool,
+    -- | How many times each driver submits its sequence.
+    submissionRounds :: !Int
   }
   deriving stock (Generic, Eq, Show)
   deriving anyclass (FromJSON, ToJSON)

@@ -168,7 +168,8 @@ instance ToJSON QuiescenceReport where
             "inboxUnfinished" .= backlog.inboxUnfinished,
             "intakeUndispatched" .= backlog.intakeUndispatched,
             "workflowsUnfinished" .= backlog.workflowsUnfinished,
-            "timersPending" .= backlog.timersPending
+            "timersPending" .= backlog.timersPending,
+            "awakeablesPending" .= backlog.awakeablesPending
           ]
 
 -- | Wait for every driver to finish, then for the system to drain: every
@@ -200,10 +201,10 @@ awaitQuiescence system driverDeadline deadline = do
       warehouseCounts <- either (const (StatusCounts 0 [] 0)) id <$> runSql system.warehouse fulfilmentStatusCountsTx
       shopBacklog <- either (const Nothing) Just <$> runSql system.shop (backlogTx Shop)
       warehouseBacklog <- either (const Nothing) Just <$> runSql system.warehouse (backlogTx Warehouse)
-      let submitted = sum [report.accepted + report.duplicates | report <- reports]
+      let submitted = sum [report.accepted | report <- reports]
           nonTerminal counts statuses = sum [count | (status, count) <- counts.byStatus, status `elem` statuses]
           drained backlog = case backlog of
-            Just value -> value == Backlog 0 0 0 0 0
+            Just value -> value == Backlog 0 0 0 0 0 0
             Nothing -> False
           reached =
             finished
