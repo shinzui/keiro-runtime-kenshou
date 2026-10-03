@@ -20,6 +20,7 @@ import Kenshou.Cli.Attest.KeiroQueueOrdering (recomputeQueueOrdering)
 import Kenshou.Cli.Attest.KeiroQueueOutcomes (recomputeQueueOutcomes)
 import Kenshou.Cli.Attest.KeiroQueuePolling (recomputeQueuePolling)
 import Kenshou.Cli.Attest.KeiroTerminal (recomputeTerminal)
+import Kenshou.Cli.Attest.KeiroZombie (recomputeZombie)
 import Kenshou.Core.Cohort (CohortIdentity (..), PackageSource (..), ResolvedComponent (..), ResolvedPackage (..))
 import Kenshou.Core.Id (renderScenarioId)
 import Kenshou.Core.Outcome (Outcome (..), outcomeExitCode)
@@ -48,6 +49,7 @@ runOutcomeRecomputer = Recomputer "run-outcome" 1 $ \root -> do
       | renderScenarioId source.result.resultScenario == "keiro/queue/correctness/consumption-config-rejections" -> recomputeQueueConfig root source
       | renderScenarioId source.result.resultScenario == "keiro/outbox/correctness/producer-identity" -> recomputeProducerIdentity root source
       | renderScenarioId source.result.resultScenario == "keiro/outbox/correctness/terminal-state-matrix" -> recomputeTerminal root source
+      | renderScenarioId source.result.resultScenario == "keiro/outbox/concurrency/zombie-publisher-finalization" -> recomputeZombie root source
       | otherwise -> case coreRecomputers of
           (core : _) -> core.recompute root
           [] -> pure (Left "the core outcome oracle is unavailable")

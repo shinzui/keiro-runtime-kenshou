@@ -1622,6 +1622,34 @@ reproduces lazy bounded-probe retention without Keiro. Strict probe fields make
 the focused weak-reference regression pass; matched process-soak confirmation
 is pending. Resource acceptance is not closed and thresholds are unchanged.
 
+### Independent stale-publisher replay
+
+Revision 2 of the existing `zombie-publisher-finalization` scenario seals five
+ordered row snapshots, the maintenance return and the broker headers in
+`logs/outbox-zombie-observations.json`. Its three verdicts are unchanged. The
+CLI independently reconstructs the realised schedule, preservation of the
+second publisher's claim and consistency of the terminal state with broker
+success. It also checks row identity, snapshot chronology, the resolved stale
+outcome, per-verdict classification and the precise BUG-5/strict-exit disposition.
+Revision 1 remains unverifiable from its saved summary alone; its published
+incomplete attestation is not rewritten.
+
+Four durable local controls under `runs/ep13-zombie-replay` reproduce the known
+failure and independently replay it:
+
+| Stale outcome | Run | Replayed failures |
+| --- | --- | --- |
+| failed | `01a0ffce-d166-750a-8be3-7bf9c7b01c5d` | stale finalization and terminal consistency |
+| succeeded | `01a0ffce-e3f0-73af-85a4-ca2ec89e98a1` | stale finalization |
+| dead | `01a0ffce-f5f3-7659-9c02-33824faad888` | stale finalization and terminal consistency |
+| failed, strict known-defect handling | `01a0ffcf-07ef-773a-ae3d-09e69c0892ab` | same two failures; CLI exit 1 instead of 0 |
+
+All 28 schema and 64 artifact checks pass. Focused mutations detect missing
+reclamation, changed claims and missing/duplicated appends, and reject mixed
+identities or reversed chronology. The full repository gate passes, including
+65 Keiro and 128 CLI examples. Clean selected publication is pending. This closes an existing implementation gap
+in the baseline replay criterion; it adds no scenario or acceptance criterion.
+
 ### Acceptance reconciliation and finite remaining work
 
 This table reconciles the original acceptance criteria with the implemented

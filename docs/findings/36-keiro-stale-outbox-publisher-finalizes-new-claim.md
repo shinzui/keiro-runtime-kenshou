@@ -7,3 +7,10 @@ The durable PostgreSQL 18 `keiro/outbox/concurrency/zombie-publisher-finalizatio
 The owner traced finalization to an `outbox_id` and `publishing` status check without a claim generation. A successful broker append can therefore leave a row in a non-sent state after reclamation. Artifacts remain under local `runs/<run-id>/` directories.
 
 A clean released-payload run on leased cell alpha reproduced the failed-state arm on PostgreSQL 18: cell session `01a0eed0-4d26-7365-abcb-334d486ac9dc`, verified cell run `01a0eed0-4d26-7365-afb3-8a03d234d014`, nested run `01a0eec4-bd55-7786-804f-bda62c6ac388`. P2 appended one broker record after maintenance reclaimed P1's claim; resuming stale P1 left the row `OutboxFailed`. Only `stale-finalization-no-effect` and `terminal-consistent-with-success` failed, exactly the owner-linked known-defect scope. The nested fingerprint records a clean harness at released payload revision `265f35b6ba839991f5684b9939bcd1d614239268`; the slice completed and verified under one lease. The [OKF baseline record](../verification/runs/keiro/2026/09/01a0eec4-bd55-7786-804f-bda62c6ac388.md) links the immutable cell objects. Its [attestation](../verification/attestations/2026/09/01a0eee9-5ccf-72b7-bcdf-54f5ec80c02a.md) passed digest, revision, cohort, environment, and clean-worktree checks but remains incomplete because no independent Keiro outbox VC-1 recomputer is registered. The fetched tree remains under ignored `.dev/01a0eed0-4d26-7365-afb3-8a03d234d014/tree/`.
+
+The scenario's revision 2 now seals ordered row observations and supports
+independent replay of all three verdicts. Four durable local controls reproduce
+the failed/succeeded/dead stale outcomes and the strict-known-defect exit path;
+all replay exactly. See [the messaging plan](../plans/13-cover-the-keiro-outbox-inbox-and-job-queue.md#independent-stale-publisher-replay).
+The older published revision-1 attestation remains incomplete; no historical
+raw data or owner-fix status is changed.

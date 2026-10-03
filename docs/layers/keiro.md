@@ -186,8 +186,9 @@ optimistic retry and exhaustion, controlled SQL rollback, and hydration over
 stream lengths and page sizes. `keiro/snapshot/correctness/policy-matrix`
 checks the persisted snapshot version and register values for all five
 policies. Two concurrency scenarios check simultaneous submission of one
-identifier and sustained writes to one hot stream. The scenario IDs and
-their knobs are available through `cabal run kenshou -- list --layer keiro`.
+identifier and sustained writes to one hot stream. List scenario IDs with `cabal run kenshou -- list --layer keiro`; use
+`kenshou plan --all --select SCENARIO --out plan.json` to inspect resolved knobs
+without running the workload.
 The writer crash scenario runs paced deposit sequences in separate processes,
 kills writers at configured intervals, and restarts each from an overlap with
 its last acknowledged operation. Deterministic IDs make the overlap safe. It
@@ -400,9 +401,24 @@ multi-process scenario checks that each partition's offsets remain contiguous
 under competing publishers. List the current scenarios with
 `cabal run kenshou -- list 'keiro/outbox/**'`.
 
-The correctness runs cover terminal `sent`, `rejected`, and `dead` states,
-ordered publication after a transient failure, skipped successor attempts,
-publisher callback errors, and stable producer identity.
+To inspect the effective knobs for an outbox, inbox or queue scenario without
+executing it, select its full ID and write a run plan:
+
+```bash
+nix develop -c cabal run kenshou -- plan --all --select keiro/outbox/correctness/terminal-state-matrix --dimension-policy default-only --knob-policy defaults --out /tmp/kenshou-messaging-plan.json
+jq '.runs[].spec | {scenario, scenarioRevision, knobs, dimensions}' /tmp/kenshou-messaging-plan.json
+```
+
+Pin controls with `--set NAME=VALUE` and inspect the resulting plan before a
+long run. The plan records scenario-specific defaults; a knob accepted by one
+scenario need not be accepted by another. The workload descriptions below
+explain what those controls test.
+
+`terminal-state-matrix` covers terminal `sent`, `rejected`, and `dead` states;
+`per-key-order-serialized` checks publication order after transient failure;
+`failure-skips-successors` checks skipped successor attempts;
+`publisher-misbehaviour` exercises callback errors; and `producer-identity`
+checks stable producer identities.
 The identity probe also asserts the literal UUID and message ID vector from
 `mori://shinzui/keiro/okf/adrs/concepts/ADR-42`.
 Revision 2 seals complete SQL rows before and after each replay/conflict in
@@ -475,7 +491,8 @@ The [clean controlled metrics investigation](../reports/2026-10-01-outbox-metric
 records fifteen benchmark-grade arms and confirmed VC-2/VC-3 comparisons.
 Collection and scraping pass their policies; serving and the identical-arm
 control remain inconclusive on p99. These results apply to the paced
-250-message/second workload; broader overhead acceptance remains open.
+250-message/second workload. The two required overhead reports exist; their
+inconclusive results remain visible in the baseline.
 
 ```bash
 nix develop -c cabal run -v0 kenshou -- run keiro/outbox/correctness/telemetry-contract --dim pg.durability=durable --dim telemetry.tracing=sdk-inmemory --dim telemetry.metrics=serve-scraped --set metrics.scrape-interval-ms=100 --out runs/
@@ -515,7 +532,7 @@ replay stayed within the declared duplicate bound.
 With `outbox.exhaust-attempts=true`, two after-claim kills consumed the attempt
 ceiling: maintenance left 32 dead rows, and 32 later rows of the same key
 reached the broker. The dead rows remain visible for operator action.
-The four-process publisher scenario passed with 20,000 rows and 200 keys: each
+The `multi-process-publishers` scenario passed with 20,000 rows and 200 keys: each
 outbox row had one broker record and one consumed attempt, and first-record
 order held within each key. A strengthened 2,000-row run observed records from
 two publishers, with no loss or duplicate records. The four-publisher
@@ -524,7 +541,7 @@ workload is now preloaded by a separate `keiro/outbox-enqueuer` worker. The
 and participation from all four publishers. A separate
 `keiro/outbox-maintenance` worker performs bounded reclaim passes and optional
 sent-row GC; its reclaim pass is exercised in the zombie publisher scenario.
-The inline enqueue ordering scenario uses an advisory lock to start one
+The `concurrent-inline-enqueue-order` scenario uses an advisory lock to start one
 transaction before another but
 commit it later. Its durable run published `second` before `first` as documented
 in `mori://shinzui/keiro/okf/user-documentation/concepts/DOC-16`; the schedule
@@ -604,6 +621,12 @@ of every historical in-process signal.
 The eleven correctness and concurrency outbox scenarios completed at their default settings on
 durable PostgreSQL. Nine passed. The inline-order and zombie-finalization
 scenarios reproduced their scoped known defects without a blocking failure.
+
+`zombie-publisher-finalization` revision 2 saves the five ordered row reads,
+maintenance result and broker headers in `logs/outbox-zombie-observations.json`.
+Independent attestation replays all three existing checks and preserves the
+scoped BUG-5 failure, including `--strict-known-defects` exit behavior. Revision
+1 records lack these raw observations and retain their incomplete attestations.
 
 ## Inbox
 

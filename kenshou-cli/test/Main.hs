@@ -29,6 +29,7 @@ import Kenshou.Cli.Attest.KeiroQueueOrdering (replayOrderingCells)
 import Kenshou.Cli.Attest.KeiroQueueOutcomes (replayQueueOutcomeCells)
 import Kenshou.Cli.Attest.KeiroQueuePolling (replayPollingCells)
 import Kenshou.Cli.Attest.KeiroTerminal (replayTerminalCells)
+import Kenshou.Cli.Attest.KeiroZombie (replayZombieCells)
 import Kenshou.Cli.Cohort (resolveDefaultCohortIdentity)
 import Kenshou.Cli.Version (appVersionWithGit)
 import Kenshou.Core.Cohort (CohortIdentity (..), CohortName (..))
@@ -65,6 +66,46 @@ readInboxFixture path = do
 
 main :: IO ()
 main = hspec do
+  describe "independent stale-publisher replay" do
+    let row status attempts second = object ["outboxId" .= ("row-1" :: Text), "messageId" .= ("message-1" :: Text), "source" .= ("kenshou-fixture-zombie" :: Text), "status" .= (status :: Text), "attemptCount" .= (attempts :: Int), "observedAt" .= (("2026-10-03T00:00:0" <> second <> "Z") :: Text)]
+        capture mode stale final copies =
+          object
+            [ "schema" .= ("kenshou.outbox-zombie-observations/v1" :: Text),
+              "outcome" .= (mode :: Text),
+              "maintenanceRequeued" .= [1 :: Int],
+              "firstClaim" .= row "OutboxPublishing" 1 "0",
+              "reclaimed" .= row "OutboxFailed" 1 "1",
+              "secondClaim" .= row "OutboxPublishing" 2 "2",
+              "afterStale" .= row stale 2 "3",
+              "finalRow" .= row final 2 "4",
+              "brokerHeaders" .= replicate copies [["keiro-message-id", "message-1"] :: [Text]]
+            ]
+        safe = capture "failed" "OutboxPublishing" "OutboxSent" 1
+        replace key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)
+        replace _ _ value = value
+        failures = fmap (map fst . filter (not . snd)) . replayZombieCells
+    it "replays the captured durable stale-publisher failure" do
+      raw <- Aeson.eitherDecodeFileStrict' "test/fixtures/outbox-zombie-observations.json" >>= either fail pure
+      failures raw `shouldBe` Right ["stale-finalization-no-effect", "terminal-consistent-with-success"]
+    it "preserves the three released stale-finalization outcomes" do
+      failures (capture "failed" "OutboxFailed" "OutboxFailed" 1) `shouldBe` Right ["stale-finalization-no-effect", "terminal-consistent-with-success"]
+      failures (capture "dead" "OutboxDead" "OutboxDead" 1) `shouldBe` Right ["stale-finalization-no-effect", "terminal-consistent-with-success"]
+      failures (capture "succeeded" "OutboxSent" "OutboxSent" 2) `shouldBe` Right ["stale-finalization-no-effect"]
+    it "accepts a preserved second claim and subsequent successful finalization" do
+      failures safe `shouldBe` Right []
+    it "detects missing reclamation and changed claims" do
+      failures (replace "maintenanceRequeued" (Aeson.toJSON [0 :: Int]) safe) `shouldBe` Right ["schedule-realised"]
+      failures (replace "afterStale" (row "OutboxPublishing" 3 "3") safe) `shouldBe` Right ["stale-finalization-no-effect"]
+    it "detects missing or duplicated broker appends" do
+      failures (capture "failed" "OutboxPublishing" "OutboxSent" 0) `shouldBe` Right ["terminal-consistent-with-success"]
+      failures (capture "failed" "OutboxPublishing" "OutboxSent" 2) `shouldBe` Right ["terminal-consistent-with-success"]
+    it "refuses mixed identities and reversed snapshot chronology" do
+      replayZombieCells (replace "finalRow" (replace "outboxId" (Aeson.String "other-row") (row "OutboxSent" 2 "4")) safe) `shouldSatisfy` either (const True) (const False)
+      replayZombieCells (replace "finalRow" (row "OutboxSent" 2 "0") safe) `shouldSatisfy` either (const True) (const False)
+    it "refuses missing observations and a substituted broker identity" do
+      replayZombieCells (object []) `shouldSatisfy` either (const True) (const False)
+      replayZombieCells (replace "brokerHeaders" (Aeson.toJSON [[["keiro-message-id", "other-message"] :: [Text]]]) safe) `shouldSatisfy` either (const True) (const False)
+
   describe "independent producer identity replay" do
     let loadFixture = Aeson.eitherDecodeFileStrict' "test/fixtures/producer-identity-controls.json" >>= either fail pure :: IO [Value]
         replace key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)

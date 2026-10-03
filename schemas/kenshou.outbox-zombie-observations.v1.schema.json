@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/kenshou.outbox-zombie-observations.v1.schema.json",
+  "title": "Stale publisher ordered row observations v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "outcome",
+    "maintenanceRequeued",
+    "firstClaim",
+    "reclaimed",
+    "secondClaim",
+    "afterStale",
+    "finalRow",
+    "brokerHeaders"
+  ],
+  "properties": {
+    "schema": {
+      "const": "kenshou.outbox-zombie-observations/v1"
+    },
+    "outcome": {
+      "enum": [
+        "failed",
+        "succeeded",
+        "dead"
+      ]
+    },
+    "maintenanceRequeued": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "firstClaim": {
+      "$ref": "#/$defs/row"
+    },
+    "reclaimed": {
+      "$ref": "#/$defs/row"
+    },
+    "secondClaim": {
+      "$ref": "#/$defs/row"
+    },
+    "afterStale": {
+      "$ref": "#/$defs/row"
+    },
+    "finalRow": {
+      "$ref": "#/$defs/row"
+    },
+    "brokerHeaders": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "minItems": 2,
+          "maxItems": 2
+        }
+      }
+    }
+  },
+  "$defs": {
+    "row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "outboxId",
+        "messageId",
+        "source",
+        "status",
+        "attemptCount",
+        "observedAt"
+      ],
+      "properties": {
+        "outboxId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": [
+            "OutboxPending",
+            "OutboxPublishing",
+            "OutboxSent",
+            "OutboxFailed",
+            "OutboxRejected",
+            "OutboxDead"
+          ]
+        },
+        "attemptCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "observedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    }
+  }
+}

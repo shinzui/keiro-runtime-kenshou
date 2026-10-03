@@ -1,0 +1,83 @@
+{
+  "afterStale": {
+    "attemptCount": 2,
+    "messageId": "zombie",
+    "observedAt": "2026-10-03T03:29:02.053862Z",
+    "outboxId": "01a0ffce-d5e9-76f3-a40a-0013c4075e21",
+    "source": "kenshou-01a0ffce-zombie",
+    "status": "OutboxFailed"
+  },
+  "brokerHeaders": [
+    [
+      [
+        "keiro-message-id",
+        "zombie"
+      ],
+      [
+        "keiro-source",
+        "kenshou-01a0ffce-zombie"
+      ],
+      [
+        "keiro-destination",
+        "kenshou.outbox.v1"
+      ],
+      [
+        "keiro-event-type",
+        "OutboxProbe"
+      ],
+      [
+        "keiro-schema-version",
+        "1"
+      ],
+      [
+        "content-type",
+        "application/json"
+      ],
+      [
+        "keiro-occurred-at",
+        "2026-10-03T03:29:00.393489Z"
+      ],
+      [
+        "keiro-attributes",
+        "{\"sequence\":1}"
+      ]
+    ]
+  ],
+  "finalRow": {
+    "attemptCount": 2,
+    "messageId": "zombie",
+    "observedAt": "2026-10-03T03:29:02.054849Z",
+    "outboxId": "01a0ffce-d5e9-76f3-a40a-0013c4075e21",
+    "source": "kenshou-01a0ffce-zombie",
+    "status": "OutboxFailed"
+  },
+  "firstClaim": {
+    "attemptCount": 1,
+    "messageId": "zombie",
+    "observedAt": "2026-10-03T03:29:00.449563Z",
+    "outboxId": "01a0ffce-d5e9-76f3-a40a-0013c4075e21",
+    "source": "kenshou-01a0ffce-zombie",
+    "status": "OutboxPublishing"
+  },
+  "maintenanceRequeued": [
+    1
+  ],
+  "outcome": "failed",
+  "reclaimed": {
+    "attemptCount": 1,
+    "messageId": "zombie",
+    "observedAt": "2026-10-03T03:29:02.000056Z",
+    "outboxId": "01a0ffce-d5e9-76f3-a40a-0013c4075e21",
+    "source": "kenshou-01a0ffce-zombie",
+    "status": "OutboxFailed"
+  },
+  "schema": "kenshou.outbox-zombie-observations/v1",
+  "secondClaim": {
+    "attemptCount": 2,
+    "messageId": "zombie",
+    "observedAt": "2026-10-03T03:29:02.052513Z",
+    "outboxId": "01a0ffce-d5e9-76f3-a40a-0013c4075e21",
+    "source": "kenshou-01a0ffce-zombie",
+    "status": "OutboxPublishing"
+  }
+}

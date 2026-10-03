@@ -52,6 +52,7 @@ import Kiroku.Store.Subscription.Stream (AckItem (..), subscriptionAckStream)
 import Kiroku.Store.Subscription.Types (SubscriptionName (..), SubscriptionResult (..), SubscriptionTarget (..), defaultSubscriptionConfig)
 import Kiroku.Store.Types (CategoryName (..), EventId (..), EventType (..), GlobalPosition (..), RecordedEvent (..), StreamId (..), StreamVersion (..))
 import Streamly.Data.Stream qualified as Streamly
+import System.FilePath ((</>))
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
@@ -61,7 +62,7 @@ zombiePublisherFinalization :: Scenario
 zombiePublisherFinalization =
   crashBetweenPublishAndMark
     { id = either (error . show) id (parseScenarioId "keiro/outbox/concurrency/zombie-publisher-finalization"),
-      revision = 1,
+      revision = 2,
       summary = "Checks that a publisher resumed after maintenance cannot finalize another publisher's claim.",
       knobs = [KnobSpec (knobName "outbox.zombie-outcome") "Outcome reported by the stale publisher" KnobText (VText "failed") (OneOf (VText "failed" :| [VText "succeeded", VText "dead"])) [VText "succeeded", VText "dead"]],
       knownDefect = Just (KnownDefect "mori://shinzui/keiro/okf/bug-reports/concepts/BUG-5" "Stale publishers can finalize a row after maintenance and another publisher re-claim it" ["stale-finalization-no-effect", "terminal-consistent-with-success"] AllCohorts),
@@ -80,7 +81,7 @@ runZombiePublisherFinalization context =
             readSingle = do
               rows <- runFixture (listOutbox source) >>= either (fail . show) pure
               case rows of
-                [row] -> pure row
+                [row] -> (row,) <$> getCurrentTime
                 _ -> fail "zombie fixture did not contain exactly one outbox row"
             startPublisher index publisherOutcome = do
               spec <- roleProcess check "keiro/outbox-publisher" index (object ["parkAfterAppend" .= True, "outcome" .= publisherOutcome, "maxAttempts" .= maxAttempts])
@@ -94,7 +95,7 @@ runZombiePublisherFinalization context =
               awaitMark child "finished" 30000
         enqueueInline fixture source [("zombie", Just "one-key", 1)]
         first <- startPublisher 0 (if outcome == "succeeded" then "succeeded" else "failed")
-        firstClaim <- readSingle
+        (firstClaim, firstClaimAt) <- readSingle
         Process.signalChild supervisor first Process.Stop
         threadDelay 1500000
         maintenanceSpec <- roleProcess check "keiro/outbox-maintenance" 0 (object ["maxAttempts" .= maxAttempts, "publishingTimeoutSeconds" .= (1 :: Double)])
@@ -104,18 +105,39 @@ runZombiePublisherFinalization context =
         awaitMark maintainer "finished" 30000
         maintenanceMessages <- readChildMessages maintainer
         let requeued = [count | WrkCustom "maintenance-pass" payload <- maintenanceMessages, Just count <- [parseMaybe (withObject "maintenance pass" (\value -> value .: "requeued")) payload]]
-        reclaimed <- readSingle
+        (reclaimed, reclaimedAt) <- readSingle
         second <- startPublisher 1 ("succeeded" :: Text.Text)
-        secondClaim <- readSingle
+        (secondClaim, secondClaimAt) <- readSingle
         Process.signalChild supervisor first Process.Cont
         finishPublisher first
-        afterStale <- readSingle
+        (afterStale, afterStaleAt) <- readSingle
         finishPublisher second
-        finalRow <- readSingle
+        (finalRow, finalRowAt) <- readSingle
         records <- Broker.readBroker broker
         let schedule = firstClaim.status == OutboxPublishing && requeued == [1 :: Int] && reclaimed.status == OutboxFailed && secondClaim.status == OutboxPublishing && secondClaim.attemptCount == 2
             staleDidNothing = afterStale.status == OutboxPublishing && afterStale.attemptCount == 2
             terminalConsistent = finalRow.status == OutboxSent && length records == (if outcome == "succeeded" then 2 else 1)
+        let snapshot row observedAt =
+              object
+                [ "outboxId" .= row.outboxId,
+                  "messageId" .= row.event.messageId,
+                  "source" .= row.event.source,
+                  "status" .= show row.status,
+                  "attemptCount" .= row.attemptCount,
+                  "observedAt" .= observedAt
+                ]
+        Aeson.encodeFile (context.outDir </> "logs/outbox-zombie-observations.json") $
+          object
+            [ "schema" .= ("kenshou.outbox-zombie-observations/v1" :: Text.Text),
+              "outcome" .= outcome,
+              "maintenanceRequeued" .= requeued,
+              "firstClaim" .= snapshot firstClaim firstClaimAt,
+              "reclaimed" .= snapshot reclaimed reclaimedAt,
+              "secondClaim" .= snapshot secondClaim secondClaimAt,
+              "afterStale" .= snapshot afterStale afterStaleAt,
+              "finalRow" .= snapshot finalRow finalRowAt,
+              "brokerHeaders" .= [[(TextEncoding.decodeUtf8 name, TextEncoding.decodeUtf8 value) | (name, value) <- record.headers] | record <- records]
+            ]
         recordMessagingCellsClassified
           context
           (Map.fromList [("brokerRecords", fromIntegral (length records)), ("attempts", fromIntegral finalRow.attemptCount)])

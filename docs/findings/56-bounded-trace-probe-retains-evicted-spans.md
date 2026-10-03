@@ -41,6 +41,14 @@ matched repaired run. This is distinct from finding 3's historical default-GC
 thread-count signal. Existing telemetry-off full soaks are not invalidated by
 this in-memory tracing defect.
 
-Validation: the full `nix develop -c just verify` gate and all 36 telemetry
+Validation: the full `nix develop -c just verify` gate and all 20 telemetry
 examples pass. The focused regression fails before the strict-state repair
 and passes after it. Matched reduced process runs remain pending.
+
+The pre-repair twenty-minute inbox control
+`01a0ffae-f01d-7084-8cb9-cb607361cd77` also held all nine business checks:
+2,421 fresh deliveries, 2,421 early duplicates, 2,421 late reprocessings and
+4,842 effects, with zero classification/GC errors or pending work. Both
+consumer heaps grew (second-half slopes approximately 14.2 and 27.2 MB/hour);
+the bounded main probes were stable. All twelve schemas and 64 artifact
+checks pass. The matched repaired queue and inbox controls are running.
