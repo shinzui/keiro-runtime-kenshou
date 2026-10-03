@@ -172,6 +172,7 @@ test-suite kenshou-linkproof
     keiro,
     keiro-core,
     keiro-migrations,
+    keiro-ops,
     keiro-pgmq,
     keiro-test-support,
     kiroku-cli,

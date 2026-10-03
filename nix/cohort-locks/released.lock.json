@@ -1,6 +1,6 @@
 {
   "cohort": "released",
-  "descriptorSha256": "44c8d2c5a775e67346f6f84abbbe0a9ce15550df747c4647f2c8857fcd82370b",
+  "descriptorSha256": "5c08f30a78a7d36ab707cde925813987356bdc46d0c3626b2882814db685cf56",
   "packages": {
     "effectful": {
       "sha256": "sha256-krNjGxqdbmFpt1g3anTd5ajGtYnyvGaG+AiDLfJN8No=",
@@ -114,6 +114,12 @@
       "sha256": "sha256-GIVefwcc1424grmE/3CVWgDpsPS8bYj+bBqlnbCBpZs=",
       "source": "hackage",
       "tarballSha256": "4eec6cd356c1989c817806713fd38dcd04f2497572b879eb2a423e1f1cf02d47",
+      "version": "0.17.0.0"
+    },
+    "keiro-ops": {
+      "sha256": "sha256-L43mVGOwPpU0Ixsrvd1FnP9U8q/7RYnuaIshzG0M/Us=",
+      "source": "hackage",
+      "tarballSha256": "57ce1052c2c709854b01e103e8a189097843a373c68f8e196c946295bfb8e918",
       "version": "0.17.0.0"
     },
     "keiro-pgmq": {

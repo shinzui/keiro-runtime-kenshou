@@ -32,6 +32,11 @@ provenance:
       at: 2026-09-27T17:44:10Z
       mode: "implement"
       note: "Pinned the head Kafka stream classification remediation and verified cohort resolution."
+    - model: "claude-opus-5-5"
+      harness: "claude-code"
+      at: 2026-10-03T13:47:23Z
+      mode: "implement"
+      note: "Added keiro-ops 0.17.0.0 to both cohorts, the link-proof and the Nix payload locks"
 ---
 
 # Bootstrap the kenshou repository and pin the runtime cohort
@@ -56,6 +61,7 @@ This plan owns Integration Points 1 and 2 of `docs/masterplans/1-build-an-extens
 
 - [x] (2026-09-21) Repository and cohort bootstrap complete: the Nix shell, released and head cohort identity, CLI build identity, combined migration check, CI, and ADR bundle are in place. Validation and implementation detail remain in Outcomes & Retrospective and Concrete Steps.
 - [x] (2026-09-27) Added `hw-kafka-streamly` commit `42163022038be4734cff64e96b83360be9c78318` to the head descriptor and Cabal project, so the head Kafka fatal-error path includes both required remediation commits. The head solver dry run and full CLI build pass, `kenshou cohort check` confirms the resolved identity, the five Kafka package tests pass, and the broker-backed fencing scenario passes with the fatal error observed. Restored the released selector afterward.
+- [x] (2026-10-03) Added `keiro-ops` 0.17.0.0 (Hackage upload 2026-09-18, inside the released index-state) to the `keiro` component of both cohort descriptors, both cohort projects' `extra-packages` and exact constraints, the link-proof component (`import Keiro.Ops ()`), and regenerated `nix/cohort-locks/{released,head}.lock.json`, whose only changes are the new entry and descriptor digests. Released: `cabal build all`, `kenshou cohort check`, `just payload-check released`, the four link-proof examples and `kenshou plan --graph-check` pass. Head: `cabal build all`, `kenshou cohort check`, the link-proof and `just payload-check head` pass. The head test build had also been broken by a shibuya `Processing` arity difference in a `kenshou-keiro` test, now built through `FromJSON`; 76 `kenshou-keiro` examples pass on both cohorts. This unblocks EP-15's `keiro-ops` role and I8 cross-check. `shibuya-current` carries no Keiro package and is unchanged.
 
 ## Surprises & Discoveries
 

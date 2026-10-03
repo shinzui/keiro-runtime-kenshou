@@ -24,6 +24,7 @@
       { "name": "keiro-core", "version": "0.17.0.0" },
       { "name": "keiro-pgmq", "version": "0.17.0.0" },
       { "name": "keiro-migrations", "version": "0.17.0.0" },
+      { "name": "keiro-ops", "version": "0.17.0.0" },
       { "name": "keiro-test-support", "version": "0.17.0.0" }
     ] },
     { "id": "shibuya", "moriUri": "mori://shinzui/shibuya", "source": { "type": "hackage" }, "packages": [
