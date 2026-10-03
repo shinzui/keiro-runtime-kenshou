@@ -1247,6 +1247,31 @@ the first worker exit; it does not pretend that the remaining faults happened.
 | postmaster / StopAllOnFailure | `01a0ff01-0a12-70b4-8de2-383d309cda8c` | passed |
 | postmaster / IgnoreFailures | `01a0ff01-eace-720d-8985-ca3e1a5f7730` | passed |
 
+### Clean polling fault and restart evidence
+
+Six revision-3 investigations on durable PostgreSQL 18 have confirmed independent
+VC-1 attestations at clean source/attester `edd7497dae84169bdab082ea1cc76211c6fb75de`,
+seed `8102429385822254`. Four failed outcomes preserve observed worker exits
+under backend, proxy and short postmaster interruptions, including the default
+five-fault request that stops after the first failed recovery. The two five-outage
+controls pass after explicit application restart: 120 exact jobs each under
+long/ordinary polling and both supervision strategies. The final fresh batch
+completes after the fifth interruption. Each attestation has six passing evidence
+checks; confirmation validates the failed results as well as the passed ones.
+All 48 schema and 78 artifact checks pass.
+These investigations do not close the owner polling defect or establish the
+adapter's transient retry-budget boundary. Faults occur while the queue is
+empty and a read is blocked; fault-at-inflight-work coverage remains separate.
+
+| Control | Investigation | Outcome | Attestation |
+| --- | --- | --- | --- |
+| backend-short | [01a0ff60-7633-77a4-b00c-7afd27d0f82d](../verification/runs/keiro/2026/10/01a0ff60-7633-77a4-b00c-7afd27d0f82d.md) | failed | [confirmed](../verification/attestations/2026/10/01a0ff6e-b385-7503-b6f7-0d7880484a7f.md) |
+| proxy-short | [01a0ff60-9600-726d-9372-efb89bc52f84](../verification/runs/keiro/2026/10/01a0ff60-9600-726d-9372-efb89bc52f84.md) | failed | [confirmed](../verification/attestations/2026/10/01a0ff6f-7c41-7206-b2e5-ecdac2440506.md) |
+| postmaster-short | [01a0ff60-c84b-74f4-81eb-66a9fe75648a](../verification/runs/keiro/2026/10/01a0ff60-c84b-74f4-81eb-66a9fe75648a.md) | failed | [confirmed](../verification/attestations/2026/10/01a0ff70-6323-72f0-9054-51bda858de0f.md) |
+| postmaster-five-long-poll | [01a0ff60-fbb2-7730-b648-368c972d5429](../verification/runs/keiro/2026/10/01a0ff60-fbb2-7730-b648-368c972d5429.md) | passed | [confirmed](../verification/attestations/2026/10/01a0ff71-4098-7115-ab36-5565a6b92111.md) |
+| postmaster-five-ordinary-poll | [01a0ff62-350c-75c2-8d48-e31e753d5bfd](../verification/runs/keiro/2026/10/01a0ff62-350c-75c2-8d48-e31e753d5bfd.md) | passed | [confirmed](../verification/attestations/2026/10/01a0ff72-2370-76fd-877c-b3e94970271f.md) |
+| default | [01a0ff63-0ecd-76dc-ad80-a31f0db1622a](../verification/runs/keiro/2026/10/01a0ff63-0ecd-76dc-ad80-a31f0db1622a.md) | failed | [confirmed](../verification/attestations/2026/10/01a0ff73-0c80-76dc-a640-2231cea2bdfb.md) |
+
 ### Remaining non-soak work
 
 Queue throughput revision 2 now implements bounded versus continuous-worker

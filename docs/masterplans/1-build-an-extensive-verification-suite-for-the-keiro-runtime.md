@@ -512,7 +512,7 @@ including the full 1,600-job FIFO-heads case. They cover ordering modes and work
 kills. Eleven clean revision-4 investigations add confirmed scripted-retry
 replay. Overlap/visibility and remaining fault/soak work keep EP-13 open.
 
-The historical bundle currently contains 181 run/comparison records: 175 sealed
+The historical bundle currently contains 187 run/comparison records: 181 sealed
 individual runs and six comparisons. The
 [working baseline report](../reports/2026-09-29-runtime-baseline.md) and child
 plans hold the detailed runs and findings. Owner projects can use this as-is
@@ -682,7 +682,7 @@ disposition changes.
 - EP-13 retry-budget oracle finding: [local finding 53](../findings/53-outbox-terminal-oracle-rejects-single-attempt-exhaustion.md); owner is this repository. A transient failure correctly ends dead when only one attempt is allowed. The repaired terminal oracle and independent replay accept that boundary and reject premature exhaustion at two attempts; sixteen policy/key/budget controls pass. No upstream owner issue is added.
 
 - EP-13 terminal replay identity gap: [local finding 54](../findings/54-terminal-replay-accepts-duplicate-final-row-substitution.md); owner is this repository. The recomputer previously accepted a same-size final-row substitution. Exact final identity coverage and four policy-specific mutations now address that local gap; no upstream owner issue is added.
-- EP-13 polling recovery gap: [local finding 55](../findings/55-polling-recovery-reuses-pre-fault-completions.md). Revision 3 now requires fresh work after every fault, including the last, and independently replays lifecycle and SQL coverage. Nineteen controls and the full verification gate pass their expected outcomes; short interruptions reproduce existing owner failures while explicit restart recovers after five long outages. Clean publication remains a separate gate.
+- EP-13 polling recovery gap: [local finding 55](../findings/55-polling-recovery-reuses-pre-fault-completions.md). Revision 3 now requires fresh work after every fault, including the last, and independently replays lifecycle and SQL coverage. Nineteen controls and the full verification gate pass their expected outcomes; short interruptions reproduce existing owner failures while explicit restart recovers after five long outages. Six clean polling investigations now have confirmed independent attestations, preserving four failures and two explicit-restart passes.
 
 ## Decision Log
 
