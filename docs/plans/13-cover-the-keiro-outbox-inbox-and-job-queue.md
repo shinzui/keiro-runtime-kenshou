@@ -1147,7 +1147,32 @@ The full default control `01a0fee0-b358-726b-957d-40aadb403218` also passes:
 1,600 completed jobs, 31 explicit head retries and one abandoned/killed head,
 with 10 schema and 21 artifact checks and independent replay agreement.
 These local implementation controls do not add published baseline records.
-Clean publication and the overlap/visibility and fault-mode gates remain open.
+Clean publication is confirmed below; overlap/visibility and fault-mode gates remain open.
+
+### Clean scripted retry ordering evidence
+
+Eleven revision-4 investigations pass on durable PostgreSQL 18 at clean
+source/attester `d33337f9013a7ac556ed84f2bb00d5d755cd4100`, seed `8102429385822254`.
+They cover the ten retry/kill/no-retry controls and the full 1,600-job default:
+1,840 completed jobs, 59 explicit retries and 6 abandoned heads.
+All 112 schema checks and 233 artifact checks pass. All eleven investigations
+have confirmed independent VC-1 attestations with six passing evidence checks.
+This closes clean scripted-retry publication. Overlap/visibility coverage and
+the remaining fault-mode and soak replay work remain separate gates.
+
+| Control | Investigation | Attestation |
+| --- | --- | --- |
+| fifo-heads-kill-false | [01a0fee5-83e3-706b-a576-f055aa66de94](../verification/runs/keiro/2026/10/01a0fee5-83e3-706b-a576-f055aa66de94.md) | [confirmed](../verification/attestations/2026/10/01a0ff05-dab0-7292-bcde-d3462238f7de.md) |
+| fifo-heads-kill-true | [01a0fee5-9905-767c-ab37-c279d398fba9](../verification/runs/keiro/2026/10/01a0fee5-9905-767c-ab37-c279d398fba9.md) | [confirmed](../verification/attestations/2026/10/01a0ff06-f8fd-769e-85f6-77138cf2bd13.md) |
+| unordered-kill-false | [01a0fee5-cc0b-72b3-bc25-1d458c820a4c](../verification/runs/keiro/2026/10/01a0fee5-cc0b-72b3-bc25-1d458c820a4c.md) | [confirmed](../verification/attestations/2026/10/01a0ff08-3d37-70f5-b4b7-3908befa609b.md) |
+| unordered-kill-true | [01a0fee5-e034-7107-99b1-a0e4ae73d92f](../verification/runs/keiro/2026/10/01a0fee5-e034-7107-99b1-a0e4ae73d92f.md) | [confirmed](../verification/attestations/2026/10/01a0ff09-7d7d-753c-b041-7638e3a03c75.md) |
+| fifo-throughput-kill-false | [01a0fee6-136f-7655-b403-bc7fa0d04ac2](../verification/runs/keiro/2026/10/01a0fee6-136f-7655-b403-bc7fa0d04ac2.md) | [confirmed](../verification/attestations/2026/10/01a0ff0a-e6ce-7697-897a-ed878ca1ce83.md) |
+| fifo-throughput-kill-true | [01a0fee6-28ad-75bb-924d-3e21d6dbbf27](../verification/runs/keiro/2026/10/01a0fee6-28ad-75bb-924d-3e21d6dbbf27.md) | [confirmed](../verification/attestations/2026/10/01a0ff0c-94a0-72d1-88e7-32baefb04193.md) |
+| fifo-round-robin-kill-false | [01a0fee6-5d70-7334-87d7-35c3fa1a3f3d](../verification/runs/keiro/2026/10/01a0fee6-5d70-7334-87d7-35c3fa1a3f3d.md) | [confirmed](../verification/attestations/2026/10/01a0ff0e-0cf6-7646-9290-a3de2353e978.md) |
+| fifo-round-robin-kill-true | [01a0fee6-7680-7479-82f2-e48b7462b94f](../verification/runs/keiro/2026/10/01a0fee6-7680-7479-82f2-e48b7462b94f.md) | [confirmed](../verification/attestations/2026/10/01a0ff0f-5b59-7555-a0eb-64a3f111ebbd.md) |
+| fifo-heads-no-retry-kill-false | [01a0fee6-af03-73b5-b34a-1249b5845d1f](../verification/runs/keiro/2026/10/01a0fee6-af03-73b5-b34a-1249b5845d1f.md) | [confirmed](../verification/attestations/2026/10/01a0ff10-bae0-7067-9839-6a1b2ac21839.md) |
+| fifo-heads-no-retry-kill-true | [01a0fee6-bfe4-73ab-8303-11ba947d62b4](../verification/runs/keiro/2026/10/01a0fee6-bfe4-73ab-8303-11ba947d62b4.md) | [confirmed](../verification/attestations/2026/10/01a0ff12-2b79-72fe-96b2-c30720fca052.md) |
+| fifo-heads-default | [01a0fee6-f492-74cd-aafc-431d48a5f447](../verification/runs/keiro/2026/10/01a0fee6-f492-74cd-aafc-431d48a5f447.md) | [confirmed](../verification/attestations/2026/10/01a0ff13-97a2-77be-9593-701befd7fdd2.md) |
 
 ### Remaining non-soak work
 
