@@ -56,7 +56,9 @@ data CellOutcome = Completed | InfrastructureFailure | Cancelled | TimedOut
 data CellNodes = CellNodes
   { postgres :: !Text,
     drivers :: ![Text],
-    monitoring :: !Text
+    monitoring :: !Text,
+    -- | The optional broker role, present on cells that run one.
+    broker :: !(Maybe Text)
   }
   deriving stock (Eq, Show)
 
@@ -309,12 +311,12 @@ renderOutcome Cancelled = "cancelled"
 renderOutcome TimedOut = "timed-out"
 
 instance ToJSON CellNodes where
-  toJSON nodes = object ["postgres" .= nodes.postgres, "drivers" .= nodes.drivers, "monitoring" .= nodes.monitoring]
+  toJSON nodes = object (["postgres" .= nodes.postgres, "drivers" .= nodes.drivers, "monitoring" .= nodes.monitoring] <> maybe [] (\name -> ["broker" .= name]) nodes.broker)
 
 instance FromJSON CellNodes where
   parseJSON = withObject "cell nodes" \value -> do
-    nodes <- CellNodes <$> value .: "postgres" <*> value .: "drivers" <*> value .: "monitoring"
-    unless (not (Text.null nodes.postgres) && not (null nodes.drivers) && all (not . Text.null) nodes.drivers && not (Text.null nodes.monitoring)) (fail "invalid cell nodes")
+    nodes <- CellNodes <$> value .: "postgres" <*> value .: "drivers" <*> value .: "monitoring" <*> value .:? "broker"
+    unless (not (Text.null nodes.postgres) && not (null nodes.drivers) && all (not . Text.null) nodes.drivers && not (Text.null nodes.monitoring) && maybe True (not . Text.null) nodes.broker) (fail "invalid cell nodes")
     pure nodes
 
 instance ToJSON CellImages where

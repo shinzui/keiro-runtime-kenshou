@@ -1110,7 +1110,7 @@ withControl (CellLocation name selectedBucket) operation = do
 
 startCellInstances :: CellDescriptor -> IO ()
 startCellInstances descriptor = do
-  let names = descriptor.instances.postgres : descriptor.instances.drivers <> [descriptor.instances.monitoring]
+  let names = descriptor.instances.postgres : descriptor.instances.drivers <> [descriptor.instances.monitoring] <> maybe [] pure descriptor.instances.broker
       location = ["--project=" <> Text.unpack descriptor.project, "--zone=" <> Text.unpack descriptor.zone]
   states <-
     traverse

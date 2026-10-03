@@ -77,6 +77,11 @@ provenance:
       at: 2026-10-03T15:31:35Z
       mode: "implement"
       note: "Rebuilt rpk-pinned payload and reproduced BUG-5 on the broker-capable alpha cell"
+    - model: "claude-opus-5-5"
+      harness: "claude-code"
+      at: 2026-10-03T21:50:14Z
+      mode: "implement"
+      note: "Started the optional broker instance with cell run --start and refreshed the stale payload fixture"
 ---
 
 # Run kenshou on leased cells with payloads, submission and retrieval
@@ -178,6 +183,7 @@ Every kenshou run that executed on a cell remains an ordinary kenshou run direct
 
 ## Surprises & Discoveries
 
+- (2026-10-03) `kenshou cell run --start` started only the PostgreSQL, driver and monitoring instances. `CellNodes` had no field for the descriptor's optional `instances.broker`, so the broker VM `cell-alpha-broker` stayed `TERMINATED`. Every slice of the first EP-15 assembled-runtime cell session (`cell-runs/ep15-runtime-1`, lease `01a103a4-8179-711f-8dd9-ab3c036c2798`) then sealed `infrastructure-failure` with `reset-failed`. The driver agent's journal shows `role endpoint 10.0.0.5:27819 did not become ready within 180s`. `CellNodes` now parses the optional `broker`, and `startCellInstances` starts it. The payload publisher test's fixed released-descriptor digest and package count were also stale after `b9881d1` added keiro-ops; they now match the descriptor.
 - A soak’s load duration does not include delayed-message drain and statistical diagnosis. The old shared five-minute margin left about 103 seconds after the full inbox business verdicts; diagnosis replay took 300 seconds on the workstation. The client now budgets ten additional minutes per soak, while preserving finite cell limits and every scenario-level business deadline. This mitigation still needs a full-duration cell rerun.
 
 - A long-lived cell client can receive a `gcloud` CLI token with less than 45 minutes remaining. The prior cache assumed 45 minutes from first retrieval, so a later GCS metadata read returned HTTP 401 and aborted an otherwise recoverable paired session. Journal resume correctly retained seven verified slices, but it cannot turn the cancelled eighth slice or a two-lease session into a valid A/A control. The GCS adapter now invalidates the cached token on 401 and retries once. This is a harness finding, not an owner runtime failure.

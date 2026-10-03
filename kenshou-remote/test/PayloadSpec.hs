@@ -48,7 +48,7 @@ spec = describe "content-addressed payload publication" do
     descriptor <- case accepted of
       Left problem -> expectationFailure (show problem) >> error "unreachable"
       Right payload -> pure payload
-    descriptor.cohortCheck.packagesChecked `shouldBe` 41
+    descriptor.cohortCheck.packagesChecked `shouldBe` 42
     descriptor.cell.bundle.sha256 `shouldBe` work.sha256
     readIORef builds `shouldReturn` 1
     stored <- store.getObject (Bucket "control") (objectFor descriptor)
@@ -174,7 +174,7 @@ releasedIdentity = do
         "x86_64"
         (Just descriptor.descriptorIndexState)
         (PlanHash ("sha256:" <> Text.replicate 64 "a"))
-        "44c8d2c5a775e67346f6f84abbbe0a9ce15550df747c4647f2c8857fcd82370b"
+        "5c08f30a78a7d36ab707cde925813987356bdc46d0c3626b2882814db685cf56"
         (map resolved descriptor.descriptorComponents)
         (Just "nix")
     )

@@ -19,3 +19,4 @@ result-*
 /runs/
 /payloads/
 .pre-commit-config.yaml
+/cell-runs/
