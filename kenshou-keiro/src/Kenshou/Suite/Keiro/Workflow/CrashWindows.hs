@@ -36,7 +36,7 @@ import Kenshou.Core.Id (ScenarioId, parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), knobDouble, knobInt, knobText)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Role (ControlMessage (..), WorkerMessage (..))
-import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..))
+import Kenshou.Core.Scenario (CohortScope (..), KnownDefect (..), Placement (..), Scenario (..), ScenarioReport, Tier (..))
 import Kenshou.Suite.Keiro.Timer.Knobs (timerKnobs)
 import Kenshou.Suite.Keiro.Workflow.Definitions (DefinitionParams (..), childName, defaultDefinitionParams, expectedLinearSteps, linearName, parentName, parentWorkflow, sleeperName, sleeperWorkflow)
 import Kenshou.Suite.Keiro.Workflow.Effects (EffectSink (..))
@@ -80,7 +80,7 @@ childCompletionCrashWindow =
       dimensions = durableOnly,
       phases = zeroPhases,
       requires = keiroPostgres,
-      knownDefect = Nothing,
+      knownDefect = Just (KnownDefect "mori://shinzui/keiro/okf/bug-reports/concepts/BUG-8" "A child killed between its completion marker and the parent wake strands the parent" ["workflow-parent-completes-after-child-marker-crash"] AllCohorts),
       run = runChildWindow
     }
 
