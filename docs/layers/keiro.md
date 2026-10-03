@@ -420,6 +420,33 @@ PostgreSQL backends during an effect pause and restarts the PostgreSQL server.
 The worker survives and two other
 workers finish the cohort. The default 100-instance durable run passed exact
 journals, at-least-once effects, and zero consumed retry attempts.
+`keiro/workflow/correctness/replay-and-journal-identity` completes every
+fixture workflow kind through its suspensions and checks each generation's
+journal: deterministic step identifiers, unique indexed steps, one closing
+marker, and the `#<g>` stream suffix after rotation. It then redeploys a
+probe with reordered steps and one renamed step. Replay is by name: the
+reordered steps return their journaled values without running, the renamed
+step runs, and the old entry stays in the index.
+`keiro/workflow/concurrency/sleep-fire-crash-window` kills a timer worker
+after a sleep completion is journaled and before the timer is marked fired.
+It requires the timer to be requeued and fired at two attempts, one
+`sleep:nap` journal entry, and a completed workflow.
+`keiro/workflow/concurrency/lease-loss-stops-side-effects` holds one resume
+worker inside a step past the lease, by `SIGSTOP` or by a slow step
+(`workflow.lease-loss-mechanism`), while a second worker finishes the
+workflow. The step after the held one must run once, in the new owner. The
+stale owner must report a lease skip, and no attempt may be consumed.
+`keiro/workflow/concurrency/terminal-marker-first-writer-wins` races
+operator cancels from three driver processes against completion, then
+against failure at the attempt ceiling. Each instance must have one lifecycle
+marker that matches its status. Exactly one cancel may report `recorded`, and
+only when the cancel won. After the marker, at most the in-flight step may be
+journaled, which `cancelWorkflow` documents.
+`keiro/workflow/concurrency/child-completion-crash-window` kills a child
+runner after the child's completion marker commits and before the parent is
+woken. A control arm kills the same runner one append earlier. On keiro
+0.17.0.0 the control parent completes, and the window parent stays suspended
+indefinitely ([finding 63](../findings/63-keiro-child-completion-crash-strands-parent.md)).
 `keiro/wake/correctness/push-fallback-when-notify-dropped` runs one approval
 through a wake source that never notifies, then another through a push source
 whose `kiroku-listener` backend is terminated before the signal. At a one-second

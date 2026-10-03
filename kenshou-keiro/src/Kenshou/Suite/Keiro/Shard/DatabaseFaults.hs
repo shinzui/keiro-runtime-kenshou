@@ -26,6 +26,7 @@ import Kenshou.Core.Knob (knobInt)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Role (ControlMessage (..), WorkerMessage (..))
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..))
+import Kenshou.Suite.Keiro.Shard.Concurrency (bucketDuplicatesStatement, checkpointStatement, deliveryCells, firstDeliveryReversalsStatement)
 import Kenshou.Suite.Keiro.Shard.Knobs (shardKnobName, shardKnobs)
 import Kenshou.Suite.Keiro.Shard.Oracle (recordShardCells)
 import Kenshou.Suite.Keiro.Workflow.Fixture (durableKirokuStore, ensureDurableTables, runDurable, withDurableStore)
@@ -71,7 +72,8 @@ runDatabaseFaults context = withCheck context \check -> do
         sinkCount = runDurable fixture (runTransaction (Tx.statement () sinkCountStatement))
         ownership = runStoreIO store (ownershipSnapshotFor name)
         covered result = case result of Right rows -> length rows == bucketCount && all (\(_, owner, _) -> owner /= Nothing) rows; Left _ -> False
-    (appenderDone, backendPresent, hookSeen, postmasterRecovered, workerStayedAlive, drained, finalCoverage) <- withSupervisor check \supervisor -> do
+        checkpoints = runDurable fixture (runTransaction (Tx.statement "kenshouShardDatabaseFaults" checkpointStatement))
+    (appenderDone, backendPresent, hookSeen, postmasterRecovered, workerStayedAlive, drained, finalCoverage, checkpointSamples) <- withSupervisor check \supervisor -> do
       appenderSpec <- roleProcess check "keiro/shard-appender" 0 (object ["eventCount" .= eventCount, "streamCount" .= streamCount, "idPrefix" .= ("kenshou:shard:database-fault:" :: Text), "streamPrefix" .= ("account-database-fault-" :: Text)])
       appender <- spawn supervisor appenderSpec
       awaitReady appender 10000
@@ -88,6 +90,7 @@ runDatabaseFaults context = withCheck context \check -> do
       sendCommand worker CtlStart
       _ <- waitUntil (covered <$> ownership) 160
       _ <- waitUntil ((\count -> case count of Right value -> value > 0 && value < eventCount; Left _ -> False) <$> sinkCount) 80
+      c0 <- checkpoints
       backends <- listBackends postgres
       let backendPresent = any (Text.isPrefixOf "kenshou-shard-fault" . (.applicationName)) backends
       handle <- (terminateBackends postgres (ByApplicationName "kenshou-shard-fault%")).inject
@@ -105,21 +108,27 @@ runDatabaseFaults context = withCheck context \check -> do
           )
           80
       drained <- waitUntil ((== Right eventCount) <$> sinkCount) (max 200 (eventCount `div` 10))
+      c1 <- checkpoints
       finalCoverage <- covered <$> ownership
       state <- atomically (progress worker)
       let workerStayedAlive = case state.lastMessage of Just (WrkError _) -> False; Just (WrkDone _) -> False; _ -> True
       _ <- stopGracefully supervisor worker 5000
-      pure (appenderDone == Just True, backendPresent, hookSeen, postmasterRecovered, workerStayedAlive, drained, finalCoverage)
-    recordShardCells
-      check
-      [ ("appender-prepared-events", appenderDone),
-        ("reader-backend-terminated", backendPresent),
-        ("error-hook-reported-reader-or-acquire", hookSeen),
-        ("postmaster-restarted", postmasterRecovered),
-        ("worker-survived-faults", workerStayedAlive),
-        ("all-events-delivered", drained),
-        ("ownership-recovered", finalCoverage)
-      ]
+      pure (appenderDone == Just True, backendPresent, hookSeen, postmasterRecovered, workerStayedAlive, drained, finalCoverage, [c0, c1])
+    reversals <- runDurable fixture (runTransaction (Tx.statement () firstDeliveryReversalsStatement))
+    duplicates <- runDurable fixture (runTransaction (Tx.statement () bucketDuplicatesStatement))
+    let batchSize = fromIntegral (knobInt context.knobs (shardKnobName "shard.batch-size"))
+    -- Two disturbances can restart readers from their checkpoints: the
+    -- backend termination and the postmaster restart.
+    recordShardCells check $
+      deliveryCells batchSize 2 checkpointSamples reversals duplicates
+        <> [ ("appender-prepared-events", appenderDone),
+             ("reader-backend-terminated", backendPresent),
+             ("error-hook-reported-reader-or-acquire", hookSeen),
+             ("postmaster-restarted", postmasterRecovered),
+             ("worker-survived-faults", workerStayedAlive),
+             ("all-events-delivered", drained),
+             ("ownership-recovered", finalCoverage)
+           ]
 
 waitUntil :: IO Bool -> Int -> IO Bool
 waitUntil _ 0 = pure False
