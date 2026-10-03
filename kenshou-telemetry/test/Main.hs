@@ -2,9 +2,9 @@ module Main (main) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (async, cancel, waitCatch)
-import Control.Concurrent.MVar (newEmptyMVar, putMVar, readMVar)
+import Control.Concurrent.MVar (newEmptyMVar, putMVar, readMVar, tryPutMVar)
 import Control.Exception (bracket)
-import Control.Monad (replicateM_, void)
+import Control.Monad (forM_, replicateM_, void)
 import Data.IORef
 import Data.List (find)
 import Data.Map.Strict (Map)
@@ -38,9 +38,12 @@ import OpenTelemetry.Context.ThreadLocal (getContext)
 import OpenTelemetry.Exporter.Span (ExportResult (..), SpanExporter (..))
 import OpenTelemetry.Processor.Batch.Span qualified as Batch
 import OpenTelemetry.Processor.Simple.Span qualified as Simple
+import OpenTelemetry.Processor.Span (SpanProcessor (..))
 import OpenTelemetry.Propagator (emptyTextMap, inject, textMapToList)
 import OpenTelemetry.Trace.Core
 import System.Directory (createDirectoryIfMissing)
+import System.Mem (performMajorGC)
+import System.Mem.Weak (Weak, deRefWeak, mkWeakPtr)
 import System.Timeout (timeout)
 import Test.Hspec
 
@@ -140,6 +143,16 @@ main = hspec do
       snapshot.spansDropped `shouldBe` 0
       _ <- stopTracing 1000 runtime
       pure ()
+
+    it "releases evicted spans before anyone reads the bounded probe" do
+      forM_ [0, 1] \capacity -> do
+        (probe, provider, weak) <- probeWithEvictedSpan capacity
+        performMajorGC
+        (isNothing <$> deRefWeak weak) `shouldReturn` True
+        spansSeen probe `shouldReturn` 10
+        (length <$> readSpans probe) `shouldReturn` capacity
+        _ <- shutdownTracerProvider provider (Just 1000000)
+        pure ()
 
     it "exports plain and gzip OTLP requests to the built-in sink" do
       forCompression CompressionNone
@@ -330,3 +343,24 @@ blocks slots = [[slot | slot <- slots, slot.block == block] | block <- unique (f
 isLeft :: Either left right -> Bool
 isLeft (Left _) = True
 isLeft (Right _) = False
+
+-- Keeping the provider and probe alive must not keep a span outside the
+-- retention window alive. Do not force readSpans/spansSeen before the GC.
+{-# NOINLINE probeWithEvictedSpan #-}
+probeWithEvictedSpan :: Int -> IO (SpanProbe, TracerProvider, Weak SpanHot)
+probeWithEvictedSpan capacity = do
+  (probe, processor) <- newSpanProbe capacity
+  first <- newEmptyMVar
+  let observing =
+        processor
+          { spanProcessorOnEnd = \spanValue -> do
+              hot <- readIORef spanValue.spanHot
+              weak <- mkWeakPtr hot Nothing
+              void (tryPutMVar first weak)
+              processor.spanProcessorOnEnd spanValue
+          }
+  provider <- createTracerProvider [observing] emptyTracerProviderOptions
+  let tracer = makeTracer provider (instrumentationLibrary "probe-retention-test" "0.1.0.0") tracerOptions
+  replicateM_ 10 (inSpan tracer "evicted" defaultSpanArguments (pure ()))
+  weak <- readMVar first
+  pure (probe, provider, weak)

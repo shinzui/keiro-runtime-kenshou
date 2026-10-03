@@ -33,7 +33,9 @@ data SpanView = SpanView
   }
   deriving stock (Eq, Show)
 
-data ProbeState = ProbeState {seen :: Int, retained :: Seq SpanView}
+-- Evict during capture, even when nobody reads the probe during a long run.
+-- A strict IORef update alone only forces the outer constructor.
+data ProbeState = ProbeState {seen :: !Int, retained :: !(Seq SpanView)}
 
 data SpanProbe = SpanProbe {capacity :: Int, state :: IORef ProbeState}
 

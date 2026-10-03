@@ -496,7 +496,7 @@ unrelated infrastructure cleanup.
 
 | Child plan | Remaining deliverable | Current constraint |
 |---|---|---|
-| [EP-13 — messaging](../plans/13-cover-the-keiro-outbox-inbox-and-job-queue.md#acceptance-reconciliation-and-finite-remaining-work) | Finish queue/inbox worker-process diagnosis, remaining process-role telemetry, independent replay for selected baseline evidence, finding 3 attribution, and final guide/package acceptance. | The child acceptance table reconciles the existing outbox/inbox/queue matrices and required negative controls; no open-ended matrix expansion remains. The two representative SQL controls have confirmed independent attestations. Both overhead reports and a permitted inconclusive A/A exist. All three repaired full-soak artifact sets pass; their independent business replay remains open. Outbox process reports preserve insufficient-duration results for killed incarnations. Runtime repairs and a further standard/unlogged performance comparison are outside these completion gates. |
+| [EP-13 — messaging](../plans/13-cover-the-keiro-outbox-inbox-and-job-queue.md#acceptance-reconciliation-and-finite-remaining-work) | Confirm repaired process resource controls, finish independent replay for selected baseline evidence and finding 3 disposition, and close final guide/package acceptance. | The child acceptance table reconciles the existing outbox/inbox/queue matrices and required negative controls; no open-ended matrix expansion remains. The two representative SQL controls have confirmed independent attestations. Both overhead reports and a permitted inconclusive A/A exist. All three repaired full-soak artifact sets pass; their independent business replay remains open. All three process-role telemetry implementations and short endpoint controls exist; finding 56 repair needs matched queue/inbox resource confirmation. Outbox process reports preserve insufficient-duration results for killed incarnations. Runtime repairs and a further standard/unlogged performance comparison are outside these completion gates. |
 | [EP-15 — assembled runtime](../plans/15-verify-the-assembled-runtime-end-to-end-and-under-soak.md) | Build the two-context worker topology and persistent business flow, independent SQL money/stock/terminal-state oracles, failure matrix, gated one/four/twenty-four-hour soaks, benchmarks, and whole-system telemetry comparison. | Domain, wire, ledger and broker seams exist, and the local two-topic wire smoke passed. That smoke does not exercise the two databases or establish an end-to-end order outcome. Controlled cell execution needs the required broker capability. |
 | [EP-12 — write side](../plans/12-cover-the-keiro-command-processor-process-managers-and-routers.md) | Finish generalized fixture roles/oracles, the remaining matrix, benchmarks, telemetry, full soak, and guide/acceptance. | Finding 44 needs capacity-versus-drain-budget isolation; finding 46 needs writer-only or profile isolation. Low-rate business checks passed; the default-rate run still missed its drain deadline. Existing Kiroku leak reports do not excuse unrelated failures. |
 | [EP-14 — durable execution](../plans/14-cover-keiro-durable-execution-timers-and-sharded-subscriptions.md) | Complete workflow definitions, crash/fault schedules, shard checkpoint and metrics assertions, benchmarks, soak pairs, telemetry, and final guide/acceptance. | Missing coverage and assertions remain implementation work; no blanket wait for a runtime fix is recorded. |
@@ -516,7 +516,7 @@ Cross-plan baseline handoff gates remain open:
 - [ ] Close finding attribution and reporting gaps with an existing or new
   owner record or a documented non-bug disposition. Unresolved investigations
   keep this gate open and must be explicit in the working report. The register
-  contains 55 numbered findings,
+  contains 56 numbered findings,
   32 distinct owner bug records and ten improvement requests; a count of
   reports is not a count of repairs or verified fixes.
 - [ ] Supply independent replayable verdict checks for the selected evidence
@@ -630,11 +630,11 @@ Numbered finding coverage is tracked separately from distinct owner records:
 |---|---:|
 | Owner bug report linked (including two Keiro reports now marked duplicate) | 31 |
 | Owner improvement request linked as the primary disposition | 6 |
-| Local suite findings (including findings 39–43, 45, 48, and 50–55) | 14 |
+| Local suite findings (including findings 39–43, 45, 48, and 50–56) | 15 |
 | Owner improvement request URI not recorded | 0 |
 | Unattributed runtime observations under investigation | 2 |
 | Infrastructure observations with final attribution open | 2 |
-| **Numbered findings** | **55** |
+| **Numbered findings** | **56** |
 
 Of the 32 linked bug records, 16 are reported, 14 are marked fixed by their
 owners, and two Keiro reports are marked duplicates of
@@ -704,6 +704,7 @@ disposition changes.
 - EP-13 retry-budget oracle finding: [local finding 53](../findings/53-outbox-terminal-oracle-rejects-single-attempt-exhaustion.md); owner is this repository. A transient failure correctly ends dead when only one attempt is allowed. The repaired terminal oracle and independent replay accept that boundary and reject premature exhaustion at two attempts; sixteen policy/key/budget controls pass. No upstream owner issue is added.
 
 - EP-13 terminal replay identity gap: [local finding 54](../findings/54-terminal-replay-accepts-duplicate-final-row-substitution.md); owner is this repository. The recomputer previously accepted a same-size final-row substitution. Exact final identity coverage and four policy-specific mutations now address that local gap; no upstream owner issue is added.
+- EP-13 process telemetry exposed [local finding 56](../findings/56-bounded-trace-probe-retains-evicted-spans.md): lazy bounded-probe state retains evicted spans. The focused test fails before and passes after strict-state repair; matched process resource confirmation remains pending. This repairs an existing soak acceptance blocker without adding a child plan or owner report.
 - EP-13 polling recovery gap: [local finding 55](../findings/55-polling-recovery-reuses-pre-fault-completions.md). Revision 3 now requires fresh work after every fault, including the last, and independently replays lifecycle and SQL coverage. Nineteen controls and the full verification gate pass their expected outcomes; short interruptions reproduce existing owner failures while explicit restart recovers after five long outages. Six clean polling investigations now have confirmed independent attestations, preserving four failures and two explicit-restart passes.
 
 ## Decision Log
