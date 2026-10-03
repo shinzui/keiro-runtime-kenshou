@@ -38,6 +38,7 @@ library
   hs-source-dirs: src
   exposed-modules:
     Kenshou.Env.Kafka
+    Kenshou.Env.Kafka.Access
     Kenshou.Env.Kafka.Admin
     Kenshou.Env.Kafka.External
     Kenshou.Env.Kafka.Naming

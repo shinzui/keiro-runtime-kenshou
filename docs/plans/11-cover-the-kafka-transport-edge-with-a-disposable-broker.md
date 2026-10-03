@@ -32,6 +32,11 @@ provenance:
       at: 2026-09-29T20:33:51Z
       mode: "implement"
       note: "Repaired broker requirements for the live Kafka catalog and excluded a brokerless cell attempt."
+    - model: "claude-opus-5-5"
+      harness: "claude-code"
+      at: 2026-10-03T06:05:39Z
+      mode: "implement"
+      note: "Closed released repetitions, sabotage controls, BUG-5 local reproduction, and the plan-15 broker interface"
 ---
 
 # Cover the Kafka transport edge with a disposable broker
@@ -78,6 +83,29 @@ cabal run kenshou -- run kafka/adapter/concurrency/sigkill-redelivery-window --o
   | head | 52 | `01a0e468-f036-77f5-aa43-d994e925ec64` | Passed |
   | head | 53 | `01a0e469-7736-7775-bb19-e37556d09a59` | Passed |
 
+- [x] (2026-10-03) Closed the `Kenshou.Env.Kafka` gaps the assembled runtime needs (commit `9c8f98e`). When lanes are proxied, the private broker now also publishes one unproxied `control` listener. Its address is `KafkaEnv.adminBrokers`, and all fixture administration and post-`start` readiness probes use it, so a blackholed client lane no longer blinds offset and lag sampling. New additive exports: `KafkaEnvUnavailable`, `unavailableReason` (`lanes-unavailable`, `broker-control-unavailable`), `requestLanes`, `laneAt`, `laneProxy`, `requireControl`, `groupLag`, `topicLag` and `adminAddresses`; every earlier export is unchanged. `kenshou-runtime` builds against them and imports only `Kenshou.Env.Kafka`, never `Kenshou.Suite.Kafka.*`, which satisfies the whole-plan import criterion. `fixture-roundtrip` revision 2 blackholes lane 0 and requires a group description to succeed. Eleven package examples pass, including the access and lag helpers.
+- [x] (2026-10-03) `partitioned-consumer-becomes-zombie` revision 2 adds a replacement-drain control (commit `9c8f98e`). Clean released run `01a10032-3557-75d3-948c-709bb860ac4d` exercised it: both original members ended normally after the post-heal rebalance, leaving 2,821 acknowledged IDs unhandled. The replacement handled all 2,821, nothing was missing, and only the scoped BUG-4 labels `zombie-zero-lag` and `zombie-consumer-exit` remained, so the result was nonblocking.
+- [x] (2026-10-03) Added a `kafka.sabotage` control to all eleven broker-backed correctness and concurrency oracles that have no known-defect reference (commit `741434f`); a package test keeps the set complete. A clean released pass with seed 60 ran each sabotage value, and every run failed with exactly its ordinary label: `fixture-roundtrip` `01a10023-9c37-7517-a7f6-92b04109ef15` (`roundtrip`), `ack-ok-commits-and-resumes` `01a10026-14a4-745f-b095-128868dbc33b`, `dead-letter-drops-record` `01a10028-7592-77e5-9a5f-f58c77c487e1`, `halt-leaves-offset-uncommitted` `01a10029-3307-7704-b178-3568504a608e`, `roundtrip-through-broker` `01a1002b-9314-727b-a359-b6bcb4e7e8ac` (`keiro-record-roundtrip`), `acked-offsets-and-batch-loop` `01a1002b-e445-76a6-bbe5-408d67e1529b`, `kill-and-restart` `01a1002c-1a58-7260-94c0-5647752a4b4e` (`broker-restart`), `stale-barrier-after-partition-roundtrip` `01a1002e-8324-779e-98f8-168b916abca8` (`roundtrip-new-records`), `transactions-commit-and-abort` `01a1002f-d2c6-705c-8113-ddda5e81505e`, `static-membership-restart-without-revoke` `01a10030-31d7-71f3-b171-291193cb3c46` (`static-member-survivor-revoked`), and `sigkill-redelivery-window` `01a10030-7713-72b4-bf10-11153c34bb4a` (`sigkill-no-loss`). This meets the Milestone 2 and 3 non-vacuity requirement.
+- [x] (2026-10-03) Clean controlled local BUG-5 reproduction, closing the gap that [finding 40](../findings/40-kenshou-kafka-scenarios-omit-broker-requirement.md) left open. Released-cohort run `01a10031-f68b-730b-bbeb-add4fcde7283` (clean tree at `741434f`, under the shared host lock) showed the predicted counter-example: first delivery 0–9, redelivery of only 4–9, committed offset 10, and offset 3 with no successful decision (`missingBelowCommit=[3]`). The result was `barrier-overwrite-no-loss`, known defect `reproduced`, nonblocking.
+- [x] (2026-10-03) Released half of the Milestone 2 and 3 repetition criterion: each of the eleven no-defect broker scenarios passed on three consecutive different seeds (61, 62, 63) from a clean tree (`741434f`, with stale-barrier at `6197e61`). Every one of the 33 runs had `outcome=passed` and `dirty=false`, and each ran under the shared host lock. The only failure, stale-barrier seed 62 at revision 1 (`01a10044-91f8-7481-bc5c-b0d7598886e7`), missed a 30-second harness drain deadline. Revision 2 removes that rate bound, and its three seeds passed. Run IDs:
+
+  | Scenario | Seed and run ID |
+  | --- | --- |
+  | `kafka/broker/correctness/fixture-roundtrip` | 61 `01a10036-1b9a-77e8-b6aa-1760d2e758b1`, 62 `01a10043-0757-72c8-8805-3f4bdf2149e7`, 63 `01a1004c-146e-7415-82c5-2d8d59946836` |
+  | `kafka/adapter/correctness/ack-ok-commits-and-resumes` | 61 `01a10036-5a50-73d4-bf1e-82bffa923bb6`, 62 `01a10043-37be-770d-b466-eaed3b68719f`, 63 `01a1004c-3f7e-7652-8ffc-5223bf70d863` |
+  | `kafka/adapter/correctness/dead-letter-drops-record` | 61 `01a10036-aab4-76bd-a529-e63afcbbbcee`, 62 `01a10043-72c4-7443-8a5a-e559de7989ca`, 63 `01a1004c-7b8d-7583-91d9-c513cc8d3fd1` |
+  | `kafka/adapter/correctness/halt-leaves-offset-uncommitted` | 61 `01a10036-de55-729d-8174-ac170801d429`, 62 `01a10043-a603-7183-b515-c9e374559e9e`, 63 `01a1004c-af54-752f-b012-97d2b833c697` |
+  | `kafka/keiro-records/correctness/roundtrip-through-broker` | 61 `01a10037-ee1d-704d-9d4c-657ba5e5d29f`, 62 `01a10043-d4d7-70f9-8a98-dc80b39d80a7`, 63 `01a1004c-e1f6-7507-b03b-e09d73dd9674` |
+  | `kafka/producer/correctness/acked-offsets-and-batch-loop` | 61 `01a10038-1f24-7391-8683-581951f3fe4a`, 62 `01a10044-038a-77b1-90fd-b72a5b31bf86`, 63 `01a1004d-1225-7109-b325-96ca61eb4b2f` |
+  | `kafka/broker/concurrency/kill-and-restart` | 61 `01a10038-5e4e-70ab-8ec7-25a368bedb58`, 62 `01a10044-2e11-730b-ac50-44f61cf5d3d5`, 63 `01a1004d-3dbb-778e-aed4-17a388078e87` |
+  | `kafka/producer/correctness/transactions-commit-and-abort` | 61 `01a1003c-8fdf-70ad-aeb9-cf33863e6420`, 62 `01a10046-e91d-758b-bb3f-d6454090300a`, 63 `01a1004e-2273-7161-9fdd-76aaa273ef73` |
+  | `kafka/consumer/concurrency/static-membership-restart-without-revoke` | 61 `01a1003d-45f4-7203-b70c-b2d3ac7d95a7`, 62 `01a10048-4ea7-750e-a90a-a5caee4754b2`, 63 `01a1004e-6fcd-73f9-abc4-bc1b7f7d5102` |
+  | `kafka/adapter/concurrency/sigkill-redelivery-window` | 61 `01a1003d-7a3f-704d-bf9b-214c7480e45e`, 62 `01a10048-c591-7025-8f7c-8db848141acd`, 63 `01a1004e-a4a7-7214-9552-d3ce8b430946` |
+  | `kafka/adapter/concurrency/stale-barrier-after-partition-roundtrip` (revision 2) | 61 `01a10056-c844-7189-822e-541cc40a8bb7`, 62 `01a10057-87d6-724f-86a3-549770de3e93`, 63 `01a10059-119e-72a4-897c-c38af866198a` |
+
+  These local run directories are functional acceptance evidence and are not recorded in the historic evidence bundle.
+- [ ] Head half of the repetition criterion. It is blocked: the head cohort does not currently build `kenshou-cli`. `kenshou-keiro/src/Kenshou/Suite/Keiro/Queue/Metrics.hs:167` matches `Processing info _`, but the head-pinned shibuya `6461c74` gives that constructor three fields. The module belongs to the Keiro plans, so it is reported to the MasterPlan rather than changed here. The six earlier head fencing runs remain valid evidence for that one scenario.
+
 ## Surprises & Discoveries
 
 - On 2026-09-24, `pkgs.redpanda-client` failed ordinary Nix evaluation because nixpkgs marks `redpanda-rpk-26.2.2` unfree. The project shell now imports the same pinned nixpkgs with `config.allowUnfree = true` for `rpk`, following the owner's stated project standard. The existing homebrew `rpk` 26.2.3 was used for the first broker probes.
@@ -120,10 +148,33 @@ cabal run kenshou -- run kafka/adapter/concurrency/sigkill-redelivery-window --o
 - The final reduced rebalance run `01a0d6b3-b843-7149-a2b2-981e6a1734ef` acknowledged and handled all 4,000 IDs, reached zero lag, and cleared the duplicate and owner-overlap labels. It still saw member 3 process partition 4 offset 200 then 165 within one assignment after the sampled committed position had reached 173. A second independent run showed the same pattern on partition 0. The owner report is `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-6`, committed as `bef1328`; the local evidence is `docs/findings/9-kafka-rebalance-replays-committed-offsets-out-of-order.md`. The adapter versus runner source path is unresolved. At that point the scenario's single known-defect reference covered BUG-4's early exits, so the independent BUG-6 order failure remained blocking until the grouped contract was added.
 - The reduced churn soak `01a0d6b5-212e-73ca-b1ae-70bf7f40d055` completed at 100 records/s and a ten-second join/leave cadence. All 120,000 broker-acknowledged IDs appeared in the fixed-size worker ledgers, no worker reported an error, and the group ended at zero lag. Sixty short-lived members had `InsufficientData` leak diagnoses, as their lifetimes are below the diagnostic window; the continuous member had 124 samples, 42 reduced native-memory points and a `Stable` verdict (`below-growth-floor`). This lower-load run did not exercise the intended deep backlog strongly enough to establish that the released `hw-kafka-client` redirect-race leak is absent. The default-rate and head-cohort contrast remain open.
 - The revision-one rebalance rerun `01a0e3b1-e07a-71da-b70d-d296864b6e51` conserved all 4,000 acknowledged IDs and reached zero lag while reproducing BUG-4 and BUG-6. The grouped classifier correctly left `rebalance-duplicate-beyond-commit` blocking. Inspection of the worker logs found that eighteen of its first twenty reported duplicate IDs crossed an actual later assignment callback that the four planned membership snapshots missed. The nineteenth crossed an assignment callback on the same worker; one value, 2353 on partition 7 at offset 198, repeated inside one assignment after offset 199. Revision two now reports duplicates below a sampled commit boundary separately from repeats within one assignment, and preserves duplicates across an unsampled callback as unresolved evidence rather than asserting that they crossed a commit boundary.
+- On 2026-10-03 an in-lock local zombie run at the 5,000-record default had both original members end normally right after the post-heal rebalance. About 2,600 acknowledged IDs then had no handler fact, and revision 1 reported the blocking label `zombie-no-loss`. The IDs were still on the broker; the run reached no member that could handle them, which is BUG-4's consequence rather than loss. A later clean run had the same exit pattern with 2,821 unhandled IDs, and revision 2's replacement handled all of them. Earlier 2,000-record runs happened to exit only after the originals had handled everything.
+- Every stale-barrier run shows the same drain profile on the moved partition: B handled about 150–200 records in its first second, then about three records per second with occasional bursts. On returning, A drained at the same three-per-second rate. The profile was identical with `environment.kafka.lanes = 0` (diagnostic run `01a10051-fd7d-767f-9174-2e3b4f0f01cf`, no TCP proxy), so the harness proxy does not cause it. The fresh consumers in `ack-ok-commits-and-resumes` and the zombie survivor drained thousands of records per second. The trickle therefore follows an assignment received by rebalance in a group with a pending-barrier member, but neither the adapter nor the binding is attributed yet. It is not filed as a finding: the head-cohort comparison that would separate the released `hw-kafka-client` from the fork is blocked by the head build failure recorded in Progress. Revision 2 records `movedPartitionDrainSeconds`; clean runs took 7.3, 10.3 and 32.3 seconds.
+- Do not edit tracked files while a clean repetition pass is running in the same worktree. `kenshou run` computes `dirty` from `git status --porcelain` at run start, and a rebuild replaces the executable the pass uses. A pass started on `9c8f98e` was stopped and discarded for this reason; all accepted runs above started from a committed, untouched tree.
 - Revision-two run `01a0e3b6-2dc7-7123-a713-3dd2b7d1eedf` acknowledged and handled all 4,000 IDs, ended at zero lag, and found no ordering, duplicate or owner-overlap violation. Two released adapter workers exited before stop, so the run kept `outcome=failed` but sealed `blocking=false` and exit code 0 under BUG-4. Its grouped result lists BUG-4 as reproduced and BUG-6 as not reproduced. A future run can reproduce both without attributing one report's labels to the other; an unfamiliar label still blocks by the core tests.
 
 
 ## Decision Log
+
+- Decision: When the private broker has proxied lanes, it publishes one extra unproxied `control` listener, and all fixture administration uses it.
+  Rationale: The assembled runtime partitions one context's lane while its oracles still sample committed offsets and lag. Before this change, administration went through lane 0's proxy, so blackholing lane 0 also blinded the oracle. Clients never receive the control address unless a scenario reads `adminBrokers`. With `lanes = 0`, administration keeps using the single direct listener.
+  Date: 2026-10-03
+
+- Decision: Missing optional broker capabilities are reported through `Kenshou.Env.Kafka.Access` with the existing labels `lanes-unavailable` and `broker-control-unavailable`.
+  Rationale: Plan 15 may import only `Kenshou.Env.Kafka`. A typed lookup keeps every consumer from matching on `KafkaEnv` internals and repeating the label strings, and `requestLanes` leaves an external specification unchanged instead of making it invalid.
+  Date: 2026-10-03
+
+- Decision: Each broker-backed correctness or concurrency scenario without a known defect gets one `kafka.sabotage` value that corrupts its collected evidence before judgment. Scenario revisions are unchanged because the default `none` behaves exactly as before.
+  Rationale: The acceptance criterion needs one deliberate sabotage per oracle. A live control proves the judgment path that real runs use, not a separately written pure checker. This follows the existing `router.sabotage` and `pgmq.sabotage` precedent.
+  Date: 2026-10-03
+
+- Decision: Zombie revision 2 judges no loss over the original members plus a replacement member, while keeping the originals' zero-lag and exit verdicts.
+  Rationale: BUG-4 can end every original member, leaving durable records unhandled. Calling that loss would turn a known, scoped defect into a blocking false loss report. The replacement separates "on the broker but unhandled" from "lost", and its own errors block.
+  Date: 2026-10-03
+
+- Decision: Stale-barrier revision 2 removes the 30-second drain bound for the moved partition, waits up to 90 seconds, and records the drain duration.
+  Rationale: The scenario's contract is that B drains the moved partition, not how fast. A clean seed-62 run missed the bound by six records because of the unattributed slow-drain profile. A rate bound would make the barrier contract flaky without measuring the rate properly. The duration stays in every verdict, so the anomaly remains visible until it is attributed.
+  Date: 2026-10-03
 
 - Decision: Declare BUG-4 and BUG-6 as separate, cohort-scoped entries in the rebalance scenario's grouped known-defect contract, and classify duplicate replay by assignment and sampled commit evidence.
   Rationale: The two owner reports explain different failure labels. A single reference either leaves one known failure blocking or falsely attributes it to the other report. Four scheduled group snapshots do not identify every assignment change after a worker exits, so a duplicate after an unsampled callback cannot prove a commit-boundary violation. Same-assignment replay is part of BUG-6's observed order regression; a duplicate below a sampled commit remains blocking.
@@ -206,6 +257,19 @@ EP-15, and cell-duration evidence remain. The head cohort pins the required
 `hw-kafka-streamly` classifier commit.
 Additional benchmark comparisons are deferred while the workstation is busy;
 existing local figures carry only exploratory meaning.
+
+As of 2026-10-03, the released half of the Milestone 2 and 3 repetition
+criterion is met. All eleven no-defect broker oracles passed three clean
+different-seed runs, and each has a recorded failing sabotage control. BUG-5
+has a clean controlled local reproduction. The broker interface plan 15 needs
+is complete: a lane fault no longer affects administration, typed capability
+lookups exist, and per-group lag is available. `kenshou-runtime` compiles
+against `Kenshou.Env.Kafka` alone. Remaining work: the head half of the
+repetitions, blocked by a head-cohort build failure in `kenshou-keiro`;
+attribution of the slow drain after a rebalance; full-rate churn and
+4-hour soaks on a quiet broker-capable cell; controlled benchmark and
+telemetry-overhead comparisons, which need plan 16's broker role; and the
+assembled-runtime integration proof in plan 15.
 
 
 ## Context and Orientation
@@ -600,5 +664,9 @@ data OffsetStoreMode = ManualStore | AutoStoreMisconfigured -- the second exists
 ```
 
 Other plans consume the following from this one. `docs/plans/15-verify-the-assembled-runtime-end-to-end-and-under-soak.md` imports `Kenshou.Env.Kafka` for the broker between its two contexts, including `BrokerControl` for its broker-restart case and lanes for its network-partition case; it must not import `Kenshou.Suite.Kafka.*`. `docs/plans/3-plan-and-select-runs-from-what-changed.md` maps the runtime components `shibuya-kafka-adapter`, `kafka-effectful`, `hw-kafka-streamly`, `hw-kafka-client` and keiro's record modules to the selectors `kafka/adapter/**`, `kafka/consumer/**`, `kafka/producer/**`, `kafka/telemetry/**`, `kafka/keiro-records/**`, with `kafka/pipeline/**` and `kafka/broker/**` selected by any of them. `docs/plans/16-provide-leased-verification-cells-in-load-testing-infra.md` and `docs/plans/17-run-kenshou-on-leased-cells-with-payloads-submission-and-retrieval.md` supply, on a cell, the broker address and optional control hooks that fill the `environment.kafka` object of each run specification; nothing in the cell protocol needs to know about Kafka beyond that.
+
+Added on 2026-10-03 (all additive): `Kenshou.Env.Kafka` also exports `KafkaEnvUnavailable (LanesUnavailable, LaneProxyUnavailable, BrokerControlUnavailable)`, `unavailableReason :: KafkaEnvUnavailable -> Text`, `requestLanes :: Int -> KafkaEnvSpec -> KafkaEnvSpec`, `laneAt :: KafkaEnv -> Int -> Either KafkaEnvUnavailable BrokerLane`, `laneProxy :: KafkaEnv -> Int -> Either KafkaEnvUnavailable TcpProxy`, `requireControl :: KafkaEnv -> Either KafkaEnvUnavailable BrokerControl`, `groupLag :: GroupSnapshot -> Maybe Int64`, `topicLag :: TopicName -> GroupSnapshot -> Maybe Int64` and `adminAddresses :: KafkaEnv -> [BrokerAddress]`. `KafkaEnv` gains the field `adminBrokers :: [BrokerAddress]`: the unproxied control listener on a private broker with proxied lanes, otherwise the client address. Code that constructs `KafkaEnv` positionally must add it; field access is unaffected. `Kenshou.Suite.Kafka.Fixture` exports `sabotageKnob`, `sabotaged` and `sabotageDropFirst` for this layer's oracles.
+
+Revision note (2026-10-03): Added the control listener and typed access helpers for plan 15, a sabotage control for every no-defect broker oracle, zombie revision 2 (replacement drain), and stale-barrier revision 2 (no drain-rate bound). Recorded the clean released repetitions, the clean BUG-5 reproduction, the head-cohort build blocker, and the unattributed slow drain after a rebalance.
 
 Revision note (2026-09-27): Split the rebalance reports into separate scoped owner defects and distinguished sampled commit violations from replay across unsampled assignments.

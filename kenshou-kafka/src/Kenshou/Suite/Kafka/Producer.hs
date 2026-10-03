@@ -17,7 +17,7 @@ import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
 import Kenshou.Env.Kafka
-import Kenshou.Suite.Kafka.Fixture (consumeValues, firstBrokers, produceValues)
+import Kenshou.Suite.Kafka.Fixture (consumeValues, firstBrokers, produceValues, sabotageDropFirst, sabotageKnob)
 
 scenarios :: [Scenario]
 scenarios =
@@ -27,7 +27,7 @@ scenarios =
         summary = "Checks acknowledged offsets, batch enqueue, and delivery callbacks against a broker.",
         tier = TierSmoke,
         placement = PlaceEither,
-        knobs = [],
+        knobs = [sabotageKnob "drop-first-fact"],
         dimensions = allTelemetryArms noDimensions,
         phases = zeroPhases,
         requires = kafkaEnvironment,
@@ -53,7 +53,7 @@ runModes context = do
       pure failedEnqueues
     failedEnqueues <- either (ioError . userError . show) pure result
     delivered <- readIORef reports
-    received <- consumeValues env 0 topic "producer-modes" 1020
+    received <- sabotageDropFirst context <$> consumeValues env 0 topic "producer-modes" 1020
     _ <- deleteRunGroups env
     _ <- deleteRunTopics env
     let syncOffsets = fmap unOffset synchronous

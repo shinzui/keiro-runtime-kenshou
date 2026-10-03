@@ -22,7 +22,7 @@ import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Role (ControlMessage (..), WorkerMessage (..))
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
 import Kenshou.Env.Kafka
-import Kenshou.Suite.Kafka.Fixture (firstBrokers, intKnob, produceValues)
+import Kenshou.Suite.Kafka.Fixture (firstBrokers, intKnob, produceValues, sabotageKnob, sabotaged)
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
@@ -36,7 +36,8 @@ scenarios =
         knobs =
           [ intKnob "kafka.messages" "Acknowledged records" 20000 200 100000,
             intKnob "kafka.kills" "Consumer SIGKILL cycles" 3 1 8,
-            intKnob "kafka.prop.auto.commit.interval.ms" "Auto-commit interval in milliseconds" 1000 100 10000
+            intKnob "kafka.prop.auto.commit.interval.ms" "Auto-commit interval in milliseconds" 1000 100 10000,
+            sabotageKnob "drop-first-fact"
           ],
         dimensions = allTelemetryArms noDimensions,
         phases = zeroPhases,
@@ -79,7 +80,7 @@ runSigkill context = do
       finished <- awaitGroup env group 45 (\snapshot -> length snapshot.offsets == 4 && all ((== Just 0) . (.lag)) snapshot.offsets)
       _ <- stopGracefully supervisor lastChild 5000
       lastFacts <- factsFrom lastChild
-      pure (acknowledged, oldFacts <> [lastFacts], oldBoundaries, finished)
+      pure (acknowledged, sabotageFirstFact context (oldFacts <> [lastFacts]), oldBoundaries, finished)
     _ <- deleteRunGroups env
     _ <- deleteRunTopics env
     let allFacts = concat generations
@@ -144,6 +145,14 @@ awaitProgress :: Child -> Int -> Int -> IO ()
 awaitProgress child target timeoutMillis = do
   result <- timeout (timeoutMillis * 1000) (atomically (progress child >>= \snapshot -> check (snapshot.count >= fromIntegral @Int @Int64 target)))
   maybe (ioError (userError ("crash consumer did not handle " <> show target <> " records"))) pure result
+
+-- | Under sabotage, forget every fact for the first handled ID, so the
+-- no-loss oracle must report it missing even if a later generation replayed
+-- it.
+sabotageFirstFact :: RunContext -> [[OkFact]] -> [[OkFact]]
+sabotageFirstFact context generations
+  | sabotaged context, (first : _) : _ <- generations = fmap (filter ((/= first.value) . (.value))) generations
+  | otherwise = generations
 
 factsFrom :: Child -> IO [OkFact]
 factsFrom child = do

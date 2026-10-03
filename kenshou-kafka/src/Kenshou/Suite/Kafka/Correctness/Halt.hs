@@ -19,7 +19,7 @@ import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
 import Kenshou.Env.Kafka
-import Kenshou.Suite.Kafka.Fixture (firstBrokers)
+import Kenshou.Suite.Kafka.Fixture (firstBrokers, sabotageDropFirst, sabotageKnob)
 import Shibuya.Adapter.Kafka (defaultConfig, kafkaAdapter)
 import Shibuya.App (ProcessorId (..), defaultAppConfig, mkProcessor, runApp, stopApp, waitApp)
 import Shibuya.Core.Ack (AckDecision (..), HaltReason (..))
@@ -36,7 +36,7 @@ scenarios =
         summary = "Halts at partition-zero offset 30, checks the committed boundary and resumed delivery.",
         tier = TierSmoke,
         placement = PlaceEither,
-        knobs = [],
+        knobs = [sabotageKnob "drop-first-fact"],
         dimensions = allTelemetryArms noDimensions,
         phases = zeroPhases,
         requires = kafkaEnvironment,
@@ -53,7 +53,7 @@ runHalt context = do
     producePartitions env topic
     facts <- newIORef ([] :: [(Int, Int)])
     result <- timeout 30000000 (consumeUntilHalt env topic facts)
-    seen <- reverse <$> readIORef facts
+    seen <- sabotageDropFirst context . reverse <$> readIORef facts
     snapshot <- describeGroup env (groupName env "halt")
     resumed <- firstPartitionZeroOnResume env topic
     _ <- deleteRunGroups env

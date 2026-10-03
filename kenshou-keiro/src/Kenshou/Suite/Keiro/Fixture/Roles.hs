@@ -2,10 +2,11 @@ module Kenshou.Suite.Keiro.Fixture.Roles (roles) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (withAsync)
-import Control.Exception (bracket)
+import Control.Exception (bracket, evaluate)
 import Control.Monad (forM, forever)
-import Data.Aeson (Value, object, withObject, (.!=), (.:), (.:?), (.=))
+import Data.Aeson (Value, encode, object, withObject, (.!=), (.:), (.:?), (.=))
 import Data.Aeson.Types (Parser, parseMaybe)
+import Data.ByteString.Lazy qualified as LBS
 import Data.IORef (atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -14,7 +15,7 @@ import Data.Time.Clock.POSIX (getPOSIXTime)
 import Effectful (liftIO)
 import GHC.Clock (getMonotonicTimeNSec)
 import Keiro.Command (RunCommandOptions (..), defaultRunCommandOptions)
-import Keiro.ProcessManager (PMCommandResult (..), PMStateResult (..), ProcessManagerResult (..), RejectedCommandPolicy (..), WorkerOptions (..), defaultWorkerOptions, runProcessManagerOnce, runProcessManagerWorkerWith)
+import Keiro.ProcessManager (PMCommandResult (..), PMStateResult (..), ProcessManagerResult (..), RejectedCommandPolicy (..), WorkerOptions (..), runProcessManagerOnce, runProcessManagerWorkerWith)
 import Keiro.Projection (AsyncApplyOutcome (..))
 import Keiro.Router (runRouterWorkerWith)
 import Keiro.Subscription.Shard.Worker (RetryDelay (..), ShardAck (..), ShardDelivery (..), ShardedWorkerOptions (..), defaultShardedWorkerOptions, runShardedSubscriptionGroupAck)
@@ -31,6 +32,8 @@ import Kenshou.Suite.Keiro.Fixture.Projection
 import Kenshou.Suite.Keiro.Fixture.Runtime
 import Kenshou.Suite.Keiro.Fixture.Transfer
 import Kenshou.Suite.Keiro.Fixture.Workload qualified as Workload
+import Kenshou.Suite.Keiro.Messaging.Metrics (withMessagingTelemetryAt)
+import Kenshou.Telemetry (telemetrySpecFromWorker)
 import Kiroku.Store (defaultConnectionSettings)
 import Kiroku.Store.Subscription.Types (ConsumerGroup (..), SubscriptionName (..), SubscriptionTarget (..))
 import Kiroku.Store.Types (CategoryName (..), RecordedEvent (..))
@@ -63,6 +66,19 @@ withPostgres :: RoleContext -> (PostgresConnInfo -> IO ()) -> IO ()
 withPostgres context action = case context.init.postgres of
   Nothing -> context.send (WrkError "Keiro worker requires PostgreSQL")
   Just postgres -> action postgres
+
+-- | Opens the fixture store for a role. With telemetry enabled the child owns
+-- its providers for the run's telemetry dimensions and writes its telemetry
+-- summary under @children/<instance>/logs@; otherwise no handle is created.
+withRoleFixture :: RoleContext -> PostgresConnInfo -> Bool -> (FixtureEnv -> IO value) -> IO value
+withRoleFixture _ postgres False action = withFixtureEnv (defaultConnectionSettings postgres.connectionString) action
+withRoleFixture context postgres True action = do
+  let directory = context.init.outDir </> "children" </> Text.unpack (Text.replace "/" "-" context.init.instanceName)
+      report value = do
+        createDirectoryIfMissing True (directory </> "logs")
+        LBS.writeFile (directory </> "logs" </> "keiro-store-metrics.json") (encode value)
+  spec <- either (fail . Text.unpack) pure (telemetrySpecFromWorker context directory)
+  withMessagingTelemetryAt postgres.connectionString report spec \fixture _ _ -> action fixture
 
 withRoleSampler :: RoleContext -> Bool -> IO value -> IO value
 withRoleSampler _ False action = action
@@ -108,7 +124,10 @@ data WriterArgs = WriterArgs
     postSubmissionDelayMicros :: !Int,
     reportEvery :: !Int,
     sampleProcess :: !Bool,
-    depositOnly :: !Bool
+    depositOnly :: !Bool,
+    snapshotPolicy :: !Text,
+    submitMode :: !Text,
+    telemetry :: !Bool
   }
 
 parseWriterArgs :: Value -> Parser WriterArgs
@@ -128,16 +147,22 @@ parseWriterArgs = withObject "keiro command writer" \value ->
     <*> value .:? "reportEvery" .!= 1
     <*> value .:? "sampleProcess" .!= False
     <*> value .:? "depositOnly" .!= False
+    <*> value .:? "snapshotPolicy" .!= "every-100"
+    <*> value .:? "submitMode" .!= "keiro"
+    <*> value .:? "telemetry" .!= False
 
 commandWriter :: RoleContext -> IO ()
 commandWriter context = case parseMaybe parseWriterArgs context.init.args of
   Nothing -> context.send (WrkError "invalid command-writer arguments")
+  Just args
+    | Left issue <- parseAccountSnapshotPolicy args.snapshotPolicy -> context.send (WrkError issue)
+    | args.submitMode `notElem` ["keiro", "generate-only"] -> context.send (WrkError ("unknown command-writer submitMode: " <> args.submitMode))
   Just args -> withPostgres context \postgres -> do
     context.send WrkReady
     started <- awaitStart context
     if not started
       then pure ()
-      else withRoleSampler context args.sampleProcess $ withLatencyCsv context args.sampleProcess \latency -> withFixtureEnv (defaultConnectionSettings postgres.connectionString) \fixture -> do
+      else withRoleSampler context args.sampleProcess $ withLatencyCsv context args.sampleProcess \latency -> withRoleFixture context postgres args.telemetry \fixture -> do
         stopRequested <- newIORef False
         let receiveStop =
               context.receive >>= \case
@@ -149,7 +174,14 @@ commandWriter context = case parseMaybe parseWriterArgs context.init.args of
               if args.depositOnly
                 then [Workload.Op args.worker (fromIntegral index) (Workload.ActDeposit (AccountId (Text.pack (show args.worker))) 1) | index <- [args.startIndex .. args.startIndex + args.count - 1]]
                 else take args.count (drop args.startIndex (Workload.workerOps (unSeed context.init.seed) spec args.worker args.workers))
-            eventStream = accountEventStream (SnapEvery 100)
+            eventStream = accountEventStream (either (const (SnapEvery 100)) id (parseAccountSnapshotPolicy args.snapshotPolicy))
+            baseOptions = ((keiroCommandOptions fixture.telemetry) {seedVerifySampleRate = args.seedVerifySampleRate} :: RunCommandOptions)
+            -- generate-only expands and forces every command and event
+            -- identifier without touching the store, which isolates the
+            -- harness's own workload and reporting path from the command path.
+            generateOnly commands = do
+              _ <- evaluate (sum [length (show eventId) | (_, eventId) <- commands])
+              pure []
             loop completed duplicates [] = do
               context.send (WrkCustom "duplicates" (object ["count" .= duplicates]))
               context.send (WrkDone (Just ("completed=" <> Text.pack (show completed))))
@@ -159,12 +191,16 @@ commandWriter context = case parseMaybe parseWriterArgs context.init.args of
                 then context.send (WrkDone (Just ("completed=" <> Text.pack (show completed))))
                 else do
                   startedAt <- getMonotonicTimeNSec
-                  outcomes <- forM (Workload.opCommands (unSeed context.init.seed) operation) \(choice, eventId) ->
-                    case choice of
-                      Left (_, bonusCommand) -> submitBonusCommand fixture defaultRunCommandOptions eventId bonusCommand
-                      Right (_, accountCommand) ->
-                        let runnerKind = if args.inlineProjectionSleep then RunnerWithProjections [accountBalanceProjection, parkingProjection] else if args.inlineProjection then RunnerWithProjections [accountBalanceProjection] else RunnerPlain
-                         in submitAccountCommand fixture eventStream runnerKind defaultRunCommandOptions {seedVerifySampleRate = args.seedVerifySampleRate} args.clientRetryBudget eventId accountCommand
+                  let commands = Workload.opCommands (unSeed context.init.seed) operation
+                  outcomes <-
+                    if args.submitMode == "generate-only"
+                      then generateOnly commands
+                      else forM commands \(choice, eventId) ->
+                        case choice of
+                          Left (_, bonusCommand) -> submitBonusCommand fixture (keiroCommandOptions fixture.telemetry) eventId bonusCommand
+                          Right (_, accountCommand) ->
+                            let runnerKind = if args.inlineProjectionSleep then RunnerWithProjections [accountBalanceProjection, parkingProjection] else if args.inlineProjection then RunnerWithProjections [accountBalanceProjection] else RunnerPlain
+                             in submitAccountCommand fixture eventStream runnerKind baseOptions args.clientRetryBudget eventId accountCommand
                   endedAt <- getMonotonicTimeNSec
                   maybe (pure ()) (\writer -> appendCsv writer [Text.pack (show endedAt), Text.pack (show (endedAt - startedAt)), Text.pack (show operation.index)]) latency
                   threadDelay args.postSubmissionDelayMicros
@@ -197,7 +233,8 @@ data DispatcherArgs = DispatcherArgs
     reportAcks :: !Bool,
     reportManagerReplay :: !Bool,
     groupMember :: !(Maybe Int),
-    groupSize :: !(Maybe Int)
+    groupSize :: !(Maybe Int),
+    telemetry :: !Bool
   }
 
 parseDispatcherArgs :: Value -> Parser DispatcherArgs
@@ -214,17 +251,18 @@ parseDispatcherArgs = withObject "keiro dispatcher" \value ->
     <*> value .:? "reportManagerReplay" .!= False
     <*> value .:? "groupMember"
     <*> value .:? "groupSize"
+    <*> value .:? "telemetry" .!= False
 
 parkForever :: RoleContext -> Text -> IO ()
 parkForever context point = do
   context.send (WrkCustom "parked" (object ["window" .= point]))
   forever (threadDelay 1000000)
 
-dispatchOptions :: RoleContext -> DispatcherArgs -> IO RunCommandOptions
-dispatchOptions context args = do
+dispatchOptions :: RoleContext -> DispatcherArgs -> RunCommandOptions -> IO RunCommandOptions
+dispatchOptions context args base = do
   invocations <- newIORef (0 :: Int)
   pure
-    defaultRunCommandOptions
+    base
       { beforeAppend = do
           invocation <- atomicModifyIORef' invocations (\n -> (n + 1, n + 1))
           if args.parkBeforeAppend == Just invocation
@@ -240,8 +278,8 @@ processManagerWorker context = case parseMaybe parseDispatcherArgs context.init.
     started <- awaitStart context
     if not started
       then pure ()
-      else withRoleSampler context args.sampleProcess $ withFixtureEnv (defaultConnectionSettings postgres.connectionString) \fixture -> do
-        options <- dispatchOptions context args
+      else withRoleSampler context args.sampleProcess $ withRoleFixture context postgres args.telemetry \fixture -> do
+        options <- dispatchOptions context args (keiroCommandOptions fixture.telemetry)
         let KeiroRunner runFixture = fixture.runner
         result <- runFixture do
           let group = ConsumerGroup <$> (fromIntegral <$> args.groupMember) <*> (fromIntegral <$> args.groupSize)
@@ -264,7 +302,7 @@ processManagerWorker context = case parseMaybe parseDispatcherArgs context.init.
                       if args.parkBeforeAck then liftIO (parkForever context "before-ack") else pure ()
                   )
                   adapter
-          runProcessManagerWorkerWith defaultWorkerOptions options manager observed decodeTransferSignal
+          runProcessManagerWorkerWith (keiroWorkerOptions fixture.telemetry) options manager observed decodeTransferSignal
         case result of
           Left issue -> context.send (WrkError (Text.pack (show issue)))
           Right () -> context.send (WrkDone Nothing)
@@ -277,14 +315,14 @@ processManagerShardedWorker context = case parseMaybe parseDispatcherArgs contex
     started <- awaitStart context
     if not started
       then pure ()
-      else withRoleSampler context args.sampleProcess $ withFixtureEnv (defaultConnectionSettings postgres.connectionString) \fixture -> do
+      else withRoleSampler context args.sampleProcess $ withRoleFixture context postgres args.telemetry \fixture -> do
         let KeiroRunner runFixture = fixture.runner
             manager = transferManager (accountEventStream SnapNever) (const [])
             options = (defaultShardedWorkerOptions (Category (CategoryName "account")) 8) {renewInterval = 0.2, leaseTtl = 2}
             handle delivery = case decodeTransferSignal delivery.event of
               Nothing -> pure ShardAckOk
               Just (recorded, signal) ->
-                runFixture (runProcessManagerOnce defaultRunCommandOptions manager recorded signal) >>= \case
+                runFixture (runProcessManagerOnce (keiroCommandOptions fixture.telemetry) manager recorded signal) >>= \case
                   Left _ -> pure (ShardAckRetry (RetryDelay 0.2))
                   Right (Left _) -> pure (ShardAckRetry (RetryDelay 0.2))
                   Right (Right result) ->
@@ -301,8 +339,8 @@ routerWorker context = case parseMaybe parseDispatcherArgs context.init.args of
     started <- awaitStart context
     if not started
       then pure ()
-      else withRoleSampler context args.sampleProcess $ withFixtureEnv (defaultConnectionSettings postgres.connectionString) \fixture -> do
-        options <- dispatchOptions context args
+      else withRoleSampler context args.sampleProcess $ withRoleFixture context postgres args.telemetry \fixture -> do
+        options <- dispatchOptions context args (keiroCommandOptions fixture.telemetry)
         let KeiroRunner runFixture = fixture.runner
         result <- runFixture do
           adapter <- kirokuBridge fixture.store (bonusAdapterConfig (SubscriptionName args.subscription))
@@ -316,17 +354,17 @@ routerWorker context = case parseMaybe parseDispatcherArgs context.init.args of
               recipients bonus = do
                 selected <- directoryRecipients bonus
                 pure (if args.reverseRecipients then reverse selected else selected)
-              routerOptions = defaultWorkerOptions {rejectedCommandPolicy = if args.rejectedDeadLetter then RejectedDeadLetter else RejectedHalt}
+              routerOptions = (keiroWorkerOptions fixture.telemetry) {rejectedCommandPolicy = if args.rejectedDeadLetter then RejectedDeadLetter else RejectedHalt}
           runRouterWorkerWith routerOptions options (bonusRouterWith bonusRouterName (accountEventStream SnapNever) recipients) observed decodeBonusDeclared
         case result of
           Left issue -> context.send (WrkError (Text.pack (show issue)))
           Right () -> context.send (WrkDone Nothing)
 
-data ProjectionArgs = ProjectionArgs {batchSize :: !Int, skipDedup :: !Bool, parkAfterApply :: !Bool, parkAfterAppliedCount :: !Int, sampleProcess :: !Bool}
+data ProjectionArgs = ProjectionArgs {batchSize :: !Int, skipDedup :: !Bool, parkAfterApply :: !Bool, parkAfterAppliedCount :: !Int, sampleProcess :: !Bool, telemetry :: !Bool}
 
 parseProjectionArgs :: Value -> Parser ProjectionArgs
 parseProjectionArgs = withObject "keiro projection worker" \value ->
-  ProjectionArgs <$> value .:? "batchSize" .!= 100 <*> value .:? "skipDedup" .!= False <*> value .:? "parkAfterApply" .!= False <*> value .:? "parkAfterAppliedCount" .!= 1 <*> value .:? "sampleProcess" .!= False
+  ProjectionArgs <$> value .:? "batchSize" .!= 100 <*> value .:? "skipDedup" .!= False <*> value .:? "parkAfterApply" .!= False <*> value .:? "parkAfterAppliedCount" .!= 1 <*> value .:? "sampleProcess" .!= False <*> value .:? "telemetry" .!= False
 
 projectionWorker :: RoleContext -> IO ()
 projectionWorker context = case parseMaybe parseProjectionArgs context.init.args of
@@ -336,7 +374,7 @@ projectionWorker context = case parseMaybe parseProjectionArgs context.init.args
     started <- awaitStart context
     if not started
       then pure ()
-      else withRoleSampler context args.sampleProcess $ withFixtureEnv (defaultConnectionSettings postgres.connectionString) \fixture -> do
+      else withRoleSampler context args.sampleProcess $ withRoleFixture context postgres args.telemetry \fixture -> do
         let sabotage = if args.skipDedup then SkipDedup else NoProjectionSabotage
         duplicates <- newIORef (0 :: Int)
         applied <- newIORef (0 :: Int)

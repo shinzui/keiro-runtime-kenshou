@@ -27,6 +27,11 @@ provenance:
       at: 2026-09-30T01:17:52Z
       mode: "implement"
       note: "Verified the effective five-minute soak diagnosis window on a clean cell."
+    - model: "claude-opus-5-5"
+      harness: "claude-code"
+      at: 2026-10-03T05:20:35Z
+      mode: "implement"
+      note: "Generalized fixture roles and oracles, added finding 44/46 soak controls, telemetry arms, benchmark matrices and the write-side guide"
 ---
 
 # Cover the keiro command processor, process managers and routers
@@ -55,7 +60,10 @@ To see it working after the first milestone, run `cabal run kenshou -- run keiro
 - [x] (2026-09-29) Found and repaired a local soak-diagnosis mismatch: a five-minute duration override used the static twenty-minute window for leak analysis. [Finding 43](../findings/43-keiro-write-side-soak-uses-default-diagnosis-window.md) excludes that old shortened run. The diagnosis API and Keiro soak scenarios now use the effective window, and their focused package suites pass. A [clean shortened alpha replay](../verification/runs/keiro/2026/09/01a0ef66-959a-7183-a9aa-3e4bed4fc7da.md) verified seconds 5–305 and passed all ten business checks at 20 commands/second; its overall failure was the separately tracked router heap-growth signal.
 - [x] (2026-09-29) Ran the [same-seed twenty-minute lower-rate control](../verification/runs/keiro/2026/09/01a0ef66-959b-7285-87b6-1b2924e04d1e.md) on clean alpha. All ten durable business checks passed and quiesced at 20 commands/second. The overall run failed leak diagnosis: router growth is consistent with the existing Kiroku report, while both writer child heaps had new eligible growth evidence and are tracked without owner attribution in [finding 46](../findings/46-keiro-command-writers-grow-heap-in-low-rate-soak.md). The first revised default-rate replay failed during cell reset before scenario execution and is excluded.
 - [x] (2026-09-29) Replayed the revised default-rate twenty-minute soak on clean alpha as cell run `01a0eff0-e271-71e1-afbe-3ee4ffb0faba`, [digest-linked nested run](../verification/runs/keiro/2026/09/01a0eff0-81f8-721c-8994-7b922ee544c3.md). Its explicit quiescence flag was false after the two-minute drain and its transfer and bonus stages had substantial backlog; the same three post-drain business checks failed. [Finding 44](../findings/44-keiro-write-side-default-soak-does-not-quiesce.md) remains unattributed until an extended-drain or capacity control determines whether all work eventually finishes.
-- [ ] Finish generalized fixture roles and oracles, write-side benchmark acceptance, telemetry arms, reduced/full soaks, and the layer guide. Audit upstream findings and distill final ADRs/outcomes.
+- [x] (2026-10-03) Generalized the fixture's roles and oracles. Every worker role accepts `telemetry` and then owns providers for the run's tracing and metrics arms. The command writer adds `snapshotPolicy` and a `generate-only` submit mode. All existing arguments keep their defaults. The oracle gained readers for `kiroku.dead_letters`, `kiroku.subscriptions` checkpoints and payload-free `StageCounts` with `stageBacklog`. The account module exports `parseAccountSnapshotPolicy` and `renderAccountSnapshotPolicy`. Every existing fixture export kept its signature; `kenshou-runtime` builds unchanged. Seventy package examples pass. Locally, under the shared host lock, `sigkill-crash-windows` (between-manager-and-target), `sigkill-mid-fanout`, `seed-divergence-detection`, `async-at-least-once-under-kill` and `topologies` passed with the generalized roles.
+- [x] (2026-10-03) `write-side-steady-state` revision 3 adds the [finding 44](../findings/44-keiro-write-side-default-soak-does-not-quiesce.md) and [finding 46](../findings/46-keiro-command-writers-grow-heap-in-low-rate-soak.md) controls and the soak telemetry arms. It has a `soak.drain-seconds` budget with time to quiescence and projected remaining drain, a `soak.stage-sample-seconds` durable stage series with per-stage capacity trends, the `writers-only` and `generate-only` topologies, and writer snapshot and seed-verification knobs. Every tracing and metrics arm is supported. Four one-minute local functional smokes at 20 commands/s passed every business check: full topology, writers-only, generate-only, and full with OTLP tracing plus scraped metrics. The last exported 677 writer spans with none dropped. Their leak and latency outcomes are not evidence. Four checked-in cell specs in `specs/keiro-write-side-*.json` repeat the earlier alpha seed for the quiet-cell controls.
+- [x] (2026-10-03) The hydration-cost and append-ceiling benchmarks declare their full planned matrices as knob variants. `kenshou plan --knob-policy declared-variants` schedules seven hydration and ten ceiling configurations one factor at a time. `docs/layers/keiro.md` now has a write-side section for every component, scenario, shared verdict, role argument and soak control. Findings 44 and 46 describe the new controls and how to read them.
+- [ ] Run the quiet-cell controls in `specs/keiro-write-side-*.json` and attribute findings 44 and 46. Run paired cell benchmark trials and the full matrices. Implement benchmark `command.processes` (multi-process load generation). Run a full-duration soak with telemetry arms. Distill final ADRs and outcomes.
 
 ## Surprises & Discoveries
 
@@ -65,6 +73,9 @@ To see it working after the first milestone, run `cabal run kenshou -- run keiro
 - `opCommands` is pure and does not receive `WorkloadSpec`, so its transfer leg cannot derive a relative deadline from `transferDeadlineSeconds`. The original literal 3600 was a time in 1970 and made every generated transfer timer immediately due. The fixture now uses a fixed far-future epoch for deterministic command expansion; making the deadline spec-driven needs an explicit parameter in the workload API.
 - `WorkerRole` names must have the shape `<layer>/<name>`, so the executable role names are `keiro/command-writer`, `keiro/pm-worker`, `keiro/router-worker`, and `keiro/projection-worker` rather than the dot-form names in the plan's prose.
 - The harness knob types are scalar; it does not support the plan's proposed enum-list policy knobs. `policy-matrix` therefore executes all nine policy combinations in one run with distinct stream names.
+- `KnobSpec.variants` is the harness's matrix mechanism. Under `--knob-policy declared-variants`, the planner schedules each declared value, at most eight per knob, one factor at a time around the defaults. The benchmark matrices therefore need declarations, not new execution code (2026-10-03).
+- Child telemetry with `telemetry.metrics=serve-scraped` waits two scrape intervals, 30 s by default, before a writer exits. The first telemetry smoke therefore failed `writers-stopped` under the soak's fixed 30 s stop grace, even though both writers had reported `done`. The grace now adds two scrape intervals, the provider shutdown timeout and five seconds whenever child telemetry is on (2026-10-03).
+- The owner marked both Keiro heap reports, `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-1` and `BUG-2`, duplicates of `mori://shinzui/kiroku/okf/bug-reports/concepts/BUG-3`, fixed in `kiroku-store` 0.9.0.1. Both cohorts still pin 0.8.0.1. That fix cannot be confirmed in this baseline, and BUG-3 remains the leading candidate for finding 46's writer growth (2026-10-03).
 
 
 ## Decision Log
@@ -137,6 +148,22 @@ To see it working after the first milestone, run `cabal run kenshou -- run keiro
   Rationale: The first one-minute run and a rerun after retiring exited child records each added six counted Haskell threads during six restarts. The root cause remains unknown; `docs/findings/3-keiro-steady-restart-harness-threads.md` separates the verified recovery behavior from the unresolved main-process signal.
   Date: 2026-09-24
 
+- Decision: Diagnose finding 44 with durable stage counts and a configurable drain budget rather than by raising the default drain or lowering the default rate.
+  Rationale: The default-rate failure is either a capacity deficit or unfinished or lost work. Capacity trends from the steady window, plus time to quiescence under an extended budget, distinguish them while every correctness check stays unchanged. Changing the defaults would hide the signal and break comparability with recorded runs. The counts read no payloads, and `soak.stage-sample-seconds=0` disables sampling.
+  Date: 2026-10-03
+
+- Decision: Isolate finding 46 with `writers-only` and `generate-only` topologies plus writer snapshot knobs, keeping the same seed and pacing as the recorded alpha control.
+  Rationale: Removing downstream workers, then the store calls, then snapshot hydration separates the Kenshou writer role from the Keiro and Kiroku command paths without a profiled build. The writers-only checks exclude effects that need absent workers and add `no-downstream-effects` or `no-commands-submitted`, so a vacuous pass is impossible.
+  Date: 2026-10-03
+
+- Decision: Remove the write-side soak's unconditional `inconclusive` outcome cap.
+  Rationale: Revision 2 forced `inconclusive` because the soak lacked telemetry arms. Revision 3 supports every arm through child-owned providers. The outcome now comes from the business checks, the main and per-child leak verdicts, and the latency drift verdict, which still returns `inconclusive` with insufficient samples.
+  Date: 2026-10-03
+
+- Decision: Child telemetry reuses `Kenshou.Suite.Keiro.Messaging.Metrics.withMessagingTelemetryAt` through a role-level `withRoleFixture` instead of a second implementation.
+  Rationale: That helper already composes the kiroku-metrics event handler before `withStore`, serves native endpoints in the serve arms and records a per-child summary. Importing it changes no messaging module.
+  Date: 2026-10-03
+
 - Decision: The one-minute telemetry-enabled seed backlog run retains its main-process thread leak failure while the durable and span checks are reported separately.
   Rationale: It completed 211 commands, passed four durable checks, and exported 211 spans without drops. The thread probe grew by 13; a matching earlier run grew by eight but was statistically inconclusive. The shared measurement signal is recorded in `docs/findings/3-keiro-steady-restart-harness-threads.md` without attributing it to worker restarts.
   Date: 2026-09-24
@@ -191,6 +218,16 @@ scraped metrics, no-op tracing, and OTLP tracing passed their policy.
 In-memory tracing was inconclusive, making the overall report inconclusive.
 The observed throughput differences ranged from −0.07% to +2.24%; this local
 run likewise does not establish a general overhead bound.
+
+By 2026-10-03, every scenario this plan names was registered and described in
+`docs/layers/keiro.md`. The fixture roles carry every telemetry arm, and the
+write-side soak can separate a drain-capacity deficit from unfinished work
+(finding 44). It can also separate the harness writer from the Keiro and
+Kiroku command paths (finding 46). Local work here can add no further
+acceptance evidence. The outstanding acceptance needs quiet, controlled
+execution: the four checked-in cell controls, paired benchmark trials over the
+declared matrices, and a full-duration soak. The one implementation gap left
+in the plan's knob list is benchmark `command.processes`.
 
 
 ## Context and Orientation
@@ -644,3 +681,5 @@ What other plans consume. `docs/plans/13-cover-the-keiro-outbox-inbox-and-job-qu
 Revision note (2026-09-23): Began implementation after the prerequisite build, self-tests, and cohort checks passed. Added the validated account and bonus aggregate foundation, a pure account model, deterministic workload generation, and unit checks. Milestone 1 remains in progress because the database fixture, workers, scenario registration, and ADRs are still to be implemented.
 
 Revision note (2026-09-23): Added the first database-backed command scenario, inline balance projection, SQL log oracle, transfer saga and plain bonus router foundations, list adapter acknowledgement test, layer guide, and the two architectural decisions. Milestone 1 remains in progress for reactive/declarative variants, asynchronous projection, durable bridges, worker roles, and full fixture oracles.
+
+Revision note (2026-10-03): Additive fixture interface changes, so the dependent plans `docs/plans/13-cover-the-keiro-outbox-inbox-and-job-queue.md`, `docs/plans/14-cover-keiro-durable-execution-timers-and-sharded-subscriptions.md` and `docs/plans/15-verify-the-assembled-runtime-end-to-end-and-under-soak.md` need no change. `Fixture.Account` adds `parseAccountSnapshotPolicy` and `renderAccountSnapshotPolicy`. `Fixture.Oracle` adds `SubscriptionDeadLetter`, `CheckpointRow`, `StageCounts`, `readSubscriptionDeadLetters`, `readCheckpoints`, `readStageCounts` and `stageBacklog`. The roles accept optional `telemetry`, `snapshotPolicy` and `submitMode` arguments. The new module `Kenshou.Suite.Keiro.Command.Backlog` holds pure capacity and drain analysis. No existing export changed.

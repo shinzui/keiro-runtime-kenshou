@@ -66,11 +66,63 @@ data after a run, set `"keepData": true`; the work directory is
 `$TMPDIR/kenshou-kafka-<run-id-without-dashes>/` and contains the container
 name. Remove retained data deliberately after the investigation.
 
+When the private backend has proxied lanes, it also publishes one unproxied
+`control` listener. `KafkaEnv.adminBrokers` holds its address, and every
+fixture administration request (`createTopics`, `describeGroup`,
+`awaitGroup`, run cleanup and readiness probes after `start`) uses it. A lane
+blackhole therefore partitions only the clients that bootstrapped through
+that lane; an oracle can still sample committed offsets and lag during the
+fault. With `"lanes": 0` there is no proxy and administration uses the direct
+port. Revision 2 of `fixture-roundtrip` blackholes lane 0 and requires a group
+description to succeed, which proves the control path is not vacuous.
+
+Scenarios outside this package, such as the assembled runtime, should reach
+optional capabilities through `Kenshou.Env.Kafka` and never through
+`Kenshou.Suite.Kafka.*`:
+
+```haskell
+spec <- requestLanes 2 <$> either (ioError . userError . Text.unpack) pure (kafkaEnvSpecFromRunSpec context)
+withKafkaEnv context spec \env -> do
+  shopLane <- either (fail . Text.unpack . unavailableReason) pure (laneAt env 0)
+  warehouseProxy <- either (fail . Text.unpack . unavailableReason) pure (laneProxy env 1)
+  control <- either (fail . Text.unpack . unavailableReason) pure (requireControl env)
+  drained <- awaitGroup env group 60 ((== Just 0) . groupLag)
+  ...
+```
+
+`requestLanes` raises a private backend's lane count and leaves an external
+specification unchanged, so the missing proxy is reported as
+`lanes-unavailable` by `laneAt` or `laneProxy`; `requireControl` reports
+`broker-control-unavailable`. `groupLag` and `topicLag` return `Nothing`
+until every described partition has a committed offset, so an absent or
+unstarted group is never mistaken for zero lag.
+
 The fixture decision is [ADR-17](../adr/0017-keep-kafka-brokers-private-to-a-run.md).
 The remaining transport scenario work is tracked in the repository-local
 [Kafka ExecPlan](../plans/11-cover-the-kafka-transport-edge-with-a-disposable-broker.md).
 
 ## Current adapter and producer checks
+
+Every broker-backed correctness or concurrency scenario without a
+known-defect reference declares a `kafka.sabotage` knob. It defaults to
+`none`, the real check. Its single other value corrupts the collected
+evidence just before judgment, so a run with that value must fail with the
+scenario's ordinary failure label. That failing run is the recorded proof
+that the oracle can fail. A package test keeps the list complete.
+
+| Scenario | Sabotage value | Expected failure |
+| --- | --- | --- |
+| `kafka/broker/correctness/fixture-roundtrip` | `drop-first-fact` | `roundtrip` |
+| `kafka/broker/concurrency/kill-and-restart` | `drop-first-fact` | `broker-restart` |
+| `kafka/adapter/correctness/ack-ok-commits-and-resumes` | `drop-first-fact` | `ack-ok-commits-and-resumes` |
+| `kafka/adapter/correctness/dead-letter-drops-record` | `drop-first-fact` | `dead-letter-drops-record` |
+| `kafka/adapter/correctness/halt-leaves-offset-uncommitted` | `drop-first-fact` | `halt-leaves-offset-uncommitted` |
+| `kafka/keiro-records/correctness/roundtrip-through-broker` | `drop-first-fact` | `keiro-record-roundtrip` |
+| `kafka/producer/correctness/acked-offsets-and-batch-loop` | `drop-first-fact` | `acked-offsets-and-batch-loop` |
+| `kafka/producer/correctness/transactions-commit-and-abort` | `duplicate-first-output` | `transactions-commit-and-abort` |
+| `kafka/adapter/concurrency/stale-barrier-after-partition-roundtrip` | `drop-new-record-fact` | `roundtrip-new-records` |
+| `kafka/consumer/concurrency/static-membership-restart-without-revoke` | `inject-survivor-revoke` | `static-member-survivor-revoked` |
+| `kafka/adapter/concurrency/sigkill-redelivery-window` | `drop-first-fact` | `sigkill-no-loss` |
 
 `kafka/adapter/correctness/ack-ok-commits-and-resumes` uses Shibuya's
 `runApp` and the Kafka adapter. Its `kafka.partitions` and `kafka.messages`
@@ -298,6 +350,15 @@ rebalance callback installed, A handled all 100 new records at offsets
 only `roundtrip-new-records`: the stale barrier discarded the new records.
 This demonstrates why callers must install the callback.
 
+Revision 2 waits up to 90 seconds, instead of 30, for B to drain the
+moved partition and records `movedPartitionDrainSeconds`. In clean local
+runs on 2026-10-03, B handled roughly 150–200 records in its first second
+and then about three records per second, with occasional bursts. The same
+profile appeared with an unproxied lane, so the harness proxy does not
+cause it. One released-cohort repetition (seed 62) missed the old 30-second
+deadline by six records. The drain rate is an open, unattributed
+observation tracked in the Kafka ExecPlan, not a pass criterion.
+
 `kafka/adapter/concurrency/partitioned-consumer-becomes-zombie` uses two
 broker-proxy lanes and blackholes A's lane for twice its session timeout.
 In a reduced 2,000-record run, B took over A's partitions, every
@@ -315,6 +376,19 @@ below the 243 estimate and 60 B-only replays were reported separately.
 All 2,000 acknowledged IDs had handler facts, commits did not regress, and
 only the scoped early-exit label remained. Exact adapter buffer occupancy
 is not exposed.
+
+Revision 2 adds a replacement drain. With the 5,000-record default, an
+in-lock local run on 2026-10-03 had both original members end normally
+right after the post-heal rebalance. About 2,600 acknowledged IDs were
+still on the broker but had no handler fact, so revision 1 reported the
+BUG-4 consequence as the blocking label `zombie-no-loss`. When the
+originals leave the group short of zero lag, revision 2 starts one fresh
+member on the healthy lane and waits for zero lag. Its facts count toward
+no loss but not toward the A-involved repeat bound, and the summary reports
+`unhandledByOriginalMembers` and `replacementHandled` separately. The
+originals' `zombie-zero-lag` and `zombie-consumer-exit` verdicts are
+unchanged. A replacement worker error is the separate blocking label
+`zombie-replacement-error`.
 
 `kafka/keiro-records/correctness/roundtrip-through-broker` publishes 200
 Keiro integration events through the neutral record conversion and checks

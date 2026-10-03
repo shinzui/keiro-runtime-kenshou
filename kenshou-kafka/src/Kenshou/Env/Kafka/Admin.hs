@@ -9,6 +9,7 @@ module Kenshou.Env.Kafka.Admin
     deleteRunTopics,
     deleteRunGroups,
     runRpk,
+    adminAddresses,
   )
 where
 
@@ -60,12 +61,18 @@ data GroupSnapshot = GroupSnapshot
   }
   deriving stock (Eq, Show)
 
+-- | The fixture's administration address list: the unproxied control
+-- listener when the backend has one, otherwise the first lane.
+adminAddresses :: KafkaEnv -> [BrokerAddress]
+adminAddresses env
+  | null env.adminBrokers = case env.lanes of lane :| _ -> lane.laneBrokers
+  | otherwise = env.adminBrokers
+
 runRpk :: KafkaEnv -> [String] -> IO String
 runRpk env args = do
-  let address = case env.lanes of
-        lane :| _ -> case lane.laneBrokers of
-          BrokerAddress value : _ -> Text.unpack value
-          [] -> error "Kafka lane has no broker"
+  let address = case adminAddresses env of
+        BrokerAddress value : _ -> Text.unpack value
+        [] -> error "Kafka environment has no broker"
       configPath = env.workDir </> "rpk.yaml"
   (code, output, errorOutput) <- readProcessWithExitCode "rpk" (["--config", configPath, "-X", "brokers=" <> address] <> args) ""
   case code of

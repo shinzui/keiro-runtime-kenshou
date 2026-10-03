@@ -7,6 +7,7 @@ import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString qualified as ByteString
 import Data.Foldable (toList)
 import Data.IORef (modifyIORef', newIORef, readIORef)
+import Data.Int (Int64)
 import Data.List (intersect, sort)
 import Data.Map.Strict qualified as Map
 import Data.Proxy (Proxy (..))
@@ -35,6 +36,9 @@ import Keiro.Router (deterministicRouterCommandId)
 import Keiro.Subscription.Shard.Worker (ShardedWorkerOptions (..))
 import Keiro.Timer (TimerWorkerOptions (..))
 import Keiro.Workflow (WorkflowId (..), WorkflowRunOptions (..), deterministicJournalId)
+import Keiro.Workflow qualified as Workflow
+import Keiro.Workflow.Child.Schema qualified as ChildSchema
+import Keiro.Workflow.Instance qualified as WorkflowInstance
 import Keiro.Workflow.Resume (WorkflowResumeOptions (..))
 import Kenshou.Check.Verdict (InvariantClass (..))
 import Kenshou.Core.Context (Environment (..), RunContext (..), newRunState)
@@ -46,6 +50,7 @@ import Kenshou.Core.Outcome qualified as Outcome
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.RunSpec (RunSpec (..), minimalRunSpec)
 import Kenshou.Core.Scenario (ScenarioReport (..))
+import Kenshou.Suite.Keiro.Command.Backlog qualified as Backlog
 import Kenshou.Suite.Keiro.Command.Correctness (recordCells)
 import Kenshou.Suite.Keiro.Fixture.Account
 import Kenshou.Suite.Keiro.Fixture.Bonus
@@ -71,10 +76,13 @@ import Kenshou.Suite.Keiro.Queue.WorkerOracle qualified as WorkerOracle
 import Kenshou.Suite.Keiro.Shard.Knobs qualified as ShardKnobs
 import Kenshou.Suite.Keiro.Shard.Oracle qualified as ShardOracle
 import Kenshou.Suite.Keiro.Timer.Knobs qualified as TimerKnobs
+import Kenshou.Suite.Keiro.Workflow.CrashWindows qualified as WorkflowCrashWindows
 import Kenshou.Suite.Keiro.Workflow.Definitions qualified as WorkflowDefinitions
 import Kenshou.Suite.Keiro.Workflow.Effects qualified as WorkflowEffects
 import Kenshou.Suite.Keiro.Workflow.Knobs qualified as WorkflowKnobs
 import Kenshou.Suite.Keiro.Workflow.Oracle qualified as WorkflowOracle
+import Kenshou.Suite.Keiro.Workflow.ReplayIdentity qualified as WorkflowReplayIdentity
+import Kenshou.Suite.Keiro.Workflow.TerminalRace qualified as WorkflowTerminalRace
 import Kiroku.Store.Subscription.Types (SubscriptionTarget (..))
 import Kiroku.Store.Types (EventId (..), EventType (..), GlobalPosition (..), RecordedEvent (..), StreamId (..), StreamVersion (..))
 import Pgmq.Types (MessageId (..))
@@ -417,6 +425,51 @@ main = hspec do
       WorkflowOracle.backoffLadder 2 0.2 good `shouldBe` Right ()
       WorkflowOracle.backoffLadder 2 0.2 [now, addUTCTime 1 now] `shouldSatisfy` either (const True) (const False)
       WorkflowOracle.backoffLadder 2 0.2 [now, addUTCTime 3 now] `shouldSatisfy` either (const True) (const False)
+  describe "workflow crash-window and terminal-race oracles" do
+    it "accepts only the state between the child's marker and the parent wake" do
+      WorkflowCrashWindows.childWindowLanded (Just WorkflowInstance.WfCompleted) (Just ChildSchema.Running) False `shouldBe` True
+      WorkflowCrashWindows.childWindowLanded (Just WorkflowInstance.WfCompleted) (Just ChildSchema.ChildCompleted) False `shouldBe` False
+      WorkflowCrashWindows.childWindowLanded (Just WorkflowInstance.WfCompleted) (Just ChildSchema.Running) True `shouldBe` False
+      WorkflowCrashWindows.childWindowLanded (Just WorkflowInstance.WfRunning) (Just ChildSchema.Running) False `shouldBe` False
+    it "requires the step after a lost lease to run once, in the new owner" do
+      let good = Map.fromList [(("w/0/s0", 0), 1), (("w/0/s0", 1), 1), (("w/0/s1", 1), 1)]
+      WorkflowCrashWindows.leaseLossEffectsHeld "w/0/s0" "w/0/s1" good `shouldBe` True
+      WorkflowCrashWindows.leaseLossEffectsHeld "w/0/s0" "w/0/s1" (Map.insert ("w/0/s1", 0) 1 good) `shouldBe` False
+      WorkflowCrashWindows.leaseLossEffectsHeld "w/0/s0" "w/0/s1" (Map.fromList [(("w/0/s0", 0), 1), (("w/0/s1", 0), 1)]) `shouldBe` False
+      WorkflowCrashWindows.leaseLossEffectsHeld "w/0/s0" "w/0/s1" (Map.insert ("w/0/s0", 2) 1 good) `shouldBe` False
+    it "allows one recorded cancel only when the cancel marker won" do
+      WorkflowTerminalRace.cancelOutcomesAgree WorkflowTerminalRace.MarkerCancelled ["recorded", "already-cancelled", "already-cancelled"] `shouldBe` True
+      WorkflowTerminalRace.cancelOutcomesAgree WorkflowTerminalRace.MarkerCancelled ["recorded", "recorded", "already-cancelled"] `shouldBe` False
+      WorkflowTerminalRace.cancelOutcomesAgree WorkflowTerminalRace.MarkerCompleted ["already-completed", "already-completed"] `shouldBe` True
+      WorkflowTerminalRace.cancelOutcomesAgree WorkflowTerminalRace.MarkerCompleted ["recorded", "already-completed"] `shouldBe` False
+      WorkflowTerminalRace.cancelOutcomesAgree WorkflowTerminalRace.MarkerFailed ["already-cancelled"] `shouldBe` False
+    it "permits only the in-flight step after a lifecycle marker" do
+      now <- getCurrentTime
+      let stepAt name = Workflow.StepRecorded name Aeson.Null now
+          cancelled = Workflow.WorkflowCancelled now
+      WorkflowTerminalRace.postMarkerBounded [stepAt "s0", cancelled] `shouldBe` True
+      WorkflowTerminalRace.postMarkerBounded [cancelled, stepAt "s0"] `shouldBe` True
+      WorkflowTerminalRace.postMarkerBounded [cancelled, stepAt "s0", stepAt "s1"] `shouldBe` False
+      WorkflowTerminalRace.postMarkerBounded [cancelled, Workflow.WorkflowCompleted now] `shouldBe` False
+      WorkflowTerminalRace.postMarkerBounded [stepAt "s0"] `shouldBe` False
+      WorkflowTerminalRace.unjournaledEffectsBounded (Set.fromList ["s0"]) (Set.fromList ["s0", "s1"]) `shouldBe` True
+      WorkflowTerminalRace.unjournaledEffectsBounded (Set.fromList ["s0"]) (Set.fromList ["s0", "s1", "s2"]) `shouldBe` False
+    it "rejects doctored generation journals" do
+      now <- getCurrentTime
+      let name = WorkflowDefinitions.linearName
+          wid = WorkflowId "identity"
+          idOf = deterministicJournalId name wid 0
+          stepAt stepName = (idOf stepName, Workflow.StepRecorded stepName Aeson.Null now)
+          completed = (idOf "__workflow_completed__", Workflow.WorkflowCompleted now)
+          index = Map.fromList [("s0", Aeson.Null), ("s1", Aeson.Null)]
+          check = WorkflowReplayIdentity.generationIdentity name wid 0 index
+      check [stepAt "s0", stepAt "s1", completed] `shouldBe` True
+      check [stepAt "s0", stepAt "s1"] `shouldBe` True
+      check [(idOf "s9", snd (stepAt "s0")), stepAt "s1", completed] `shouldBe` False
+      check [stepAt "s0", stepAt "s0", stepAt "s1", completed] `shouldBe` False
+      check [stepAt "s0", stepAt "s1", stepAt "s2", completed] `shouldBe` False
+      check [stepAt "s0", completed, stepAt "s1"] `shouldBe` False
+      check [stepAt "s0", stepAt "s1", completed, completed] `shouldBe` False
   describe "workflow knobs" do
     it "maps resolved defaults to short lease and polling options" do
       case resolveKnobs WorkflowKnobs.workflowKnobs [] of
@@ -464,6 +517,11 @@ main = hspec do
     it "rejects a regressing checkpoint for one member" do
       ShardOracle.checkpointsMonotonic [("a", 1), ("b", 5), ("a", 2), ("b", 5)] `shouldBe` True
       ShardOracle.checkpointsMonotonic [("a", 2), ("b", 5), ("a", 1)] `shouldBe` False
+    it "bounds duplicate deliveries by one batch per bucket per membership change" do
+      ShardOracle.duplicatesWithinBound 100 2 [(0, 0), (1, 200)] `shouldBe` True
+      ShardOracle.duplicatesWithinBound 100 2 [(0, 0), (1, 201)] `shouldBe` False
+      ShardOracle.duplicatesWithinBound 100 0 [(0, 1)] `shouldBe` False
+      ShardOracle.duplicatesWithinBound 100 1 [(0, -1)] `shouldBe` False
   describe "shard knobs" do
     it "maps resolved defaults to valid short leases" do
       case resolveKnobs ShardKnobs.shardKnobs [] of
@@ -630,6 +688,45 @@ main = hspec do
           expected = Oracle.expectedRouterCommandId "bonusRouter" (BonusId "b") source (AccountId "a") 0
       expected `shouldBe` deterministicRouterCommandId "bonusRouter" "b" source (accountStreamName (AccountId "a")) 0
       expected `shouldBe` EventId (read "2fa4be29-7c5d-5665-b5a2-b5a7a6054754")
+  describe "snapshot policy knob" do
+    it "round trips every registered spelling and rejects others" do
+      forM_ ["never", "every-1", "every-10", "every-100", "on-terminal"] \spelling ->
+        fmap renderAccountSnapshotPolicy (parseAccountSnapshotPolicy spelling) `shouldBe` Right spelling
+      forM_ ["every-0", "every-", "every-x", "always", ""] \spelling ->
+        parseAccountSnapshotPolicy spelling `shouldSatisfy` either (const True) (const False)
+  describe "write-side backlog analysis" do
+    let counts debited credited declared bonusCredited =
+          Oracle.StageCounts
+            { Oracle.transferDebited = debited,
+              Oracle.transferAnnounced = debited,
+              Oracle.transferCredited = credited,
+              Oracle.transferConfirmed = credited,
+              Oracle.sagaEvents = 2 * credited,
+              Oracle.bonusDeclared = declared,
+              Oracle.bonusCredited = bonusCredited,
+              Oracle.accountEvents = 100,
+              Oracle.activityApplied = 100
+            }
+        sample at = Backlog.StageSample at "steady"
+    it "is zero exactly at quiescence" do
+      Oracle.stageBacklog 4 (counts 10 10 3 12) `shouldSatisfy` all ((== 0) . snd)
+      lookup "credit" (Oracle.stageBacklog 4 (counts 10 7 3 12)) `shouldBe` Just 3
+      lookup "bonus" (Oracle.stageBacklog 4 (counts 10 10 3 11)) `shouldBe` Just 1
+    it "computes an exact least-squares slope" do
+      Backlog.leastSquaresSlope [(0, 1), (1, 3), (2, 5)] `shouldBe` Just 2
+      Backlog.leastSquaresSlope [(1, 1)] `shouldBe` Nothing
+    it "classifies a stage whose backlog grows with the offered load as falling behind" do
+      let behind = [sample (fromIntegral i) (counts (10 * i) (8 * i) i (4 * i)) | i <- [0 .. 20 :: Int64]]
+          keeping = [sample (fromIntegral i) (counts (10 * i) (10 * i) i (4 * i)) | i <- [0 .. 20 :: Int64]]
+          classify samples = Backlog.classifyCapacity 10 (Backlog.steadyTrends 4 samples)
+      classify behind `shouldBe` Backlog.FallingBehind ["credit", "confirm", "saga"]
+      classify keeping `shouldBe` Backlog.WithinCapacity
+      Backlog.classifyCapacity 3 (Backlog.steadyTrends 4 keeping) `shouldBe` Backlog.InsufficientSamples
+    it "projects remaining drain time from the observed drain rate" do
+      let report = Backlog.drainReport 4 (counts 100 40 0 0) (counts 100 70 0 0) 30 Nothing
+      report.projectedRemainingSeconds `shouldBe` Just 30
+      (Backlog.drainReport 4 (counts 100 40 0 0) (counts 100 100 0 0) 30 (Just 12)).projectedRemainingSeconds `shouldBe` Nothing
+      (Backlog.drainReport 4 (counts 100 40 0 0) (counts 100 40 0 0) 30 Nothing).projectedRemainingSeconds `shouldBe` Nothing
   describe "list adapter" do
     it "records one acknowledgement for every delivery" do
       now <- getCurrentTime

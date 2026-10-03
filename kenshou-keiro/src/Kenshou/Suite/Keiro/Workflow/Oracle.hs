@@ -4,10 +4,11 @@ module Kenshou.Suite.Keiro.Workflow.Oracle
     backoffLadder,
     recordWorkflowCells,
     recordWorkflowCellsAs,
+    recordWorkflowExampleCells,
   )
 where
 
-import Data.Aeson (object)
+import Data.Aeson (Value, object)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
@@ -62,6 +63,34 @@ backoffLadder initialDelay slack observations
 
 recordWorkflowCells :: CheckEnv -> [(Text, Bool)] -> IO ScenarioReport
 recordWorkflowCells = recordWorkflowCellsAs Contract
+
+-- | Like 'recordWorkflowCells', but each cell carries the counter-examples
+-- that violated it, truncated to 'exampleLimit', with the full count kept.
+recordWorkflowExampleCells :: CheckEnv -> [(Text, Int, [Value])] -> IO ScenarioReport
+recordWorkflowExampleCells check cells = do
+  now <- getCurrentTime
+  let verdict (name, examined, examples) =
+        let violations = length examples
+            held = violations == 0
+         in Verdict
+              { checker = "workflow-" <> name,
+                invariant = name,
+                cls = Contract,
+                status = if held then Held else Violated,
+                reason = Nothing,
+                summary = if held then "Workflow invariant held" else "Workflow invariant failed",
+                counts = Map.fromList [("examined", fromIntegral examined), ("violations", fromIntegral violations)],
+                parameters = object [],
+                counterExamples = take exampleLimit examples,
+                counterExamplesTruncated = violations > exampleLimit,
+                inputs = [],
+                replay = Nothing,
+                checkedAt = now,
+                durationMillis = 0
+              }
+  finishWithVerdicts check (map verdict cells)
+  where
+    exampleLimit = 20
 
 recordWorkflowCellsAs :: InvariantClass -> CheckEnv -> [(Text, Bool)] -> IO ScenarioReport
 recordWorkflowCellsAs invariantClass check cells = do

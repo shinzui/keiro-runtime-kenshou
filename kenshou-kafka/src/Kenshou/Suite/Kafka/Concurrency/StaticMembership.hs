@@ -21,7 +21,7 @@ import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Role (ControlMessage (..), WorkerMessage (..))
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
 import Kenshou.Env.Kafka
-import Kenshou.Suite.Kafka.Fixture (firstBrokers, intKnob, produceValues)
+import Kenshou.Suite.Kafka.Fixture (firstBrokers, intKnob, produceValues, sabotageKnob, sabotaged)
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
@@ -32,7 +32,7 @@ scenarios =
         summary = "Checks that a static member's quick restart keeps the surviving member's assignment.",
         tier = TierStandard,
         placement = PlaceEither,
-        knobs = [intKnob "kafka.prop.session.timeout.ms" "Static member session timeout in milliseconds" 10000 6000 30000],
+        knobs = [intKnob "kafka.prop.session.timeout.ms" "Static member session timeout in milliseconds" 10000 6000 30000, sabotageKnob "inject-survivor-revoke"],
         dimensions = allTelemetryArms noDimensions,
         phases = zeroPhases,
         requires = kafkaEnvironment,
@@ -83,7 +83,8 @@ runStaticMembership context = do
       lagResult <- awaitGroup env group 20 (\snapshot -> length snapshot.offsets == 4 && all ((== Just 0) . (.lag)) snapshot.offsets)
       _ <- stopGracefully supervisor replacement 5000
       _ <- stopGracefully supervisor second 5000
-      let revokes = [event | event <- secondEvents, event.at >= killedAt, event.at <= received.at, event.kind `elem` ["before-revoke", "revoke"]]
+      let observedRevokes = [event | event <- secondEvents, event.at >= killedAt, event.at <= received.at, event.kind `elem` ["before-revoke", "revoke"]]
+          revokes = if sabotaged context then RebalanceFact "revoke" old.partitions killedAt : observedRevokes else observedRevokes
       pure (old.partitions, new.partitions, revokes, received, either (const False) (const True) lagResult)
     _ <- deleteRunGroups env
     _ <- deleteRunTopics env

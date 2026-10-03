@@ -1,6 +1,7 @@
-module Kenshou.Suite.Kafka.Fixture (scenarios, produceValues, consumeValues, firstBrokers, intKnob) where
+module Kenshou.Suite.Kafka.Fixture (scenarios, produceValues, consumeValues, firstBrokers, intKnob, sabotageKnob, sabotaged, sabotageDropFirst) where
 
 import Control.Concurrent (threadDelay)
+import Control.Exception (SomeException, finally, try)
 import Control.Monad (forM)
 import Data.ByteString.Char8 qualified as ByteString
 import Data.Foldable (toList)
@@ -13,11 +14,12 @@ import Effectful.Error.Static (runError)
 import Kafka.Effectful.Consumer qualified as C
 import Kafka.Effectful.Producer qualified as P
 import Kafka.Types (BrokerAddress (..), KafkaError, Timeout (..), TopicName (..))
+import Kenshou.Check.Fault.Network (ProxyMode (..), resetConnections, setProxyMode)
 import Kenshou.Core.Context (RunContext (..))
 import Kenshou.Core.Dimension (allTelemetryArms, noDimensions)
 import Kenshou.Core.Env (kafkaEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
-import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), knobInt, mkKnobName)
+import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), knobInt, knobText, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
 import Kenshou.Env.Kafka
@@ -28,15 +30,15 @@ import System.Timeout (timeout)
 
 scenarios :: [Scenario]
 scenarios =
-  [ fixtureScenario "kafka/broker/correctness/fixture-roundtrip" "Round-trips 100 acknowledged records through a private broker." TierSmoke partitionKnobs runRoundtrip,
-    fixtureScenario "kafka/broker/concurrency/kill-and-restart" "Kills and restarts the broker on its existing data." TierStandard outageKnobs runKillRestart
+  [ fixtureScenario "kafka/broker/correctness/fixture-roundtrip" 2 "Round-trips 100 acknowledged records through a private broker and administers it while a lane is blackholed." TierSmoke (partitionKnobs <> [sabotageKnob "drop-first-fact"]) runRoundtrip,
+    fixtureScenario "kafka/broker/concurrency/kill-and-restart" 1 "Kills and restarts the broker on its existing data." TierStandard (outageKnobs <> [sabotageKnob "drop-first-fact"]) runKillRestart
   ]
 
-fixtureScenario :: Text -> Text -> Tier -> [KnobSpec] -> (RunContext -> IO ScenarioReport) -> Scenario
-fixtureScenario identifier summary tier knobs run =
+fixtureScenario :: Text -> Int -> Text -> Tier -> [KnobSpec] -> (RunContext -> IO ScenarioReport) -> Scenario
+fixtureScenario identifier revision summary tier knobs run =
   Scenario
     { id = either (error . Text.unpack) id (parseScenarioId identifier),
-      revision = 1,
+      revision,
       summary,
       tier,
       placement = PlaceEither,
@@ -54,6 +56,22 @@ partitionKnobs = [intKnob "kafka.partitions" "Number of topic partitions" 3 1 64
 outageKnobs :: [KnobSpec]
 outageKnobs = [intKnob "kafka.outage-seconds" "Duration of broker outage" 5 1 60]
 
+-- | The deliberate oracle sabotage of a scenario without a known defect.
+-- @none@ is the real check; the one other value corrupts the collected
+-- evidence just before judgment, so a run with it must fail with the
+-- scenario's ordinary failure label. That run is the recorded proof that the
+-- oracle is not vacuous; it never changes the default behaviour.
+sabotageKnob :: Text -> KnobSpec
+sabotageKnob mode =
+  KnobSpec (either (error . Text.unpack) id (mkKnobName "kafka.sabotage")) "Deliberately corrupt the evidence before judgment" KnobText (VText "none") (OneOf (VText "none" :| [VText mode])) []
+
+sabotaged :: RunContext -> Bool
+sabotaged context = knobText context.knobs (either (error . Text.unpack) id (mkKnobName "kafka.sabotage")) /= "none"
+
+-- | Under sabotage, forget the first collected fact.
+sabotageDropFirst :: RunContext -> [a] -> [a]
+sabotageDropFirst context facts = if sabotaged context then drop 1 facts else facts
+
 intKnob :: Text -> Text -> Int -> Int -> Int -> KnobSpec
 intKnob name summary def low high =
   KnobSpec (either (error . Text.unpack) id (mkKnobName name)) summary KnobInt (VInt (fromIntegral def)) (IntRange (fromIntegral low) (fromIntegral high)) []
@@ -65,17 +83,21 @@ runRoundtrip context = do
     let partitions = fromIntegral (knobInt context.knobs (either (error . Text.unpack) id (mkKnobName "kafka.partitions")))
     [topic] <- createTopics env [TopicSpec "roundtrip" partitions mempty]
     sent <- produceValues env topic [0 .. 99]
-    received <- consumeValues env (if length env.lanes > 1 then 1 else 0) topic "roundtrip" 100
+    received <- sabotageDropFirst context <$> consumeValues env (if length env.lanes > 1 then 1 else 0) topic "roundtrip" 100
     let values = sort received
         expected = [0 .. 99]
         safe = all ((/= "127.0.0.1:9092") . unBrokerAddress) [broker | lane <- toList env.lanes, broker <- lane.laneBrokers]
     snapshot <- describeGroup env (groupName env "roundtrip")
+    adminIsolated <- adminSurvivesLaneBlackhole env (groupName env "roundtrip")
     _ <- deleteRunGroups env
     removed <- deleteRunTopics env
     remaining <- deleteRunTopics env
     pure $
       if length sent == 100 && values == expected && safe && length snapshot.offsets == partitions && all ((== Just 0) . (.lag)) snapshot.offsets && removed == 1 && remaining == 0
-        then passed
+        then
+          if adminIsolated
+            then passed
+            else failedWith ["admin-blinded-by-lane-fault"] "group administration failed while lane 0 was blackholed"
         else failedWith ["roundtrip"] ("sent=" <> Text.pack (show (length sent)) <> " received=" <> Text.pack (show (length received)) <> " group=" <> Text.pack (show snapshot) <> " removed=" <> Text.pack (show removed) <> " remaining=" <> Text.pack (show remaining))
 
 runKillRestart :: RunContext -> IO ScenarioReport
@@ -94,7 +116,7 @@ runKillRestart context = do
       control.start
       after <- control.generation
       second <- produceValues env topic [500 .. 999]
-      received <- consumeValues env 0 topic "restart" 1000
+      received <- sabotageDropFirst context <$> consumeValues env 0 topic "restart" 1000
       let expected = [0 .. 999]
       _ <- deleteRunGroups env
       _ <- deleteRunTopics env
@@ -102,6 +124,21 @@ runKillRestart context = do
         if down && downWriteFailed && before /= after && length first == 500 && length second == 500 && sort received == expected
           then passed
           else failedWith ["broker-restart"] ("down=" <> Text.pack (show down) <> " downWriteFailed=" <> Text.pack (show downWriteFailed) <> " generationChanged=" <> Text.pack (show (before /= after)) <> " received=" <> Text.pack (show (length received)))
+
+-- | With a proxied lane, blackhole it and require that the fixture's own
+-- administration still answers. This is the non-vacuity check for the
+-- unproxied control listener that oracles rely on during lane partitions.
+-- An environment without a lane proxy has nothing to isolate.
+adminSurvivesLaneBlackhole :: KafkaEnv -> C.ConsumerGroupId -> IO Bool
+adminSurvivesLaneBlackhole env group = case laneProxy env 0 of
+  Left _ -> pure True
+  Right proxy -> do
+    setProxyMode proxy Blackhole
+    _ <- resetConnections proxy
+    outcome <- (timeout 20000000 (try @SomeException (describeGroup env group))) `finally` setProxyMode proxy Forward
+    pure case outcome of
+      Just (Right described) -> not (null described.offsets)
+      _ -> False
 
 attemptProduceDuringOutage :: KafkaEnv -> TopicName -> IO Bool
 attemptProduceDuringOutage env (TopicName topic) = do
