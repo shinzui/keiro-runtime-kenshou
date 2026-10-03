@@ -27,6 +27,257 @@ projection, snapshot, benchmark, soak, and telemetry scenarios share this
 fixture. Their implementation record is the repository-local
 `docs/plans/12-cover-the-keiro-command-processor-process-managers-and-routers.md` plan.
 
+## Write side
+
+Every write-side scenario supports only `pg.version=18`. Crash, benchmark and
+soak scenarios support only `pg.durability=durable`; pass
+`--dim pg.durability=durable`. Every check reads durable truth through its own
+Hasql connection, never through the store under test. Unless stated otherwise
+a check is a contract invariant.
+
+### Shared verdicts and oracles
+
+- `log-is-well-formed`: every stream's versions are 1 to n without gaps and
+  event identifiers are unique.
+- `model-equals-log`: folding the account log through the hand-written model
+  never meets an invalid transition, and no balance goes negative.
+- `inline-read-model-equals-log`: `kenshou_keiro.account_balance` equals the
+  model, with `last_version` equal to the stream version.
+- `money-is-conserved`: balances equal openings plus deposits and bonuses,
+  minus withdrawals and transfer value debited but not yet credited.
+- `exactly-once-target-effects`: every source event produced exactly one saga
+  event and one effect per target, under the identifiers that
+  `Keiro.ProcessManager.deterministicCommandId` and
+  `Keiro.Router.deterministicRouterCommandId` define.
+
+`Kenshou.Suite.Keiro.Fixture.Oracle` reads the category log (one SQL statement
+over Kiroku's tables), balance, activity, snapshot, timer, dispatch
+dead-letter (`keiro.keiro_dead_letters`) and subscription dead-letter
+(`kiroku.dead_letters`) tables, subscription checkpoints
+(`kiroku.subscriptions`), and `StageCounts`. `StageCounts` contains only
+counts by event type plus the applied activity total. It reads no payloads,
+so it is cheap enough to sample while workers run. `stageBacklog` turns those
+counts into the credit, confirm, saga, bonus and activity backlogs, which are
+all zero exactly at quiescence.
+
+### Worker roles
+
+All roles are children of the `kenshou` binary and connect with
+`PGAPPNAME=kenshou-<run>-<role>-<index>`. That lets fault injectors and
+per-process connection probes find each child's backends. Arguments are JSON;
+every argument has a default, so older callers keep their behaviour.
+
+- `keiro/command-writer` runs seeded workload operations or a deposit-only
+  sequence. Its arguments are `snapshotPolicy` (`never`, `every-<n>`,
+  `on-terminal`; default `every-100`), `seedVerifySampleRate`,
+  `inlineProjection`, `postSubmissionDelayMicros` and `submitMode`. `keiro`
+  submits commands. `generate-only` expands and forces every command and event
+  identifier without touching the store, which isolates the harness's own
+  workload path. The writer can park after a chosen operation.
+- `keiro/pm-worker`, `keiro/pm-sharded-worker` and `keiro/router-worker` run
+  the transfer saga or bonus router over the production Kiroku adapter or
+  lease-owned shards. They can park before an append or before the
+  acknowledgement.
+- `keiro/projection-worker` applies the additive activity projection and can
+  park after an apply.
+
+With `"telemetry": true`, a role builds its own tracing and metrics providers
+for the run's telemetry dimensions. It passes the tracer and Keiro metrics
+into command and worker options. In the serve arms it also starts a
+kiroku-metrics endpoint. It writes `children/<instance>/logs/telemetry-summary.json`
+on a graceful stop.
+
+### Command processor (`keiro/command/*`)
+
+- `correctness/fixture-roundtrip` (smoke): `workload.operations`,
+  `snapshot.policy`. Proves the fixture end to end: each submit outcome
+  matches the model, and the four shared verdicts hold.
+- `correctness/occ-retry-and-exhaustion` (smoke): `command.retry-limit`,
+  `command.retry-backoff-micros`, `command.injected-conflicts`. Conflicts up
+  to the retry limit succeed. Beyond it, the command exhausts after
+  `retryLimit + 1` attempts with nothing appended. The backoff lower bound is
+  an implementation check.
+- `correctness/idempotent-event-ids` (smoke): a repeated identifier is a
+  duplicate and appends once. `command.sabotage=omit-event-ids` must fail.
+- `correctness/hydration-paging` (standard): every stream length and page
+  size reports the right version and balance; page size 0 behaves as 1.
+- `correctness/controlled-rollback` (smoke): commit, rollback, SQL error and
+  the silent no-op leave exactly the expected events and rows.
+- `concurrency/identical-commands-one-batch` (standard): `command.concurrency`,
+  `command.processes`. One identifier submitted concurrently appends once.
+- `concurrency/hot-stream-contention` (standard): `command.writers`,
+  `command.duration-seconds`. Every accepted command has a distinct version,
+  and the balance is the sum of accepted amounts.
+- `concurrency/model-based-parallel-commands` (standard): `model.tests`,
+  `model.branches`. Hedgehog parallel histories must be linearizable against
+  the model. Failures keep the seed and the shrunk history.
+- `concurrency/sigkill-idempotent-resubmission` (standard, durable): writer
+  processes are killed and resumed from an overlap. Every operation identifier
+  must occur exactly once.
+
+### Snapshots (`keiro/snapshot/*`)
+
+- `correctness/policy-matrix` (standard): every policy leaves exactly the
+  expected snapshot row, with registers matching the model. Snapshot versions
+  never decrease under concurrent writers (implementation check).
+- `correctness/truncation-covering-snapshot` (smoke): a covering snapshot
+  hydrates past a truncation marker. An uncovered marker reports
+  `HydrationGapDetected` or `ConflictFixpoint`.
+- `correctness/seed-divergence-detection` (smoke):
+  `snapshot.seed-verify-sample-rate`. A corrupted seed is reported only when
+  sampled, and the command still succeeds.
+- `soak/seed-verification-backlog` and `-reduced`: `command.stream-length`,
+  `snapshot.seed-verify-sample-rate`, `diagnose.major-gc-interval-ms`. Leak
+  verdicts on threads, connections and heap while sampled seed verification
+  runs; see `docs/findings/2-keiro-seed-backlog-heap-growth.md`.
+
+### Projections (`keiro/projection/*`)
+
+- `correctness/async-dedup-and-fence` (smoke): applied, duplicate and fenced
+  outcomes. A prune deliberately re-admits an event.
+- `concurrency/inline-atomicity-under-kill` (standard, durable): SIGKILL,
+  backend termination or a projection error inside an open append
+  transaction. Log and balance table are always both present or both absent.
+- `concurrency/async-at-least-once-under-kill` (standard, durable):
+  `projection.batch-size`, `projection.events`, `projection.crash-count`,
+  `projection.sabotage`. Activity advances exactly once per apply across
+  crashes. `skip-dedup` must fail.
+- `concurrency/async-apply-checkpoint-atomic` (standard, durable): the known
+  defect `mori://shinzui/keiro/okf/improvement-requests/concepts/IR-10`. The
+  stronger no-redelivery property fails nonblockingly.
+
+### Process managers (`keiro/process-manager/*`)
+
+`pm.source` selects `list`, `kiroku-adapter` or `ack-stream` where a scenario
+allows it.
+
+- `correctness/deterministic-ids-redelivery` (smoke): `pm.redeliveries`,
+  `pm.sabotage`. Repeated delivery writes each effect once.
+  `unstable-manager-name` must fail.
+- `correctness/policy-matrix` (standard): poison and rejected-command policies
+  give the documented acknowledgement, dead-letter rows and poison counter.
+- `correctness/transient-classification` (standard): conflicts and lost
+  backends retry; malformed history halts; transient failures win over
+  rejection.
+- `correctness/retry-budget-dead-letter` (standard): the production adapter
+  dead-letters after five deliveries; `ack-stream` honours
+  `kiroku.retry-max-attempts`. Replay is fresh once, then a duplicate.
+- `correctness/order-insensitive-join` (smoke): the fixture saga joins either
+  order. The strict variant halts or dead-letters the out-of-order input.
+- `correctness/timers-commit-with-manager-append` (smoke): the timeout timer
+  commits with the saga append, and a rejected append leaves the timer
+  unchanged.
+- `correctness/reaction-schedule-modes` (smoke): `Once` keeps the first time,
+  `Rearm` moves a scheduled timer, and accepted redelivery completes missing
+  dispatches.
+- `correctness/reaction-no-advance-receipt` (smoke): the known defect
+  `mori://shinzui/keiro/okf/adrs/concepts/ADR-41`.
+- `concurrency/sigkill-crash-windows` (standard, durable): `pm.kill-window`.
+  Each of the four windows is parked, killed and resumed with exactly-once
+  effects. The restarted worker reports `PMStateDuplicate`.
+- `concurrency/random-kill-exactly-once` (standard, durable):
+  `command.rate-per-second`, `fault.kill-interval-seconds`,
+  `command.duration-seconds`, `fault.backend-terminate`. Open-loop transfers
+  survive periodic kills and backend terminations. A driver that cannot hold
+  its schedule is `inconclusive`.
+- `concurrency/topologies` (standard, durable): duplicate subscribers, a
+  static consumer group and lease-owned shards each reach exactly-once
+  effects. A run that observes only one input order is `inconclusive`.
+
+### Routers (`keiro/router/*`)
+
+- `correctness/fanout-exactly-once` (smoke): `router.fanout`,
+  `router.redeliveries`, `router.sabotage`. Recipient credits are keyed by
+  target and occurrence.
+- `correctness/stable-union-under-drift` (smoke): recipients dispatched before
+  a failure keep their credit after the selection changes.
+- `correctness/per-target-independent-commits` (smoke): a closed recipient
+  dead-letters alone.
+- `correctness/declarative-selection-policies` (standard): all twelve
+  empty/failure policy cells and the normalization codes.
+- `correctness/dead-letter-identity-under-reordered-redelivery` (smoke): each
+  rejected target keeps one correctly named dead letter after reversed
+  redelivery.
+- `concurrency/sigkill-mid-fanout` (standard, durable):
+  `router.kill-after-targets`. Exactly k credits exist before the kill, and
+  every recipient is credited once after resumption.
+
+### Benchmarks
+
+Benchmarks are authoritative only as paired trials on a cell. A local run
+checks function and data integrity, not performance. Each benchmark runs the
+shared checks after its drain phase; a benchmark that corrupts data is
+`failed`, not fast.
+
+- `keiro/command/benchmark/throughput-latency`: load model, writers, pool
+  size, runner path, snapshot policy, accounts, memo size and replay
+  verification.
+- `keiro/command/benchmark/hydration-cost`: stream length (variants 0, 100,
+  1,000 and 10,000), snapshot policy (`never`, `every-100`) and page size
+  (64, 256, 1,024).
+- `keiro/command/benchmark/all-stream-append-ceiling`: writers (1 to 64) and
+  pool size (4, 10, 13, 32) over independent accounts, so the shared `$all`
+  row is the only contention.
+- `keiro/process-manager/benchmark/dispatch-latency` and
+  `keiro/router/benchmark/fanout-dispatch`: list or production-adapter source,
+  injected redelivery percentage and fanout.
+
+Plan a benchmark matrix one factor at a time with
+`kenshou plan --select <id> --knob-policy declared-variants`. `command.processes`
+(multi-process load generation) is not yet implemented in the benchmarks.
+
+### Write-side soaks
+
+`keiro/command/soak/write-side-steady-state` (cell, 240 minutes) and `-reduced`
+(either, 20 minutes) run two command writers with a saga worker, a router
+worker and a projection worker on one durable database. Revision 3 adds the
+following controls:
+
+- `soak.drain-seconds` (default 120): after both writers stop, wait up to this
+  long for every stage backlog to reach zero.
+- `soak.stage-sample-seconds` (default 10, `0` disables it): sample
+  `StageCounts` into `series/write-side-stages.csv` during the steady and drain
+  phases.
+- `soak.topology` (`full`, `writers-only`) and `writer.submit-mode` (`keiro`,
+  `generate-only`; `generate-only` requires `writers-only`).
+- `snapshot.policy` and `snapshot.seed-verify-sample-rate` for the writers.
+- Every value of `telemetry.tracing` and `telemetry.metrics`. Any non-off arm
+  gives each child its own providers.
+
+The run summary's `write-side-steady` section reports stage counts and
+`quiescentWithinTimeout`. Its `drain` object gives the backlog at writer stop
+and at the end, the elapsed drain, `quiescentAfterSeconds`, and
+`projectedRemainingSeconds` at the slowest stage's observed drain rate. Its
+`capacity` object gives each stage's arrival rate, completion rate and backlog
+slope over the second half of the steady samples. It also gives a class:
+`within-capacity`, `falling-behind` (a backlog that grows by more than 5% of
+its arrival rate), or `insufficient-samples`. These are diagnostics, not
+verdicts.
+
+The full topology checks writer exit, source setup, scheduled kills,
+`exactly-once-target-effects` at quiescence, inline balances, async activity,
+both dead-letter tables, bounded snapshots, dedup retention and well-formed
+logs. `writers-only` keeps the writer, setup, dead-letter, snapshot, inline
+balance and log checks and adds `no-downstream-effects`. `generate-only`
+replaces the balance check with `no-commands-submitted`. Leak verdicts cover
+the main process and every started child: post-major-GC live bytes, native
+memory, Haskell and OS threads, descriptors, and PostgreSQL connections by
+application name.
+
+The checked-in specs in `specs/keiro-write-side-*.json` are the cell controls
+for `docs/findings/44-keiro-write-side-default-soak-does-not-quiesce.md` and
+`docs/findings/46-keiro-command-writers-grow-heap-in-low-rate-soak.md`. They
+reuse the seed and settings of the earlier alpha runs.
+
+### Telemetry (`keiro/telemetry/correctness/write-side-signals`)
+
+With in-memory tracing and collected metrics, each command produces one span
+with the documented attributes. The conflict, retry, duplicate, dispatch,
+dead-letter, poison and snapshot counters equal the ledger's counts. With
+both dimensions `off`, nothing is exported and results are unchanged. The
+benchmarks and soaks support every arm of both dimensions. Compare overhead
+with `kenshou overhead <benchmark> --arms tracing=… --arms metrics=…`.
+
 ## Durable execution probes
 
 The durable-execution work tracked by
