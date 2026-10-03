@@ -12,7 +12,7 @@ where
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (cancel, link, withAsync)
 import Control.Concurrent.MVar (modifyMVar_, newMVar, readMVar, withMVar)
-import Control.Exception (bracket, mask_)
+import Control.Exception (mask_)
 import Control.Monad (forM, forever, unless, when)
 import Data.Aeson (encode, object, withObject, (.:), (.=))
 import Data.Aeson.Types (parseMaybe)
@@ -21,8 +21,6 @@ import Data.IORef (atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Data.Time.Clock.POSIX (getPOSIXTime)
-import GHC.Clock (getMonotonicTimeNSec)
 import Keiro.Integration.Event (IntegrationEvent (..))
 import Keiro.Outbox (OutboxPublishOptions (..), OutboxPublishSummary (..), OutboxRow (..), defaultPublishOptions, publishClaimedOutbox)
 import Kenshou.Check.Process (awaitMark, awaitReady, childPid, killChild, readChildMessages, roleProcess, sendCommand, spawn, stopGracefully, withSupervisor)
@@ -31,17 +29,13 @@ import Kenshou.Core.Context (ArtifactDir (..), RunContext (..), artifactPath, de
 import Kenshou.Core.Id (unSeed)
 import Kenshou.Core.Knob (knobInt, mkKnobName)
 import Kenshou.Core.Role (ControlMessage (..), PostgresConnInfo (..), RoleContext (..), WorkerInit (..), WorkerMessage (..), WorkerRole (..), mkRoleName)
-import Kenshou.Diagnose.Leak (LeakReport (..), LeakSpec (..), ProbeReport (..), ProbeSpec (..), analyseSeriesDirectory)
-import Kenshou.Diagnose.Series (SeriesBinding (..))
-import Kenshou.Measure.Sampler.Process qualified as ProcessSample
-import Kenshou.Measure.Sampler.Rts (closeRtsSampler, openRtsSampler, sampleRts)
+import Kenshou.Diagnose.Leak (LeakReport (..), LeakSpec, ProbeReport (..), analyseSeriesDirectory)
 import Kenshou.Suite.Keiro.Fixture.Runtime (FixtureEnv (..), KeiroRunner (..), withFixtureEnv)
-import Kenshou.Suite.Keiro.Messaging.SoakDiagnosis (soakLeakSpec)
+import Kenshou.Suite.Keiro.Messaging.SoakDiagnosis (processLeakSpec, soakLeakSpec, withRoleSamples)
 import Kenshou.Suite.Keiro.Outbox.Broker qualified as Broker
 import Kiroku.Store (defaultConnectionSettings)
 import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
-import System.Mem (performMajorGC)
 
 data PublisherReport = PublisherReport
   { kills :: !Int,
@@ -123,18 +117,7 @@ withProcessPublishers context killInterval action = withCheck context \check -> 
     integer key = knobInt context.knobs (either (error . show) id (mkKnobName key))
 
 publisherLeakSpec :: FilePath -> LeakSpec -> LeakSpec
-publisherLeakSpec prefix (LeakSpec probes warmup points duration envelope resamples confidence) =
-  LeakSpec
-    [ probe {binding = if probe.name == "heap.live-bytes" then probe.binding {file = prefix </> "rts.csv", valueColumn = "live_bytes_last_gc"} else probe.binding {file = prefix </> probe.binding.file}}
-    | probe <- probes,
-      probe.name `elem` ["heap.live-bytes", "process.native-bytes", "haskell.threads", "os.threads", "os.fds"]
-    ]
-    warmup
-    points
-    duration
-    envelope
-    resamples
-    confidence
+publisherLeakSpec = processLeakSpec
 
 -- A repeated broker append needs a recorded crash of that exact message,
 -- rather than borrowing the unused duplicate allowance of an unrelated batch.
@@ -151,7 +134,7 @@ runPublisher context = case context.init.postgres of
   Just postgres -> do
     context.send WrkReady
     context.receive >>= \case
-      Just CtlStart -> withFixtureEnv (defaultConnectionSettings postgres.connectionString) \fixture -> Broker.withTableBroker postgres.connectionString \broker -> withSamples context do
+      Just CtlStart -> withFixtureEnv (defaultConnectionSettings postgres.connectionString) \fixture -> Broker.withTableBroker postgres.connectionString \broker -> withRoleSamples context do
         stopped <- newIORef False
         armed <- newIORef False
         let KeiroRunner runFixture = fixture.runner
@@ -186,26 +169,3 @@ runPublisher context = case context.init.postgres of
       _ -> pure ()
   where
     integer key = knobInt context.init.knobs (either (error . show) id (mkKnobName key))
-
-withSamples :: RoleContext -> IO value -> IO value
-withSamples context action = bracket open close \(rts, process, start) -> withAsync (sampleLoop rts process start) \sampler -> link sampler >> action
-  where
-    directory = context.init.outDir </> "series" </> "children" </> Text.unpack (Text.replace "/" "-" context.init.instanceName)
-    open = do
-      rts <- openRtsSampler (directory </> "rts.csv")
-      process <- ProcessSample.openProcessSampler (directory </> "proc.csv")
-      start <- getMonotonicTimeNSec
-      pure (rts, process, start)
-    close (rts, process, _) = maybe (pure ()) closeRtsSampler rts >> ProcessSample.closeProcessSampler process
-    sampleLoop rts process start = do
-      lastMajor <- newIORef start
-      forever do
-        now <- getMonotonicTimeNSec
-        previous <- readIORef lastMajor
-        let interval = fromIntegral (knobInt context.init.knobs (either (error . show) id (mkKnobName "diagnose.major-gc-interval-ms"))) * 1000000
-        when (interval > 0 && now - previous >= interval) (performMajorGC >> writeIORef lastMajor now)
-        wall <- getPOSIXTime
-        let prefix = [Text.pack (show (now - start)), Text.pack (show (round (wall * 1000) :: Integer)), "steady"]
-        maybe (pure ()) (\sampler -> sampleRts sampler prefix) rts
-        ProcessSample.sampleProcess process prefix
-        threadDelay 1000000

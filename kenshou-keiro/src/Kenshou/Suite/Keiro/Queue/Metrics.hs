@@ -2,6 +2,7 @@ module Kenshou.Suite.Keiro.Queue.Metrics
   ( QueueMetrics,
     WorkerCounts (..),
     withQueueTelemetry,
+    withQueueTelemetryAt,
     registerWorker,
     checkpoint,
     probeEndpoints,
@@ -15,7 +16,7 @@ import Control.Concurrent.Async (Async, async, cancel, poll)
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar)
 import Control.Exception (bracket, mask, throwIO)
 import Control.Monad (forM, forM_, forever, when)
-import Data.Aeson (ToJSON (..), eitherDecode, encode, object, (.=))
+import Data.Aeson (ToJSON (..), Value, eitherDecode, encode, object, (.=))
 import Data.ByteString.Lazy qualified as LBS
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.Map.Strict qualified as Map
@@ -32,6 +33,8 @@ import Network.HTTP.Types.Status (statusCode)
 import Shibuya.App (Master, getAllMetricsIO)
 import Shibuya.Core.Metrics (InFlightInfo (..), MetricsMap, ProcessorId (..), ProcessorMetrics (..), ProcessorState (..), StreamStats (..))
 import Shibuya.Metrics.Server qualified as Server
+import System.Directory (createDirectoryIfMissing)
+import System.FilePath ((</>))
 import System.IO (BufferMode (LineBuffering), Handle, IOMode (WriteMode), hClose, hSetBuffering, openFile)
 import Text.Read (readMaybe)
 
@@ -49,7 +52,8 @@ instance ToJSON WorkerCounts where
 data Source = Source {label :: Text, master :: Master, port :: Maybe Int}
 
 data QueueMetrics = QueueMetrics
-  { context :: RunContext,
+  { path :: ArtifactDir -> FilePath -> IO FilePath,
+    report :: Value -> IO (),
     sources :: IORef [Source],
     servers :: IORef [Server.MetricsServer],
     collectors :: IORef [Async ()],
@@ -57,7 +61,18 @@ data QueueMetrics = QueueMetrics
   }
 
 withQueueTelemetry :: RunContext -> TelemetrySpec -> (TelemetryHandles -> QueueMetrics -> IO a) -> IO a
-withQueueTelemetry context spec action = bracket acquire release \resources ->
+withQueueTelemetry context = withQueueTelemetryUsing (artifactPath context) (putSummary context Telemetry "queue-worker-metrics")
+
+withQueueTelemetryAt :: FilePath -> (Value -> IO ()) -> TelemetrySpec -> (TelemetryHandles -> QueueMetrics -> IO a) -> IO a
+withQueueTelemetryAt directory = withQueueTelemetryUsing path
+  where
+    path kind name = do
+      let root = directory </> (if kind == SeriesDir then "series" else "logs")
+      createDirectoryIfMissing True root
+      pure (root </> name)
+
+withQueueTelemetryUsing :: (ArtifactDir -> FilePath -> IO FilePath) -> (Value -> IO ()) -> TelemetrySpec -> (TelemetryHandles -> QueueMetrics -> IO a) -> IO a
+withQueueTelemetryUsing path report spec action = bracket acquire release \resources ->
   withTelemetry spec \telemetry -> do
     result <- action telemetry resources
     tasks <- readIORef resources.collectors
@@ -68,7 +83,7 @@ withQueueTelemetry context spec action = bracket acquire release \resources ->
         Just (Right ()) -> fail "queue metrics collector exited unexpectedly"
     pure result
   where
-    acquire = QueueMetrics context <$> newIORef [] <*> newIORef [] <*> newIORef [] <*> newMVar Nothing
+    acquire = QueueMetrics path report <$> newIORef [] <*> newIORef [] <*> newIORef [] <*> newMVar Nothing
     release resources = do
       readIORef resources.collectors >>= mapM_ cancel
       readIORef resources.servers >>= mapM_ Server.stopMetricsServer
@@ -103,7 +118,7 @@ checkpoint resources = do
     writeSample resources source.label "checkpoint" snapshot
     pure snapshot
   let snapshot = Map.unions snapshots
-  putSummary resources.context Telemetry "queue-worker-metrics" (object ["sources" .= length sources, "processors" .= snapshot])
+  resources.report (object ["sources" .= length sources, "processors" .= snapshot])
   pure snapshot
 
 writeSample :: QueueMetrics -> Text -> Text -> MetricsMap -> IO ()
@@ -114,7 +129,7 @@ writeSample resources source sampling snapshot = do
     handle <- case previous of
       Just handle -> pure handle
       Nothing -> do
-        path <- artifactPath resources.context SeriesDir "queue-worker-metrics.jsonl"
+        path <- resources.path SeriesDir "queue-worker-metrics.jsonl"
         handle <- openFile path WriteMode
         hSetBuffering handle LineBuffering
         pure handle
@@ -133,8 +148,8 @@ probeEndpoints resources phase expected = do
           fetch path = parseRequest (Text.unpack (url port path)) >>= \request -> httpLbs request manager
       json <- fetch "/metrics"
       prometheus <- fetch "/metrics/prometheus"
-      jsonPath <- artifactPath resources.context LogsDir (Text.unpack (source.label <> "-" <> phase <> ".json"))
-      promPath <- artifactPath resources.context LogsDir (Text.unpack (source.label <> "-" <> phase <> ".prom"))
+      jsonPath <- resources.path LogsDir (Text.unpack (source.label <> "-" <> phase <> ".json"))
+      promPath <- resources.path LogsDir (Text.unpack (source.label <> "-" <> phase <> ".prom"))
       LBS.writeFile jsonPath json.responseBody
       LBS.writeFile promPath prometheus.responseBody
       pure

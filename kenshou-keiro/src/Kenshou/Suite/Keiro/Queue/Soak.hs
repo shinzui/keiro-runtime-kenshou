@@ -19,7 +19,7 @@ import Hasql.Session qualified as Session
 import Hasql.Statement qualified as Statement
 import Keiro.PGMQ.Codec (aesonJobCodec)
 import Keiro.PGMQ.Dlq (PurgeDlqResult (..), archiveDlq, purgeDlq)
-import Keiro.PGMQ.Job (Job (..), JobOrdering (..), JobOutcome (..), JobPolling (..), JobTuning (..), defaultJobTuning, defaultRetryPolicy, enqueue, ensureJobQueue, runJobOnceWithContext)
+import Keiro.PGMQ.Job (Job (..), JobOrdering (..), JobOutcome (..), JobPolling (..), JobTuning (..), defaultJobTuning, defaultRetryPolicy, enqueue, enqueueTraced, ensureJobQueue, runJobOnceWithContext)
 import Keiro.PGMQ.Runtime (JobRuntime (..), QueueRef (..), queueRef, runJobEff, withJobRuntime)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary, requirePostgres)
 import Kenshou.Core.Dimension
@@ -42,8 +42,9 @@ import Kenshou.Suite.Keiro.Command.Correctness (recordCells)
 import Kenshou.Suite.Keiro.Messaging.RelationGrowth (RelationGrowth (..), bytesPerInsertedRow, deadTuplesBounded, readRelationGrowth, sizeBounded)
 import Kenshou.Suite.Keiro.Messaging.SoakDiagnosis (majorGcIntervalMs, majorGcKnob, soakLeakSpec, withSoakMajorGc)
 import Kenshou.Suite.Keiro.Outbox.Workload (sourceName)
+import Kenshou.Suite.Keiro.Queue.SoakWorker qualified as SoakWorker
 import Kenshou.Telemetry (TelemetryHandles (..), telemetryKnobs, telemetrySpecFromContext, withTelemetry)
-import Pgmq.Types (queueNameToText)
+import Pgmq.Types (MessageHeaders (..), queueNameToText)
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
@@ -53,11 +54,11 @@ queueGrowth :: Bool -> Scenario
 queueGrowth reduced =
   Scenario
     { id = either (error . show) id (parseScenarioId (if reduced then "keiro/queue/soak/queue-and-dlq-growth-reduced" else "keiro/queue/soak/queue-and-dlq-growth")),
-      revision = 2,
+      revision = 3,
       summary = "Continuously processes jobs with terminal poison messages, checking bounded main queue, exact DLQ placement and optional DLQ archiving.",
       tier = if reduced then TierExtended else TierSoak,
       placement = if reduced then PlaceEither else PlaceCell,
-      knobs = telemetryKnobs <> measureKnobs Soak <> [intKnob "soak.duration-minutes" (if reduced then 20 else 240) 1 1440, intKnob "queue.rate-per-second" 5 1 100, intKnob "queue.dead-every" 20 2 1000, textKnob "queue.dlq-maintenance" "on" ["off"], majorGcKnob],
+      knobs = telemetryKnobs <> measureKnobs Soak <> [intKnob "soak.duration-minutes" (if reduced then 20 else 240) 1 1440, intKnob "queue.rate-per-second" 5 1 100, intKnob "queue.dead-every" 20 2 1000, textKnob "queue.dlq-maintenance" "on" ["off"], textKnob "queue.worker-isolation" "in-process" ["process"], majorGcKnob],
       dimensions =
         DimensionSupport
           { tracing = Supported (Support (TracingOff :| [TracingNoop, TracingSdkInMemory, TracingSdkOtlp]) TracingOff),
@@ -83,6 +84,7 @@ runQueueGrowth context = case (measureConfigFromKnobs context (phasePlanFromCore
           archiveTable = "pgmq.a_" <> queueNameToText job.jobQueue.dlqName
           rateInt = fromIntegral (knobInt context.knobs (name "queue.rate-per-second")) :: Int
           deadEvery = fromIntegral (knobInt context.knobs (name "queue.dead-every")) :: Int
+          isolated = knobText context.knobs (name "queue.worker-isolation") == "process"
           maintenance = knobText context.knobs (name "queue.dlq-maintenance") == "on"
           load = OpenLoop (OpenConfig (ConstantRate (fromIntegral rateInt)) 128 1 (OverloadConfig 1000000000 3 30000000000))
           tuning = defaultJobTuning {polling = PollEvery 0.1, visibilityTimeout = 30}
@@ -94,7 +96,7 @@ runQueueGrowth context = case (measureConfigFromKnobs context (phasePlanFromCore
           effectRows = do
             let statement = Statement.preparable "SELECT payload, attempts FROM kenshou_fx.queue_soak_effects" Encoders.noParams (Decoders.rowList ((,) <$> Decoders.column (Decoders.nonNullable Decoders.text) <*> Decoders.column (Decoders.nonNullable Decoders.int4)))
             Pool.use runtime.runtimePool (Session.statement () statement) >>= either (fail . show) pure
-      Pool.use runtime.runtimePool (Session.script "CREATE SCHEMA IF NOT EXISTS kenshou_fx; CREATE TABLE kenshou_fx.queue_soak_effects (payload text PRIMARY KEY, attempts integer NOT NULL)") >>= either (fail . show) pure
+      Pool.use runtime.runtimePool (Session.script "CREATE SCHEMA IF NOT EXISTS kenshou_fx; CREATE TABLE kenshou_fx.queue_soak_effects (payload text PRIMARY KEY, attempts integer NOT NULL, worker text NOT NULL DEFAULT 'in-process')") >>= either (fail . show) pure
       _ <- runJobEff runtime (ensureJobQueue job) >>= either (fail . show) pure
       workerErrors <- newIORef (0 :: Int)
       maintenanceErrors <- newIORef (0 :: Int)
@@ -104,7 +106,7 @@ runQueueGrowth context = case (measureConfigFromKnobs context (phasePlanFromCore
       let enqueueOne _ sequenceNumber = do
             let poison = fromIntegral sequenceNumber `mod` deadEvery == (0 :: Int)
                 payload = (if poison then "dead:" else "done:") <> Text.pack (show sequenceNumber)
-            sent <- runJobEff runtime (enqueue job payload)
+            sent <- runJobEff runtime (case telemetry.tracerProvider of Nothing -> enqueue job payload; Just provider -> enqueueTraced provider job (MessageHeaders (object [])) payload)
             case sent of
               Right _ -> pure (OpOk 1)
               Left err -> pure (OpFailed (ErrorCause (Text.pack (show err))))
@@ -142,18 +144,23 @@ runQueueGrowth context = case (measureConfigFromKnobs context (phasePlanFromCore
             if seen == fromIntegral expected && depth == 0
               then pure True
               else threadDelay 1000000 >> awaitDrain expected
-      workers <- forM [1 .. 2 :: Int] (const (async worker))
+      workers <- if isolated then pure [] else forM [1 .. 2 :: Int] (const (async worker))
       collector <- if maintenance then Just <$> async collect else pure Nothing
       depthSampler <- async sampleDepth
       let shutdown = writeIORef stop True >> mapM_ cancel workers >> maybe (pure ()) wait collector >> cancel depthSampler
-      ((loadReport, measurement), drained) <-
-        withSoakMajorGc context $
-          ( do
-              result@(loadReport, _) <- withMeasurement context config \session -> runLoad session load (Operation (OpName "queue.enqueue") enqueueOne)
-              drained <- timeout 120000000 (awaitDrain (fromIntegral loadReport.completed))
-              pure (result, drained)
-          )
-            `finally` shutdown
+      let withWorkers action =
+            if isolated
+              then do
+                (value, report) <- SoakWorker.withProcessWorkers context (sourceName context "queue-growth") action
+                pure (value, Just report)
+              else (,Nothing) <$> action
+      (((loadReport, measurement), drained), processReport) <-
+        ( withWorkers $ withSoakMajorGc context do
+            result@(loadReport, _) <- withMeasurement context config \session -> runLoad session load (Operation (OpName "queue.enqueue") enqueueOne)
+            drained <- timeout 120000000 (awaitDrain (fromIntegral loadReport.completed))
+            pure (result, drained)
+        )
+          `finally` shutdown
       finalArchive <- if maintenance then runJobEff runtime (archiveDlq job 100000) >>= either (fail . show) pure else pure 0
       purged <- if maintenance then Just <$> (runJobEff runtime (purgeDlq job) >>= either (fail . show) pure) else pure Nothing
       effects <- effectRows
@@ -173,6 +180,8 @@ runQueueGrowth context = case (measureConfigFromKnobs context (phasePlanFromCore
           dlqBounded = maybe False (sizeBounded (8 * 1024 * 1024)) dlqGrowth
           deadTuplesBoundedMain = maybe False (deadTuplesBounded (fromIntegral (max 1000 (rateInt * 60)))) mainGrowth
           deadTuplesBoundedDlq = maybe False (deadTuplesBounded (fromIntegral (max 1000 (rateInt * 60)))) dlqGrowth
+          processOutcomes = maybe [] (map leakOutcome . (.childLeaks)) processReport
+          processCells = maybe [] (\report -> [("worker-processes-stopped", report.stopped && report.errors == 0)]) processReport
           cells =
             [ ("enqueue-load-completed", completed > 0 && loadReport.failed == 0 && not loadReport.abortedEarly),
               ("all-jobs-handled-once", drained == Just True && length effects == completed && Set.fromList (map fst effects) == expected && all ((== 1) . snd) effects),
@@ -184,13 +193,14 @@ runQueueGrowth context = case (measureConfigFromKnobs context (phasePlanFromCore
               ("dlq-table-growth", minutes < 10 || not maintenance || dlqBounded),
               ("dlq-dead-tuple-growth", minutes < 10 || not maintenance || deadTuplesBoundedDlq)
             ]
+              <> processCells
           duration = fromIntegral minutes * 60 :: Double
           leakSpec = soakLeakSpec context duration
           growthSummary sample = object ["earlyBytes" .= sample.earlyBytes, "lateBytes" .= sample.lateBytes, "earlyDeadTuples" .= sample.earlyDeadTuples, "lateDeadTuples" .= sample.lateDeadTuples, "bytesPerInsertedRow" .= bytesPerInsertedRow sample]
-      putSummary context Measurements "queue-and-dlq-growth" (object ["enqueued" .= completed, "handled" .= length effects, "deadExpected" .= deadExpected, "mainDepth" .= mainDepth, "peakMainDepth" .= maxDepth, "dlqDepth" .= dlqDepth, "dlqArchiveDepth" .= archiveDepth, "archivedDuringSteady" .= archivedDuring, "archivedAtEnd" .= finalArchive, "maintenance" .= maintenance, "purged" .= show purged, "workerErrors" .= errors, "maintenanceErrors" .= gcErrors, "majorGcIntervalMs" .= majorGcIntervalMs context, "mainGrowth" .= fmap growthSummary mainGrowth, "dlqGrowth" .= fmap growthSummary dlqGrowth])
+      putSummary context Measurements "queue-and-dlq-growth" (object ["workerIsolation" .= (if isolated then "process" :: Text else "in-process"), "workerReports" .= fmap (.workers) processReport, "enqueued" .= completed, "handled" .= length effects, "deadExpected" .= deadExpected, "mainDepth" .= mainDepth, "peakMainDepth" .= maxDepth, "dlqDepth" .= dlqDepth, "dlqArchiveDepth" .= archiveDepth, "archivedDuringSteady" .= archivedDuring, "archivedAtEnd" .= finalArchive, "maintenance" .= maintenance, "purged" .= show purged, "workerErrors" .= errors, "maintenanceErrors" .= gcErrors, "majorGcIntervalMs" .= majorGcIntervalMs context, "mainGrowth" .= fmap growthSummary mainGrowth, "dlqGrowth" .= fmap growthSummary dlqGrowth])
       base <- recordCells context cells
       leak <- judgeLeaksWithWindow context (Just (5, 5 + duration)) leakSpec
-      pure (base {outcome = worstOutcome (base.outcome :| [measuredOutcome measurement base.outcome, leakOutcome leak, if minutes >= 10 && (mainGrowth == Nothing || (maintenance && dlqGrowth == Nothing)) then Inconclusive else Passed])})
+      pure (base {outcome = worstOutcome (base.outcome :| ([measuredOutcome measurement base.outcome, leakOutcome leak, if minutes >= 10 && (mainGrowth == Nothing || (maintenance && dlqGrowth == Nothing)) then Inconclusive else Passed] <> processOutcomes))})
   where
     minutes = fromIntegral (knobInt context.knobs (name "soak.duration-minutes")) :: Int
 

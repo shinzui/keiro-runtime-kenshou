@@ -8,10 +8,11 @@ import Kenshou.Suite.Keiro.Queue.Correctness qualified as Correctness
 import Kenshou.Suite.Keiro.Queue.PollingFaults qualified as PollingFaults
 import Kenshou.Suite.Keiro.Queue.Roles qualified as Roles
 import Kenshou.Suite.Keiro.Queue.Soak qualified as Soak
+import Kenshou.Suite.Keiro.Queue.SoakWorker qualified as SoakWorker
 import Kenshou.Suite.Keiro.Queue.Telemetry qualified as Telemetry
 
 scenarios :: [Scenario]
 scenarios = Correctness.scenarios <> Concurrency.scenarios <> Telemetry.scenarios <> Bench.scenarios <> Soak.scenarios
 
 roles :: [WorkerRole]
-roles = Roles.roles <> PollingFaults.roles
+roles = Roles.roles <> PollingFaults.roles <> [SoakWorker.role]

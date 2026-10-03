@@ -12,11 +12,13 @@ module Kenshou.Telemetry.Spec
     TelemetrySpec (..),
     telemetryKnobs,
     telemetrySpecFromContext,
+    telemetrySpecFromWorker,
     renderSinkFault,
   )
 where
 
-import Data.Aeson (Value)
+import Data.Aeson (Value, encode)
+import Data.ByteString.Lazy qualified as LBS
 import Data.Int (Int64)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text (Text)
@@ -25,6 +27,9 @@ import Kenshou.Core.Context (RunContext (..), SummarySection (Telemetry), putSum
 import Kenshou.Core.Dimension (Dimensions (..), MetricsArm (..), TracingArm (..))
 import Kenshou.Core.Id (renderScenarioId)
 import Kenshou.Core.Knob
+import Kenshou.Core.Role (RoleContext (..), WorkerInit (..))
+import System.Directory (createDirectoryIfMissing)
+import System.FilePath ((</>))
 
 data SamplerSpec = AlwaysOn | AlwaysOff | ParentBasedAlwaysOn | TraceIdRatio Double | ParentBasedTraceIdRatio Double
   deriving stock (Eq, Show)
@@ -95,21 +100,45 @@ telemetryKnobs =
   ]
 
 telemetrySpecFromContext :: RunContext -> Either Text TelemetrySpec
-telemetrySpecFromContext context = do
-  let Dimensions resolvedTracing resolvedMetrics _ _ = context.dimensions
+telemetrySpecFromContext context =
+  makeTelemetrySpec
+    context.knobs
+    context.dimensions
+    (Text.replace "/" "." (renderScenarioId context.scenario))
+    (HelperProcess "kenshou")
+    (Just context)
+    context.outDir
+    (putSummary context Telemetry "telemetry")
+
+-- A child owns its providers, endpoints and files. It must never write into
+-- the parent's series or retain the parent's in-memory summary state.
+telemetrySpecFromWorker :: RoleContext -> FilePath -> Either Text TelemetrySpec
+telemetrySpecFromWorker context directory =
+  makeTelemetrySpec
+    context.init.knobs
+    context.init.dimensions
+    (Text.replace "/" "." context.init.instanceName)
+    HelperInProcess
+    Nothing
+    directory
+    (\value -> createDirectoryIfMissing True (directory </> "logs") >> LBS.writeFile (directory </> "logs" </> "telemetry-summary.json") (encode value))
+
+makeTelemetrySpec :: ResolvedKnobs -> Dimensions -> Text -> HelperPlacement -> Maybe RunContext -> FilePath -> (Value -> IO ()) -> Either Text TelemetrySpec
+makeTelemetrySpec knobs dimensions serviceName helpers workerContext outDir report = do
+  let Dimensions resolvedTracing resolvedMetrics _ _ = dimensions
   tracing <- maybe (Left "telemetry.tracing is not applicable") Right resolvedTracing
   metrics <- maybe (Left "telemetry.metrics is not applicable") Right resolvedMetrics
-  sampler <- parseSampler (knobText context.knobs (name "otel.sampler")) (knobDouble context.knobs (name "otel.sampler-arg"))
-  processor <- parseProcessor context.knobs
-  exporter <- parseProtocol (knobText context.knobs (name "otel.exporter"))
-  endpoint <- parseEndpoint context.knobs
-  compression <- parseCompression (knobText context.knobs (name "otel.compression"))
-  reader <- parseReader (knobText context.knobs (name "metrics.otel-reader"))
+  sampler <- parseSampler (knobText knobs (name "otel.sampler")) (knobDouble knobs (name "otel.sampler-arg"))
+  processor <- parseProcessor knobs
+  exporter <- parseProtocol (knobText knobs (name "otel.exporter"))
+  endpoint <- parseEndpoint knobs
+  compression <- parseCompression (knobText knobs (name "otel.compression"))
+  reader <- parseReader (knobText knobs (name "metrics.otel-reader"))
   pure
     TelemetrySpec
       { tracing,
         metrics,
-        serviceName = Text.replace "/" "." (renderScenarioId context.scenario),
+        serviceName = serviceName,
         sampler,
         processor,
         exporter,
@@ -121,13 +150,13 @@ telemetrySpecFromContext context = do
         otelExportMs = integer "metrics.otel-export-interval-ms",
         scrapeMs = integer "metrics.scrape-interval-ms",
         wsSubscribers = integer "metrics.ws-subscribers",
-        helpers = HelperProcess "kenshou",
-        workerContext = Just context,
-        outDir = context.outDir,
-        report = putSummary context Telemetry "telemetry"
+        helpers,
+        workerContext,
+        outDir,
+        report
       }
   where
-    integer key = fromIntegral (knobInt context.knobs (name key))
+    integer key = fromIntegral (knobInt knobs (name key))
 
 parseSampler :: Text -> Double -> Either Text SamplerSpec
 parseSampler "always-on" _ = Right AlwaysOn

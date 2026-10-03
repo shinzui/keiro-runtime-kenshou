@@ -1547,6 +1547,38 @@ as clean controlled comparisons.
 | standard / workers / unordered / long-poll | `01a0f5d0-200e-778e-8385-84a92dbecc9d` | 733 |
 | unlogged / workers / unordered / long-poll | `01a0f5d0-5f9e-76a6-96f1-33f393f2b862` | 737 |
 
+### Queue worker-process soak implementation
+
+Revision 3 adds `queue.worker-isolation=process` alongside the original
+in-process arm. It starts two separate continuous workers through the existing
+supervisor. Each owns its job runtime and telemetry, writes RTS/OS series,
+and gets an independent leak report whose result contributes to the scenario
+outcome. Native collection and JSON/Prometheus responses are checked against
+SQL effects grouped by worker; both workers must participate and stop cleanly.
+The common process sampler and probe mapping now live in
+`Messaging.SoakDiagnosis`, retaining the outbox incarnation behavior.
+Telemetry settings are parsed consistently for parent and worker roles, with
+separate output directories and provider lifetimes.
+
+The one-minute durable controls under `runs/ep13-queue-process-smoke` verify
+functional wiring: process run `01a0ff9a-d2e2-7547-b3d3-87ce03ec9d9a` handles
+351 jobs exactly once, archives 18 dead jobs, and passes all ten business and
+lifecycle checks. Its workers handle 228 and 123 jobs, and all 450 endpoint
+scrapes succeed. The overall result is failed because the main harness's
+short post-major heap interval grows from 82,919,408 to 118,306,528 bytes;
+both worker resource reports are stable. This short signal is preserved and
+is not an attributed runtime leak or a completed twenty-minute acceptance.
+The in-process off control `01a0ff9c-08a9-759f-b1d6-469aa3bf5577` holds all nine
+business checks and is inconclusive. All 25 schema checks and 92 artifact
+checks pass. The full repository verification gate passes, including 65 Keiro,
+35 telemetry and 121 CLI examples. The twenty-minute reduced process run is
+in progress; its resource result remains pending.
+
+This implements the existing Milestone 4 per-worker diagnosis requirement,
+following [ADR-7](../adr/0007-record-measurements-independently-of-the-feature-under-test.md)
+and [ADR-10](../adr/0010-judge-heap-leaks-on-live-bytes-after-major-collections.md).
+It does not add a new scenario family or change the leak thresholds.
+
 ### Acceptance reconciliation and finite remaining work
 
 This table reconciles the original acceptance criteria with the implemented

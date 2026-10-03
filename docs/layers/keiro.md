@@ -765,7 +765,32 @@ rows with none archived. Both short leak verdicts were inconclusive. The
 have since held all nine business checks. The reduced forced-major-GC diagnostic
 passed resource acceptance; the default-collection full run lacks eligible heap
 samples and has legacy verdict schema defects. A repaired-payload full GC
-diagnostic is running; full resource and artifact acceptance remain open.
+diagnostic passed all nine business checks, six bounded resource probes, twelve
+schemas and 29 artifact checks. Independent business replay remains open.
+
+Queue soak revision 3 adds `queue.worker-isolation=process`. Two supervised
+operating-system processes run continuous job workers, each with its own
+runtime pool, tracing provider, native Shibuya metrics and resource sampler.
+The default `in-process` arm retains the original bounded worker loops.
+Both arms still check the durable effect ledger and final main/DLQ placement.
+Process mode additionally requires two participating workers, matching native
+metrics against each worker's SQL effects, and graceful termination.
+
+Each process writes RTS and OS samples under
+`series/children/keiro-queue-soak-worker-<index>/` and receives a separate
+`diagnosis/leak-keiro-queue-soak-worker-<index>.json` report. Telemetry logs,
+endpoint responses and native metric samples are kept under
+`children/keiro-queue-soak-worker-<index>/`. These paths are sealed in the run
+manifest. A worker's resource failure or insufficient-data verdict contributes
+to the whole run; the harness process retains its own separate diagnosis.
+
+```bash
+nix develop -c cabal run kenshou -- run keiro/queue/soak/queue-and-dlq-growth-reduced --dim pg.durability=durable --dim telemetry.tracing=sdk-inmemory --dim telemetry.metrics=serve-scraped --set queue.worker-isolation=process --set metrics.scrape-interval-ms=1000 --set diagnose.major-gc-interval-ms=5000 --out runs/queue-process-reduced
+```
+
+The default reduced window is twenty minutes. Forced major collection makes
+this a resource diagnostic; its latency is not a performance baseline. A
+one-minute override verifies wiring but does not replace the reduced window.
 
 The queue scenarios provision PGMQ through the harness migration and run
 Keiro's typed job API through its separate runtime pool.

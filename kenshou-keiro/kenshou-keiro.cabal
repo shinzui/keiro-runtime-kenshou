@@ -98,6 +98,7 @@ library
     Kenshou.Suite.Keiro.Queue.PollingFaults
     Kenshou.Suite.Keiro.Queue.Roles
     Kenshou.Suite.Keiro.Queue.Soak
+    Kenshou.Suite.Keiro.Queue.SoakWorker
     Kenshou.Suite.Keiro.Queue.Telemetry
     Kenshou.Suite.Keiro.Queue.WorkerOracle
     Kenshou.Suite.Keiro.Queue.WorkerOutcomes
