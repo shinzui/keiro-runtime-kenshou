@@ -28,6 +28,25 @@ type ValidatedAccountEventStream = ValidatedEventStream AccountPhi AccountRegs A
 data AccountSnapshotPolicy = SnapNever | SnapEvery !Int | SnapOnTerminal
   deriving stock (Eq, Show)
 
+-- | Parses the @snapshot.policy@ knob spelling: @never@, @every-<n>@ with a
+-- positive @n@, or @on-terminal@.
+parseAccountSnapshotPolicy :: Text.Text -> Either Text.Text AccountSnapshotPolicy
+parseAccountSnapshotPolicy = \case
+  "never" -> Right SnapNever
+  "on-terminal" -> Right SnapOnTerminal
+  text
+    | Just digits <- Text.stripPrefix "every-" text,
+      [(n, "")] <- reads (Text.unpack digits),
+      n > 0 ->
+        Right (SnapEvery n)
+    | otherwise -> Left ("unknown snapshot policy: " <> text)
+
+renderAccountSnapshotPolicy :: AccountSnapshotPolicy -> Text.Text
+renderAccountSnapshotPolicy = \case
+  SnapNever -> "never"
+  SnapEvery n -> "every-" <> Text.pack (show n)
+  SnapOnTerminal -> "on-terminal"
+
 $(deriveAggregate ''AccountCommand ''AccountRegs ''AccountEvent)
 
 accountTransducer :: SymTransducer AccountPhi AccountRegs AccountState AccountCommand AccountEvent
