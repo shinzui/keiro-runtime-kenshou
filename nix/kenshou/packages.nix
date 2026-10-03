@@ -97,6 +97,12 @@ let
         disallowGhcReference = false;
       })
       static;
+  # The external-broker path runs `rpk` (Kenshou.Env.Kafka.Admin.runRpk). Ship
+  # a pinned client so a cell never falls back to an ambient, older rpk.
+  rpk = (import inputs.nixpkgs {
+    system = pkgs.stdenv.hostPlatform.system;
+    config.allowUnfreePredicate = drv: lib.getName drv == "redpanda-rpk";
+  }).redpanda-client;
   revision = inputs.self.rev or (lib.removeSuffix "-dirty" (inputs.self.dirtyRev or "unknown"));
   dirty = if inputs.self ? rev then "false" else "true";
   package = pkgs.runCommand "kenshou-${cohort}-${variant}"
@@ -129,7 +135,8 @@ let
       --set-default KENSHOU_HARNESS_REVISION "${revision}" \
       --set-default KENSHOU_HARNESS_DIRTY "${dirty}" \
       --set-default KENSHOU_PG17_BIN "${pkgs.postgresql_17}/bin" \
-      --set-default KENSHOU_PG18_BIN "${pkgs.postgresql_18}/bin"
+      --set-default KENSHOU_PG18_BIN "${pkgs.postgresql_18}/bin" \
+      --prefix PATH : "${rpk}/bin"
   '';
 in
 assert lib.assertMsg (descriptorHash == lock.descriptorSha256)
