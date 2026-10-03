@@ -1,6 +1,7 @@
 module Main (main) where
 
 import Control.Exception (evaluate)
+import Data.Aeson (toJSON)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
@@ -9,7 +10,12 @@ import Kafka.Types (PartitionId (..), TopicName (..), headersFromList)
 import Keiro.Codec (Codec (..))
 import Keiro.Integration.Event (IntegrationEvent (..))
 import Keiro.Outbox qualified
+import Kenshou.Core.Id (mkSeed)
+import Kenshou.Core.Knob (resolveKnobs)
+import Kenshou.Suite.Runtime.Driver qualified as Driver
+import Kenshou.Suite.Runtime.Knobs (runtimeKnobs, systemConfigFrom)
 import Kenshou.Suite.Runtime.Oracle.Pure qualified as Oracle
+import Kenshou.Suite.Runtime.System.Config (SystemConfig (..))
 import Kenshou.Suite.Runtime.System.Contracts (CustomerId (..), OrderId (..), ShopMessage (..), Sku (..), TopicPrefix (..), WarehouseMessage (..), shopTopic, warehouseTopic)
 import Kenshou.Suite.Runtime.System.Fulfilment qualified as Fulfilment
 import Kenshou.Suite.Runtime.System.KafkaBridge qualified as KafkaBridge
@@ -17,11 +23,46 @@ import Kenshou.Suite.Runtime.System.Ledger qualified as Ledger
 import Kenshou.Suite.Runtime.System.Model
 import Kenshou.Suite.Runtime.System.Order qualified as Order
 import Kenshou.Suite.Runtime.System.SagaLog qualified as SagaLog
+import Kenshou.Suite.Runtime.System.Schema qualified as Schema
+import Kenshou.Suite.Runtime.System.Shop qualified as Shop
+import Kenshou.Suite.Runtime.System.Warehouse qualified as Warehouse
 import Kenshou.Suite.Runtime.System.Wire qualified as Wire
 import Test.Hspec
 
 main :: IO ()
 main = hspec do
+  describe "reference system wiring" do
+    it "accepts a keyless envelope only when the delivery path cannot expose the key" do
+      let prefix = TopicPrefix "run-1"
+          placed = OrderPlacedV1 (OrderId "order-1") (CustomerId "customer-1") (Sku "sku-1") 2 900 False
+          keyless = fromDraftWith "order.placed.v1" Nothing (Wire.shopEventDraft prefix (posixSecondsToUTCTime 0) placed)
+      Wire.decodeShopEventWith Wire.KeyUnavailable prefix keyless `shouldBe` Right placed
+      Wire.decodeShopEvent prefix keyless `shouldBe` Left (Wire.UnexpectedKey Nothing)
+      Wire.decodeShopEventWith Wire.KeyUnavailable prefix (fromDraftWith "order.placed.v1" (Just "other") (Wire.shopEventDraft prefix (posixSecondsToUTCTime 0) placed))
+        `shouldBe` Left (Wire.UnexpectedKey (Just "other"))
+    it "derives every order from the seed and partitions them across drivers" do
+      let seed = either (error . show) id (mkSeed 42)
+          config = (systemConfigFrom (either (error . show) id (resolveKnobs runtimeKnobs []))) {orders = 100, processesPerRole = 3, refuseFraction = 0.2, expireFraction = 0.1}
+          orders = fmap (Driver.generateOrder seed config) [0 .. 99]
+      fmap (Driver.generateOrder seed config) [0 .. 99] `shouldBe` orders
+      concatMap (Driver.driverIndices 100 3) [0 .. 2] `shouldMatchList` [0 .. 99]
+      all (\order -> order.quantity >= 1 && order.quantity <= 3 && order.amountCents >= 100) orders `shouldBe` True
+      any (Warehouse.isDiscontinued . (.sku)) orders `shouldBe` True
+      any (.slowPick) orders `shouldBe` True
+      any (\order -> order.slowPick && Warehouse.isDiscontinued order.sku) orders `shouldBe` False
+    it "decides refusal from the inbound message and the static catalogue alone" do
+      let row sku = Schema.IntakeRow "m-1" "o-1" "order.placed.v1" (toJSON (OrderPlacedV1 (OrderId "o-1") (CustomerId "customer-1") (Sku sku) 2 900 False))
+      Warehouse.warehouseIntakeCommand (row "discontinued-1") `shouldBe` Right (Fulfilment.RefuseFulfilment (Fulfilment.RefuseFulfilmentData (OrderId "o-1") "discontinued"))
+      Warehouse.warehouseIntakeCommand (row "sku-1") `shouldBe` Right (Fulfilment.RequestFulfilment (Fulfilment.RequestFulfilmentData (OrderId "o-1") (Sku "sku-1") 2 False))
+    it "maps each warehouse outcome to exactly one order command" do
+      let row kind message = Schema.IntakeRow "m-1" "o-1" kind (toJSON message)
+      Shop.shopIntakeCommand (row "fulfilment.shipped.v1" (FulfilmentShippedV1 (OrderId "o-1") (Sku "sku-1") 2)) `shouldBe` Right (Order.CompleteOrder (Order.CompleteOrderData (OrderId "o-1")))
+      Shop.shopIntakeCommand (row "fulfilment.refused.v1" (FulfilmentRefusedV1 (OrderId "o-1") "discontinued")) `shouldBe` Right (Order.RejectOrder (Order.RejectOrderData (OrderId "o-1") "discontinued"))
+      Shop.shopIntakeCommand (row "fulfilment.expired.v1" (FulfilmentExpiredV1 (OrderId "o-1"))) `shouldBe` Right (Order.ExpireOrder (Order.ExpireOrderData (OrderId "o-1")))
+    it "gives every customer exactly fanout distinct referrers other than itself" do
+      let pairs = Shop.referralPairs 50 3
+      length pairs `shouldBe` 150
+      all (uncurry (/=)) pairs `shouldBe` True
   describe "two-context public wire contract" do
     it "routes an order and a warehouse outcome by order key with versioned types" do
       let at = posixSecondsToUTCTime 0
@@ -117,7 +158,7 @@ main = hspec do
     it "round-trips every event through its versioned codec" do
       let identifier = OrderId "order-1"
           events =
-            [ Fulfilment.FulfilmentRequested (Fulfilment.FulfilmentRequestedData identifier (Sku "sku-1") 2),
+            [ Fulfilment.FulfilmentRequested (Fulfilment.FulfilmentRequestedData identifier (Sku "sku-1") 2 False),
               Fulfilment.FulfilmentRefused (Fulfilment.FulfilmentRefusedData identifier "discontinued"),
               Fulfilment.FulfilmentShipped (Fulfilment.FulfilmentShippedData identifier),
               Fulfilment.FulfilmentExpired (Fulfilment.FulfilmentExpiredData identifier)
