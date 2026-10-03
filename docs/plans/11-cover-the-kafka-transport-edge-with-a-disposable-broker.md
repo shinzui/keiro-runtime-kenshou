@@ -32,6 +32,11 @@ provenance:
       at: 2026-09-29T20:33:51Z
       mode: "implement"
       note: "Repaired broker requirements for the live Kafka catalog and excluded a brokerless cell attempt."
+    - model: "claude-opus-5-5"
+      harness: "claude-code"
+      at: 2026-10-03T06:05:39Z
+      mode: "implement"
+      note: "Closed released repetitions, sabotage controls, BUG-5 local reproduction, and the plan-15 broker interface"
 ---
 
 # Cover the Kafka transport edge with a disposable broker
