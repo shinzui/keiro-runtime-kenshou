@@ -23,7 +23,7 @@ import Hasql.Statement qualified as Statement
 import Hasql.Transaction qualified as Tx
 import Keiro.PGMQ.Codec (aesonJobCodec)
 import Keiro.PGMQ.Dlq (redriveDlq)
-import Keiro.PGMQ.Job (Job (..), JobOrdering (..), JobOutcome (..), RetryDelay (..), RetryPolicy (..), defaultJobTuning, defaultRetryPolicy, enqueue, enqueueBatch, enqueueToGroup, ensureJobQueue, runJobOnceWithContext)
+import Keiro.PGMQ.Job (Job (..), JobOrdering (..), JobOutcome (..), RetryDelay (..), RetryPolicy (..), defaultJobTuning, defaultRetryPolicy, enqueue, enqueueToGroup, ensureJobQueue, runJobOnceWithContext)
 import Keiro.PGMQ.Runtime (JobRuntime (..), QueueRef (..), queueRef, runJobEff, withJobRuntime)
 import Kenshou.Check.Fault (Fault (..), FaultHandle (..))
 import Kenshou.Check.Fault.Network (ProxyMode (..), proxiedConnectionString, setProxyMode, withTcpProxy)
@@ -32,17 +32,16 @@ import Kenshou.Check.Process (ChildSignal (..), ProgressSnapshot (..), awaitMark
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Check.Verdict (InvariantClass (..))
 import Kenshou.Core.Context (ArtifactDir (..), RunContext (..), SummarySection (..), artifactPath, putSummary, requirePostgres)
-import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobBool, knobInt, knobText, mkKnobName)
-import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Role (ControlMessage (..))
 import Kenshou.Core.Scenario (CohortScope (..), KnownDefect (..), Placement (..), Scenario (..), ScenarioReport, Tier (..))
 import Kenshou.Suite.Keiro.Fixture.Runtime (FixtureEnv (..), KeiroRunner (..), withFixtureEnv)
 import Kenshou.Suite.Keiro.Messaging.Verdict (recordMessagingCells, recordMessagingCellsClassified, recordMessagingObservations)
 import Kenshou.Suite.Keiro.Outbox.Workload (sourceName)
+import Kenshou.Suite.Keiro.Queue.PollingFaults qualified as PollingFaults
 import Kiroku.Store (defaultConnectionSettings)
 import Kiroku.Store.Transaction qualified as KirokuTransaction
 import Pgmq.Types (queueNameToText)
@@ -51,7 +50,7 @@ import System.Timeout (timeout)
 import Text.Read (readMaybe)
 
 scenarios :: [Scenario]
-scenarios = [workersSurviveTransientPollingError, crashRedeliveryCadence, leaseExtension, fifoHeadsStrictOrder, deadLetterWindowDrainPath, deadLetterAtomicWorkerPath, runtimePoolIsolation, redriveWindow]
+scenarios = [PollingFaults.scenario, crashRedeliveryCadence, leaseExtension, fifoHeadsStrictOrder, deadLetterWindowDrainPath, deadLetterAtomicWorkerPath, runtimePoolIsolation, redriveWindow]
 
 redriveWindow :: Scenario
 redriveWindow =
@@ -119,7 +118,7 @@ runRedriveWindow context =
 
 runtimePoolIsolation :: Scenario
 runtimePoolIsolation =
-  workersSurviveTransientPollingError
+  queueConcurrencyDefaults
     { id = either (error . show) id (parseScenarioId "keiro/queue/concurrency/runtime-pool-isolation"),
       summary = "Checks that queue delivery continues while the kiroku store pool is fully occupied.",
       knobs = [],
@@ -301,7 +300,7 @@ runDeadLetterAtomicWorkerPath context =
 
 deadLetterWindowDrainPath :: Scenario
 deadLetterWindowDrainPath =
-  workersSurviveTransientPollingError
+  queueConcurrencyDefaults
     { id = either (error . show) id (parseScenarioId "keiro/queue/concurrency/dead-letter-window-drain-path"),
       summary = "Pins the drain path's send-then-delete dead-letter crash window.",
       tier = TierSmoke,
@@ -360,7 +359,7 @@ runDeadLetterWindowDrainPath context =
 
 fifoHeadsStrictOrder :: Scenario
 fifoHeadsStrictOrder =
-  workersSurviveTransientPollingError
+  queueConcurrencyDefaults
     { id = either (error . show) id (parseScenarioId "keiro/queue/concurrency/fifo-heads-strict-order"),
       revision = 4,
       summary = "Checks FIFO-head ordering against unordered and legacy controls with competing workers.",
@@ -529,7 +528,7 @@ leaseEvidenceValid extended first contested attempts =
 
 leaseExtension :: Scenario
 leaseExtension =
-  workersSurviveTransientPollingError
+  queueConcurrencyDefaults
     { id = either (error . show) id (parseScenarioId "keiro/queue/concurrency/lease-extension"),
       revision = 3,
       summary = "Checks lease extension against competing processes with gated handlers and direct PostgreSQL read-count and lease evidence.",
@@ -646,7 +645,7 @@ runLeaseExtension context =
 
 crashRedeliveryCadence :: Scenario
 crashRedeliveryCadence =
-  workersSurviveTransientPollingError
+  queueConcurrencyDefaults
     { id = either (error . show) id (parseScenarioId "keiro/queue/concurrency/crash-redelivery-cadence"),
       summary = "Checks a killed handler redelivers at the visibility timeout rather than the policy retry delay.",
       knobs = [KnobSpec (knobName "queue.polling") "Job worker polling mode" KnobText (VText "poll-every") (OneOf (VText "poll-every" :| [VText "long-poll"])) [VText "long-poll"]],
@@ -741,93 +740,7 @@ runCrashRedeliveryCadence context =
 knobName :: Text -> KnobName
 knobName = either (error . show) id . mkKnobName
 
-workersSurviveTransientPollingError :: Scenario
-workersSurviveTransientPollingError =
-  Scenario
-    { id = either (error . show) id (parseScenarioId "keiro/queue/concurrency/workers-survive-transient-polling-error"),
-      revision = 2,
-      summary = "Checks the continuous job worker resumes after its blocked PGMQ read backend is terminated.",
-      tier = TierStandard,
-      placement = PlaceEither,
-      knobs = [],
-      dimensions =
-        DimensionSupport
-          { tracing = Supported (Support (TracingOff :| []) TracingOff),
-            metrics = Supported (Support (MetricsOff :| []) MetricsOff),
-            pgDurability = Supported (Support (PgDurable :| []) PgDurable),
-            pgVersion = Supported (Support (Pg18 :| []) Pg18)
-          },
-      phases = zeroPhases,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaPgmq] [] False)},
-      knownDefect = Just (KnownDefect "mori://shinzui/keiro/okf/bug-reports/concepts/BUG-3" "Polling backend termination can stop the worker after an unexpected row-count error" ["faults-injected", "processing-resumed", "no-loss"] AllCohorts),
-      run = runWorkersSurviveTransientPollingError
-    }
-
-effectCountsStatement :: Statement.Statement () (Int64, Int64)
-effectCountsStatement = Statement.preparable "SELECT count(*), count(DISTINCT payload) FROM kenshou_fx.queue_effects" Encoders.noParams (Decoders.singleRow ((,) <$> Decoders.column (Decoders.nonNullable Decoders.int8) <*> Decoders.column (Decoders.nonNullable Decoders.int8)))
-
-runWorkersSurviveTransientPollingError :: RunContext -> IO ScenarioReport
-runWorkersSurviveTransientPollingError context =
-  withJobRuntime (requirePostgres context).connectionString Nothing \runtime ->
-    withCheck context \check -> withSupervisor check \supervisor -> do
-      let postgres = requirePostgres context
-          queue = sourceName context "polling"
-          job = Job "queue-poll-probe" (queueRef queue) (aesonJobCodec @Text) Unordered defaultRetryPolicy
-          readCounts = Pool.use runtime.runtimePool (Session.statement () effectCountsStatement) >>= either (fail . show) pure
-          lockTable = "q_" <> queueNameToText job.jobQueue.physicalName
-          lockFault = holdLock postgres (TableLock "pgmq" lockTable)
-          waitBlockedRead = do
-            backends <- listBackends postgres
-            case [backend.pid | backend <- backends, "queue-worker-0" `Text.isInfixOf` backend.applicationName, backend.waitEventType == Just "Lock", "pgmq.read" `Text.isInfixOf` backend.query] of
-              pid : _ -> pure (Just pid)
-              [] -> threadDelay 100000 >> waitBlockedRead
-      Pool.use runtime.runtimePool (Session.script "CREATE SCHEMA IF NOT EXISTS kenshou_fx; CREATE TABLE IF NOT EXISTS kenshou_fx.queue_effects (payload text NOT NULL)") >>= either (fail . show) pure
-      setup <- runJobEff runtime (ensureJobQueue job)
-      _ <- either (fail . show) pure setup
-      spec <- roleProcess check "keiro/queue-worker" 0 (object ["queue" .= queue])
-      child <- spawn supervisor spec
-      awaitReady child 10000
-      sendCommand child CtlStart
-      awaitMark child "running" 30000
-      let waitDistinct expected = do
-            (_, distinct) <- readCounts
-            snapshot <- atomically (progress child)
-            if distinct >= expected
-              then pure True
-              else
-                if Map.member "stopped" snapshot.marks then pure False else threadDelay 100000 >> waitDistinct expected
-          runBatches [] = pure []
-          runBatches (batch : rest) = do
-            let payloads = [Text.pack (show index) | index <- [batch * 20 + 1 .. batch * 20 + 20 :: Int]]
-            sent <- runJobEff runtime (enqueueBatch job payloads)
-            _ <- either (fail . show) pure sent
-            completed <- maybe False id <$> timeout 30000000 (waitDistinct (fromIntegral ((batch + 1) * 20)))
-            if not completed
-              then pure [(False, False)]
-              else do
-                faulted <- bracket lockFault.inject (.heal) \_ -> do
-                  victim <- maybe Nothing id <$> timeout 10000000 waitBlockedRead
-                  case victim of
-                    Nothing -> pure False
-                    Just pid -> do
-                      _ <- (terminateOneBackend postgres (ByPid pid)).inject
-                      pure True
-                if faulted then ((True, True) :) <$> runBatches rest else pure [(True, False)]
-      faultResults <- runBatches [0 .. 4 :: Int]
-      final <- if length faultResults == 5 then maybe False id <$> timeout 30000000 (waitDistinct 100) else pure False
-      (total, distinct) <- readCounts
-      let queueTable = "pgmq.q_" <> queueNameToText job.jobQueue.physicalName
-          depthStatement = Statement.preparable ("SELECT count(*) FROM " <> queueTable) Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
-      threadDelay 1000000
-      depth <- Pool.use runtime.runtimePool (Session.statement () depthStatement) >>= either (fail . show) pure
-      snapshot <- atomically (progress child)
-      if Map.member "stopped" snapshot.marks then pure () else killChild supervisor child
-      let enqueued = fromIntegral (length faultResults * 20)
-          injectedFaults = fromIntegral (length (filter snd faultResults))
-          cells =
-            [ ("faults-injected", length faultResults == 5 && all snd faultResults),
-              ("processing-resumed", all fst faultResults && final && snapshot.count >= 100 && not (Map.member "stopped" snapshot.marks)),
-              ("no-loss", distinct == enqueued && depth == 0),
-              ("bounded-duplicates", total >= distinct && total <= enqueued + injectedFaults)
-            ]
-      recordMessagingCells context (Map.fromList [("enqueued", enqueued), ("effects", total), ("distinctEffects", distinct), ("faults", injectedFaults)]) (object ["faultResults" .= faultResults, "faultSchedule" .= ("blocked-pgmq-read" :: Text), "workerStopped" .= Map.member "stopped" snapshot.marks]) cells
+-- These scenarios predate the polling-fault knobs and retain their own
+-- revision and knob surface when the registered polling scenario evolves.
+queueConcurrencyDefaults :: Scenario
+queueConcurrencyDefaults = PollingFaults.scenario {revision = 2, knobs = []}

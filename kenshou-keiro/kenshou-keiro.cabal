@@ -95,6 +95,7 @@ library
     Kenshou.Suite.Keiro.Queue.Correctness
     Kenshou.Suite.Keiro.Queue.Metrics
     Kenshou.Suite.Keiro.Queue.Oracle
+    Kenshou.Suite.Keiro.Queue.PollingFaults
     Kenshou.Suite.Keiro.Queue.Roles
     Kenshou.Suite.Keiro.Queue.Soak
     Kenshou.Suite.Keiro.Queue.Telemetry

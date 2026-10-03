@@ -496,7 +496,7 @@ Cross-plan baseline handoff gates remain open:
 - [ ] Close finding attribution and reporting gaps with an existing or new
   owner record or a documented non-bug disposition. Unresolved investigations
   keep this gate open and must be explicit in the working report. The register
-  contains 54 numbered findings,
+  contains 55 numbered findings,
   32 distinct owner bug records and ten improvement requests; a count of
   reports is not a count of repairs or verified fixes.
 - [ ] Supply independent replayable verdict checks for the selected evidence
@@ -608,11 +608,11 @@ Numbered finding coverage is tracked separately from distinct owner records:
 |---|---:|
 | Owner bug report linked (including two Keiro reports now marked duplicate) | 31 |
 | Owner improvement request linked as the primary disposition | 6 |
-| Local suite findings (including findings 39–43, 45, 48, and 50–54) | 13 |
+| Local suite findings (including findings 39–43, 45, 48, and 50–55) | 14 |
 | Owner improvement request URI not recorded | 0 |
 | Unattributed runtime observations under investigation | 2 |
 | Infrastructure observations with final attribution open | 2 |
-| **Numbered findings** | **54** |
+| **Numbered findings** | **55** |
 
 Of the 32 linked bug records, 16 are reported, 14 are marked fixed by their
 owners, and two Keiro reports are marked duplicates of
@@ -682,6 +682,7 @@ disposition changes.
 - EP-13 retry-budget oracle finding: [local finding 53](../findings/53-outbox-terminal-oracle-rejects-single-attempt-exhaustion.md); owner is this repository. A transient failure correctly ends dead when only one attempt is allowed. The repaired terminal oracle and independent replay accept that boundary and reject premature exhaustion at two attempts; sixteen policy/key/budget controls pass. No upstream owner issue is added.
 
 - EP-13 terminal replay identity gap: [local finding 54](../findings/54-terminal-replay-accepts-duplicate-final-row-substitution.md); owner is this repository. The recomputer previously accepted a same-size final-row substitution. Exact final identity coverage and four policy-specific mutations now address that local gap; no upstream owner issue is added.
+- EP-13 polling recovery gap: [local finding 55](../findings/55-polling-recovery-reuses-pre-fault-completions.md). Revision 3 now requires fresh work after every fault, including the last, and independently replays lifecycle and SQL coverage. Nineteen controls and the full verification gate pass their expected outcomes; short interruptions reproduce existing owner failures while explicit restart recovers after five long outages. Clean publication remains a separate gate.
 
 ## Decision Log
 

@@ -10,3 +10,17 @@ A clean released-cohort cell control, verified cell run `01a0ef02-3208-72ed-be06
 
 Scenario revision 2 now holds an exclusive lock on the queue table, waits until the worker's `pgmq.read` is blocked on that lock, terminates precisely that backend, and only then releases the lock. Its 37 package tests pass. The revision-1 cell pass remains part of the historical record.
 The clean revision-2 alpha control has now completed: verified cell run `01a0ef4a-689c-7230-9711-7adea51eedae` and [digest-linked nested run](../verification/runs/keiro/2026/09/01a0ef2f-0b70-77e1-9c32-cd4283e1fd4d.md). All five faults found a worker backend blocked in `pgmq.read` and terminated it. The worker continued, processed all 100 distinct jobs, and passed all four checks; `knownDefect.status=not-reproduced`. This narrows the release-cohort reproduction gap but does not erase the earlier local failures or close the owner report. PostgreSQL patch version, host architecture, and the error path behind the old `UnexpectedRowCountStatementError` remain to be isolated.
+
+The revision-3 local control matrix reproduces this failure again on durable
+PostgreSQL 18 at seed `8102429385822254`, including both polling modes and both
+supervision strategies. The ordinary backend-termination control
+`01a0fef2-f81f-7734-9538-eed1e3bad897` reports app exit and leaves the fresh
+post-fault twenty-job batch queued. The role captures the linked
+`PgmqSessionError`/`UnexpectedRowCountStatementError` instead of treating old
+warm-up completions as recovery. TCP-reset and immediate postmaster controls
+also fail to resume. Four ten-second outage controls do recover after an
+explicit app restart; this demonstrates durable queued work, not autonomous
+worker survival or a repaired retry classifier. The full matrix is recorded
+in the messaging plan's polling-fault evidence section. These exploratory
+captures are not yet clean published baseline records. Historical alpha passes
+remain unchanged and the cross-environment reproduction gap remains open.

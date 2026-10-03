@@ -25,6 +25,7 @@ import Kenshou.Cli.Attest.KeiroPoison (replayPoisonCells)
 import Kenshou.Cli.Attest.KeiroQueueConfig (replayQueueConfigCells)
 import Kenshou.Cli.Attest.KeiroQueueOrdering (replayOrderingCells)
 import Kenshou.Cli.Attest.KeiroQueueOutcomes (replayQueueOutcomeCells)
+import Kenshou.Cli.Attest.KeiroQueuePolling (replayPollingCells)
 import Kenshou.Cli.Attest.KeiroTerminal (replayTerminalCells)
 import Kenshou.Cli.Cohort (resolveDefaultCohortIdentity)
 import Kenshou.Cli.Version (appVersionWithGit)
@@ -153,6 +154,62 @@ main = hspec do
         let rejected = either (const True) (const False)
         failures (replace "spans" (Aeson.toJSON ([] :: [Value])) raw) `shouldSatisfy` rejected
         failures (changeRows (map (\(item, attempt, start, finish, disposition) -> (item, attempt, start, fmap (const (addUTCTime (-1) start)) finish, disposition))) raw) `shouldSatisfy` rejected
+  describe "independent polling fault replay" do
+    let loadFixture = Aeson.eitherDecodeFileStrict' "test/fixtures/queue-polling-controls.json" >>= either fail pure :: IO [Value]
+        replace key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)
+        replace _ _ value = value
+        values (Aeson.Array entries) = toList entries
+        values _ = []
+        phases raw = maybe [] values (jsonField "faults" raw)
+        changePhases change raw = replace "faults" (Aeson.toJSON (change (phases raw))) raw
+        failures = fmap (map fst . filter (not . snd)) . replayPollingCells
+        detects label raw = failures raw `shouldSatisfy` either (const False) (elem label)
+        capture entry = maybe (error "fixture lacks raw capture") id (jsonField "raw" entry)
+    it "replays every captured fault and recovery result" do
+      entries <- loadFixture
+      length entries `shouldBe` 16
+      forM_ entries \entry -> Aeson.toJSON (either (error . Text.unpack) id (failures (capture entry))) `shouldBe` maybe Aeson.Null id (jsonField "failures" entry)
+    it "requires fresh work after the final fault even when final coverage is complete" do
+      entries <- loadFixture
+      forM_ entries \entry -> do
+        let raw = capture entry
+            warmup = Aeson.toJSON [Text.pack (show index) | index <- [1 .. 20 :: Int]]
+        detects "processing-resumed" (changePhases (map (replace "effectsAfter" warmup)) raw)
+        detects "processing-resumed" (changePhases (map (replace "recoveredAt" Aeson.Null)) raw)
+        detects "faults-injected" (changePhases (drop 1) raw)
+    it "rejects recovery after the five-second bound" do
+      entries <- loadFixture
+      let late raw = case jsonField "healedAt" raw of
+            Just value -> case Aeson.fromJSON value :: Aeson.Result UTCTime of
+              Aeson.Success stamp -> replace "recoveredAt" (Aeson.toJSON (addUTCTime 6 stamp)) raw
+              Aeson.Error _ -> raw
+            Nothing -> raw
+      forM_ [capture entry | entry <- entries, jsonField "failures" entry == Just (Aeson.toJSON ([] :: [Text]))] \raw -> do
+        failures raw `shouldBe` Right []
+        detects "processing-resumed" (changePhases (map late) raw)
+    it "binds injection to a blocked polling backend" do
+      entries <- loadFixture
+      forM_ entries \entry -> do
+        let raw = capture entry
+        forM_ [("victimPid", Aeson.Number 0), ("victimQuery", Aeson.String "SELECT 1"), ("victimWait", Aeson.Null), ("injected", Aeson.Bool False)] \(key, value) ->
+          detects "faults-injected" (changePhases (map (replace key value)) raw)
+    it "requires visible exit and restart for long outages and uninterrupted apps for short faults" do
+      entries <- loadFixture
+      forM_ entries \entry -> do
+        let raw = capture entry
+            long = jsonField "outageSeconds" raw == Just (Aeson.Number 10)
+        detects "processing-resumed" (changePhases (map (replace "appExited" (Aeson.Bool (not long)))) raw)
+        detects "processing-resumed" (changePhases (map (replace "restarted" (Aeson.Bool (not long)))) raw)
+        detects "processing-resumed" (replace "appExitedAtEnd" (Aeson.Bool True) raw)
+    it "detects missing or substituted work and excess duplicates" do
+      entries <- loadFixture
+      forM_ entries \entry -> do
+        let raw = capture entry
+            effects = maybe [] values (jsonField "effects" raw)
+        detects "no-loss" (replace "effects" (Aeson.toJSON (drop 1 effects)) raw)
+        detects "no-loss" (replace "effects" (Aeson.toJSON (Aeson.String "foreign" : drop 1 effects)) raw)
+        detects "bounded-duplicates" (replace "effects" (Aeson.toJSON (effects <> effects)) raw)
+        detects "no-loss" (replace "queueDepth" (Aeson.Number 1) raw)
   describe "independent queue outcome replay" do
     let loadFixture = Aeson.eitherDecodeFileStrict' "test/fixtures/queue-job-outcomes.json" >>= either fail pure
         replace key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)

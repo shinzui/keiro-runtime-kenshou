@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/kenshou.queue-polling-observations.v1.schema.json",
+  "title": "Queue polling recovery observations",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "fault",
+    "outageSeconds",
+    "faultCount",
+    "polling",
+    "supervision",
+    "warmupCompletedAt",
+    "faults",
+    "effects",
+    "queueDepth",
+    "appExitedAtEnd"
+  ],
+  "properties": {
+    "schema": {
+      "const": "kenshou.queue-polling-observations/v1"
+    },
+    "fault": {
+      "enum": [
+        "backend-kill",
+        "proxy-reset",
+        "postmaster-restart"
+      ]
+    },
+    "outageSeconds": {
+      "enum": [
+        0,
+        10
+      ]
+    },
+    "faultCount": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5
+    },
+    "polling": {
+      "enum": [
+        "poll-every",
+        "long-poll"
+      ]
+    },
+    "supervision": {
+      "enum": [
+        "stop-all-on-failure",
+        "ignore-failures"
+      ]
+    },
+    "warmupCompletedAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "faults": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "batch",
+          "victimPid",
+          "victimQuery",
+          "victimWait",
+          "injected",
+          "startedAt",
+          "healedAt",
+          "recoveredAt",
+          "effectsAfter",
+          "appExited",
+          "restarted",
+          "stillRunning"
+        ],
+        "properties": {
+          "batch": {
+            "type": "integer"
+          },
+          "victimPid": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "victimQuery": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "victimWait": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "injected": {
+            "type": "boolean"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "healedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "recoveredAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "effectsAfter": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "appExited": {
+            "type": "boolean"
+          },
+          "restarted": {
+            "type": "boolean"
+          },
+          "stillRunning": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "effects": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "queueDepth": {
+      "type": "integer"
+    },
+    "appExitedAtEnd": {
+      "type": "boolean"
+    }
+  }
+}

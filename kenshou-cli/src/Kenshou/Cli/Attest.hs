@@ -17,6 +17,7 @@ import Kenshou.Cli.Attest.KeiroPoison (recomputePoison)
 import Kenshou.Cli.Attest.KeiroQueueConfig (recomputeQueueConfig)
 import Kenshou.Cli.Attest.KeiroQueueOrdering (recomputeQueueOrdering)
 import Kenshou.Cli.Attest.KeiroQueueOutcomes (recomputeQueueOutcomes)
+import Kenshou.Cli.Attest.KeiroQueuePolling (recomputeQueuePolling)
 import Kenshou.Cli.Attest.KeiroTerminal (recomputeTerminal)
 import Kenshou.Core.Cohort (CohortIdentity (..), PackageSource (..), ResolvedComponent (..), ResolvedPackage (..))
 import Kenshou.Core.Id (renderScenarioId)
@@ -40,6 +41,7 @@ runOutcomeRecomputer = Recomputer "run-outcome" 1 $ \root -> do
       | renderScenarioId source.result.resultScenario == "keiro/inbox/correctness/effectively-once-matrix" -> recomputeInbox root source
       | renderScenarioId source.result.resultScenario == "keiro/inbox/correctness/batch-fast-path-and-fallback" -> recomputeBatch root source
       | renderScenarioId source.result.resultScenario == "keiro/inbox/correctness/poison-accounting" -> recomputePoison root source
+      | renderScenarioId source.result.resultScenario == "keiro/queue/concurrency/workers-survive-transient-polling-error" -> recomputeQueuePolling root source
       | renderScenarioId source.result.resultScenario == "keiro/queue/concurrency/fifo-heads-strict-order" -> recomputeQueueOrdering root source
       | renderScenarioId source.result.resultScenario == "keiro/queue/correctness/job-outcome-semantics" -> recomputeQueueOutcomes root source
       | renderScenarioId source.result.resultScenario == "keiro/queue/correctness/consumption-config-rejections" -> recomputeQueueConfig root source

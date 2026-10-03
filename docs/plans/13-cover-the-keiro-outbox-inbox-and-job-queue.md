@@ -1174,6 +1174,79 @@ the remaining fault-mode and soak replay work remain separate gates.
 | fifo-heads-no-retry-kill-true | [01a0fee6-bfe4-73ab-8303-11ba947d62b4](../verification/runs/keiro/2026/10/01a0fee6-bfe4-73ab-8303-11ba947d62b4.md) | [confirmed](../verification/attestations/2026/10/01a0ff12-2b79-72fe-96b2-c30720fca052.md) |
 | fifo-heads-default | [01a0fee6-f492-74cd-aafc-431d48a5f447](../verification/runs/keiro/2026/10/01a0fee6-f492-74cd-aafc-431d48a5f447.md) | [confirmed](../verification/attestations/2026/10/01a0ff13-97a2-77be-9593-701befd7fdd2.md) |
 
+### Polling-fault recovery and independent evidence
+
+Scenario revision 3 moves the active polling-fault fixture into
+`Kenshou.Suite.Keiro.Queue.PollingFaults`. It supports backend termination,
+TCP reset and postmaster restart under ordinary and long polling and both
+supervision strategies. The bounded downtime controls are explicitly zero
+seconds and ten seconds; intermediate durations are not accepted as an
+unverified retry-budget boundary. Each fault targets an observed locked
+`pgmq.read` request and is followed by twenty newly enqueued jobs, including
+the final fault. This repairs the old final-fault recovery gap tracked in
+[local finding 55](../findings/55-polling-recovery-reuses-pre-fault-completions.md).
+Other queue scenarios retain their prior revisions and knob surfaces.
+
+The role reports every app exit and only restarts on a controller command.
+A separate scoped thread owns the app so a late linked exception cannot kill
+the role's command receiver after `waitApp` returns. Short-fault controls
+require uninterrupted app operation and fresh completion within five seconds.
+Ten-second postmaster controls require a visible app exit, explicit restart,
+and fresh completion within five seconds after the server returns. Exact
+payload coverage, remaining depth and duplicate counts are checked separately.
+These are correctness controls, not throughput measurements.
+
+The sixteen durable PostgreSQL 18 controls use seed `8102429385822254` and one
+fault each under `runs/ep13-polling-fault-final/`. All twelve short controls
+reproduce a stopped app and twenty durable queued jobs after twenty warm-up
+completions. All four ten-second controls restart explicitly and complete all
+forty jobs. The captured `UnexpectedRowCountStatementError` polling failures
+match existing [finding 34](../findings/34-keiro-job-worker-exits-after-polling-backend-termination.md)
+and the disconnect-classification concern in
+[finding 10](../findings/10-pgmq-disconnects-are-classified-as-permanent.md).
+A long-outage pass proves visible exit and application restart; it does not
+prove that all transient retry attempts were exhausted, since the observed
+error can be classified as permanent on its first occurrence. No new owner
+bug is claimed. These raw local controls are not published baseline records.
+
+| Control | Run | Outcome |
+| --- | --- | --- |
+| backend-kill-poll-every-stop-all-on-failure-0 | `01a0fef2-f81f-7734-9538-eed1e3bad897` | failed |
+| backend-kill-poll-every-ignore-failures-0 | `01a0fef3-197c-7277-8a40-c6d95c5a9046` | failed |
+| backend-kill-long-poll-stop-all-on-failure-0 | `01a0fef3-3a7a-7398-98e0-404c4bb945ac` | failed |
+| backend-kill-long-poll-ignore-failures-0 | `01a0fef3-6d9a-7699-8d0f-19887c4b4225` | failed |
+| proxy-reset-poll-every-stop-all-on-failure-0 | `01a0fef3-a075-75ad-b3e7-8a49b081948d` | failed |
+| proxy-reset-poll-every-ignore-failures-0 | `01a0fef3-bf85-71cf-a4d3-cadcf1ae8227` | failed |
+| proxy-reset-long-poll-stop-all-on-failure-0 | `01a0fef3-de5f-7638-9f9f-5778060bccae` | failed |
+| proxy-reset-long-poll-ignore-failures-0 | `01a0fef4-1218-730f-8ebf-68072b4e7868` | failed |
+| postmaster-restart-poll-every-stop-all-on-failure-0 | `01a0fef4-44ba-77c4-bbae-ac3db54b0757` | failed |
+| postmaster-restart-poll-every-ignore-failures-0 | `01a0fef4-675f-7123-91f3-8398b8c88b02` | failed |
+| postmaster-restart-long-poll-stop-all-on-failure-0 | `01a0fef4-8797-7277-9d7e-6ae744e0c87b` | failed |
+| postmaster-restart-long-poll-ignore-failures-0 | `01a0fef4-bbc3-7225-aadd-f8c5b80fa33a` | failed |
+| postmaster-restart-poll-every-stop-all-on-failure-10 | `01a0fef4-f001-76a4-a990-8dabd33abe24` | passed |
+| postmaster-restart-poll-every-ignore-failures-10 | `01a0fef5-23b7-755e-bb54-c8b5882c35d4` | passed |
+| postmaster-restart-long-poll-stop-all-on-failure-10 | `01a0fef5-577b-740c-bec0-5c3812c2d076` | passed |
+| postmaster-restart-long-poll-ignore-failures-10 | `01a0fef5-9ef8-77a5-b5af-e4e1ca04cb54` | passed |
+
+The full `nix develop -c just verify` gate passes, including 63 Keiro and
+112 CLI examples. Six polling replay examples reject missing post-fault work,
+missing or late recovery, incomplete fault schedules, wrong target evidence,
+unexpected app lifecycle and incorrect final coverage. The sixteen captures
+pass 128 schema and 208 artifact integrity checks, and all independently
+replay to their observed outcomes.
+
+Three default-count controls under `runs/ep13-polling-five-faults/` also replay
+independently, with 24 schema and 39 artifact checks. Both explicit-restart
+controls complete 120 jobs after all five ten-second outages, proving fresh
+work after the final fault. The default backend control reports failure after
+the first worker exit; it does not pretend that the remaining faults happened.
+
+| Repeated-fault control | Run | Outcome |
+| --- | --- | --- |
+| default backend termination | `01a0ff00-e84b-7326-bf84-8260a9ef8014` | failed |
+| postmaster / StopAllOnFailure | `01a0ff01-0a12-70b4-8de2-383d309cda8c` | passed |
+| postmaster / IgnoreFailures | `01a0ff01-eace-720d-8985-ca3e1a5f7730` | passed |
+
 ### Remaining non-soak work
 
 Queue throughput revision 2 now implements bounded versus continuous-worker
