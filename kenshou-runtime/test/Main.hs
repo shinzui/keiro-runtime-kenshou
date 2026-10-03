@@ -12,9 +12,12 @@ import Keiro.Integration.Event (IntegrationEvent (..))
 import Keiro.Outbox qualified
 import Kenshou.Core.Id (mkSeed)
 import Kenshou.Core.Knob (resolveKnobs)
+import Kenshou.Suite.Runtime.Correctness.OrderFlow qualified as OrderFlow
 import Kenshou.Suite.Runtime.Driver qualified as Driver
 import Kenshou.Suite.Runtime.Knobs (runtimeKnobs, systemConfigFrom)
-import Kenshou.Suite.Runtime.Oracle.Pure qualified as Oracle
+import Kenshou.Suite.Runtime.Oracle qualified as Oracle
+import Kenshou.Suite.Runtime.Oracle.Pure qualified as PureOracle
+import Kenshou.Suite.Runtime.Oracle.Sql qualified as Sql
 import Kenshou.Suite.Runtime.System.Config (SystemConfig (..))
 import Kenshou.Suite.Runtime.System.Contracts (CustomerId (..), OrderId (..), ShopMessage (..), Sku (..), TopicPrefix (..), WarehouseMessage (..), shopTopic, warehouseTopic)
 import Kenshou.Suite.Runtime.System.Fulfilment qualified as Fulfilment
@@ -31,6 +34,48 @@ import Test.Hspec
 
 main :: IO ()
 main = hspec do
+  describe "end-to-end oracle controls" do
+    let outcome order first terminals kind status quantity = Sql.StreamOutcome order first terminals kind (Just status) (Just quantity)
+        completedOrder = outcome "o-1" 1 1 (Just "OrderCompleted") "completed" 2
+        shippedFulfilment = outcome "o-1" 1 1 (Just "FulfilmentShipped") "shipped" 2
+        violations judgement = judgement.violations
+        seeded = Oracle.SeededLedgers {moneyTotal = 1000, poolOpening = 100, stockPerSku = 50, skus = 1, fanout = 2}
+        totals = Sql.ShopTotals {total = 1000, escrow = 0, merchant = 300, pool = 96, loyaltyAccounts = 4, capturedAmount = 300, completedOrders = 1, completedQuantity = 2, bonusUnits = 2}
+        movements = Map.fromList [("hold/debit", 1), ("hold/credit", 1), ("capture/debit", 1), ("capture/credit", 1), ("loyalty/debit", 1), ("loyalty/credit", 2)]
+    it "accepts a matched, single-terminal pair" do
+      violations (Oracle.judgePair (Just completedOrder) (Just shippedFulfilment)) `shouldBe` 0
+    it "fails terminal-exactly-once when a terminal event is deleted" do
+      violations (Oracle.judgePair (Just completedOrder {Sql.terminalEvents = 0, Sql.terminalKind = Nothing}) (Just shippedFulfilment)) `shouldBe` 1
+    it "fails terminal-exactly-once on a second terminal event, a mismatch or a missing side" do
+      violations (Oracle.judgePair (Just completedOrder {Sql.terminalEvents = 2}) (Just shippedFulfilment)) `shouldBe` 1
+      violations (Oracle.judgePair (Just completedOrder) (Just shippedFulfilment {Sql.terminalKind = Just "FulfilmentExpired", Sql.readModelStatus = Just "expired"})) `shouldBe` 1
+      violations (Oracle.judgePair (Just completedOrder) Nothing) `shouldBe` 1
+      violations (Oracle.judgePair (Just completedOrder {Sql.readModelStatus = Just "placed"}) (Just shippedFulfilment)) `shouldBe` 1
+    it "merge-joins pages and judges unmatched tails only once a side is exhausted" do
+      let (pending, restOrders, _) = Oracle.mergeOutcomes False False [completedOrder, completedOrder {Sql.orderId = "o-2"}] [shippedFulfilment]
+      (pending.examined, length restOrders) `shouldBe` (1, 1)
+      let (finished, _, _) = Oracle.mergeOutcomes False True [completedOrder {Sql.orderId = "o-2"}] []
+      violations finished `shouldBe` 1
+    it "fails effects-exactly-once and conservation on a doctored second capture" do
+      let row = Sql.EffectRow "o-1" "completed" movements
+      violations (Oracle.judgeShopEffects 2 row) `shouldBe` 0
+      violations (Oracle.judgeShopEffects 2 row {Sql.movements = Map.insert "capture/credit" 2 movements}) `shouldBe` 1
+      violations (Oracle.judgeShopConservation seeded totals) `shouldBe` 0
+      violations (Oracle.judgeShopConservation seeded totals {Sql.merchant = 600, Sql.total = 1300}) `shouldBe` 2
+    it "fails warehouse effects and conservation on doctored stock" do
+      let stock = Sql.SkuStock "sku-1" 48 0 2 2
+      violations (Oracle.judgeWarehouseEffects (Sql.EffectRow "o-1" "refused" Map.empty)) `shouldBe` 0
+      violations (Oracle.judgeWarehouseEffects (Sql.EffectRow "o-1" "refused" (Map.fromList [("reserve/debit", 1)]))) `shouldBe` 1
+      violations (Oracle.judgeWarehouseConservation seeded 2 [stock]) `shouldBe` 0
+      violations (Oracle.judgeWarehouseConservation seeded 2 [stock {Sql.reserved = 1}]) `shouldBe` 1
+      violations (Oracle.judgeWarehouseConservation seeded 4 [stock]) `shouldBe` 1
+    it "fails no-orphans on a pending outbox row" do
+      violations (Oracle.judgeOrphans "shop" [("outbox-unsent", 0), ("inbox-unfinished", 0)]) `shouldBe` 0
+      violations (Oracle.judgeOrphans "shop" [("outbox-unsent", 1), ("inbox-unfinished", 0)]) `shouldBe` 1
+    it "predicts the outcome mix from the seed alone" do
+      let seed = either (error . show) id (mkSeed 42)
+          config = (systemConfigFrom (either (error . show) id (resolveKnobs runtimeKnobs []))) {orders = 600, refuseFraction = 0.2, expireFraction = 0.1}
+      OrderFlow.predictedMix seed config `shouldBe` Map.fromList [("completed", 432), ("expired", 49), ("rejected", 119)]
   describe "reference system wiring" do
     it "accepts a keyless envelope only when the delivery path cannot expose the key" do
       let prefix = TopicPrefix "run-1"
@@ -186,24 +231,24 @@ main = hspec do
 
   describe "independent order effect oracle" do
     it "accepts one fully balanced completed order" do
-      Oracle.checkOrderFacts completedOrder `shouldBe` []
+      PureOracle.checkOrderFacts completedOrder `shouldBe` []
 
     it "rejects a doctored double capture while preserving the terminal outcome" do
-      let doubled = completedOrder {Oracle.ledgerLegCounts = Map.insert Oracle.CaptureCredit 2 completedOrder.ledgerLegCounts}
-      Oracle.checkOrderFacts doubled `shouldBe` [Oracle.LedgerLegCount Oracle.CaptureCredit 1 2]
+      let doubled = completedOrder {PureOracle.ledgerLegCounts = Map.insert PureOracle.CaptureCredit 2 completedOrder.ledgerLegCounts}
+      PureOracle.checkOrderFacts doubled `shouldBe` [PureOracle.LedgerLegCount PureOracle.CaptureCredit 1 2]
 
-completedOrder :: Oracle.OrderFacts
+completedOrder :: PureOracle.OrderFacts
 completedOrder =
-  Oracle.OrderFacts
+  PureOracle.OrderFacts
     { shopTerminals = [OrderCompleted],
       warehouseTerminals = [FulfilmentShipped],
       ledgerLegCounts = Map.fromList [(leg, count leg) | leg <- [minBound .. maxBound]],
       loyaltyFanout = 3
     }
   where
-    count Oracle.LoyaltyCredit = 3
+    count PureOracle.LoyaltyCredit = 3
     count leg
-      | leg `elem` [Oracle.RefundDebit, Oracle.RefundCredit, Oracle.ReleaseDebit, Oracle.ReleaseCredit] = 0
+      | leg `elem` [PureOracle.RefundDebit, PureOracle.RefundCredit, PureOracle.ReleaseDebit, PureOracle.ReleaseCredit] = 0
       | otherwise = 1
 
 fromDraft :: Keiro.Outbox.IntegrationEventDraft -> IntegrationEvent

@@ -43,7 +43,9 @@ library
     Kenshou.Suite.Runtime.Correctness.WireRoundtrip
     Kenshou.Suite.Runtime.Driver
     Kenshou.Suite.Runtime.Knobs
+    Kenshou.Suite.Runtime.Oracle
     Kenshou.Suite.Runtime.Oracle.Pure
+    Kenshou.Suite.Runtime.Oracle.Sql
     Kenshou.Suite.Runtime.Roles
     Kenshou.Suite.Runtime.System.Broker
     Kenshou.Suite.Runtime.System.Config

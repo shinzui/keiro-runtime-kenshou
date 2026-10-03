@@ -44,7 +44,8 @@ runtimeKnobs =
     choices "workflow.wake" "How the resume worker learns about runnable workflows." "push" ["poll"],
     integer "workflow.max-concurrent-advances" "Workflows one resume pass may advance concurrently." 4 1 32,
     integer "shard.count" "Shards of each context's dispatch subscription." 8 1 256,
-    integer "queue.batch-size" "Pick jobs read per poll." 1 1 100
+    integer "queue.batch-size" "Pick jobs read per poll." 1 1 100,
+    choices "oracle.sabotage" "Doctor durable state after quiescence so one invariant must fail (sabotage control only)." "none" ["double-capture", "stale-read-model", "pending-outbox"]
   ]
   where
     integer name summary value low high = KnobSpec (runtimeKnobName name) summary KnobInt (VInt value) (IntRange low high) []
