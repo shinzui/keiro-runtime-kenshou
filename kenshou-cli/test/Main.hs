@@ -16,12 +16,14 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.IO qualified as Text
 import Data.Time (UTCTime, addUTCTime, getCurrentTime)
+import Data.UUID qualified as UUID
 import Kenshou.Cli (runWithArgs)
 import Kenshou.Cli.Attest (FencingFacts (..), fencingFacts)
 import Kenshou.Cli.Attest.KeiroBatch (replayBatchCells)
 import Kenshou.Cli.Attest.KeiroInbox (replayDelegatedCells, replayInboxCells)
 import Kenshou.Cli.Attest.KeiroLease (replayLeaseCells)
 import Kenshou.Cli.Attest.KeiroPoison (replayPoisonCells)
+import Kenshou.Cli.Attest.KeiroProducerIdentity (producerIdentityV1, replayProducerIdentityCells)
 import Kenshou.Cli.Attest.KeiroQueueConfig (replayQueueConfigCells)
 import Kenshou.Cli.Attest.KeiroQueueOrdering (replayOrderingCells)
 import Kenshou.Cli.Attest.KeiroQueueOutcomes (replayQueueOutcomeCells)
@@ -63,6 +65,56 @@ readInboxFixture path = do
 
 main :: IO ()
 main = hspec do
+  describe "independent producer identity replay" do
+    let loadFixture = Aeson.eitherDecodeFileStrict' "test/fixtures/producer-identity-controls.json" >>= either fail pure :: IO [Value]
+        replace key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)
+        replace _ _ value = value
+        array key raw = case jsonField key raw of Just (Aeson.Array values) -> toList values; _ -> []
+        change key f raw = maybe raw (\value -> replace key (f value) raw) (jsonField key raw)
+        failures = fmap (map fst . filter (not . snd)) . replayProducerIdentityCells
+        detects label raw = failures raw `shouldSatisfy` either (const False) (elem label)
+    it "matches independently generated UTF-8, framing, UUID and index boundary vectors" do
+      vectors <- Aeson.eitherDecodeFileStrict' "test/fixtures/producer-identity-vectors.json" >>= either fail pure :: IO [Value]
+      length vectors `shouldBe` 8
+      forM_ vectors \vector -> case (jsonField "source" vector, jsonField "name" vector, jsonField "namespace" vector, jsonField "eventId" vector, jsonField "index" vector) of
+        (Just (Aeson.String source), Just (Aeson.String name), Just (Aeson.String namespace), Just (Aeson.String event), Just index) -> case (UUID.fromText event, Aeson.fromJSON index) of
+          (Just eventId, Aeson.Success emissionIndex) -> Just (producerIdentityV1 source name namespace eventId emissionIndex) `shouldBe` jsonField "identity" vector
+          _ -> expectationFailure "invalid vector identity parameters"
+        _ -> expectationFailure "invalid producer vector"
+    it "replays both actual SQL captures" do
+      controls <- loadFixture
+      length controls `shouldBe` 2
+      forM_ controls \raw -> failures raw `shouldBe` Right []
+    it "rejects omitted, duplicated and mislabeled conflict classes" do
+      controls <- loadFixture
+      forM_ controls \raw -> do
+        let entries = array "conflicts" raw
+        forM_ [drop 1 entries, entries <> take 1 entries, map (replace "field" (Aeson.String "RoutingField")) entries] \changed ->
+          detects "one-field-conflicts" (replace "conflicts" (Aeson.toJSON changed) raw)
+    it "rejects full-row mutations and transient mutations restored before the final snapshot" do
+      controls <- loadFixture
+      forM_ controls \raw -> forM_ [("status", Aeson.String "published"), ("attempt_count", Aeson.Number 99), ("last_error", Aeson.String "changed"), ("updated_at", Aeson.String "2099-01-01T00:00:00+00:00")] \(key, value) -> do
+        let rows = Aeson.toJSON (map (replace key value) (array "before" raw))
+        detects "identical-replay-no-mutation" (replace "afterDuplicate" rows raw)
+        detects "equivalent-replays-do-not-mutate" (replace "finalRows" rows raw)
+        detects "conflicts-do-not-mutate" (replace "afterConflicts" rows raw)
+        case array "conflicts" raw of
+          entry : rest -> detects "conflicts-do-not-mutate" (replace "conflicts" (Aeson.toJSON (replace "rows" rows entry : rest)) raw)
+          _ -> expectationFailure "missing conflicts"
+    it "rejects a consistently forged API and stored identity" do
+      controls <- loadFixture
+      forM_ controls \raw -> do
+        let forged = Aeson.String "00000000-0000-0000-0000-000000000000"
+            api = change "first" (change "identity" (replace "outboxId" forged)) raw
+            sql = replace "before" (Aeson.toJSON (map (replace "outbox_id" forged) (array "before" raw))) api
+        detects "deterministic-identity" sql
+        detects "adr-42-frozen-vector" (change "frozenIdentity" (replace "outboxId" forged) raw)
+    it "requires duplicate outcomes for both equivalence controls and an identity conflict for namespace changes" do
+      controls <- loadFixture
+      forM_ controls \raw -> do
+        detects "microsecond-equivalence" (change "submicrosecond" (replace "type" (Aeson.String "inserted")) raw)
+        detects "attribute-key-order-equivalence" (change "reordered" (replace "type" (Aeson.String "inserted")) raw)
+        detects "namespace-change-is-identity-conflict" (change "identityConflict" (replace "fields" (Aeson.toJSON (["RoutingField"] :: [Text]))) raw)
   describe "independent queue ordering replay" do
     let loadFixture = Aeson.eitherDecodeFileStrict' "test/fixtures/queue-ordering-controls.json" >>= either fail pure :: IO [Value]
         replace key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)
@@ -154,6 +206,43 @@ main = hspec do
         let rejected = either (const True) (const False)
         failures (replace "spans" (Aeson.toJSON ([] :: [Value])) raw) `shouldSatisfy` rejected
         failures (changeRows (map (\(item, attempt, start, finish, disposition) -> (item, attempt, start, fmap (const (addUTCTime (-1) start)) finish, disposition))) raw) `shouldSatisfy` rejected
+  describe "independent queue ordering lease replay" do
+    let loadFixture = Aeson.eitherDecodeFileStrict' "test/fixtures/queue-ordering-lease-controls.json" >>= either fail pure :: IO [Value]
+        replace key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)
+        replace _ _ value = value
+        rows :: Value -> [(Text, Int, UTCTime, Integer, Integer, UTCTime, UTCTime)]
+        rows raw = case jsonField "leaseSpans" raw of
+          Just value -> case Aeson.fromJSON value of Aeson.Success entries -> entries; Aeson.Error _ -> []
+          Nothing -> []
+        changes f raw = replace "leaseSpans" (Aeson.toJSON (f (rows raw))) raw
+        failures = fmap (map fst . filter (not . snd) . fst) . replayOrderingCells
+        detects raw = failures raw `shouldSatisfy` either (const False) (elem "lease-bound-handler-overlap")
+    it "independently validates SQL leases in every ordering mode" do
+      controls <- loadFixture
+      length controls `shouldBe` 10
+      forM_ controls \raw -> failures raw `shouldBe` Right []
+    it "rejects missing, repeated, rebound or stale delivery captures" do
+      controls <- loadFixture
+      forM_ controls \raw -> do
+        detects (changes (drop 1) raw)
+        detects (changes (\entries -> entries <> take 1 entries) raw)
+        detects (changes (map (\(p, a, t, _, r, rd, vt) -> (p, a, t, (1 :: Integer), r, rd, vt))) raw)
+        detects (changes (map (\(p, a, t, mid, r, rd, vt) -> (p, a, t, mid, r + 1, rd, vt))) raw)
+        detects (changes (map (\(p, a, t, mid, r, rd, vt) -> (p, a, t, mid, r, rd, addUTCTime 1 vt))) raw)
+    it "rejects premature redelivery even with coherent attempts and SQL timestamps" do
+      controls <- loadFixture
+      forM_ [raw | raw <- controls, jsonField "killWorker" raw == Just (Aeson.Bool True)] \raw -> do
+        let firstExpiry = [vt | ("0:0", 0, _, _, _, _, vt) <- rows raw]
+            attempts = case jsonField "attemptSpans" raw of
+              Just value -> case Aeson.fromJSON value :: Aeson.Result [(Text, Int, UTCTime, Maybe UTCTime, Text)] of Aeson.Success entries -> entries; Aeson.Error _ -> []
+              Nothing -> []
+        case firstExpiry of
+          [expiry] -> do
+            let early = addUTCTime (-1) expiry
+                modified = [(p, a, if p == "0:0" && a == 1 then early else t, end, disposition) | (p, a, t, end, disposition) <- attempts]
+                moved = replace "attemptSpans" (Aeson.toJSON modified) (replace "spans" (Aeson.toJSON [(p, t, end) | (p, _, t, end, disposition) <- modified, disposition == "done" || end == Nothing]) raw)
+            detects (changes (map (\(p, a, t, mid, r, rd, vt) -> if p == "0:0" && a == 1 then (p, a, early, mid, r, early, addUTCTime 10 early) else (p, a, t, mid, r, rd, vt))) moved)
+          _ -> expectationFailure "missing killed head's original lease"
   describe "independent polling fault replay" do
     let loadFixture = Aeson.eitherDecodeFileStrict' "test/fixtures/queue-polling-controls.json" >>= either fail pure :: IO [Value]
         replace key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)

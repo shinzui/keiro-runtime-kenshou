@@ -1,4 +1,4 @@
-module Kenshou.Suite.Keiro.Queue.Concurrency (scenarios, fifoGroupOrder, LeaseObservation (..), leaseEvidenceValid) where
+module Kenshou.Suite.Keiro.Queue.Concurrency (scenarios, fifoGroupOrder, fifoLeaseEvidence, LeaseObservation (..), leaseEvidenceValid) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (mapConcurrently, withAsync)
@@ -361,7 +361,7 @@ fifoHeadsStrictOrder :: Scenario
 fifoHeadsStrictOrder =
   queueConcurrencyDefaults
     { id = either (error . show) id (parseScenarioId "keiro/queue/concurrency/fifo-heads-strict-order"),
-      revision = 4,
+      revision = 5,
       summary = "Checks FIFO-head ordering against unordered and legacy controls with competing workers.",
       knobs =
         [ KnobSpec (knobName "queue.ordering") "Queue ordering contract under test" KnobText (VText "fifo-heads") (OneOf (VText "fifo-heads" :| [VText "unordered", VText "fifo-throughput", VText "fifo-round-robin"])) [VText "unordered", VText "fifo-throughput", VText "fifo-round-robin"],
@@ -395,13 +395,15 @@ runFifoHeadsStrictOrder context =
           readSpans = Pool.use runtime.runtimePool (Session.statement () spansStatement) >>= either (fail . show) pure
           attemptsStatement = Statement.preparable "SELECT payload, attempt, started_at, finished_at, outcome FROM kenshou_fx.queue_fifo_spans ORDER BY id" Encoders.noParams (Decoders.rowList ((,,,,) <$> Decoders.column (Decoders.nonNullable Decoders.text) <*> Decoders.column (Decoders.nonNullable Decoders.int4) <*> Decoders.column (Decoders.nonNullable Decoders.timestamptz) <*> Decoders.column (Decoders.nullable Decoders.timestamptz) <*> Decoders.column (Decoders.nonNullable Decoders.text)))
           readAttempts = Pool.use runtime.runtimePool (Session.statement () attemptsStatement) >>= either (fail . show) pure
+          leasesStatement = Statement.preparable "SELECT payload, attempt, started_at, message_id, read_count, last_read_at, visible_at FROM kenshou_fx.queue_fifo_spans ORDER BY id" Encoders.noParams (Decoders.rowList ((,,,,,,) <$> Decoders.column (Decoders.nonNullable Decoders.text) <*> Decoders.column (Decoders.nonNullable Decoders.int4) <*> Decoders.column (Decoders.nonNullable Decoders.timestamptz) <*> Decoders.column (Decoders.nonNullable Decoders.int8) <*> Decoders.column (Decoders.nonNullable Decoders.int8) <*> Decoders.column (Decoders.nonNullable Decoders.timestamptz) <*> Decoders.column (Decoders.nonNullable Decoders.timestamptz)))
+          readLeases = Pool.use runtime.runtimePool (Session.statement () leasesStatement) >>= either (fail . show) pure
           depthStatement = Statement.preparable ("SELECT count(*) FROM pgmq.q_" <> queueNameToText job.jobQueue.physicalName) Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
           readDepth = Pool.use runtime.runtimePool (Session.statement () depthStatement) >>= either (fail . show) pure
           waitComplete = do
             spans <- readSpans
             depth <- readDepth
             if length [() | (_, _, Just _) <- spans] >= expected && depth == 0 then pure spans else threadDelay 100000 >> waitComplete
-      Pool.use runtime.runtimePool (Session.script "CREATE SCHEMA IF NOT EXISTS kenshou_fx; CREATE TABLE kenshou_fx.queue_fifo_spans (id bigserial PRIMARY KEY, payload text NOT NULL, attempt integer NOT NULL, started_at timestamptz NOT NULL, finished_at timestamptz, outcome text NOT NULL); CREATE TABLE kenshou_fx.queue_fifo_gate (released boolean NOT NULL); INSERT INTO kenshou_fx.queue_fifo_gate VALUES (false)") >>= either (fail . show) pure
+      Pool.use runtime.runtimePool (Session.script "CREATE SCHEMA IF NOT EXISTS kenshou_fx; CREATE TABLE kenshou_fx.queue_fifo_spans (id bigserial PRIMARY KEY, payload text NOT NULL, attempt integer NOT NULL, started_at timestamptz NOT NULL, finished_at timestamptz, outcome text NOT NULL, message_id bigint NOT NULL, read_count bigint NOT NULL, last_read_at timestamptz NOT NULL, visible_at timestamptz NOT NULL); CREATE TABLE kenshou_fx.queue_fifo_gate (released boolean NOT NULL); INSERT INTO kenshou_fx.queue_fifo_gate VALUES (false)") >>= either (fail . show) pure
       let enqueueCoordinate (groupIndex, sequenceIndex) = enqueueToGroup job (Text.pack (show groupIndex)) (Text.pack (show groupIndex <> ":" <> show sequenceIndex))
       setup <- runJobEff runtime do
         ensureJobQueue job
@@ -447,6 +449,7 @@ runFifoHeadsStrictOrder context =
       maybeSpans <- timeout 120000000 waitComplete
       spans <- maybe readSpans pure maybeSpans
       attempts <- readAttempts
+      leases <- readLeases
       depth <- readDepth
       mapM_ (killChild supervisor) children
       let parsePayload payload = case Text.splitOn ":" payload of
@@ -477,14 +480,15 @@ runFifoHeadsStrictOrder context =
               ("all-jobs-completed", complete),
               ("other-groups-progress", otherProgress),
               ("scripted-head-retries", all retryPattern [0 .. groups - 1] && retryCount == expectedRetries),
-              ("head-retry-delay", retryDelays)
+              ("head-retry-delay", retryDelays),
+              ("lease-bound-handler-overlap", fifoLeaseEvidence [(payload, fromIntegral attempt, started, ended) | (payload, attempt, started, ended, _) <- attempts] [(payload, fromIntegral attempt, started, messageId, readCount, readAt, visibleAt) | (payload, attempt, started, messageId, readCount, readAt, visibleAt) <- leases])
             ]
               <> [("strict-group-order", strict) | ordering == FifoHeads]
               <> [("unordered-control-reorders", not strict) | ordering == Unordered]
           observations = [("strict-group-order", strict) | ordering /= FifoHeads]
           timedOut = maybe True (const False) maybeSpans
       encodeFile (context.outDir </> "logs/queue-ordering-observations.json") $
-        object ["schema" .= ("kenshou.queue-ordering-observations/v2" :: Text), "ordering" .= orderingLabel, "batchSize" .= batch, "groups" .= groups, "jobsPerGroup" .= jobsPerGroup, "workers" .= workers, "killWorker" .= killWorker, "blockedAtKill" .= blockedAtKill, "timedOut" .= timedOut, "queueDepth" .= depth, "spans" .= spans, "retryHeads" .= retryHeads, "attemptSpans" .= attempts]
+        object ["schema" .= ("kenshou.queue-ordering-observations/v3" :: Text), "ordering" .= orderingLabel, "batchSize" .= batch, "groups" .= groups, "jobsPerGroup" .= jobsPerGroup, "workers" .= workers, "killWorker" .= killWorker, "blockedAtKill" .= blockedAtKill, "timedOut" .= timedOut, "queueDepth" .= depth, "spans" .= spans, "retryHeads" .= retryHeads, "attemptSpans" .= attempts, "leaseSpans" .= leases]
       recordMessagingObservations context (Map.fromList [("groups", fromIntegral groups), ("jobs", fromIntegral (length parsed)), ("workers", fromIntegral workers), ("queueDepth", depth), ("abandonedHeads", fromIntegral abandonedHead)]) (object ["timedOut" .= timedOut, "groupSizes" .= fmap length byGroup, "killWorker" .= killWorker, "ordering" .= orderingLabel, "effectiveBatchSize" .= batch]) cells observations
 
 fifoGroupOrder :: Int -> [(Int, UTCTime, UTCTime)] -> Bool
@@ -492,6 +496,24 @@ fifoGroupOrder jobsPerGroup groupSpans =
   let sorted = sortOn (\(sequenceIndex, _, _) -> sequenceIndex) groupSpans
    in map (\(sequenceIndex, _, _) -> sequenceIndex) sorted == [0 .. jobsPerGroup - 1]
         && and (zipWith (\(_, _, previousFinished) (_, nextStarted, _) -> previousFinished <= nextStarted) sorted (drop 1 sorted))
+
+-- The lease is captured in the same INSERT as handler entry. A stale prefetched
+-- delivery cannot borrow the newer lease of another attempt.
+fifoLeaseEvidence :: [(Text, Int, UTCTime, Maybe UTCTime)] -> [(Text, Int, UTCTime, Int64, Int64, UTCTime, UTCTime)] -> Bool
+fifoLeaseEvidence attempts leases =
+  let keys = [(payload, attempt, started) | (payload, attempt, started, _) <- attempts]
+      leaseKeys = [(payload, attempt, started) | (payload, attempt, started, _, _, _, _) <- leases]
+      finishes = Map.fromList [((payload, attempt, started), ended) | (payload, attempt, started, ended) <- attempts]
+      identities = Map.fromListWith Set.union [(payload, Set.singleton messageId) | (payload, _, _, messageId, _, _, _) <- leases]
+      byMessage = Map.fromListWith (<>) [(messageId, [lease]) | lease@(_, _, _, messageId, _, _, _) <- leases]
+      validLease (_, attempt, started, messageId, readCount, readAt, visibleAt) = messageId > 0 && readCount == fromIntegral attempt + 1 && readAt <= started && visibleAt > readAt && visibleAt <= addUTCTime 10 started
+      allowed (payload, attempt, started, _, _, _, visibleAt) (_, nextAttempt, nextStart, _, _, nextReadAt, _) =
+        nextAttempt <= attempt
+          || ( nextStart > started && case Map.lookup (payload, attempt, started) finishes of
+                 Just (Just ended) | ended <= nextStart -> True
+                 _ -> nextReadAt >= visibleAt
+             )
+   in keys == leaseKeys && length keys == Set.size (Set.fromList [(payload, attempt) | (payload, attempt, _) <- keys]) && all ((== 1) . Set.size) identities && Map.size identities == Map.size byMessage && all validLease leases && and [allowed earlier later | group <- Map.elems byMessage, earlier <- group, later <- group]
 
 -- All timestamps come from PostgreSQL; no worker wall clock decides a lease.
 data LeaseObservation = LeaseObservation

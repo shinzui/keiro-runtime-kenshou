@@ -275,3 +275,10 @@ All six bounded resource probes, eleven schemas and 28 artifact checks pass.
 This closes the remaining repaired full-soak artifact gap. Forced major GC
 is a diagnostic control; historical default-GC attribution, killed-process
 resource coverage and independent soak replay remain open.
+
+Ordering revision 5 now captures physical message identities and SQL lease
+boundaries at handler entry. Ten local controls and the 1,600-job default pass,
+with 123 schema and 244 artifact checks; all 29 new and historical captures
+independently replay. The full verification gate passes with 65 Keiro and 115
+CLI examples. Live overlap after lease expiry is permitted; premature overlapping
+redelivery is rejected. These exploratory runs add no published record.

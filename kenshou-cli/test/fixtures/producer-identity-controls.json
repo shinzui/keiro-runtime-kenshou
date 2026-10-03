@@ -1,0 +1,1288 @@
+[
+  {
+    "afterConflicts": [
+      {
+        "attempt_count": 0,
+        "attributes": {
+          "a": 1,
+          "b": 2
+        },
+        "causation_id": null,
+        "content_type": "application/json",
+        "correlation_id": null,
+        "created_at": "2026-10-02T18:39:32.158125-07:00",
+        "destination": "kenshou.outbox.v1",
+        "event_type": "Probe",
+        "last_error": null,
+        "message_id": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+        "message_key": "account-1",
+        "next_attempt_at": "2026-10-02T18:39:32.158125-07:00",
+        "occurred_at": "2026-10-02T18:39:32.157992-07:00",
+        "outbox_id": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+        "payload_bytes": "\\x010203",
+        "published_at": null,
+        "rejected_at": null,
+        "rejection_code": null,
+        "rejection_detail": null,
+        "schema_fingerprint": null,
+        "schema_id": null,
+        "schema_registry": null,
+        "schema_subject": null,
+        "schema_version": 1,
+        "schema_version_ref": null,
+        "source": "kenshou-01a0ff6a-producer-id",
+        "source_event_id": "00000000-0000-0000-0000-000000000000",
+        "source_global_position": 1,
+        "status": "pending",
+        "traceparent": null,
+        "tracestate": null,
+        "updated_at": "2026-10-02T18:39:32.158125-07:00"
+      }
+    ],
+    "afterDuplicate": [
+      {
+        "attempt_count": 0,
+        "attributes": {
+          "a": 1,
+          "b": 2
+        },
+        "causation_id": null,
+        "content_type": "application/json",
+        "correlation_id": null,
+        "created_at": "2026-10-02T18:39:32.158125-07:00",
+        "destination": "kenshou.outbox.v1",
+        "event_type": "Probe",
+        "last_error": null,
+        "message_id": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+        "message_key": "account-1",
+        "next_attempt_at": "2026-10-02T18:39:32.158125-07:00",
+        "occurred_at": "2026-10-02T18:39:32.157992-07:00",
+        "outbox_id": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+        "payload_bytes": "\\x010203",
+        "published_at": null,
+        "rejected_at": null,
+        "rejection_code": null,
+        "rejection_detail": null,
+        "schema_fingerprint": null,
+        "schema_id": null,
+        "schema_registry": null,
+        "schema_subject": null,
+        "schema_version": 1,
+        "schema_version_ref": null,
+        "source": "kenshou-01a0ff6a-producer-id",
+        "source_event_id": "00000000-0000-0000-0000-000000000000",
+        "source_global_position": 1,
+        "status": "pending",
+        "traceparent": null,
+        "tracestate": null,
+        "updated_at": "2026-10-02T18:39:32.158125-07:00"
+      }
+    ],
+    "before": [
+      {
+        "attempt_count": 0,
+        "attributes": {
+          "a": 1,
+          "b": 2
+        },
+        "causation_id": null,
+        "content_type": "application/json",
+        "correlation_id": null,
+        "created_at": "2026-10-02T18:39:32.158125-07:00",
+        "destination": "kenshou.outbox.v1",
+        "event_type": "Probe",
+        "last_error": null,
+        "message_id": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+        "message_key": "account-1",
+        "next_attempt_at": "2026-10-02T18:39:32.158125-07:00",
+        "occurred_at": "2026-10-02T18:39:32.157992-07:00",
+        "outbox_id": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+        "payload_bytes": "\\x010203",
+        "published_at": null,
+        "rejected_at": null,
+        "rejection_code": null,
+        "rejection_detail": null,
+        "schema_fingerprint": null,
+        "schema_id": null,
+        "schema_registry": null,
+        "schema_subject": null,
+        "schema_version": 1,
+        "schema_version_ref": null,
+        "source": "kenshou-01a0ff6a-producer-id",
+        "source_event_id": "00000000-0000-0000-0000-000000000000",
+        "source_global_position": 1,
+        "status": "pending",
+        "traceparent": null,
+        "tracestate": null,
+        "updated_at": "2026-10-02T18:39:32.158125-07:00"
+      }
+    ],
+    "changedNamespace": "other",
+    "conflicts": [
+      {
+        "field": "RoutingField",
+        "outcome": {
+          "fields": [
+            "RoutingField"
+          ],
+          "identity": {
+            "messageId": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+            "outboxId": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+            "version": 1
+          },
+          "type": "conflict"
+        },
+        "rows": [
+          {
+            "attempt_count": 0,
+            "attributes": {
+              "a": 1,
+              "b": 2
+            },
+            "causation_id": null,
+            "content_type": "application/json",
+            "correlation_id": null,
+            "created_at": "2026-10-02T18:39:32.158125-07:00",
+            "destination": "kenshou.outbox.v1",
+            "event_type": "Probe",
+            "last_error": null,
+            "message_id": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+            "message_key": "account-1",
+            "next_attempt_at": "2026-10-02T18:39:32.158125-07:00",
+            "occurred_at": "2026-10-02T18:39:32.157992-07:00",
+            "outbox_id": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+            "payload_bytes": "\\x010203",
+            "published_at": null,
+            "rejected_at": null,
+            "rejection_code": null,
+            "rejection_detail": null,
+            "schema_fingerprint": null,
+            "schema_id": null,
+            "schema_registry": null,
+            "schema_subject": null,
+            "schema_version": 1,
+            "schema_version_ref": null,
+            "source": "kenshou-01a0ff6a-producer-id",
+            "source_event_id": "00000000-0000-0000-0000-000000000000",
+            "source_global_position": 1,
+            "status": "pending",
+            "traceparent": null,
+            "tracestate": null,
+            "updated_at": "2026-10-02T18:39:32.158125-07:00"
+          }
+        ]
+      },
+      {
+        "field": "SchemaField",
+        "outcome": {
+          "fields": [
+            "SchemaField"
+          ],
+          "identity": {
+            "messageId": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+            "outboxId": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+            "version": 1
+          },
+          "type": "conflict"
+        },
+        "rows": [
+          {
+            "attempt_count": 0,
+            "attributes": {
+              "a": 1,
+              "b": 2
+            },
+            "causation_id": null,
+            "content_type": "application/json",
+            "correlation_id": null,
+            "created_at": "2026-10-02T18:39:32.158125-07:00",
+            "destination": "kenshou.outbox.v1",
+            "event_type": "Probe",
+            "last_error": null,
+            "message_id": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+            "message_key": "account-1",
+            "next_attempt_at": "2026-10-02T18:39:32.158125-07:00",
+            "occurred_at": "2026-10-02T18:39:32.157992-07:00",
+            "outbox_id": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+            "payload_bytes": "\\x010203",
+            "published_at": null,
+            "rejected_at": null,
+            "rejection_code": null,
+            "rejection_detail": null,
+            "schema_fingerprint": null,
+            "schema_id": null,
+            "schema_registry": null,
+            "schema_subject": null,
+            "schema_version": 1,
+            "schema_version_ref": null,
+            "source": "kenshou-01a0ff6a-producer-id",
+            "source_event_id": "00000000-0000-0000-0000-000000000000",
+            "source_global_position": 1,
+            "status": "pending",
+            "traceparent": null,
+            "tracestate": null,
+            "updated_at": "2026-10-02T18:39:32.158125-07:00"
+          }
+        ]
+      },
+      {
+        "field": "PayloadField",
+        "outcome": {
+          "fields": [
+            "PayloadField"
+          ],
+          "identity": {
+            "messageId": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+            "outboxId": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+            "version": 1
+          },
+          "type": "conflict"
+        },
+        "rows": [
+          {
+            "attempt_count": 0,
+            "attributes": {
+              "a": 1,
+              "b": 2
+            },
+            "causation_id": null,
+            "content_type": "application/json",
+            "correlation_id": null,
+            "created_at": "2026-10-02T18:39:32.158125-07:00",
+            "destination": "kenshou.outbox.v1",
+            "event_type": "Probe",
+            "last_error": null,
+            "message_id": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+            "message_key": "account-1",
+            "next_attempt_at": "2026-10-02T18:39:32.158125-07:00",
+            "occurred_at": "2026-10-02T18:39:32.157992-07:00",
+            "outbox_id": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+            "payload_bytes": "\\x010203",
+            "published_at": null,
+            "rejected_at": null,
+            "rejection_code": null,
+            "rejection_detail": null,
+            "schema_fingerprint": null,
+            "schema_id": null,
+            "schema_registry": null,
+            "schema_subject": null,
+            "schema_version": 1,
+            "schema_version_ref": null,
+            "source": "kenshou-01a0ff6a-producer-id",
+            "source_event_id": "00000000-0000-0000-0000-000000000000",
+            "source_global_position": 1,
+            "status": "pending",
+            "traceparent": null,
+            "tracestate": null,
+            "updated_at": "2026-10-02T18:39:32.158125-07:00"
+          }
+        ]
+      },
+      {
+        "field": "OccurredAtField",
+        "outcome": {
+          "fields": [
+            "OccurredAtField"
+          ],
+          "identity": {
+            "messageId": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+            "outboxId": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+            "version": 1
+          },
+          "type": "conflict"
+        },
+        "rows": [
+          {
+            "attempt_count": 0,
+            "attributes": {
+              "a": 1,
+              "b": 2
+            },
+            "causation_id": null,
+            "content_type": "application/json",
+            "correlation_id": null,
+            "created_at": "2026-10-02T18:39:32.158125-07:00",
+            "destination": "kenshou.outbox.v1",
+            "event_type": "Probe",
+            "last_error": null,
+            "message_id": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+            "message_key": "account-1",
+            "next_attempt_at": "2026-10-02T18:39:32.158125-07:00",
+            "occurred_at": "2026-10-02T18:39:32.157992-07:00",
+            "outbox_id": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+            "payload_bytes": "\\x010203",
+            "published_at": null,
+            "rejected_at": null,
+            "rejection_code": null,
+            "rejection_detail": null,
+            "schema_fingerprint": null,
+            "schema_id": null,
+            "schema_registry": null,
+            "schema_subject": null,
+            "schema_version": 1,
+            "schema_version_ref": null,
+            "source": "kenshou-01a0ff6a-producer-id",
+            "source_event_id": "00000000-0000-0000-0000-000000000000",
+            "source_global_position": 1,
+            "status": "pending",
+            "traceparent": null,
+            "tracestate": null,
+            "updated_at": "2026-10-02T18:39:32.158125-07:00"
+          }
+        ]
+      },
+      {
+        "field": "CausalField",
+        "outcome": {
+          "fields": [
+            "CausalField"
+          ],
+          "identity": {
+            "messageId": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+            "outboxId": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+            "version": 1
+          },
+          "type": "conflict"
+        },
+        "rows": [
+          {
+            "attempt_count": 0,
+            "attributes": {
+              "a": 1,
+              "b": 2
+            },
+            "causation_id": null,
+            "content_type": "application/json",
+            "correlation_id": null,
+            "created_at": "2026-10-02T18:39:32.158125-07:00",
+            "destination": "kenshou.outbox.v1",
+            "event_type": "Probe",
+            "last_error": null,
+            "message_id": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+            "message_key": "account-1",
+            "next_attempt_at": "2026-10-02T18:39:32.158125-07:00",
+            "occurred_at": "2026-10-02T18:39:32.157992-07:00",
+            "outbox_id": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+            "payload_bytes": "\\x010203",
+            "published_at": null,
+            "rejected_at": null,
+            "rejection_code": null,
+            "rejection_detail": null,
+            "schema_fingerprint": null,
+            "schema_id": null,
+            "schema_registry": null,
+            "schema_subject": null,
+            "schema_version": 1,
+            "schema_version_ref": null,
+            "source": "kenshou-01a0ff6a-producer-id",
+            "source_event_id": "00000000-0000-0000-0000-000000000000",
+            "source_global_position": 1,
+            "status": "pending",
+            "traceparent": null,
+            "tracestate": null,
+            "updated_at": "2026-10-02T18:39:32.158125-07:00"
+          }
+        ]
+      },
+      {
+        "field": "TraceField",
+        "outcome": {
+          "fields": [
+            "TraceField"
+          ],
+          "identity": {
+            "messageId": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+            "outboxId": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+            "version": 1
+          },
+          "type": "conflict"
+        },
+        "rows": [
+          {
+            "attempt_count": 0,
+            "attributes": {
+              "a": 1,
+              "b": 2
+            },
+            "causation_id": null,
+            "content_type": "application/json",
+            "correlation_id": null,
+            "created_at": "2026-10-02T18:39:32.158125-07:00",
+            "destination": "kenshou.outbox.v1",
+            "event_type": "Probe",
+            "last_error": null,
+            "message_id": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+            "message_key": "account-1",
+            "next_attempt_at": "2026-10-02T18:39:32.158125-07:00",
+            "occurred_at": "2026-10-02T18:39:32.157992-07:00",
+            "outbox_id": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+            "payload_bytes": "\\x010203",
+            "published_at": null,
+            "rejected_at": null,
+            "rejection_code": null,
+            "rejection_detail": null,
+            "schema_fingerprint": null,
+            "schema_id": null,
+            "schema_registry": null,
+            "schema_subject": null,
+            "schema_version": 1,
+            "schema_version_ref": null,
+            "source": "kenshou-01a0ff6a-producer-id",
+            "source_event_id": "00000000-0000-0000-0000-000000000000",
+            "source_global_position": 1,
+            "status": "pending",
+            "traceparent": null,
+            "tracestate": null,
+            "updated_at": "2026-10-02T18:39:32.158125-07:00"
+          }
+        ]
+      },
+      {
+        "field": "AttributesField",
+        "outcome": {
+          "fields": [
+            "AttributesField"
+          ],
+          "identity": {
+            "messageId": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+            "outboxId": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+            "version": 1
+          },
+          "type": "conflict"
+        },
+        "rows": [
+          {
+            "attempt_count": 0,
+            "attributes": {
+              "a": 1,
+              "b": 2
+            },
+            "causation_id": null,
+            "content_type": "application/json",
+            "correlation_id": null,
+            "created_at": "2026-10-02T18:39:32.158125-07:00",
+            "destination": "kenshou.outbox.v1",
+            "event_type": "Probe",
+            "last_error": null,
+            "message_id": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+            "message_key": "account-1",
+            "next_attempt_at": "2026-10-02T18:39:32.158125-07:00",
+            "occurred_at": "2026-10-02T18:39:32.157992-07:00",
+            "outbox_id": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+            "payload_bytes": "\\x010203",
+            "published_at": null,
+            "rejected_at": null,
+            "rejection_code": null,
+            "rejection_detail": null,
+            "schema_fingerprint": null,
+            "schema_id": null,
+            "schema_registry": null,
+            "schema_subject": null,
+            "schema_version": 1,
+            "schema_version_ref": null,
+            "source": "kenshou-01a0ff6a-producer-id",
+            "source_event_id": "00000000-0000-0000-0000-000000000000",
+            "source_global_position": 1,
+            "status": "pending",
+            "traceparent": null,
+            "tracestate": null,
+            "updated_at": "2026-10-02T18:39:32.158125-07:00"
+          }
+        ]
+      },
+      {
+        "field": "ProvenanceField",
+        "outcome": {
+          "fields": [
+            "ProvenanceField"
+          ],
+          "identity": {
+            "messageId": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+            "outboxId": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+            "version": 1
+          },
+          "type": "conflict"
+        },
+        "rows": [
+          {
+            "attempt_count": 0,
+            "attributes": {
+              "a": 1,
+              "b": 2
+            },
+            "causation_id": null,
+            "content_type": "application/json",
+            "correlation_id": null,
+            "created_at": "2026-10-02T18:39:32.158125-07:00",
+            "destination": "kenshou.outbox.v1",
+            "event_type": "Probe",
+            "last_error": null,
+            "message_id": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+            "message_key": "account-1",
+            "next_attempt_at": "2026-10-02T18:39:32.158125-07:00",
+            "occurred_at": "2026-10-02T18:39:32.157992-07:00",
+            "outbox_id": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+            "payload_bytes": "\\x010203",
+            "published_at": null,
+            "rejected_at": null,
+            "rejection_code": null,
+            "rejection_detail": null,
+            "schema_fingerprint": null,
+            "schema_id": null,
+            "schema_registry": null,
+            "schema_subject": null,
+            "schema_version": 1,
+            "schema_version_ref": null,
+            "source": "kenshou-01a0ff6a-producer-id",
+            "source_event_id": "00000000-0000-0000-0000-000000000000",
+            "source_global_position": 1,
+            "status": "pending",
+            "traceparent": null,
+            "tracestate": null,
+            "updated_at": "2026-10-02T18:39:32.158125-07:00"
+          }
+        ]
+      }
+    ],
+    "emissionIndex": 0,
+    "finalRows": [
+      {
+        "attempt_count": 0,
+        "attributes": {
+          "a": 1,
+          "b": 2
+        },
+        "causation_id": null,
+        "content_type": "application/json",
+        "correlation_id": null,
+        "created_at": "2026-10-02T18:39:32.158125-07:00",
+        "destination": "kenshou.outbox.v1",
+        "event_type": "Probe",
+        "last_error": null,
+        "message_id": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+        "message_key": "account-1",
+        "next_attempt_at": "2026-10-02T18:39:32.158125-07:00",
+        "occurred_at": "2026-10-02T18:39:32.157992-07:00",
+        "outbox_id": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+        "payload_bytes": "\\x010203",
+        "published_at": null,
+        "rejected_at": null,
+        "rejection_code": null,
+        "rejection_detail": null,
+        "schema_fingerprint": null,
+        "schema_id": null,
+        "schema_registry": null,
+        "schema_subject": null,
+        "schema_version": 1,
+        "schema_version_ref": null,
+        "source": "kenshou-01a0ff6a-producer-id",
+        "source_event_id": "00000000-0000-0000-0000-000000000000",
+        "source_global_position": 1,
+        "status": "pending",
+        "traceparent": null,
+        "tracestate": null,
+        "updated_at": "2026-10-02T18:39:32.158125-07:00"
+      }
+    ],
+    "first": {
+      "fields": [],
+      "identity": {
+        "messageId": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+        "outboxId": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+        "version": 1
+      },
+      "type": "inserted"
+    },
+    "frozenIdentity": {
+      "messageId": "msg_v1_61dd62b4bbfef1ce56346ce6afd485172774bc060102e5cf455e39bd0edfa84b",
+      "outboxId": "61dd62b4-bbfe-81ce-9634-6ce6afd48517",
+      "version": 1
+    },
+    "identical": {
+      "fields": [],
+      "identity": {
+        "messageId": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+        "outboxId": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+        "version": 1
+      },
+      "type": "duplicate"
+    },
+    "identityConflict": {
+      "fields": [
+        "IdentityField"
+      ],
+      "identity": {
+        "messageId": "other_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+        "outboxId": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+        "version": 1
+      },
+      "type": "conflict"
+    },
+    "namespace": "kenshou",
+    "producerName": "probe",
+    "reordered": {
+      "fields": [],
+      "identity": {
+        "messageId": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+        "outboxId": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+        "version": 1
+      },
+      "type": "duplicate"
+    },
+    "schema": "kenshou.outbox-producer-identity/v1",
+    "source": "kenshou-01a0ff6a-producer-id",
+    "sourceEventId": "00000000-0000-0000-0000-000000000000",
+    "submicrosecond": {
+      "fields": [],
+      "identity": {
+        "messageId": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+        "outboxId": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+        "version": 1
+      },
+      "type": "duplicate"
+    }
+  },
+  {
+    "afterConflicts": [
+      {
+        "attempt_count": 0,
+        "attributes": {
+          "a": 1,
+          "b": 2
+        },
+        "causation_id": null,
+        "content_type": "application/json",
+        "correlation_id": null,
+        "created_at": "2026-10-02T18:39:35.263297-07:00",
+        "destination": "kenshou.outbox.v1",
+        "event_type": "Probe",
+        "last_error": null,
+        "message_id": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+        "message_key": "account-1",
+        "next_attempt_at": "2026-10-02T18:39:35.263297-07:00",
+        "occurred_at": "2026-10-02T18:39:35.263217-07:00",
+        "outbox_id": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+        "payload_bytes": "\\x010203",
+        "published_at": null,
+        "rejected_at": null,
+        "rejection_code": null,
+        "rejection_detail": null,
+        "schema_fingerprint": null,
+        "schema_id": null,
+        "schema_registry": null,
+        "schema_subject": null,
+        "schema_version": 1,
+        "schema_version_ref": null,
+        "source": "kenshou-01a0ff6a-producer-id",
+        "source_event_id": "00000000-0000-0000-0000-000000000000",
+        "source_global_position": 1,
+        "status": "pending",
+        "traceparent": null,
+        "tracestate": null,
+        "updated_at": "2026-10-02T18:39:35.263297-07:00"
+      }
+    ],
+    "afterDuplicate": [
+      {
+        "attempt_count": 0,
+        "attributes": {
+          "a": 1,
+          "b": 2
+        },
+        "causation_id": null,
+        "content_type": "application/json",
+        "correlation_id": null,
+        "created_at": "2026-10-02T18:39:35.263297-07:00",
+        "destination": "kenshou.outbox.v1",
+        "event_type": "Probe",
+        "last_error": null,
+        "message_id": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+        "message_key": "account-1",
+        "next_attempt_at": "2026-10-02T18:39:35.263297-07:00",
+        "occurred_at": "2026-10-02T18:39:35.263217-07:00",
+        "outbox_id": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+        "payload_bytes": "\\x010203",
+        "published_at": null,
+        "rejected_at": null,
+        "rejection_code": null,
+        "rejection_detail": null,
+        "schema_fingerprint": null,
+        "schema_id": null,
+        "schema_registry": null,
+        "schema_subject": null,
+        "schema_version": 1,
+        "schema_version_ref": null,
+        "source": "kenshou-01a0ff6a-producer-id",
+        "source_event_id": "00000000-0000-0000-0000-000000000000",
+        "source_global_position": 1,
+        "status": "pending",
+        "traceparent": null,
+        "tracestate": null,
+        "updated_at": "2026-10-02T18:39:35.263297-07:00"
+      }
+    ],
+    "before": [
+      {
+        "attempt_count": 0,
+        "attributes": {
+          "a": 1,
+          "b": 2
+        },
+        "causation_id": null,
+        "content_type": "application/json",
+        "correlation_id": null,
+        "created_at": "2026-10-02T18:39:35.263297-07:00",
+        "destination": "kenshou.outbox.v1",
+        "event_type": "Probe",
+        "last_error": null,
+        "message_id": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+        "message_key": "account-1",
+        "next_attempt_at": "2026-10-02T18:39:35.263297-07:00",
+        "occurred_at": "2026-10-02T18:39:35.263217-07:00",
+        "outbox_id": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+        "payload_bytes": "\\x010203",
+        "published_at": null,
+        "rejected_at": null,
+        "rejection_code": null,
+        "rejection_detail": null,
+        "schema_fingerprint": null,
+        "schema_id": null,
+        "schema_registry": null,
+        "schema_subject": null,
+        "schema_version": 1,
+        "schema_version_ref": null,
+        "source": "kenshou-01a0ff6a-producer-id",
+        "source_event_id": "00000000-0000-0000-0000-000000000000",
+        "source_global_position": 1,
+        "status": "pending",
+        "traceparent": null,
+        "tracestate": null,
+        "updated_at": "2026-10-02T18:39:35.263297-07:00"
+      }
+    ],
+    "changedNamespace": "other",
+    "conflicts": [
+      {
+        "field": "RoutingField",
+        "outcome": {
+          "fields": [
+            "RoutingField"
+          ],
+          "identity": {
+            "messageId": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+            "outboxId": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+            "version": 1
+          },
+          "type": "conflict"
+        },
+        "rows": [
+          {
+            "attempt_count": 0,
+            "attributes": {
+              "a": 1,
+              "b": 2
+            },
+            "causation_id": null,
+            "content_type": "application/json",
+            "correlation_id": null,
+            "created_at": "2026-10-02T18:39:35.263297-07:00",
+            "destination": "kenshou.outbox.v1",
+            "event_type": "Probe",
+            "last_error": null,
+            "message_id": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+            "message_key": "account-1",
+            "next_attempt_at": "2026-10-02T18:39:35.263297-07:00",
+            "occurred_at": "2026-10-02T18:39:35.263217-07:00",
+            "outbox_id": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+            "payload_bytes": "\\x010203",
+            "published_at": null,
+            "rejected_at": null,
+            "rejection_code": null,
+            "rejection_detail": null,
+            "schema_fingerprint": null,
+            "schema_id": null,
+            "schema_registry": null,
+            "schema_subject": null,
+            "schema_version": 1,
+            "schema_version_ref": null,
+            "source": "kenshou-01a0ff6a-producer-id",
+            "source_event_id": "00000000-0000-0000-0000-000000000000",
+            "source_global_position": 1,
+            "status": "pending",
+            "traceparent": null,
+            "tracestate": null,
+            "updated_at": "2026-10-02T18:39:35.263297-07:00"
+          }
+        ]
+      },
+      {
+        "field": "SchemaField",
+        "outcome": {
+          "fields": [
+            "SchemaField"
+          ],
+          "identity": {
+            "messageId": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+            "outboxId": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+            "version": 1
+          },
+          "type": "conflict"
+        },
+        "rows": [
+          {
+            "attempt_count": 0,
+            "attributes": {
+              "a": 1,
+              "b": 2
+            },
+            "causation_id": null,
+            "content_type": "application/json",
+            "correlation_id": null,
+            "created_at": "2026-10-02T18:39:35.263297-07:00",
+            "destination": "kenshou.outbox.v1",
+            "event_type": "Probe",
+            "last_error": null,
+            "message_id": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+            "message_key": "account-1",
+            "next_attempt_at": "2026-10-02T18:39:35.263297-07:00",
+            "occurred_at": "2026-10-02T18:39:35.263217-07:00",
+            "outbox_id": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+            "payload_bytes": "\\x010203",
+            "published_at": null,
+            "rejected_at": null,
+            "rejection_code": null,
+            "rejection_detail": null,
+            "schema_fingerprint": null,
+            "schema_id": null,
+            "schema_registry": null,
+            "schema_subject": null,
+            "schema_version": 1,
+            "schema_version_ref": null,
+            "source": "kenshou-01a0ff6a-producer-id",
+            "source_event_id": "00000000-0000-0000-0000-000000000000",
+            "source_global_position": 1,
+            "status": "pending",
+            "traceparent": null,
+            "tracestate": null,
+            "updated_at": "2026-10-02T18:39:35.263297-07:00"
+          }
+        ]
+      },
+      {
+        "field": "PayloadField",
+        "outcome": {
+          "fields": [
+            "PayloadField"
+          ],
+          "identity": {
+            "messageId": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+            "outboxId": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+            "version": 1
+          },
+          "type": "conflict"
+        },
+        "rows": [
+          {
+            "attempt_count": 0,
+            "attributes": {
+              "a": 1,
+              "b": 2
+            },
+            "causation_id": null,
+            "content_type": "application/json",
+            "correlation_id": null,
+            "created_at": "2026-10-02T18:39:35.263297-07:00",
+            "destination": "kenshou.outbox.v1",
+            "event_type": "Probe",
+            "last_error": null,
+            "message_id": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+            "message_key": "account-1",
+            "next_attempt_at": "2026-10-02T18:39:35.263297-07:00",
+            "occurred_at": "2026-10-02T18:39:35.263217-07:00",
+            "outbox_id": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+            "payload_bytes": "\\x010203",
+            "published_at": null,
+            "rejected_at": null,
+            "rejection_code": null,
+            "rejection_detail": null,
+            "schema_fingerprint": null,
+            "schema_id": null,
+            "schema_registry": null,
+            "schema_subject": null,
+            "schema_version": 1,
+            "schema_version_ref": null,
+            "source": "kenshou-01a0ff6a-producer-id",
+            "source_event_id": "00000000-0000-0000-0000-000000000000",
+            "source_global_position": 1,
+            "status": "pending",
+            "traceparent": null,
+            "tracestate": null,
+            "updated_at": "2026-10-02T18:39:35.263297-07:00"
+          }
+        ]
+      },
+      {
+        "field": "OccurredAtField",
+        "outcome": {
+          "fields": [
+            "OccurredAtField"
+          ],
+          "identity": {
+            "messageId": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+            "outboxId": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+            "version": 1
+          },
+          "type": "conflict"
+        },
+        "rows": [
+          {
+            "attempt_count": 0,
+            "attributes": {
+              "a": 1,
+              "b": 2
+            },
+            "causation_id": null,
+            "content_type": "application/json",
+            "correlation_id": null,
+            "created_at": "2026-10-02T18:39:35.263297-07:00",
+            "destination": "kenshou.outbox.v1",
+            "event_type": "Probe",
+            "last_error": null,
+            "message_id": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+            "message_key": "account-1",
+            "next_attempt_at": "2026-10-02T18:39:35.263297-07:00",
+            "occurred_at": "2026-10-02T18:39:35.263217-07:00",
+            "outbox_id": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+            "payload_bytes": "\\x010203",
+            "published_at": null,
+            "rejected_at": null,
+            "rejection_code": null,
+            "rejection_detail": null,
+            "schema_fingerprint": null,
+            "schema_id": null,
+            "schema_registry": null,
+            "schema_subject": null,
+            "schema_version": 1,
+            "schema_version_ref": null,
+            "source": "kenshou-01a0ff6a-producer-id",
+            "source_event_id": "00000000-0000-0000-0000-000000000000",
+            "source_global_position": 1,
+            "status": "pending",
+            "traceparent": null,
+            "tracestate": null,
+            "updated_at": "2026-10-02T18:39:35.263297-07:00"
+          }
+        ]
+      },
+      {
+        "field": "CausalField",
+        "outcome": {
+          "fields": [
+            "CausalField"
+          ],
+          "identity": {
+            "messageId": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+            "outboxId": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+            "version": 1
+          },
+          "type": "conflict"
+        },
+        "rows": [
+          {
+            "attempt_count": 0,
+            "attributes": {
+              "a": 1,
+              "b": 2
+            },
+            "causation_id": null,
+            "content_type": "application/json",
+            "correlation_id": null,
+            "created_at": "2026-10-02T18:39:35.263297-07:00",
+            "destination": "kenshou.outbox.v1",
+            "event_type": "Probe",
+            "last_error": null,
+            "message_id": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+            "message_key": "account-1",
+            "next_attempt_at": "2026-10-02T18:39:35.263297-07:00",
+            "occurred_at": "2026-10-02T18:39:35.263217-07:00",
+            "outbox_id": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+            "payload_bytes": "\\x010203",
+            "published_at": null,
+            "rejected_at": null,
+            "rejection_code": null,
+            "rejection_detail": null,
+            "schema_fingerprint": null,
+            "schema_id": null,
+            "schema_registry": null,
+            "schema_subject": null,
+            "schema_version": 1,
+            "schema_version_ref": null,
+            "source": "kenshou-01a0ff6a-producer-id",
+            "source_event_id": "00000000-0000-0000-0000-000000000000",
+            "source_global_position": 1,
+            "status": "pending",
+            "traceparent": null,
+            "tracestate": null,
+            "updated_at": "2026-10-02T18:39:35.263297-07:00"
+          }
+        ]
+      },
+      {
+        "field": "TraceField",
+        "outcome": {
+          "fields": [
+            "TraceField"
+          ],
+          "identity": {
+            "messageId": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+            "outboxId": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+            "version": 1
+          },
+          "type": "conflict"
+        },
+        "rows": [
+          {
+            "attempt_count": 0,
+            "attributes": {
+              "a": 1,
+              "b": 2
+            },
+            "causation_id": null,
+            "content_type": "application/json",
+            "correlation_id": null,
+            "created_at": "2026-10-02T18:39:35.263297-07:00",
+            "destination": "kenshou.outbox.v1",
+            "event_type": "Probe",
+            "last_error": null,
+            "message_id": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+            "message_key": "account-1",
+            "next_attempt_at": "2026-10-02T18:39:35.263297-07:00",
+            "occurred_at": "2026-10-02T18:39:35.263217-07:00",
+            "outbox_id": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+            "payload_bytes": "\\x010203",
+            "published_at": null,
+            "rejected_at": null,
+            "rejection_code": null,
+            "rejection_detail": null,
+            "schema_fingerprint": null,
+            "schema_id": null,
+            "schema_registry": null,
+            "schema_subject": null,
+            "schema_version": 1,
+            "schema_version_ref": null,
+            "source": "kenshou-01a0ff6a-producer-id",
+            "source_event_id": "00000000-0000-0000-0000-000000000000",
+            "source_global_position": 1,
+            "status": "pending",
+            "traceparent": null,
+            "tracestate": null,
+            "updated_at": "2026-10-02T18:39:35.263297-07:00"
+          }
+        ]
+      },
+      {
+        "field": "AttributesField",
+        "outcome": {
+          "fields": [
+            "AttributesField"
+          ],
+          "identity": {
+            "messageId": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+            "outboxId": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+            "version": 1
+          },
+          "type": "conflict"
+        },
+        "rows": [
+          {
+            "attempt_count": 0,
+            "attributes": {
+              "a": 1,
+              "b": 2
+            },
+            "causation_id": null,
+            "content_type": "application/json",
+            "correlation_id": null,
+            "created_at": "2026-10-02T18:39:35.263297-07:00",
+            "destination": "kenshou.outbox.v1",
+            "event_type": "Probe",
+            "last_error": null,
+            "message_id": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+            "message_key": "account-1",
+            "next_attempt_at": "2026-10-02T18:39:35.263297-07:00",
+            "occurred_at": "2026-10-02T18:39:35.263217-07:00",
+            "outbox_id": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+            "payload_bytes": "\\x010203",
+            "published_at": null,
+            "rejected_at": null,
+            "rejection_code": null,
+            "rejection_detail": null,
+            "schema_fingerprint": null,
+            "schema_id": null,
+            "schema_registry": null,
+            "schema_subject": null,
+            "schema_version": 1,
+            "schema_version_ref": null,
+            "source": "kenshou-01a0ff6a-producer-id",
+            "source_event_id": "00000000-0000-0000-0000-000000000000",
+            "source_global_position": 1,
+            "status": "pending",
+            "traceparent": null,
+            "tracestate": null,
+            "updated_at": "2026-10-02T18:39:35.263297-07:00"
+          }
+        ]
+      },
+      {
+        "field": "ProvenanceField",
+        "outcome": {
+          "fields": [
+            "ProvenanceField"
+          ],
+          "identity": {
+            "messageId": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+            "outboxId": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+            "version": 1
+          },
+          "type": "conflict"
+        },
+        "rows": [
+          {
+            "attempt_count": 0,
+            "attributes": {
+              "a": 1,
+              "b": 2
+            },
+            "causation_id": null,
+            "content_type": "application/json",
+            "correlation_id": null,
+            "created_at": "2026-10-02T18:39:35.263297-07:00",
+            "destination": "kenshou.outbox.v1",
+            "event_type": "Probe",
+            "last_error": null,
+            "message_id": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+            "message_key": "account-1",
+            "next_attempt_at": "2026-10-02T18:39:35.263297-07:00",
+            "occurred_at": "2026-10-02T18:39:35.263217-07:00",
+            "outbox_id": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+            "payload_bytes": "\\x010203",
+            "published_at": null,
+            "rejected_at": null,
+            "rejection_code": null,
+            "rejection_detail": null,
+            "schema_fingerprint": null,
+            "schema_id": null,
+            "schema_registry": null,
+            "schema_subject": null,
+            "schema_version": 1,
+            "schema_version_ref": null,
+            "source": "kenshou-01a0ff6a-producer-id",
+            "source_event_id": "00000000-0000-0000-0000-000000000000",
+            "source_global_position": 1,
+            "status": "pending",
+            "traceparent": null,
+            "tracestate": null,
+            "updated_at": "2026-10-02T18:39:35.263297-07:00"
+          }
+        ]
+      }
+    ],
+    "emissionIndex": 0,
+    "finalRows": [
+      {
+        "attempt_count": 0,
+        "attributes": {
+          "a": 1,
+          "b": 2
+        },
+        "causation_id": null,
+        "content_type": "application/json",
+        "correlation_id": null,
+        "created_at": "2026-10-02T18:39:35.263297-07:00",
+        "destination": "kenshou.outbox.v1",
+        "event_type": "Probe",
+        "last_error": null,
+        "message_id": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+        "message_key": "account-1",
+        "next_attempt_at": "2026-10-02T18:39:35.263297-07:00",
+        "occurred_at": "2026-10-02T18:39:35.263217-07:00",
+        "outbox_id": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+        "payload_bytes": "\\x010203",
+        "published_at": null,
+        "rejected_at": null,
+        "rejection_code": null,
+        "rejection_detail": null,
+        "schema_fingerprint": null,
+        "schema_id": null,
+        "schema_registry": null,
+        "schema_subject": null,
+        "schema_version": 1,
+        "schema_version_ref": null,
+        "source": "kenshou-01a0ff6a-producer-id",
+        "source_event_id": "00000000-0000-0000-0000-000000000000",
+        "source_global_position": 1,
+        "status": "pending",
+        "traceparent": null,
+        "tracestate": null,
+        "updated_at": "2026-10-02T18:39:35.263297-07:00"
+      }
+    ],
+    "first": {
+      "fields": [],
+      "identity": {
+        "messageId": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+        "outboxId": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+        "version": 1
+      },
+      "type": "inserted"
+    },
+    "frozenIdentity": {
+      "messageId": "msg_v1_61dd62b4bbfef1ce56346ce6afd485172774bc060102e5cf455e39bd0edfa84b",
+      "outboxId": "61dd62b4-bbfe-81ce-9634-6ce6afd48517",
+      "version": 1
+    },
+    "identical": {
+      "fields": [],
+      "identity": {
+        "messageId": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+        "outboxId": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+        "version": 1
+      },
+      "type": "duplicate"
+    },
+    "identityConflict": {
+      "fields": [
+        "IdentityField"
+      ],
+      "identity": {
+        "messageId": "other_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+        "outboxId": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+        "version": 1
+      },
+      "type": "conflict"
+    },
+    "namespace": "kenshou",
+    "producerName": "probe",
+    "reordered": {
+      "fields": [],
+      "identity": {
+        "messageId": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+        "outboxId": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+        "version": 1
+      },
+      "type": "duplicate"
+    },
+    "schema": "kenshou.outbox-producer-identity/v1",
+    "source": "kenshou-01a0ff6a-producer-id",
+    "sourceEventId": "00000000-0000-0000-0000-000000000000",
+    "submicrosecond": {
+      "fields": [],
+      "identity": {
+        "messageId": "kenshou_v1_3a5a61d3436ef991095c4d792c15f6f94f46fdf457f00bd3939485cd54234dd7",
+        "outboxId": "3a5a61d3-436e-8991-895c-4d792c15f6f9",
+        "version": 1
+      },
+      "type": "duplicate"
+    }
+  }
+]

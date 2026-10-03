@@ -6,8 +6,9 @@ import Data.Aeson (FromJSON, Value (..), eitherDecodeFileStrict', object, toJSON
 import Data.Aeson.Key (Key)
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Aeson.Types (Parser, parseEither)
-import Data.List (sortOn)
+import Data.List (sortOn, tails)
 import Data.Map.Strict qualified as Map
+import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (UTCTime, addUTCTime)
@@ -37,11 +38,20 @@ replayOrderingCells = either (Left . Text.pack) Right . parseEither replay
       scheduled <- get "blockedAtKill" raw :: Parser Bool
       depth <- get "queueDepth" raw :: Parser Int
       spans <- get "spans" raw :: Parser [(Text, UTCTime, Maybe UTCTime)]
-      unless (schema `elem` ["kenshou.queue-ordering-observations/v1", "kenshou.queue-ordering-observations/v2"] && mode `elem` ["fifo-heads", "unordered", "fifo-throughput", "fifo-round-robin"] && groups >= 2 && groups <= 32 && count >= 2 && count <= 50 && workers >= 2 && workers <= 8 && batch >= 1 && batch <= 32 && (mode `notElem` ["fifo-throughput", "fifo-round-robin"] || batch == 1)) (fail "invalid ordering capture parameters")
-      let withAttempts = schema == "kenshou.queue-ordering-observations/v2"
+      unless (schema `elem` ["kenshou.queue-ordering-observations/v1", "kenshou.queue-ordering-observations/v2", "kenshou.queue-ordering-observations/v3"] && mode `elem` ["fifo-heads", "unordered", "fifo-throughput", "fifo-round-robin"] && groups >= 2 && groups <= 32 && count >= 2 && count <= 50 && workers >= 2 && workers <= 8 && batch >= 1 && batch <= 32 && (mode `notElem` ["fifo-throughput", "fifo-round-robin"] || batch == 1)) (fail "invalid ordering capture parameters")
+      let withLeases = schema == "kenshou.queue-ordering-observations/v3"
+          withAttempts = withLeases || schema == "kenshou.queue-ordering-observations/v2"
       retries <- if withAttempts then get "retryHeads" raw else pure False
       attempts <- if withAttempts then get "attemptSpans" raw else pure [] :: Parser [(Text, Int, UTCTime, Maybe UTCTime, Text)]
       unless (not withAttempts || (spans == [(item, started, ended) | (item, _, started, ended, disposition) <- attempts, disposition == "done" || ended == Nothing] && all (\(_, attempt, started, ended, disposition) -> attempt >= 0 && case (disposition, ended) of ("running", Nothing) -> True; ("done", Just finish) -> finish >= started; ("retry", Just finish) -> finish >= started; _ -> False) attempts)) (fail "inconsistent ordering attempt capture")
+      leases <- if withLeases then get "leaseSpans" raw else pure [] :: Parser [(Text, Int, UTCTime, Integer, Integer, UTCTime, UTCTime)]
+      let leaseKeys = [(item, attempt, started) | (item, attempt, started, _, _, _, _) <- leases]
+          attemptKeys = [(item, attempt, started) | (item, attempt, started, _, _) <- attempts]
+          identities = Map.fromListWith Set.union [(item, Set.singleton mid) | (item, _, _, mid, _, _, _) <- leases]
+          byMessage = Map.fromListWith (<>) [(mid, [(item, attempt, started, readAt, visible)]) | (item, attempt, started, mid, _, readAt, visible) <- leases]
+          coherent = leaseKeys == attemptKeys && length leaseKeys == Set.size (Set.fromList [(item, attempt) | (item, attempt, _) <- leaseKeys]) && all ((== 1) . Set.size) identities && Map.size identities == Map.size byMessage && all (\(_, attempt, started, mid, readCount, readAt, visible) -> mid > 0 && readCount == fromIntegral attempt + 1 && readAt <= started && visible > readAt && visible <= addUTCTime 10 started) leases
+          overlapSafe rows = and [nextAttempt > attempt && nextStart > started && (any (\(p, a, entry, ended, _) -> p == item && a == attempt && entry == started && maybe False (<= nextStart) ended) attempts || nextRead >= visible) | (item, attempt, started, _, visible) : following <- tails (sortOn (\(_, _, entry, _, _) -> entry) rows), (_, nextAttempt, nextStart, nextRead, _) <- following]
+          leaseSafe = coherent && all overlapSafe (Map.elems byMessage)
       let firstStarts = Map.fromListWith min [(item, started) | (item, _, started, _, _) <- attempts]
           payload :: Int -> Int -> Text
           payload groupIndex sequenceIndex = Text.pack (show groupIndex <> ":" <> show sequenceIndex)
@@ -69,6 +79,7 @@ replayOrderingCells = either (Left . Text.pack) Right . parseEither replay
             [("schedule-realised", scheduled && (not killed || abandoned == 1)), ("all-jobs-completed", complete), ("other-groups-progress", otherProgress)]
               <> [("scripted-head-retries", patterns) | withAttempts]
               <> [("head-retry-delay", delays) | withAttempts]
+              <> [("lease-bound-handler-overlap", leaseSafe) | withLeases]
               <> [("strict-group-order", strict) | mode == "fifo-heads"]
               <> [("unordered-control-reorders", not strict) | mode == "unordered"]
       pure (contracts, [("strict-group-order", strict) | mode /= "fifo-heads"])
@@ -80,8 +91,9 @@ recomputeQueueOrdering root source = do
   spec <- readDocument (root <> "/run-spec.json")
   result <- readDocument (root <> "/run-result.json")
   captured <- readDocument (root <> "/logs/queue-ordering-observations.json")
-  let isV2 = either (const False) ((== Just (String "kenshou.queue-ordering-observations/v2")) . field "schema") captured
-      names = ["schedule-realised", "all-jobs-completed", "other-groups-progress", "strict-group-order"] <> [name | isV2, name <- ["scripted-head-retries", "head-retry-delay"]] <> ["unordered-control-reorders" | either (const False) ((== Just (String "unordered")) . field "ordering") captured]
+  let isV3 = either (const False) ((== Just (String "kenshou.queue-ordering-observations/v3")) . field "schema") captured
+      isV2 = isV3 || either (const False) ((== Just (String "kenshou.queue-ordering-observations/v2")) . field "schema") captured
+      names = ["lease-bound-handler-overlap" | isV3] <> ["schedule-realised", "all-jobs-completed", "other-groups-progress", "strict-group-order"] <> [name | isV2, name <- ["scripted-head-retries", "head-retry-delay"]] <> ["unordered-control-reorders" | either (const False) ((== Just (String "unordered")) . field "ordering") captured]
   verdicts <- forM names \name -> do
     value <- readDocument (root <> "/verdicts/" <> Text.unpack name <> ".json")
     pure (name, value)
@@ -89,8 +101,8 @@ recomputeQueueOrdering root source = do
     specification <- spec
     document <- result
     raw <- captured
-    let revision = if isV2 then Number 4 else Number 3
-    unless (field "scenarioRevision" specification == Just revision && field "scenarioRevision" document == Just revision) (Left "ordering replay requires revision 3/v1 or 4/v2 captures")
+    let revision = if isV3 then Number 5 else if isV2 then Number 4 else Number 3
+    unless (field "scenarioRevision" specification == Just revision && field "scenarioRevision" document == Just revision) (Left "ordering replay requires revision 3/v1, 4/v2 or 5/v3 captures")
     knobs <- maybe (Left "missing ordering knobs") Right (field "knobs" specification)
     let matches (key, knob) = field key raw == field knob knobs
         mode = field "ordering" raw

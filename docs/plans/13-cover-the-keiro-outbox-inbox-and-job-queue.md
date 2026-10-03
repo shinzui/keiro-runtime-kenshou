@@ -1311,6 +1311,96 @@ valid artifacts, per-worker soak verdicts, telemetry reports and documentation
 remain in force. Runtime repairs and runtime-package unit tests stay outside
 this MasterPlan. No milestone is marked complete by this clarification.
 
+### SQL lease evidence for ordering
+
+Ordering revision 5 captures the SQL message identity, read count, last-read
+stamp and visibility deadline in the same insert that records handler entry.
+The seven-field `leaseSpans` capture is bound exactly to the attempt ledger in
+`kenshou.queue-ordering-observations/v3`. Every payload has one physical message
+identity, every attempt agrees with `read_ct - 1`, and the capture cannot reuse
+a newer claim for a stale prefetched delivery. Across attempts for the same
+message, overlapping or unfinished handlers require the next read to occur at
+or after the prior SQL visibility deadline. Finished retries are checked by the
+existing explicit-delay oracle. This adds one deciding check to every ordering
+mode while preserving replay of historical revision-3 and revision-4 records.
+
+The first exploratory matrix stopped on a suite timestamp assertion in
+`01a0ff0c-5555-753c-9fa8-3602ce81cb73`: a legacy grouped read recorded `vt`
+one microsecond beyond `last_read_at + 10 seconds`. The
+`mori://pgmq/pgmq/packages/pgmq-extension` SQL uses separate `clock_timestamp()`
+calls for those columns, in different expression orders among read functions.
+The corrected capture checks positive lease duration and a deadline no later
+than handler entry plus the configured ten seconds. The overlap decision uses
+the recorded deadline directly, with no early-delivery tolerance. This was a
+pre-publication oracle correction, not an owner defect or historical finding.
+
+Ten durable PostgreSQL 18 controls, seed `8102429385822254`, cover all four
+ordering modes with and without worker death plus two no-retry controls.
+Their 240 jobs complete, and independent replay agrees with every result.
+All 112 schema and 222 artifact integrity checks pass.
+The pure handler-interval controls distinguish live overlap after expiry from
+premature overlap. Replay mutations preserve coherent attempt timestamps while
+moving a redelivery before the original deadline, and reject missing, duplicated,
+substituted or stale lease captures. The full `nix develop -c just verify` gate passes with 65 Keiro and 115 CLI
+examples. Default control `01a0ff18-953f-758b-9a63-c64a268f07d6` passes
+with 1,600 completions, 31 retries, one abandoned head, eleven schema checks
+and 22 artifact checks. Independent replay agrees with that default, the ten
+revision-5 controls and eighteen historical revision-3/revision-4 controls.
+Clean publication remains separate.
+
+| Control | Local investigation |
+| --- | --- |
+| fifo-heads-kill-false | `01a0ff0f-3c5c-7421-98f3-4a31a6a9ebbb` |
+| fifo-heads-kill-true | `01a0ff0f-520b-7726-8e85-a26fadf2c4f3` |
+| unordered-kill-false | `01a0ff0f-8739-7646-8b6d-c58acf855ba3` |
+| unordered-kill-true | `01a0ff0f-9edf-72b6-85de-ffc98a6006d4` |
+| fifo-throughput-kill-false | `01a0ff0f-d646-7174-9c1d-ed1a6384b06d` |
+| fifo-throughput-kill-true | `01a0ff0f-f129-727e-b7ac-6b6a43d429c4` |
+| fifo-round-robin-kill-false | `01a0ff10-2840-7757-8ef5-6f1f6f390e90` |
+| fifo-round-robin-kill-true | `01a0ff10-3ec3-778e-a016-e7e82686f984` |
+| fifo-heads-no-retry-kill-false | `01a0ff10-7300-74a0-a15e-5e5ec865ff83` |
+| fifo-heads-no-retry-kill-true | `01a0ff10-821f-71f4-8616-5eb0c0028ae0` |
+
+### Producer identity SQL snapshots and independent replay
+
+Producer-identity revision 2 captures complete `to_jsonb` SQL rows before
+replay, after the identical replay, after each of the eight single-class
+conflicts, after the changed-namespace conflict, and after the equivalent
+replays. Retained identity and row equality therefore use PostgreSQL facts
+rather than a subset projected by the producer API. Intermediate snapshots
+also detect changes that are restored before the final read.
+
+`logs/outbox-producer-identity.json` follows the new
+`kenshou.outbox-producer-identity/v1` schema. The CLI independently reconstructs
+the versioned, length-framed SHA-256 identity without calling Keiro's derivation
+function, checks all eight conflict classes exactly once, and compares every
+retained SQL column. It binds the source to the run ID and requires revision 2.
+The frozen contract is
+`mori://shinzui/keiro/okf/adrs/concepts/ADR-42`: namespace affects the wire message
+ID but does not enter the digest; UTF-8 text is not Unicode-normalized.
+
+Eight independently generated literal vectors cover the frozen example,
+nonzero UUID bytes, the maximum emission index, multibyte text, distinct
+Unicode spellings, tuple framing and namespace variation. Six replay examples
+check real captures and reject missing/duplicate conflict classes, changed
+retained columns and intermediate rows, consistently forged API/SQL identities,
+and false equivalent-replay outcomes. SQL coverage uses the fixed scenario
+fixture. Additional pure producer classification properties were explored
+but excluded from this change because runtime-package unit tests are outside
+the MasterPlan scope.
+
+Both durable PostgreSQL 18 runs pass all nine checks under
+`runs/ep13-producer-identity-sql/`:
+`01a0ff6a-98c1-73a4-89ab-ca4269e4de99` (seed `4252662818734786`) and
+`01a0ff6a-a4d4-775c-b9d6-4216bb6260fe` (seed `8102429385822254`).
+All 26 schemas and 28 artifact checks pass, and both independently replay.
+Focused validation passes 121 CLI examples. The first recomputation used
+the wrong verdict filename prefix; the
+corrected reader agrees with both original captures without rewriting them.
+The full repository verification gate passes, including 121 CLI examples.
+Clean publication remains a separate evidence step; the two local captures
+do not change the published baseline record count.
+
 ### Remaining non-soak work
 
 Queue throughput revision 2 now implements bounded versus continuous-worker

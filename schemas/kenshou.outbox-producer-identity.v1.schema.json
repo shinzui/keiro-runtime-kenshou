@@ -1,0 +1,207 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kenshou.invalid/schemas/kenshou.outbox-producer-identity.v1.schema.json",
+  "title": "Outbox producer identity SQL and enqueue observations",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "source",
+    "producerName",
+    "namespace",
+    "sourceEventId",
+    "emissionIndex",
+    "changedNamespace",
+    "frozenIdentity",
+    "first",
+    "identical",
+    "identityConflict",
+    "submicrosecond",
+    "reordered",
+    "before",
+    "afterDuplicate",
+    "afterConflicts",
+    "finalRows",
+    "conflicts"
+  ],
+  "properties": {
+    "schema": {
+      "const": "kenshou.outbox-producer-identity/v1"
+    },
+    "source": {
+      "type": "string"
+    },
+    "producerName": {
+      "const": "probe"
+    },
+    "namespace": {
+      "const": "kenshou"
+    },
+    "sourceEventId": {
+      "const": "00000000-0000-0000-0000-000000000000"
+    },
+    "emissionIndex": {
+      "const": 0
+    },
+    "changedNamespace": {
+      "const": "other"
+    },
+    "frozenIdentity": {
+      "$ref": "#/$defs/identity"
+    },
+    "first": {
+      "$ref": "#/$defs/outcome"
+    },
+    "identical": {
+      "$ref": "#/$defs/outcome"
+    },
+    "identityConflict": {
+      "$ref": "#/$defs/outcome"
+    },
+    "submicrosecond": {
+      "$ref": "#/$defs/outcome"
+    },
+    "reordered": {
+      "$ref": "#/$defs/outcome"
+    },
+    "before": {
+      "$ref": "#/$defs/rows"
+    },
+    "afterDuplicate": {
+      "$ref": "#/$defs/rows"
+    },
+    "afterConflicts": {
+      "$ref": "#/$defs/rows"
+    },
+    "finalRows": {
+      "$ref": "#/$defs/rows"
+    },
+    "conflicts": {
+      "type": "array",
+      "minItems": 8,
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "field",
+          "outcome",
+          "rows"
+        ],
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/$defs/outcome"
+          },
+          "rows": {
+            "$ref": "#/$defs/rows"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "outboxId",
+        "messageId",
+        "version"
+      ],
+      "properties": {
+        "outboxId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "messageId": {
+          "type": "string"
+        },
+        "version": {
+          "const": 1
+        }
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "identity",
+        "fields"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "inserted",
+            "duplicate",
+            "conflict"
+          ]
+        },
+        "identity": {
+          "$ref": "#/$defs/identity"
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "IdentityField",
+              "RoutingField",
+              "SchemaField",
+              "PayloadField",
+              "OccurredAtField",
+              "CausalField",
+              "TraceField",
+              "AttributesField",
+              "ProvenanceField"
+            ]
+          }
+        }
+      }
+    },
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "outbox_id",
+          "message_id",
+          "source",
+          "created_at",
+          "updated_at",
+          "status",
+          "attempt_count"
+        ],
+        "properties": {
+          "outbox_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "message_id": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "type": "string"
+          },
+          "attempt_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    }
+  }
+}

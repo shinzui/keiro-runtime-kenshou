@@ -359,6 +359,26 @@ main = hspec do
       QueueConcurrency.fifoGroupOrder 2 [first] `shouldBe` False
       QueueConcurrency.fifoGroupOrder 2 [first, first] `shouldBe` False
       QueueConcurrency.fifoGroupOrder 2 [first, overlap] `shouldBe` False
+  describe "FIFO lease overlap oracle" do
+    it "permits a live overlapping redelivery only after the earlier lease expires" do
+      now <- getCurrentTime
+      let t = (`addUTCTime` now)
+          attempts = [("0:0", 0, t 0, Just (t 15)), ("0:0", 1, t 10, Just (t 11))]
+          leases = [("0:0", 0, t 0, 1, 1, t 0, t 10), ("0:0", 1, t 10, 1, 2, t 10, t 20)]
+          earlyAttempts = [("0:0", 0, t 0, Just (t 15)), ("0:0", 1, t 9, Just (t 11))]
+          earlyLeases = [head leases, ("0:0", 1, t 9, 1, 2, t 9, t 19)]
+      QueueConcurrency.fifoLeaseEvidence attempts leases `shouldBe` True
+      QueueConcurrency.fifoLeaseEvidence earlyAttempts earlyLeases `shouldBe` False
+      QueueConcurrency.fifoLeaseEvidence [("0:0", 0, t 0, Nothing), ("0:0", 1, t 10, Just (t 11))] leases `shouldBe` True
+    it "rejects stale attempts, substituted message identities and incomplete lease captures" do
+      now <- getCurrentTime
+      let attempts = [("0:0", 0, now, Just (addUTCTime 1 now)), ("1:0", 0, now, Just (addUTCTime 1 now))]
+          leases = [("0:0", 0, now, 1, 1, now, addUTCTime 10 now), ("1:0", 0, now, 2, 1, now, addUTCTime 10 now)]
+      QueueConcurrency.fifoLeaseEvidence attempts leases `shouldBe` True
+      QueueConcurrency.fifoLeaseEvidence attempts (drop 1 leases) `shouldBe` False
+      QueueConcurrency.fifoLeaseEvidence attempts (leases <> take 1 leases) `shouldBe` False
+      QueueConcurrency.fifoLeaseEvidence attempts [(p, a, t, 1, r, rd, vt) | (p, a, t, _, r, rd, vt) <- leases] `shouldBe` False
+      QueueConcurrency.fifoLeaseEvidence attempts [(p, a, t, mid, r + 1, rd, vt) | (p, a, t, mid, r, rd, vt) <- leases] `shouldBe` False
   describe "workflow crash schedule" do
     it "arms only the named positive occurrence of a matching boundary" do
       let boundary = WorkflowEffects.AfterStepAction "s3"

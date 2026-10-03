@@ -1,0 +1,98 @@
+[
+  {
+    "source": "ordering",
+    "name": "ordering-integration-producer",
+    "eventId": "00000000-0000-0000-0000-000000000001",
+    "index": 0,
+    "namespace": "msg",
+    "identity": {
+      "outboxId": "61dd62b4-bbfe-81ce-9634-6ce6afd48517",
+      "messageId": "msg_v1_61dd62b4bbfef1ce56346ce6afd485172774bc060102e5cf455e39bd0edfa84b",
+      "version": 1
+    }
+  },
+  {
+    "source": "source",
+    "name": "producer",
+    "eventId": "00112233-4455-6677-8899-aabbccddeeff",
+    "index": 0,
+    "namespace": "kenshou",
+    "identity": {
+      "outboxId": "1360ad65-a163-8849-81a9-a8df911d92c8",
+      "messageId": "kenshou_v1_1360ad65a163184901a9a8df911d92c8216113c1d3a5d3364700f50c7777b4b6",
+      "version": 1
+    }
+  },
+  {
+    "source": "source",
+    "name": "producer",
+    "eventId": "00112233-4455-6677-8899-aabbccddeeff",
+    "index": 4294967295,
+    "namespace": "kenshou",
+    "identity": {
+      "outboxId": "1378630c-db01-8f1d-96c6-5928c292958c",
+      "messageId": "kenshou_v1_1378630cdb011f1d16c65928c292958cc0239f5781efb4fbdbabbd04f45861f9",
+      "version": 1
+    }
+  },
+  {
+    "source": "é",
+    "name": "日本語",
+    "eventId": "ffffffff-ffff-ffff-ffff-ffffffffffff",
+    "index": 1,
+    "namespace": "event",
+    "identity": {
+      "outboxId": "bcc4d32e-c885-88ce-8756-67d31d5aa984",
+      "messageId": "event_v1_bcc4d32ec88558ce475667d31d5aa9844f675ec0054ddc45317d5534f267fcfc",
+      "version": 1
+    }
+  },
+  {
+    "source": "é",
+    "name": "日本語",
+    "eventId": "ffffffff-ffff-ffff-ffff-ffffffffffff",
+    "index": 1,
+    "namespace": "event",
+    "identity": {
+      "outboxId": "8091d5ff-f227-8a61-8790-c7829bb883e2",
+      "messageId": "event_v1_8091d5fff2277a614790c7829bb883e29afd56617b813542304078381113fe16",
+      "version": 1
+    }
+  },
+  {
+    "source": "ab",
+    "name": "c",
+    "eventId": "00000000-0000-0000-0000-000000000000",
+    "index": 2,
+    "namespace": "msg",
+    "identity": {
+      "outboxId": "440a86f5-4160-84fa-b1ee-1f318811a0fe",
+      "messageId": "msg_v1_440a86f5416064fab1ee1f318811a0fe14578b985458b475035c58b526fa9b45",
+      "version": 1
+    }
+  },
+  {
+    "source": "a",
+    "name": "bc",
+    "eventId": "00000000-0000-0000-0000-000000000000",
+    "index": 2,
+    "namespace": "msg",
+    "identity": {
+      "outboxId": "b31d1954-bca7-8144-b8b0-e1aaafb2b461",
+      "messageId": "msg_v1_b31d1954bca76144f8b0e1aaafb2b461cbcf4ec08bf8d6f92de2abfde5d4958f",
+      "version": 1
+    }
+  },
+  {
+    "source": "source",
+    "name": "producer",
+    "eventId": "00112233-4455-6677-8899-aabbccddeeff",
+    "index": 0,
+    "namespace": "other",
+    "identity": {
+      "outboxId": "1360ad65-a163-8849-81a9-a8df911d92c8",
+      "messageId": "other_v1_1360ad65a163184901a9a8df911d92c8216113c1d3a5d3364700f50c7777b4b6",
+      "version": 1
+    }
+  }
+]

@@ -43,6 +43,7 @@ library
     Kenshou.Cli.Attest.KeiroInbox
     Kenshou.Cli.Attest.KeiroLease
     Kenshou.Cli.Attest.KeiroPoison
+    Kenshou.Cli.Attest.KeiroProducerIdentity
     Kenshou.Cli.Attest.KeiroQueueConfig
     Kenshou.Cli.Attest.KeiroQueueOrdering
     Kenshou.Cli.Attest.KeiroQueueOutcomes
@@ -138,6 +139,7 @@ test-suite kenshou-cli-test
     temporary,
     text >=2.1 && <2.2,
     time,
+    uuid,
 
 test-suite kenshou-linkproof
   import: warnings

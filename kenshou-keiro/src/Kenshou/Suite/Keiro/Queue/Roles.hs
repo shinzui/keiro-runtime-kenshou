@@ -19,8 +19,9 @@ import Hasql.Statement qualified as Statement
 import Keiro.PGMQ.Codec (JobCodec (..), JobDecodeError (..), aesonJobCodec)
 import Keiro.PGMQ.Dlq (redriveDlq)
 import Keiro.PGMQ.Job (Job (..), JobContext (..), JobOrdering (..), JobOutcome (..), JobPolling (..), JobTuning (..), RetryDelay (..), RetryPolicy (..), defaultJobTuning, defaultRetryPolicy, jobProcessorWithContext, runJobOnceWithContext, runJobWorkers)
-import Keiro.PGMQ.Runtime (JobRuntime (..), queueRef, runJobEff, withJobRuntime)
+import Keiro.PGMQ.Runtime (JobRuntime (..), QueueRef (..), queueRef, runJobEff, withJobRuntime)
 import Kenshou.Core.Role (ControlMessage (..), PostgresConnInfo (..), RoleContext (..), RoleName, WorkerInit (..), WorkerMessage (..), WorkerRole (..), mkRoleName)
+import Pgmq.Types (queueNameToText)
 import Shibuya.App (SupervisionStrategy (..), waitApp)
 
 roles :: [WorkerRole]
@@ -54,8 +55,8 @@ effectInsertStatement = Statement.preparable "INSERT INTO kenshou_fx.queue_effec
 boundaryInsertStatement :: Statement.Statement Value ()
 boundaryInsertStatement = Statement.preparable "INSERT INTO kenshou_fx.queue_boundary_deliveries (observation) VALUES ($1)" (Encoders.param (Encoders.nonNullable Encoders.jsonb)) Decoders.noResult
 
-fifoStartStatement :: Statement.Statement (Text, Int32) Int64
-fifoStartStatement = Statement.preparable "INSERT INTO kenshou_fx.queue_fifo_spans (payload, attempt, started_at, outcome) VALUES ($1, $2, clock_timestamp(), 'running') RETURNING id" (contramap fst (Encoders.param (Encoders.nonNullable Encoders.text)) <> contramap snd (Encoders.param (Encoders.nonNullable Encoders.int4))) (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
+fifoStartStatement :: Text -> Statement.Statement (Text, Int32) Int64
+fifoStartStatement queue = Statement.preparable ("INSERT INTO kenshou_fx.queue_fifo_spans (payload, attempt, started_at, outcome, message_id, read_count, last_read_at, visible_at) SELECT $1, $2, clock_timestamp(), 'running', msg_id, read_ct, last_read_at, vt FROM pgmq.q_" <> queue <> " WHERE message = to_jsonb($1::text) RETURNING id") (contramap fst (Encoders.param (Encoders.nonNullable Encoders.text)) <> contramap snd (Encoders.param (Encoders.nonNullable Encoders.int4))) (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
 
 fifoFinishStatement :: Statement.Statement (Int64, Text) ()
 fifoFinishStatement = Statement.preparable "UPDATE kenshou_fx.queue_fifo_spans SET finished_at = clock_timestamp(), outcome = $2 WHERE id = $1" (contramap fst (Encoders.param (Encoders.nonNullable Encoders.int8)) <> contramap snd (Encoders.param (Encoders.nonNullable Encoders.text))) Decoders.noResult
@@ -140,7 +141,7 @@ worker context = case context.init.postgres of
                                 else
                                   if fifo
                                     then do
-                                      started <- Pool.use runtime.runtimePool (Session.statement (payload, maybe (-1) fromIntegral jobContext.attempt) fifoStartStatement)
+                                      started <- Pool.use runtime.runtimePool (Session.statement (payload, maybe (-1) fromIntegral jobContext.attempt) (fifoStartStatement (queueNameToText job.jobQueue.physicalName)))
                                       spanId <- either (fail . show) pure started
                                       when (payload == "0:0" && jobContext.attempt == Just 0) awaitGate
                                       threadDelay 10000

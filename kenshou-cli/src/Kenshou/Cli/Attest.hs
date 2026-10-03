@@ -14,6 +14,7 @@ import Kenshou.Cli.Attest.KeiroBatch (recomputeBatch)
 import Kenshou.Cli.Attest.KeiroInbox (recomputeInbox)
 import Kenshou.Cli.Attest.KeiroLease (recomputeLease)
 import Kenshou.Cli.Attest.KeiroPoison (recomputePoison)
+import Kenshou.Cli.Attest.KeiroProducerIdentity (recomputeProducerIdentity)
 import Kenshou.Cli.Attest.KeiroQueueConfig (recomputeQueueConfig)
 import Kenshou.Cli.Attest.KeiroQueueOrdering (recomputeQueueOrdering)
 import Kenshou.Cli.Attest.KeiroQueueOutcomes (recomputeQueueOutcomes)
@@ -45,6 +46,7 @@ runOutcomeRecomputer = Recomputer "run-outcome" 1 $ \root -> do
       | renderScenarioId source.result.resultScenario == "keiro/queue/concurrency/fifo-heads-strict-order" -> recomputeQueueOrdering root source
       | renderScenarioId source.result.resultScenario == "keiro/queue/correctness/job-outcome-semantics" -> recomputeQueueOutcomes root source
       | renderScenarioId source.result.resultScenario == "keiro/queue/correctness/consumption-config-rejections" -> recomputeQueueConfig root source
+      | renderScenarioId source.result.resultScenario == "keiro/outbox/correctness/producer-identity" -> recomputeProducerIdentity root source
       | renderScenarioId source.result.resultScenario == "keiro/outbox/correctness/terminal-state-matrix" -> recomputeTerminal root source
       | otherwise -> case coreRecomputers of
           (core : _) -> core.recompute root
