@@ -18,7 +18,7 @@ import Kenshou.Core.Knob (knobInt, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
 import Kenshou.Env.Kafka
-import Kenshou.Suite.Kafka.Fixture (firstBrokers, intKnob, produceValues)
+import Kenshou.Suite.Kafka.Fixture (firstBrokers, intKnob, produceValues, sabotageDropFirst, sabotageKnob)
 import Shibuya.Adapter (Adapter (..))
 import Shibuya.Adapter.Kafka (defaultConfig, kafkaAdapter)
 import Shibuya.App (ProcessorId (..), defaultAppConfig, mkProcessor, runApp, stopApp, waitApp)
@@ -36,7 +36,7 @@ scenarios =
         summary = "Checks serial AckOk handling, committed offsets, and a quiet resumed session.",
         tier = TierSmoke,
         placement = PlaceEither,
-        knobs = [intKnob "kafka.partitions" "Topic partitions" 4 1 64, intKnob "kafka.messages" "Acknowledged records" 500 1 50000],
+        knobs = [intKnob "kafka.partitions" "Topic partitions" 4 1 64, intKnob "kafka.messages" "Acknowledged records" 500 1 50000, sabotageKnob "drop-first-fact"],
         dimensions = allTelemetryArms noDimensions,
         phases = zeroPhases,
         requires = kafkaEnvironment,
@@ -53,7 +53,7 @@ runAckOk context = do
         messages = fromIntegral (knobInt context.knobs (either (error . Text.unpack) id (mkKnobName "kafka.messages")))
     [topic] <- createTopics env [TopicSpec "ack-ok" partitions mempty]
     sent <- produceValues env topic [0 .. messages - 1]
-    facts <- consumeWithAdapter env topic messages
+    facts <- sabotageDropFirst context <$> consumeWithAdapter env topic messages
     snapshot <- describeGroup env (groupName env "ack-ok")
     resumed <- countOnResume env topic
     _ <- deleteRunGroups env

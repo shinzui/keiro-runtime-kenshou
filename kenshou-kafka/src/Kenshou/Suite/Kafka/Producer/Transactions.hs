@@ -21,7 +21,7 @@ import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Role (ControlMessage (..))
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
 import Kenshou.Env.Kafka
-import Kenshou.Suite.Kafka.Fixture (firstBrokers, produceValues)
+import Kenshou.Suite.Kafka.Fixture (firstBrokers, produceValues, sabotageKnob, sabotaged)
 
 scenarios :: [Scenario]
 scenarios =
@@ -31,7 +31,7 @@ scenarios =
         summary = "Checks read-committed visibility and exactly-once transform across a worker SIGKILL.",
         tier = TierStandard,
         placement = PlaceEither,
-        knobs = [],
+        knobs = [sabotageKnob "duplicate-first-output"],
         dimensions = allTelemetryArms noDimensions,
         phases = zeroPhases,
         requires = kafkaEnvironment,
@@ -49,7 +49,7 @@ runTransactions context = do
     visible <- readCommitted env visibility "tx-visibility-reader" 10
     _ <- produceValues env input [0 .. 49]
     (firstPid, secondPid) <- crashAndRestart context env input output
-    transformed <- readCommitted env output "tx-output-reader" 50
+    transformed <- (\values -> if sabotaged context then take 1 values <> values else values) <$> readCommitted env output "tx-output-reader" 50
     inputSnapshot <- describeGroup env (groupName env "tx-input-worker")
     _ <- deleteRunGroups env
     _ <- deleteRunTopics env

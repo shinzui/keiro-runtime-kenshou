@@ -1,4 +1,4 @@
-module Kenshou.Suite.Kafka.Fixture (scenarios, produceValues, consumeValues, firstBrokers, intKnob) where
+module Kenshou.Suite.Kafka.Fixture (scenarios, produceValues, consumeValues, firstBrokers, intKnob, sabotageKnob, sabotaged, sabotageDropFirst) where
 
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, finally, try)
@@ -19,7 +19,7 @@ import Kenshou.Core.Context (RunContext (..))
 import Kenshou.Core.Dimension (allTelemetryArms, noDimensions)
 import Kenshou.Core.Env (kafkaEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
-import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), knobInt, mkKnobName)
+import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), knobInt, knobText, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
 import Kenshou.Env.Kafka
@@ -30,8 +30,8 @@ import System.Timeout (timeout)
 
 scenarios :: [Scenario]
 scenarios =
-  [ fixtureScenario "kafka/broker/correctness/fixture-roundtrip" 2 "Round-trips 100 acknowledged records through a private broker and administers it while a lane is blackholed." TierSmoke partitionKnobs runRoundtrip,
-    fixtureScenario "kafka/broker/concurrency/kill-and-restart" 1 "Kills and restarts the broker on its existing data." TierStandard outageKnobs runKillRestart
+  [ fixtureScenario "kafka/broker/correctness/fixture-roundtrip" 2 "Round-trips 100 acknowledged records through a private broker and administers it while a lane is blackholed." TierSmoke (partitionKnobs <> [sabotageKnob "drop-first-fact"]) runRoundtrip,
+    fixtureScenario "kafka/broker/concurrency/kill-and-restart" 1 "Kills and restarts the broker on its existing data." TierStandard (outageKnobs <> [sabotageKnob "drop-first-fact"]) runKillRestart
   ]
 
 fixtureScenario :: Text -> Int -> Text -> Tier -> [KnobSpec] -> (RunContext -> IO ScenarioReport) -> Scenario
@@ -56,6 +56,22 @@ partitionKnobs = [intKnob "kafka.partitions" "Number of topic partitions" 3 1 64
 outageKnobs :: [KnobSpec]
 outageKnobs = [intKnob "kafka.outage-seconds" "Duration of broker outage" 5 1 60]
 
+-- | The deliberate oracle sabotage of a scenario without a known defect.
+-- @none@ is the real check; the one other value corrupts the collected
+-- evidence just before judgment, so a run with it must fail with the
+-- scenario's ordinary failure label. That run is the recorded proof that the
+-- oracle is not vacuous; it never changes the default behaviour.
+sabotageKnob :: Text -> KnobSpec
+sabotageKnob mode =
+  KnobSpec (either (error . Text.unpack) id (mkKnobName "kafka.sabotage")) "Deliberately corrupt the evidence before judgment" KnobText (VText "none") (OneOf (VText "none" :| [VText mode])) []
+
+sabotaged :: RunContext -> Bool
+sabotaged context = knobText context.knobs (either (error . Text.unpack) id (mkKnobName "kafka.sabotage")) /= "none"
+
+-- | Under sabotage, forget the first collected fact.
+sabotageDropFirst :: RunContext -> [a] -> [a]
+sabotageDropFirst context facts = if sabotaged context then drop 1 facts else facts
+
 intKnob :: Text -> Text -> Int -> Int -> Int -> KnobSpec
 intKnob name summary def low high =
   KnobSpec (either (error . Text.unpack) id (mkKnobName name)) summary KnobInt (VInt (fromIntegral def)) (IntRange (fromIntegral low) (fromIntegral high)) []
@@ -67,7 +83,7 @@ runRoundtrip context = do
     let partitions = fromIntegral (knobInt context.knobs (either (error . Text.unpack) id (mkKnobName "kafka.partitions")))
     [topic] <- createTopics env [TopicSpec "roundtrip" partitions mempty]
     sent <- produceValues env topic [0 .. 99]
-    received <- consumeValues env (if length env.lanes > 1 then 1 else 0) topic "roundtrip" 100
+    received <- sabotageDropFirst context <$> consumeValues env (if length env.lanes > 1 then 1 else 0) topic "roundtrip" 100
     let values = sort received
         expected = [0 .. 99]
         safe = all ((/= "127.0.0.1:9092") . unBrokerAddress) [broker | lane <- toList env.lanes, broker <- lane.laneBrokers]
@@ -100,7 +116,7 @@ runKillRestart context = do
       control.start
       after <- control.generation
       second <- produceValues env topic [500 .. 999]
-      received <- consumeValues env 0 topic "restart" 1000
+      received <- sabotageDropFirst context <$> consumeValues env 0 topic "restart" 1000
       let expected = [0 .. 999]
       _ <- deleteRunGroups env
       _ <- deleteRunTopics env

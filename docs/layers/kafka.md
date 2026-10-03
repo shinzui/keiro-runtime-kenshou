@@ -103,6 +103,27 @@ The remaining transport scenario work is tracked in the repository-local
 
 ## Current adapter and producer checks
 
+Every broker-backed correctness or concurrency scenario without a
+known-defect reference declares a `kafka.sabotage` knob. It defaults to
+`none`, the real check. Its single other value corrupts the collected
+evidence just before judgment, so a run with that value must fail with the
+scenario's ordinary failure label. That failing run is the recorded proof
+that the oracle can fail. A package test keeps the list complete.
+
+| Scenario | Sabotage value | Expected failure |
+| --- | --- | --- |
+| `kafka/broker/correctness/fixture-roundtrip` | `drop-first-fact` | `roundtrip` |
+| `kafka/broker/concurrency/kill-and-restart` | `drop-first-fact` | `broker-restart` |
+| `kafka/adapter/correctness/ack-ok-commits-and-resumes` | `drop-first-fact` | `ack-ok-commits-and-resumes` |
+| `kafka/adapter/correctness/dead-letter-drops-record` | `drop-first-fact` | `dead-letter-drops-record` |
+| `kafka/adapter/correctness/halt-leaves-offset-uncommitted` | `drop-first-fact` | `halt-leaves-offset-uncommitted` |
+| `kafka/keiro-records/correctness/roundtrip-through-broker` | `drop-first-fact` | `keiro-record-roundtrip` |
+| `kafka/producer/correctness/acked-offsets-and-batch-loop` | `drop-first-fact` | `acked-offsets-and-batch-loop` |
+| `kafka/producer/correctness/transactions-commit-and-abort` | `duplicate-first-output` | `transactions-commit-and-abort` |
+| `kafka/adapter/concurrency/stale-barrier-after-partition-roundtrip` | `drop-new-record-fact` | `roundtrip-new-records` |
+| `kafka/consumer/concurrency/static-membership-restart-without-revoke` | `inject-survivor-revoke` | `static-member-survivor-revoked` |
+| `kafka/adapter/concurrency/sigkill-redelivery-window` | `drop-first-fact` | `sigkill-no-loss` |
+
 `kafka/adapter/correctness/ack-ok-commits-and-resumes` uses Shibuya's
 `runApp` and the Kafka adapter. Its `kafka.partitions` and `kafka.messages`
 knobs default to four partitions and 500 records. It checks that every

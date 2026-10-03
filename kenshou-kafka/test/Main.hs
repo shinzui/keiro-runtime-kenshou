@@ -3,10 +3,13 @@ module Main (main) where
 import Data.Aeson (object, (.=))
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
+import Data.Text qualified as Text
 import Kafka.Consumer (ConsumerGroupId (..), PartitionId (..))
 import Kafka.Types (BrokerAddress (..), TopicName (..))
 import Kenshou.Core.Bundle (LayerBundle (..))
 import Kenshou.Core.Env (EnvRequirements (..))
+import Kenshou.Core.Id (renderScenarioId)
+import Kenshou.Core.Knob (KnobSpec (..), KnobValue (..), renderKnobName)
 import Kenshou.Core.Scenario (Scenario (..))
 import Kenshou.Env.Kafka (BrokerLane (..), GroupSnapshot (..), KafkaEnv (..), KafkaEnvUnavailable (..), PartitionOffsets (..), adminAddresses, groupLag, laneAt, laneProxy, requestLanes, requireControl, topicLag, unavailableReason)
 import Kenshou.Env.Kafka.Spec
@@ -24,6 +27,17 @@ main = hspec do
       map (.id) brokerBacked `shouldSatisfy` (not . null)
       map (\scenario -> scenario.requires.kafka) brokerBacked `shouldSatisfy` and
       map (\scenario -> scenario.requires.kafka) Model.scenarios `shouldSatisfy` (all not)
+    it "gives every broker-backed correctness oracle without a known defect a sabotage control" do
+      let modelIds = fmap (.id) Model.scenarios
+          judged scenario =
+            scenario.id `notElem` modelIds
+              && scenario.knownDefect == Nothing
+              && any (`Text.isInfixOf` renderScenarioId scenario.id) ["/correctness/", "/concurrency/"]
+              && not ("kafka/telemetry/" `Text.isPrefixOf` renderScenarioId scenario.id)
+          sabotage scenario = [knob | knob <- scenario.knobs, renderKnobName knob.name == "kafka.sabotage"]
+          checked = filter judged Kafka.bundle.scenarios
+      length checked `shouldBe` 11
+      mapM_ (\scenario -> (renderScenarioId scenario.id, fmap (.def) (sabotage scenario)) `shouldBe` (renderScenarioId scenario.id, [VText "none"])) checked
   describe "Kafka broker specification" do
     it "rejects every spelling of the shared broker" do
       mapM_

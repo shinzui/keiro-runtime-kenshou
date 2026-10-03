@@ -26,7 +26,7 @@ import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Role (ControlMessage (..), WorkerMessage (..))
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
 import Kenshou.Env.Kafka
-import Kenshou.Suite.Kafka.Fixture (firstBrokers)
+import Kenshou.Suite.Kafka.Fixture (firstBrokers, sabotageKnob, sabotaged)
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]
@@ -37,7 +37,7 @@ scenarios =
         summary = "Checks that a retry barrier is cleared when a partition leaves and returns to a consumer.",
         tier = TierStandard,
         placement = PlaceEither,
-        knobs = [KnobSpec (key "kafka.rebalance-handler") "Install the adapter's rebalance callback" KnobText (VText "installed") (OneOf (VText "installed" :| [VText "absent"])) []],
+        knobs = [KnobSpec (key "kafka.rebalance-handler") "Install the adapter's rebalance callback" KnobText (VText "installed") (OneOf (VText "installed" :| [VText "absent"])) [], sabotageKnob "drop-new-record-fact"],
         dimensions = allTelemetryArms noDimensions,
         phases = zeroPhases,
         requires = kafkaEnvironment,
@@ -105,7 +105,8 @@ runStaleBarrier context = do
         Nothing -> pure False
         Just partition -> waitUntil 30 do
           rows <- readChildMessages a
-          let accepted = Set.fromList [fact.value | fact <- okFacts rows, fact.partition == partition]
+          let observed = Set.fromList [fact.value | fact <- okFacts rows, fact.partition == partition]
+              accepted = if sabotaged context then Set.delete 2000 observed else observed
           pure (all (`Set.member` accepted) [2000 .. 2099])
       stopIfAlive supervisor a
       aRows <- readChildMessages a
