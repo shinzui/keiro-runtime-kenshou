@@ -1,11 +1,14 @@
 module Main (main) where
 
 import Data.Aeson (object, (.=))
+import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
-import Kafka.Types (BrokerAddress (..))
+import Kafka.Consumer (ConsumerGroupId (..), PartitionId (..))
+import Kafka.Types (BrokerAddress (..), TopicName (..))
 import Kenshou.Core.Bundle (LayerBundle (..))
 import Kenshou.Core.Env (EnvRequirements (..))
 import Kenshou.Core.Scenario (Scenario (..))
+import Kenshou.Env.Kafka (BrokerLane (..), GroupSnapshot (..), KafkaEnv (..), KafkaEnvUnavailable (..), PartitionOffsets (..), adminAddresses, groupLag, laneAt, laneProxy, requestLanes, requireControl, topicLag, unavailableReason)
 import Kenshou.Env.Kafka.Spec
 import Kenshou.Suite.Kafka qualified as Kafka
 import Kenshou.Suite.Kafka.Model qualified as Model
@@ -34,9 +37,38 @@ main = hspec do
       validateKafkaEnvSpec (defaultKafkaEnvSpec {backend = ExternalBrokers, brokers = [BrokerAddress "10.0.0.1:9092"], lanes = 0}) `shouldSatisfy` isRight
     it "rejects listener overrides" do
       validateKafkaEnvSpec (defaultKafkaEnvSpec {brokerProps = Map.singleton "advertised.listeners" "127.0.0.1:9092"}) `shouldSatisfy` isLeft
+  describe "Kafka environment access" do
+    it "requests proxied lanes only from private backends" do
+      (requestLanes 2 defaultKafkaEnvSpec).lanes `shouldBe` 2
+      (requestLanes 9 defaultKafkaEnvSpec).lanes `shouldBe` 4
+      (requestLanes 0 defaultKafkaEnvSpec).lanes `shouldBe` 1
+      let external = defaultKafkaEnvSpec {backend = ExternalBrokers, brokers = [BrokerAddress "10.0.0.1:9092"], lanes = 0}
+      requestLanes 2 external `shouldBe` external
+    it "reports missing lanes, proxies and control with the suite-wide labels" do
+      let env = directEnv []
+      fmap (.laneBrokers) (laneAt env 0) `shouldBe` Right [BrokerAddress "127.0.0.1:40001"]
+      either Just (const Nothing) (laneAt env 1) `shouldBe` Just (LanesUnavailable 1 1)
+      either Just (const Nothing) (laneAt env (-1)) `shouldBe` Just (LanesUnavailable (-1) 1)
+      either Just (const Nothing) (laneProxy env 0) `shouldBe` Just (LaneProxyUnavailable 0)
+      either (Just . unavailableReason) (const Nothing) (requireControl env) `shouldBe` Just "broker-control-unavailable"
+      fmap unavailableReason [LanesUnavailable 1 1, LaneProxyUnavailable 0] `shouldBe` ["lanes-unavailable", "lanes-unavailable"]
+    it "administers through the control listener when one exists" do
+      adminAddresses (directEnv []) `shouldBe` [BrokerAddress "127.0.0.1:40001"]
+      adminAddresses (directEnv [BrokerAddress "127.0.0.1:40009"]) `shouldBe` [BrokerAddress "127.0.0.1:40009"]
+    it "sums group lag only when every partition has committed" do
+      let offsets committed lag partition topic = PartitionOffsets (TopicName topic) (PartitionId partition) committed 10 lag
+          snapshot = GroupSnapshot (ConsumerGroupId "g") "Stable" []
+      groupLag (snapshot []) `shouldBe` Nothing
+      groupLag (snapshot [offsets (Just 10) (Just 0) 0 "a", offsets (Just 7) (Just 3) 1 "a"]) `shouldBe` Just 3
+      groupLag (snapshot [offsets (Just 10) (Just 0) 0 "a", offsets Nothing (Just 10) 1 "a"]) `shouldBe` Nothing
+      topicLag (TopicName "b") (snapshot [offsets Nothing Nothing 0 "a", offsets (Just 4) (Just 6) 0 "b"]) `shouldBe` Just 6
+      topicLag (TopicName "c") (snapshot [offsets (Just 4) (Just 6) 0 "b"]) `shouldBe` Nothing
   describe "Kafka reference acknowledgement model" do
     it "satisfies no-loss, first-success order, and finite completion for two retries" do
       mapM_ checkReference [1 .. 7]
+
+directEnv :: [BrokerAddress] -> KafkaEnv
+directEnv admin = KafkaEnv RedpandaContainer (BrokerLane [BrokerAddress "127.0.0.1:40001"] Nothing :| []) "kenshou-test" Nothing "test" "/nonexistent" admin
 
 isLeft :: Either a b -> Bool
 isLeft (Left _) = True

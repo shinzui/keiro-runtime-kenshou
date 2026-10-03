@@ -40,8 +40,8 @@ scenarios :: [Scenario]
 scenarios =
   [ Scenario
       { id = either (error . Text.unpack) id (parseScenarioId "kafka/adapter/concurrency/partitioned-consumer-becomes-zombie"),
-        revision = 1,
-        summary = "Blackholes one consumer lane and checks takeover, offset monotonicity, and redelivery bounds.",
+        revision = 2,
+        summary = "Blackholes one consumer lane and checks takeover, offset monotonicity, redelivery bounds, and no loss through a replacement drain.",
         tier = TierStandard,
         placement = PlaceLocal,
         knobs =
@@ -86,7 +86,7 @@ runZombie context = do
         lane1 = case env.lanes of _ :| lane : _ -> lane; _ -> error "zombie scenario requires two lanes"
     proxy <- maybe (ioError (userError "zombie scenario requires a fault proxy on lane 1")) pure lane1.laneFaults
     [topic] <- createTopics env [TopicSpec "zombie" 4 mempty]
-    (acked, aRows, bRows, initialA, blackholedAt, healedAt, snapshots, reachedEnd, committedAtBlackhole) <- withCheck context \check -> withSupervisor check \supervisor -> do
+    (acked, aRows, bRows, replacementRows, initialA, blackholedAt, healedAt, snapshots, reachedEnd, committedAtBlackhole) <- withCheck context \check -> withSupervisor check \supervisor -> do
       let args lane = object ["brokers" .= fmap unBrokerAddress lane.laneBrokers, "topic" .= unTopicName topic, "group" .= unConsumerGroupId group, "autoCommitMillis" .= (1000 :: Int), "sessionMillis" .= sessionMillis, "serviceMillis" .= serviceMillis]
       aSpec <- roleProcess check "kafka/crash-consumer" 0 (args lane1)
       bSpec <- roleProcess check "kafka/crash-consumer" 1 (args lane0)
@@ -118,7 +118,23 @@ runZombie context = do
       stopIfAlive supervisor b
       first <- readChildMessages a
       second <- readChildMessages b
-      pure (delivered, first, second, initial, blackholedAt, healedAt, before : [snapshot | Right snapshot <- samples], finished, before)
+      -- Replacement control: when the original members did not drain the
+      -- group (BUG-4 ends both normally after a reassignment), a fresh
+      -- member on the healthy lane resumes from the committed offsets. Its
+      -- facts separate records that are durably on the broker but were left
+      -- unhandled by an ended consumer from records that are really lost.
+      -- The original members' zero-lag and exit verdicts are unchanged.
+      replacement <- case finished of
+        Right _ -> pure []
+        Left _ -> do
+          cSpec <- roleProcess check "kafka/crash-consumer" 2 (args lane0)
+          c <- spawn supervisor cSpec
+          awaitReady c 10000
+          sendCommand c CtlStart
+          _ <- awaitGroup env group 90 (\snapshot -> length snapshot.offsets == 4 && groupLag snapshot == Just 0)
+          stopIfAlive supervisor c
+          readChildMessages c
+      pure (delivered, first, second, replacement, initial, blackholedAt, healedAt, before : [snapshot | Right snapshot <- samples], finished, before)
     _ <- deleteRunGroups env
     _ <- deleteRunTopics env
     let ackedIds = Set.fromList [value | P.DeliverySuccess sent _ <- acked, Just value <- [P.prValue sent >>= readInt]]
@@ -126,7 +142,10 @@ runZombie context = do
         aFacts = okFacts aRows
         bFacts = okFacts bRows
         allFacts = aFacts <> bFacts
-        handledIds = Set.fromList (fmap (.value) allFacts)
+        replacementFacts = okFacts replacementRows
+        originalIds = Set.fromList (fmap (.value) allFacts)
+        handledIds = Set.union originalIds (Set.fromList (fmap (.value) replacementFacts))
+        unhandledByOriginals = Set.size (Set.difference ackedIds originalIds)
         missing = Set.toAscList (Set.difference ackedIds handledIds)
         bAssignments = [fact | fact <- rebalanceFacts bRows, fact.kind == "assign", fact.at >= blackholedAt]
         takenOver = not (null initialA) && any (\fact -> not (null (fact.partitions `intersect` initialA))) bAssignments
@@ -140,6 +159,7 @@ runZombie context = do
         duplicated = proxyDuplicates + survivorReplays
         duplicateBound = uncommittedA + 100 * length initialA
         errors = [problem | WrkError problem <- aRows <> bRows]
+        replacementErrors = [problem | WrkError problem <- replacementRows]
         (zeroLag, lastSnapshot) = case reachedEnd of Left item -> (False, item); Right item -> (True, item)
         failures =
           ["zombie-ack-count" | Set.size ackedIds /= messages || deliveryFailures > 0]
@@ -149,8 +169,9 @@ runZombie context = do
             <> ["zombie-duplicate-proxy-bound" | proxyDuplicates > duplicateBound]
             <> ["zombie-zero-lag" | not zeroLag]
             <> ["zombie-consumer-exit" | not (null errors)]
-    putSummary context Verdicts "zombie" (object ["acknowledged" .= Set.size ackedIds, "handled" .= length allFacts, "missing" .= take 20 missing, "initialAPartitions" .= initialA, "bTookOver" .= takenOver, "commitRegressions" .= regressions, "duplicateCount" .= duplicated, "proxyDuplicateCount" .= proxyDuplicates, "survivorReplayCount" .= survivorReplays, "duplicateBoundEstimate" .= duplicateBound, "duplicateBoundBasis" .= ("A handler facts above the sampled commit boundary plus 100 polled records per initial A partition; exact adapter buffer occupancy is not exposed. The bound applies to repeats involving A; B-only replays after reassignment are reported separately." :: Text), "consumerErrors" .= errors, "blackholedAt" .= blackholedAt, "healedAt" .= healedAt, "zeroLag" .= zeroLag])
-    pure $ if null failures then passed else failedWith failures ("missing=" <> Text.pack (show (take 20 missing)) <> " takeover=" <> Text.pack (show takenOver) <> " regressions=" <> Text.pack (show regressions) <> " proxyDuplicates=" <> Text.pack (show proxyDuplicates) <> "/" <> Text.pack (show duplicateBound) <> " survivorReplays=" <> Text.pack (show survivorReplays) <> " group=" <> Text.pack (show lastSnapshot))
+            <> ["zombie-replacement-error" | not (null replacementErrors)]
+    putSummary context Verdicts "zombie" (object ["acknowledged" .= Set.size ackedIds, "handled" .= length allFacts, "missing" .= take 20 missing, "initialAPartitions" .= initialA, "bTookOver" .= takenOver, "commitRegressions" .= regressions, "duplicateCount" .= duplicated, "proxyDuplicateCount" .= proxyDuplicates, "survivorReplayCount" .= survivorReplays, "duplicateBoundEstimate" .= duplicateBound, "duplicateBoundBasis" .= ("A handler facts above the sampled commit boundary plus 100 polled records per initial A partition; exact adapter buffer occupancy is not exposed. The bound applies to repeats involving A; B-only replays after reassignment are reported separately." :: Text), "consumerErrors" .= errors, "unhandledByOriginalMembers" .= unhandledByOriginals, "replacementStarted" .= not (null replacementRows), "replacementHandled" .= length replacementFacts, "replacementErrors" .= replacementErrors, "blackholedAt" .= blackholedAt, "healedAt" .= healedAt, "zeroLag" .= zeroLag])
+    pure $ if null failures then passed else failedWith failures ("missing=" <> Text.pack (show (take 20 missing)) <> " unhandledByOriginals=" <> Text.pack (show unhandledByOriginals) <> " replacementHandled=" <> Text.pack (show (length replacementFacts)) <> " takeover=" <> Text.pack (show takenOver) <> " regressions=" <> Text.pack (show regressions) <> " proxyDuplicates=" <> Text.pack (show proxyDuplicates) <> "/" <> Text.pack (show duplicateBound) <> " survivorReplays=" <> Text.pack (show survivorReplays) <> " group=" <> Text.pack (show lastSnapshot))
 
 produceOpenLoop :: KafkaEnv -> TopicName -> Int -> IORef [P.DeliveryReport] -> IO ()
 produceOpenLoop env topic count reports = do

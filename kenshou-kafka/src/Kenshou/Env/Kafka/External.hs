@@ -17,7 +17,7 @@ import System.Process (readProcessWithExitCode)
 withExternalBrokers :: RunContext -> KafkaEnvSpec -> FilePath -> Text -> (KafkaEnv -> IO a) -> IO a
 withExternalBrokers _ spec workDir prefix action = do
   control <- traverse hooks spec.controlHooks
-  let env = KafkaEnv ExternalBrokers (BrokerLane spec.brokers Nothing :| []) prefix control "external" workDir
+  let env = KafkaEnv ExternalBrokers (BrokerLane spec.brokers Nothing :| []) prefix control "external" workDir spec.brokers
       cleanup = void (deleteRunGroups env) >> void (deleteRunTopics env)
   bracket_ (pure ()) cleanup (action env)
 

@@ -35,7 +35,7 @@ data Runtime = AppleContainer | Docker deriving stock (Eq, Show)
 withRedpandaContainer :: RunContext -> KafkaEnvSpec -> FilePath -> Text -> (KafkaEnv -> IO a) -> IO a
 withRedpandaContainer context spec workDir prefix action = do
   runtime <- chooseRuntime
-  let listenerCount = max 1 spec.lanes
+  let listenerCount = if spec.lanes == 0 then 1 else spec.lanes + 1
       name = "kenshou-rp-" <> Text.unpack (Text.drop 8 prefix)
       image = "docker.io/redpandadata/redpanda:v26.2.1"
   unless (Map.null spec.brokerProps) $ LazyByteString.writeFile (workDir </> "redpanda.yaml") (brokerConfig spec.brokerProps)
@@ -45,11 +45,16 @@ withRedpandaContainer context spec workDir prefix action = do
   where
     runWithPorts runtime listenerCount name image retries = do
       hostPorts <- forM [1 .. listenerCount] (const freePort)
-      withProxies (if spec.lanes == 0 then [] else hostPorts) \proxies -> do
-        let advertisedPorts = if spec.lanes == 0 then hostPorts else fmap (fromIntegral . proxyPort) proxies
-            lanePorts = if spec.lanes == 0 then hostPorts else advertisedPorts
+      -- With proxied lanes, the last listener is the unproxied control
+      -- listener used only by the fixture's administration and readiness
+      -- probes, so a lane fault never blinds an oracle.
+      let (laneHostPorts, controlHostPorts) = if spec.lanes == 0 then (hostPorts, hostPorts) else splitAt spec.lanes hostPorts
+      withProxies (if spec.lanes == 0 then [] else laneHostPorts) \proxies -> do
+        let lanePorts = if spec.lanes == 0 then hostPorts else fmap (fromIntegral . proxyPort) proxies
+            advertisedPorts = if spec.lanes == 0 then hostPorts else lanePorts <> controlHostPorts
             laneValues = zipWith (\port proxy -> BrokerLane [BrokerAddress (address port)] proxy) lanePorts (if spec.lanes == 0 then [Nothing] else fmap Just proxies)
-            listenerNames = ["lane" <> show index | index <- [0 .. listenerCount - 1]]
+            controlBrokers = [BrokerAddress (address port) | port <- controlHostPorts]
+            listenerNames = if spec.lanes == 0 then ["lane0"] else ["lane" <> show index | index <- [0 .. spec.lanes - 1]] <> ["control"]
             kafkaAddr = intercalate "," (zipWith (\lane index -> lane <> "://0.0.0.0:" <> show (19092 + index)) listenerNames ([0 ..] :: [Int]))
             advertisedAddr = intercalate "," (zipWith (\lane port -> lane <> "://" <> Text.unpack (address port)) listenerNames advertisedPorts)
             publishArgs = concat (zipWith (\port index -> ["-p", "127.0.0.1:" <> show port <> ":" <> show (19092 + index)]) hostPorts ([0 ..] :: [Int]))
@@ -57,7 +62,7 @@ withRedpandaContainer context spec workDir prefix action = do
             args = runtimeRunArgs runtime name (mountArgs <> publishArgs) image kafkaAddr advertisedAddr
             invoke = runRuntime runtime
             firstLane = case laneValues of lane : rest -> lane :| rest; [] -> error "Redpanda has no lane"
-            probe = case firstLane of lane :| _ -> case lane.laneBrokers of value : _ -> value; [] -> error "Redpanda lane has no broker"
+            probe = case controlBrokers of value : _ -> value; [] -> error "Redpanda has no control listener"
             await = awaitReady workDir spec.readyTimeoutSeconds probe
             status = inspect runtime name
             running = maybe False (maybe False (== "running") . lookupField (if runtime == AppleContainer then ["status", "state"] else ["State", "Status"])) <$> status
@@ -70,7 +75,7 @@ withRedpandaContainer context spec workDir prefix action = do
                   isRunning = running,
                   generation = generation
                 }
-            env = KafkaEnv RedpandaContainer firstLane prefix (Just control) "redpanda:v26.2.1" workDir
+            env = KafkaEnv RedpandaContainer firstLane prefix (Just control) "redpanda:v26.2.1" workDir controlBrokers
         launched <- try @IOException (invoke args)
         case launched of
           Left problem -> do

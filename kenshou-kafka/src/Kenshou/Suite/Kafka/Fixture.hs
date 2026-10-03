@@ -1,6 +1,7 @@
 module Kenshou.Suite.Kafka.Fixture (scenarios, produceValues, consumeValues, firstBrokers, intKnob) where
 
 import Control.Concurrent (threadDelay)
+import Control.Exception (SomeException, finally, try)
 import Control.Monad (forM)
 import Data.ByteString.Char8 qualified as ByteString
 import Data.Foldable (toList)
@@ -13,6 +14,7 @@ import Effectful.Error.Static (runError)
 import Kafka.Effectful.Consumer qualified as C
 import Kafka.Effectful.Producer qualified as P
 import Kafka.Types (BrokerAddress (..), KafkaError, Timeout (..), TopicName (..))
+import Kenshou.Check.Fault.Network (ProxyMode (..), resetConnections, setProxyMode)
 import Kenshou.Core.Context (RunContext (..))
 import Kenshou.Core.Dimension (allTelemetryArms, noDimensions)
 import Kenshou.Core.Env (kafkaEnvironment)
@@ -28,15 +30,15 @@ import System.Timeout (timeout)
 
 scenarios :: [Scenario]
 scenarios =
-  [ fixtureScenario "kafka/broker/correctness/fixture-roundtrip" "Round-trips 100 acknowledged records through a private broker." TierSmoke partitionKnobs runRoundtrip,
-    fixtureScenario "kafka/broker/concurrency/kill-and-restart" "Kills and restarts the broker on its existing data." TierStandard outageKnobs runKillRestart
+  [ fixtureScenario "kafka/broker/correctness/fixture-roundtrip" 2 "Round-trips 100 acknowledged records through a private broker and administers it while a lane is blackholed." TierSmoke partitionKnobs runRoundtrip,
+    fixtureScenario "kafka/broker/concurrency/kill-and-restart" 1 "Kills and restarts the broker on its existing data." TierStandard outageKnobs runKillRestart
   ]
 
-fixtureScenario :: Text -> Text -> Tier -> [KnobSpec] -> (RunContext -> IO ScenarioReport) -> Scenario
-fixtureScenario identifier summary tier knobs run =
+fixtureScenario :: Text -> Int -> Text -> Tier -> [KnobSpec] -> (RunContext -> IO ScenarioReport) -> Scenario
+fixtureScenario identifier revision summary tier knobs run =
   Scenario
     { id = either (error . Text.unpack) id (parseScenarioId identifier),
-      revision = 1,
+      revision,
       summary,
       tier,
       placement = PlaceEither,
@@ -70,12 +72,16 @@ runRoundtrip context = do
         expected = [0 .. 99]
         safe = all ((/= "127.0.0.1:9092") . unBrokerAddress) [broker | lane <- toList env.lanes, broker <- lane.laneBrokers]
     snapshot <- describeGroup env (groupName env "roundtrip")
+    adminIsolated <- adminSurvivesLaneBlackhole env (groupName env "roundtrip")
     _ <- deleteRunGroups env
     removed <- deleteRunTopics env
     remaining <- deleteRunTopics env
     pure $
       if length sent == 100 && values == expected && safe && length snapshot.offsets == partitions && all ((== Just 0) . (.lag)) snapshot.offsets && removed == 1 && remaining == 0
-        then passed
+        then
+          if adminIsolated
+            then passed
+            else failedWith ["admin-blinded-by-lane-fault"] "group administration failed while lane 0 was blackholed"
         else failedWith ["roundtrip"] ("sent=" <> Text.pack (show (length sent)) <> " received=" <> Text.pack (show (length received)) <> " group=" <> Text.pack (show snapshot) <> " removed=" <> Text.pack (show removed) <> " remaining=" <> Text.pack (show remaining))
 
 runKillRestart :: RunContext -> IO ScenarioReport
@@ -102,6 +108,21 @@ runKillRestart context = do
         if down && downWriteFailed && before /= after && length first == 500 && length second == 500 && sort received == expected
           then passed
           else failedWith ["broker-restart"] ("down=" <> Text.pack (show down) <> " downWriteFailed=" <> Text.pack (show downWriteFailed) <> " generationChanged=" <> Text.pack (show (before /= after)) <> " received=" <> Text.pack (show (length received)))
+
+-- | With a proxied lane, blackhole it and require that the fixture's own
+-- administration still answers. This is the non-vacuity check for the
+-- unproxied control listener that oracles rely on during lane partitions.
+-- An environment without a lane proxy has nothing to isolate.
+adminSurvivesLaneBlackhole :: KafkaEnv -> C.ConsumerGroupId -> IO Bool
+adminSurvivesLaneBlackhole env group = case laneProxy env 0 of
+  Left _ -> pure True
+  Right proxy -> do
+    setProxyMode proxy Blackhole
+    _ <- resetConnections proxy
+    outcome <- (timeout 20000000 (try @SomeException (describeGroup env group))) `finally` setProxyMode proxy Forward
+    pure case outcome of
+      Just (Right described) -> not (null described.offsets)
+      _ -> False
 
 attemptProduceDuringOutage :: KafkaEnv -> TopicName -> IO Bool
 attemptProduceDuringOutage env (TopicName topic) = do
