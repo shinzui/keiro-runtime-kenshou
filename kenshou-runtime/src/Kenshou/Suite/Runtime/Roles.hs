@@ -77,6 +77,9 @@ data RoleEnv = RoleEnv
     -- role decides to exit after an unrecoverable failure.
     stop :: !(MVar (Either Text ())),
     handled :: !(IORef Int64),
+    -- | Extra handling latency set at run time by a @latency@ control
+    -- message (slow-consumer fault), in microseconds.
+    latency :: !(IORef Int),
     -- | Tracer, Keiro metrics and telemetry handles for the run's
     -- telemetry dimensions; empty when both are @off@.
     telemetry :: !RoleTelemetry,
@@ -192,6 +195,7 @@ runtimeRole name summary body = WorkerRole (roleName name) summary \context -> c
     when started do
       stop <- newEmptyMVar
       handled <- newIORef 0
+      latency <- newIORef 0
       pid <- getProcessID
       -- The incarnation is the process identifier: a restarted process
       -- receives the same initialisation and must not reuse a segment name.
@@ -199,8 +203,8 @@ runtimeRole name summary body = WorkerRole (roleName name) summary \context -> c
           ledgerConfig = defaultLedgerConfig (context.init.outDir </> "verdicts" </> "ledger") proc (renderRunId context.init.runId)
       withLedger ledgerConfig \ledger ->
         flushLedger ledger >> withRoleTelemetry (traceSabotageFrom args.config.traceSabotage) (observeDelivery ledger) context \telemetry -> do
-          let env = RoleEnv context args.config args.index stop handled telemetry ledger
-          withAsync (watchControl context stop) \_ -> withAsync (heartbeat env) \_ -> do
+          let env = RoleEnv context args.config args.index stop handled latency telemetry ledger
+          withAsync (watchRoleControl context stop latency) \_ -> withAsync (heartbeat env) \_ -> do
             outcome <- try @SomeException (body env)
             final <- tryReadMVar stop
             case (outcome, final) of
@@ -228,6 +232,21 @@ watchControl context stop = loop
         Just (CtlStop _) -> void (tryPutMVar stop (Right ()))
         Nothing -> void (tryPutMVar stop (Right ()))
         Just _ -> loop
+
+-- | Like 'watchControl', and also applies @latency@ messages (milliseconds).
+watchRoleControl :: RoleContext -> MVar (Either Text ()) -> IORef Int -> IO ()
+watchRoleControl context stop latency = loop
+  where
+    loop =
+      context.receive >>= \case
+        Just (CtlStop _) -> void (tryPutMVar stop (Right ()))
+        Nothing -> void (tryPutMVar stop (Right ()))
+        Just (CtlCustom "latency" (Aeson.Number millis)) -> atomicModifyIORef' latency (const (round millis * 1000, ())) >> loop
+        Just _ -> loop
+
+-- | Sleep for the run-time latency, if any.
+injectedLatency :: RoleEnv -> IO ()
+injectedLatency env = readIORef env.latency >>= \micros -> when (micros > 0) (threadDelay micros)
 
 heartbeat :: RoleEnv -> IO ()
 heartbeat env = forever do
@@ -359,6 +378,7 @@ jobsRole :: RoleEnv -> IO ()
 jobsRole env = withWarehouseEnv env \warehouse -> do
   let tuning = pickTuning (timeouts env).jobVisibilitySeconds env.config.queueBatchSize
       handler jobContext job = do
+        liftIO (injectedLatency env)
         outcome <- handlePick warehouse jobContext job
         liftIO do
           bump env
@@ -389,7 +409,7 @@ publisherRole database brokersOf env = withContextStore (database env.config) en
           }
       brokers = fmap BrokerAddress (brokersOf env.config)
   untilStopped env 50000 do
-    summary <- runContext store (publishClaimedOutbox (liftIO . publishToBrokers env.telemetry.signals brokers policy) options env.telemetry.signals.metrics)
+    summary <- runContext store (publishClaimedOutbox (liftIO . publishToBrokers env.config.publishMode env.telemetry.signals brokers policy) options env.telemetry.signals.metrics)
     case summary of
       Left problem -> env.context.send (WrkCustom "publish-pass-failed" (object ["problem" .= show problem])) >> pure False
       Right value -> do
@@ -438,7 +458,7 @@ consumerRole sideFor database brokersOf topicOf groupOf env = withContextStore (
             processor = topicOf env.config <> "-consumer",
             properties = [("auto.commit.interval.ms", "1000"), ("session.timeout.ms", "10000")]
           }
-      handle envelope now = attempt (3 :: Int) (500000 :: Int)
+      handle envelope now = injectedLatency env >> attempt (3 :: Int) (500000 :: Int)
         where
           attempt remaining delay = do
             outcome <- consumeEnvelope env.config.inboxMode (4 - remaining) side store (prefixOf env.config) topic envelope now

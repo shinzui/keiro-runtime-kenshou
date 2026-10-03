@@ -7,9 +7,12 @@ module Kenshou.Suite.Runtime.Topology
     awaitQuiescence,
     processesOf,
     signalRole,
+    sendRole,
     stopRoles,
     RestartRecord (..),
     killAndRestart,
+    stopAndRestart,
+    pauseProcess,
     restartsOf,
     recordWindow,
     driverReports,
@@ -40,7 +43,7 @@ import Keiro.PGMQ.Runtime (withJobRuntime)
 import Kenshou.Check.Fact (FactKind (..), ProcId (..))
 import Kenshou.Check.Fault.Network (TcpProxy, proxiedConnectionString, withTcpProxy)
 import Kenshou.Check.Ledger (recordDurable)
-import Kenshou.Check.Process (Child, ChildSignal, ProgressSnapshot (..), Supervisor, awaitReady, childExitCode, childPid, childProc, killChild, progress, readChildMessages, reapChild, restartChild, roleProcess, sendCommand, signalChild, spawn, stopGracefully, withSupervisor)
+import Kenshou.Check.Process (Child, ChildSignal (..), ProgressSnapshot (..), Supervisor, awaitReady, childExitCode, childPid, childProc, killChild, progress, readChildMessages, reapChild, restartChild, roleProcess, sendCommand, signalChild, spawn, stopGracefully, withSupervisor)
 import Kenshou.Check.Scenario (CheckEnv (..), withCheck)
 import Kenshou.Core.Context (RunContext (..))
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
@@ -214,7 +217,16 @@ superviseRoles system = forever do
 -- as @fault/sigkill@. Returns the restart, or nothing when the system is
 -- stopping or the role has no process at that index.
 killAndRestart :: RunningSystem -> Text -> Int -> IO (Maybe RestartRecord)
-killAndRestart system role index = withMVar system.lifecycle \stopping ->
+killAndRestart system = disturbAndRestart system "fault/sigkill" "sigkill" (killChild system.supervisor)
+
+-- | Stop one process gracefully through the worker protocol (it drains and
+-- relinquishes its leases) and start its replacement, recording the window
+-- as @fault/rolling-restart@.
+stopAndRestart :: RunningSystem -> Text -> Int -> IO (Maybe RestartRecord)
+stopAndRestart system = disturbAndRestart system "fault/rolling-restart" "graceful-stop" (\child -> void (stopGracefully system.supervisor child 10000))
+
+disturbAndRestart :: RunningSystem -> Text -> Text -> (Child -> IO ()) -> Text -> Int -> IO (Maybe RestartRecord)
+disturbAndRestart system label cause disturb role index = withMVar system.lifecycle \stopping ->
   if stopping
     then pure Nothing
     else do
@@ -223,12 +235,33 @@ killAndRestart system role index = withMVar system.lifecycle \stopping ->
         [] -> pure Nothing
         child : _ -> do
           let target = processTarget role child
-          recordWindow system "fault/sigkill" target DisturbanceStart
+          recordWindow system label target DisturbanceStart
           diedAt <- getCurrentTime
-          killChild system.supervisor child
-          record <- replace system role child "sigkill" "SIGKILL" diedAt
-          recordWindow system "fault/sigkill" target DisturbanceEnd
+          disturb child
+          record <- replace system role child cause label diedAt
+          recordWindow system label target DisturbanceEnd
           pure (Just record)
+
+-- | Freeze one process with SIGSTOP for a duration and resume it with
+-- SIGCONT, recording the window as @fault/pause@. A paused lease holder
+-- keeps its leases until they expire, so another process may take over
+-- while it is frozen.
+pauseProcess :: RunningSystem -> Text -> Int -> Int -> IO Bool
+pauseProcess system role index micros = withMVar system.lifecycle \stopping ->
+  if stopping
+    then pure False
+    else do
+      members <- processesOf system role
+      case drop index members of
+        [] -> pure False
+        child : _ -> do
+          let target = processTarget role child
+          recordWindow system "fault/pause" target DisturbanceStart
+          signalChild system.supervisor child Stop
+          threadDelay micros
+          signalChild system.supervisor child Cont
+          recordWindow system "fault/pause" target DisturbanceEnd
+          pure True
 
 replace :: RunningSystem -> Text -> Child -> Text -> Text -> UTCTime -> IO RestartRecord
 replace system role child cause code diedAt = do
@@ -252,6 +285,10 @@ processTarget role child = role <> "/" <> Text.pack (show (childProc child).inde
 recordWindow :: RunningSystem -> Text -> Text -> FactKind -> IO ()
 recordWindow system label target kind =
   recordDurable system.check.ledger kind target 0 label (KeyMap.fromList [("label", Aeson.String label), ("target", Aeson.String target)])
+
+-- | Send a control message to every process of a long-running role.
+sendRole :: RunningSystem -> Text -> ControlMessage -> IO ()
+sendRole system role message = processesOf system role >>= mapM_ \child -> sendCommand child message
 
 -- | Deliver a signal to every process of a long-running role. The supervisor
 -- records each delivery as a disturbance window.

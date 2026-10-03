@@ -36,6 +36,7 @@ import Keiro.Outbox (OrderingPolicy (..), OutboxId, OutboxRow (..), PublishOutco
 import Keiro.Outbox.Kafka (KafkaProducerRecord (..), outboxRowToKafkaRecord)
 import Keiro.Telemetry (injectTraceContext)
 import Kenshou.Env.Kafka (BrokerLane (..), KafkaEnv (..))
+import Kenshou.Suite.Runtime.System.Config (PublishMode (..))
 import Kenshou.Suite.Runtime.System.Trace (Signals (..), TraceSabotage (..), noSignals, withStoredTrace)
 import OpenTelemetry.Trace.Core (Tracer)
 import Shibuya.Adapter.Kafka (defaultConfig, kafkaAdapterWith, kafkaRebalanceHandler, newKafkaAdapterState)
@@ -48,7 +49,7 @@ import Text.Read (readMaybe)
 
 -- | Publish through the run's first broker lane. See 'publishToBrokers'.
 publishToKafka :: KafkaEnv -> OrderingPolicy -> [OutboxRow] -> IO [(OutboxId, PublishOutcome)]
-publishToKafka environment = publishToBrokers noSignals (NonEmpty.head environment.lanes).laneBrokers
+publishToKafka environment = publishToBrokers SyncPerRecord noSignals (NonEmpty.head environment.lanes).laneBrokers
 
 -- | Publish one record at a time with broker acknowledgement, through one
 -- producer per claimed batch. A failed ordering group is blocked for the
@@ -60,9 +61,23 @@ publishToKafka environment = publishToBrokers noSignals (NonEmpty.head environme
 -- the order's trace and its context replaces the stored trace headers, so
 -- the consumer's process span becomes the send span's child. Without one,
 -- the stored headers are published as they are.
-publishToBrokers :: Signals -> [BrokerAddress] -> OrderingPolicy -> [OutboxRow] -> IO [(OutboxId, PublishOutcome)]
-publishToBrokers _ _ _ [] = pure []
-publishToBrokers signals brokers policy rows = do
+--
+-- 'BatchEnqueue' is the known-defect wiring (keiro plan 120, KFK-3): it hands
+-- the whole batch to the producer's queue and reports every enqueued row as
+-- published without waiting for a broker acknowledgement.
+publishToBrokers :: PublishMode -> Signals -> [BrokerAddress] -> OrderingPolicy -> [OutboxRow] -> IO [(OutboxId, PublishOutcome)]
+publishToBrokers _ _ _ _ [] = pure []
+publishToBrokers BatchEnqueue _ brokers _ rows = do
+  let properties = Producer.brokersList brokers <> Producer.sendTimeout (Timeout 10000) <> Producer.extraProp "acks" "all"
+      records = [(row.outboxId, producerRecord wire wire.headers) | row <- rows, let wire = outboxRowToKafkaRecord row]
+  result <- runEff . runError @KafkaError $ Producer.runKafkaProducer properties (Producer.produceMessageBatch (fmap snd records))
+  pure case result of
+    Left (_, problem) -> [(row.outboxId, PublishFailed ("producer unavailable: " <> Text.pack (show problem))) | row <- rows]
+    Right failures ->
+      [ (identifier, maybe PublishSucceeded (PublishFailed . Text.pack . show) (lookup record [(failed, problem) | (failed, problem) <- failures]))
+      | (identifier, record) <- records
+      ]
+publishToBrokers SyncPerRecord signals brokers policy rows = do
   let properties = Producer.brokersList brokers <> Producer.sendTimeout (Timeout 10000) <> Producer.extraProp "acks" "all"
   result <-
     runEff . runError @KafkaError $

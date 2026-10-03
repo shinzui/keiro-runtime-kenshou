@@ -7,7 +7,6 @@ where
 import Data.Aeson (object, toJSON, (.=))
 import Data.Aeson.Key qualified as Key
 import Data.Int (Int64)
-import Data.List (foldl')
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map

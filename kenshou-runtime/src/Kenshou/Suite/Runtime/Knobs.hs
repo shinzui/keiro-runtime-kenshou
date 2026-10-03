@@ -38,7 +38,7 @@ runtimeKnobs =
     integer "runtime.quiescence-deadline-seconds" "Time allowed after the driver stops for all work to finish." 120 1 86400,
     choices "runtime.inbox-idempotence" "Inbox idempotence mechanism of both Kafka consumers." "table" ["delegated"],
     choices "runtime.kafka-transient-policy" "Kafka consumer reaction to a transient database failure." "crash-only" ["ack-retry"],
-    choices "runtime.publish-mode" "Outbox publisher wiring (batch-enqueue arrives with its known-defect scenario)." "sync-per-record" [],
+    choices "runtime.publish-mode" "Outbox publisher wiring: acknowledged per record, or the known-defect batch enqueue." "sync-per-record" ["batch-enqueue"],
     choices "runtime.ttl-profile" "Lease and timeout profile of every runtime component." "short" ["production"],
     integer "kiroku.pool-size" "Connection pool size of each role's event store." 4 2 32,
     integer "kafka.partitions" "Partitions of each run-scoped topic." 6 1 128,

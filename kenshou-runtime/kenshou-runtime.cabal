@@ -43,6 +43,7 @@ library
     Kenshou.Suite.Runtime.Concurrency.Broker
     Kenshou.Suite.Runtime.Concurrency.Network
     Kenshou.Suite.Runtime.Concurrency.Postgres
+    Kenshou.Suite.Runtime.Concurrency.Resources
     Kenshou.Suite.Runtime.Concurrency.Workers
     Kenshou.Suite.Runtime.Correctness.Ops
     Kenshou.Suite.Runtime.Correctness.OrderFlow
