@@ -176,3 +176,9 @@ stable plateau. No post-major heap points were eligible; native bytes, OS
 threads, descriptors and connections were stable. Historical attribution stays
 open. Finding 50 separately qualifies the legacy verdict document schema;
 all sealed bytes and observations remain unchanged.
+
+The [four-hour outbox GC diagnostic](../verification/runs/keiro/2026/10/01a0fdea-68ff-704b-bc96-176ee5235120.md) passes all six bounded resource
+probes with forced major GC every five seconds. Haskell threads stay at 143
+across 240 publisher restarts, while all eight business checks hold. This is
+full-duration evidence for the forced-GC control, not closure of the historical
+default-GC thread attribution or killed-process acceptance.

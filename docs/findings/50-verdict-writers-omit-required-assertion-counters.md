@@ -56,7 +56,9 @@ passes all 11 schemas, including eight verdict documents with required
 assertion counters, and all 27 artifact checks. Inbox full-soak artifact
 acceptance is closed. The repaired [full queue GC diagnostic](../verification/runs/keiro/2026/10/01a0fd67-a9cb-7001-9322-69251c14d682.md)
 also passes all twelve schemas and 29 artifact checks, closing the queue
-artifact gap. Repaired full outbox evidence remains pending.
+artifact gap. The repaired [four-hour outbox GC diagnostic](../verification/runs/keiro/2026/10/01a0fdea-68ff-704b-bc96-176ee5235120.md)
+passes all eleven schemas and 28 artifact checks, closing the last repaired
+full-soak artifact gap. Historical sealed artifacts retain their qualification.
 
 Validation: the Keiro regression failed before the production change and passed
 afterward. All 49 Keiro and 35 core check examples pass. All ten held/violated
