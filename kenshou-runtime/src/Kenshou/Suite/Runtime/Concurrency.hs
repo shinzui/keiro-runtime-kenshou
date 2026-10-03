@@ -32,7 +32,7 @@ import Kenshou.Suite.Runtime.Oracle (checkCell, verdictFor, verifyEndToEnd, with
 import Kenshou.Suite.Runtime.Oracle.Duplicates (collectObservations, declaredWindows, hopAllowances, judgeDuplicates)
 import Kenshou.Suite.Runtime.System.Config (SystemConfig (..))
 import Kenshou.Suite.Runtime.System.Context (runtimeRequirements)
-import Kenshou.Suite.Runtime.Topology (QuiescenceReport (..), RunningSystem (..), awaitQuiescence, consumerSessionsEnded, restartsOf, stopRoles, systemSpecFrom, withReferenceSystem)
+import Kenshou.Suite.Runtime.Topology (QuiescenceReport (..), RunningSystem (..), SystemSpec (..), awaitQuiescence, consumerSessionsEnded, restartsOf, stopRoles, systemSpecFrom, withReferenceSystem)
 
 -- | What a fault schedule reports: how many faults took effect, and the
 -- evidence for each. A scenario whose schedule took no effect is errored,
@@ -55,7 +55,9 @@ data FaultPlan = FaultPlan
     -- | Runs the fault schedule during the steady phase and returns once
     -- every fault has been lifted.
     inject :: RunContext -> RunningSystem -> IO FaultEvidence,
-    knownDefect :: !(Maybe KnownDefect)
+    knownDefect :: !(Maybe KnownDefect),
+    -- | Route role processes to their databases through proxies.
+    databaseProxies :: !Bool
   }
 
 -- | The shared procedure: start the system, warm up, run the schedule while
@@ -107,7 +109,7 @@ faultText :: ResolvedKnobs -> Text -> Text
 faultText knobs name = knobText knobs (runtimeKnobName name)
 
 runFault :: FaultPlan -> RunContext -> IO ScenarioReport
-runFault plan context = withReferenceSystem context (systemSpecFrom context) \system -> withCheckpointMonitor system.shop system.warehouse \checkpoints -> do
+runFault plan context = withReferenceSystem context (systemSpecFrom context) {proxiedDatabases = plan.databaseProxies} \system -> withCheckpointMonitor system.shop system.warehouse \checkpoints -> do
   let config = system.config
       submissionSeconds =
         if config.orders > 0

@@ -53,7 +53,8 @@ backendKill =
             recordWindow system "fault/backend-kill" "*" DisturbanceEnd
             pure (sum terminated)
           pure (FaultEvidence (length (filter (> 0) passes)) (object ["target" .= target, "terminatedPerPass" .= passes])),
-        knownDefect = Nothing
+        knownDefect = Nothing,
+        databaseProxies = False
       }
   where
     listener backend = "LISTEN" `Text.isPrefixOf` Text.toUpper (Text.stripStart backend.query)
@@ -87,7 +88,8 @@ postmasterRestart =
                 recordWindow system "fault/postmaster" "*" DisturbanceEnd
                 pure (length controls)
           pure (FaultEvidence (length restarts) (object ["mode" .= show mode, "servers" .= length controls, "restarts" .= restarts])),
-        knownDefect = Nothing
+        knownDefect = Nothing,
+        databaseProxies = False
       }
 
 contextKnob :: KnobSpec

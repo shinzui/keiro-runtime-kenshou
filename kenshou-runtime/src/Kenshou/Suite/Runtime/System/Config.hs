@@ -41,7 +41,10 @@ data WakeMode = WakePush | WakePoll
 data SystemConfig = SystemConfig
   { shopDatabase :: !Text,
     warehouseDatabase :: !Text,
-    brokers :: ![Text],
+    -- | Each context's Kafka clients use their own broker lane, so a fault
+    -- on one lane partitions one context from the broker.
+    shopBrokers :: ![Text],
+    warehouseBrokers :: ![Text],
     topicPrefix :: !Text,
     shopTopic :: !Text,
     warehouseTopic :: !Text,

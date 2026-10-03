@@ -38,13 +38,14 @@ import Kafka.Consumer.Types (ConsumerGroupId (..))
 import Kafka.Types (BrokerAddress (..), PartitionId (..), TopicName (..))
 import Keiro.PGMQ.Runtime (withJobRuntime)
 import Kenshou.Check.Fact (FactKind (..), ProcId (..))
+import Kenshou.Check.Fault.Network (TcpProxy, proxiedConnectionString, withTcpProxy)
 import Kenshou.Check.Ledger (recordDurable)
 import Kenshou.Check.Process (Child, ChildSignal, ProgressSnapshot (..), Supervisor, awaitReady, childExitCode, childPid, childProc, killChild, progress, readChildMessages, reapChild, restartChild, roleProcess, sendCommand, signalChild, spawn, stopGracefully, withSupervisor)
 import Kenshou.Check.Scenario (CheckEnv (..), withCheck)
 import Kenshou.Core.Context (RunContext (..))
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Role (ControlMessage (..), WorkerMessage (..))
-import Kenshou.Env.Kafka (BrokerLane (..), GroupSnapshot (..), KafkaEnv (..), PartitionOffsets (..), describeGroup)
+import Kenshou.Env.Kafka (BrokerLane (..), GroupSnapshot (..), KafkaEnv (..), PartitionOffsets (..), describeGroup, laneAt)
 import Kenshou.Suite.Runtime.Driver (DriverReport (..))
 import Kenshou.Suite.Runtime.Knobs (partitionsFrom, systemConfigFrom)
 import Kenshou.Suite.Runtime.Roles (RoleArgs (..), longRunningRoles, roleNameText)
@@ -58,10 +59,16 @@ import Kenshou.Suite.Runtime.System.Warehouse (seedWarehouse)
 
 -- | What a scenario asks of the reference system. Everything that changes
 -- the experiment is a resolved knob, carried by the base configuration.
-newtype SystemSpec = SystemSpec {base :: SystemConfig}
+data SystemSpec = SystemSpec
+  { base :: SystemConfig,
+    -- | Route each context's role processes to its database through a TCP
+    -- proxy, so a fault can partition one context from its database while
+    -- the harness keeps its direct connection.
+    proxiedDatabases :: Bool
+  }
 
 systemSpecFrom :: RunContext -> SystemSpec
-systemSpecFrom context = SystemSpec (systemConfigFrom context.knobs)
+systemSpecFrom context = SystemSpec (systemConfigFrom context.knobs) False
 
 data RunningSystem = RunningSystem
   { config :: !SystemConfig,
@@ -70,6 +77,8 @@ data RunningSystem = RunningSystem
     -- | The two PostgreSQL environments, for fault injection.
     shopPostgres :: !PostgresEnv,
     warehousePostgres :: !PostgresEnv,
+    -- | The proxies in front of each context's database, when requested.
+    databaseProxies :: ![(ContextName, TcpProxy)],
     broker :: !RuntimeBroker,
     check :: !CheckEnv,
     supervisor :: !Supervisor,
@@ -105,23 +114,27 @@ instance ToJSON RestartRecord where
 -- removed.
 withReferenceSystem :: RunContext -> SystemSpec -> (RunningSystem -> IO a) -> IO a
 withReferenceSystem context spec action =
-  withRuntimeResources context (partitionsFrom context.knobs) \resources -> do
+  withRuntimeResources context (partitionsFrom context.knobs) \resources -> withDatabaseProxies spec.proxiedDatabases resources \proxies -> do
     let environment = resources.broker.environment
+        database name postgres = maybe postgres.connectionString (proxiedConnectionString postgres) (lookup name proxies)
         TopicName shopTopic = resources.broker.shopEvents
         TopicName warehouseTopic = resources.broker.warehouseEvents
         ConsumerGroupId shopGroup = resources.broker.shopConsumerGroup
         ConsumerGroupId warehouseGroup = resources.broker.warehouseConsumerGroup
         config =
           spec.base
-            { shopDatabase = resources.shop.postgres.connectionString,
-              warehouseDatabase = resources.warehouse.postgres.connectionString,
-              brokers = [address | BrokerAddress address <- (NonEmpty.head environment.lanes).laneBrokers],
+            { shopDatabase = database Shop resources.shop.postgres,
+              warehouseDatabase = database Warehouse resources.warehouse.postgres,
+              shopBrokers = laneAddresses 0,
+              warehouseBrokers = laneAddresses 1,
               topicPrefix = environment.prefix,
               shopTopic,
               warehouseTopic,
               shopConsumerGroup = shopGroup,
               warehouseConsumerGroup = warehouseGroup
             }
+        -- An external broker has a single lane, which both contexts share.
+        laneAddresses index = [address | BrokerAddress address <- (either (const (NonEmpty.head environment.lanes)) id (laneAt environment index)).laneBrokers]
         shop = ContextStore resources.shop.store
         warehouse = ContextStore resources.warehouse.store
     seedShop shop customerCount config.routerFanout
@@ -131,7 +144,7 @@ withReferenceSystem context spec action =
       invocations <- newIORef 0
       lifecycle <- newMVar False
       restarts <- newIORef []
-      let system = RunningSystem config shop warehouse resources.shop.postgres resources.warehouse.postgres resources.broker check supervisor children invocations lifecycle restarts
+      let system = RunningSystem config shop warehouse resources.shop.postgres resources.warehouse.postgres proxies resources.broker check supervisor children invocations lifecycle restarts
           startRole role = do
             started <- forM [0 .. max 1 config.processesPerRole - 1] \index -> do
               process <- roleProcess check (roleNameText role) index (toJSON (RoleArgs config index))
@@ -141,6 +154,19 @@ withReferenceSystem context spec action =
               pure child
             modifyIORef' children (Map.insert role started)
       (mapM_ startRole longRunningRoles >> withAsync (superviseRoles system) \_ -> action system) `finally` stopRoles system
+
+-- | Proxies in front of both databases when requested and both expose a
+-- TCP endpoint; otherwise none, and a partition scenario reports that it
+-- took no effect.
+withDatabaseProxies :: Bool -> RuntimeResources -> ([(ContextName, TcpProxy)] -> IO a) -> IO a
+withDatabaseProxies False _ action = action []
+withDatabaseProxies True resources action = case (resources.shop.postgres.tcpEndpoint, resources.warehouse.postgres.tcpEndpoint) of
+  (Just shopEndpoint, Just warehouseEndpoint) ->
+    withTcpProxy (upstream shopEndpoint) \shopProxy ->
+      withTcpProxy (upstream warehouseEndpoint) \warehouseProxy -> action [(Shop, shopProxy), (Warehouse, warehouseProxy)]
+  _ -> action []
+  where
+    upstream (host, port) = pure (Text.unpack host, fromIntegral port)
 
 processesOf :: RunningSystem -> Text -> IO [Child]
 processesOf system role = Map.findWithDefault [] role <$> readIORef system.children

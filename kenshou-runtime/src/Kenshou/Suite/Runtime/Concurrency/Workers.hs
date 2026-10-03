@@ -39,7 +39,8 @@ sigkillRole =
             killAndRestart system role (n `mod` processes)
           let applied = catMaybes restarts
           pure (FaultEvidence (length applied) (object ["victimRole" .= role, "restarts" .= toJSON applied])),
-        knownDefect = Nothing
+        knownDefect = Nothing,
+        databaseProxies = False
       }
 
 victimKnob :: KnobSpec

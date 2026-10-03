@@ -11,7 +11,7 @@ import Data.Text qualified as Text
 import Kafka.Consumer (ConsumerGroupId)
 import Kafka.Types (TopicName)
 import Kenshou.Core.Context (RunContext)
-import Kenshou.Env.Kafka (KafkaEnv, TopicSpec (..), createTopics, deleteRunGroups, deleteRunTopics, groupName, kafkaEnvSpecFromRunSpec, withKafkaEnv)
+import Kenshou.Env.Kafka (KafkaEnv, TopicSpec (..), createTopics, deleteRunGroups, deleteRunTopics, groupName, kafkaEnvSpecFromRunSpec, requestLanes, withKafkaEnv)
 
 data RuntimeBroker = RuntimeBroker
   { environment :: !KafkaEnv,
@@ -23,7 +23,8 @@ data RuntimeBroker = RuntimeBroker
 
 withRuntimeBroker :: RunContext -> Int -> (RuntimeBroker -> IO value) -> IO value
 withRuntimeBroker context partitions action = do
-  spec <- either (ioError . userError . Text.unpack) pure (kafkaEnvSpecFromRunSpec context)
+  -- Two lanes: one per context, each behind its own proxy locally.
+  spec <- either (ioError . userError . Text.unpack) pure (requestLanes 2 <$> kafkaEnvSpecFromRunSpec context)
   withKafkaEnv context spec \environment ->
     ( do
         topics <-

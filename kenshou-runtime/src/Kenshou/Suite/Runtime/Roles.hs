@@ -34,7 +34,7 @@ import Keiro.Timer (TimerWorkerOptions (..), defaultTimerWorkerOptions, drainDue
 import Keiro.Workflow.Resume (WorkflowResumeOptions (..), defaultWorkflowResumeOptions, runWorkflowResumeWorkerPush, runWorkflowResumeWorkerWith)
 import Keiro.Workflow.Sleep (workflowSleepFireAction)
 import Kenshou.Check.Fact (FactKind (..), ProcId (..))
-import Kenshou.Check.Ledger (LedgerWriter, defaultLedgerConfig, recordDurable, withLedger)
+import Kenshou.Check.Ledger (LedgerWriter, defaultLedgerConfig, flushLedger, recordDurable, withLedger)
 import Kenshou.Core.Id (renderRunId)
 import Kenshou.Core.Role (ControlMessage (..), RoleContext (..), RoleName, WorkerInit (..), WorkerMessage (..), WorkerRole (..), mkRoleName)
 import Kenshou.Suite.Runtime.Driver (DriverReport (..), runDriver)
@@ -54,7 +54,7 @@ import Options.Applicative (ParserResult (..), execParserPure, prefs, renderFail
 import Shibuya.App (SupervisionStrategy (..), stopApp)
 import Shibuya.Core.Ack (AckDecision (..), HaltReason (..))
 import Shibuya.Core.Ack qualified as Ack
-import Shibuya.Core.Types (Envelope (..))
+import Shibuya.Core.Types (Cursor (..), Envelope (..))
 import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
 import System.IO (IOMode (WriteMode), hClose, hFlush, stdout, withFile)
@@ -115,15 +115,15 @@ roles :: [WorkerRole]
 roles =
   [ runtimeRole "driver" "Submits seeded open-loop orders to the shop's command processor." driverRole,
     runtimeRole "a-dispatch" "Shop sharded subscription: payment manager, loyalty router and order producer." shopDispatchRole,
-    runtimeRole "a-publisher" "Publishes the shop outbox to Kafka with per-record acknowledgement." (publisherRole (.shopDatabase)),
-    runtimeRole "a-consumer" "Consumes warehouse outcomes into the shop inbox and order commands." (consumerRole shopIntakeSide (.shopDatabase) (.warehouseTopic) (.shopConsumerGroup)),
+    runtimeRole "a-publisher" "Publishes the shop outbox to Kafka with per-record acknowledgement." (publisherRole (.shopDatabase) (.shopBrokers)),
+    runtimeRole "a-consumer" "Consumes warehouse outcomes into the shop inbox and order commands." (consumerRole shopIntakeSide (.shopDatabase) (.shopBrokers) (.warehouseTopic) (.shopConsumerGroup)),
     runtimeRole "a-maintenance" "Reclaims stale shop outbox claims." (maintenanceRole (.shopDatabase) (pure ())),
-    runtimeRole "b-consumer" "Consumes shop orders into the warehouse inbox and fulfilment commands." (consumerRole warehouseIntakeSide (.warehouseDatabase) (.shopTopic) (.warehouseConsumerGroup)),
+    runtimeRole "b-consumer" "Consumes shop orders into the warehouse inbox and fulfilment commands." (consumerRole warehouseIntakeSide (.warehouseDatabase) (.warehouseBrokers) (.shopTopic) (.warehouseConsumerGroup)),
     runtimeRole "b-dispatch" "Warehouse sharded subscription: stock manager, workflow start, timers and producer." warehouseDispatchRole,
     runtimeRole "b-resume" "Advances fulfilment workflows." resumeRole,
     runtimeRole "b-timer" "Fires workflow sleeps and fulfilment deadlines." timerRole,
     runtimeRole "b-jobs" "Processes pick jobs and confirms picks through awakeables." jobsRole,
-    runtimeRole "b-publisher" "Publishes the warehouse outbox to Kafka with per-record acknowledgement." (publisherRole (.warehouseDatabase)),
+    runtimeRole "b-publisher" "Publishes the warehouse outbox to Kafka with per-record acknowledgement." (publisherRole (.warehouseDatabase) (.warehouseBrokers)),
     runtimeRole "b-maintenance" "Reclaims stale warehouse outbox claims and cancels awakeables left by terminal workflows." (maintenanceRole (.warehouseDatabase) (void (cancelOrphanedAwakeables Nothing))),
     keiroOpsRole
   ]
@@ -197,15 +197,16 @@ runtimeRole name summary body = WorkerRole (roleName name) summary \context -> c
       -- receives the same initialisation and must not reuse a segment name.
       let proc = ProcId (roleNameText name) args.index (fromIntegral pid)
           ledgerConfig = defaultLedgerConfig (context.init.outDir </> "verdicts" </> "ledger") proc (renderRunId context.init.runId)
-      withLedger ledgerConfig \ledger -> withRoleTelemetry (traceSabotageFrom args.config.traceSabotage) (observeDelivery ledger) context \telemetry -> do
-        let env = RoleEnv context args.config args.index stop handled telemetry ledger
-        withAsync (watchControl context stop) \_ -> withAsync (heartbeat env) \_ -> do
-          outcome <- try @SomeException (body env)
-          final <- tryReadMVar stop
-          case (outcome, final) of
-            (Left exception, _) -> ioError (userError (displayException exception))
-            (Right (), Just (Left reason)) -> ioError (userError (Text.unpack reason))
-            (Right (), _) -> pure ()
+      withLedger ledgerConfig \ledger ->
+        flushLedger ledger >> withRoleTelemetry (traceSabotageFrom args.config.traceSabotage) (observeDelivery ledger) context \telemetry -> do
+          let env = RoleEnv context args.config args.index stop handled telemetry ledger
+          withAsync (watchControl context stop) \_ -> withAsync (heartbeat env) \_ -> do
+            outcome <- try @SomeException (body env)
+            final <- tryReadMVar stop
+            case (outcome, final) of
+              (Left exception, _) -> ioError (userError (displayException exception))
+              (Right (), Just (Left reason)) -> ioError (userError (Text.unpack reason))
+              (Right (), _) -> pure ()
 
 -- | One handled delivery on a hop, keyed by the delivery's identity.
 observeDelivery :: LedgerWriter -> Text -> Text -> IO ()
@@ -376,8 +377,8 @@ jobsRole env = withWarehouseEnv env \warehouse -> do
     Right (Left problem) -> ioError (userError (Text.unpack problem))
     Right (Right _) -> pure ()
 
-publisherRole :: (SystemConfig -> Text) -> RoleEnv -> IO ()
-publisherRole database env = withContextStore (database env.config) env.config.poolSize \store -> do
+publisherRole :: (SystemConfig -> Text) -> (SystemConfig -> [Text]) -> RoleEnv -> IO ()
+publisherRole database brokersOf env = withContextStore (database env.config) env.config.poolSize \store -> do
   let policy = orderingPolicyFrom env.config.orderingPolicy
       options =
         defaultPublishOptions
@@ -386,7 +387,7 @@ publisherRole database env = withContextStore (database env.config) env.config.p
             publishingTimeout = realToFrac (timeouts env).publishingTimeoutSeconds,
             backoff = ConstantBackoff 1
           }
-      brokers = fmap BrokerAddress env.config.brokers
+      brokers = fmap BrokerAddress (brokersOf env.config)
   untilStopped env 50000 do
     summary <- runContext store (publishClaimedOutbox (liftIO . publishToBrokers env.telemetry.signals brokers policy) options env.telemetry.signals.metrics)
     case summary of
@@ -415,17 +416,23 @@ maintenanceRole database extra env = withContextStore (database env.config) env.
 -- transient database failure is retried in place three times; after that the
 -- process exits non-zero so that consumption resumes from the committed
 -- offset when it is restarted.
-consumerRole :: (Signals -> ContextStore -> IntakeSide) -> (SystemConfig -> Text) -> (SystemConfig -> Text) -> (SystemConfig -> Text) -> RoleEnv -> IO ()
-consumerRole sideFor database topicOf groupOf env = withContextStore (database env.config) env.config.poolSize \store -> do
+consumerRole :: (Signals -> ContextStore -> IntakeSide) -> (SystemConfig -> Text) -> (SystemConfig -> [Text]) -> (SystemConfig -> Text) -> (SystemConfig -> Text) -> RoleEnv -> IO ()
+consumerRole sideFor database brokersOf topicOf groupOf env = withContextStore (database env.config) env.config.poolSize \store -> do
   let side = sideFor env.telemetry.signals store
   swept <- sweepIntake side store
   case swept of
     Left problem -> ioError (userError ("intake sweep failed: " <> Text.unpack problem))
     Right count -> env.context.send (WrkCustom "intake-swept" (object ["rows" .= count]))
-  let topic = TopicName (topicOf env.config)
+  starting <- newIORef True
+  let hop = topicOf env.config <> "-consumer"
+      -- Redeliveries are expected while the group rebalances: from a
+      -- session's start until its first acknowledgement, and while a
+      -- session that ended is resumed from the committed offsets.
+      window label kind = recordDurable env.ledger kind (hop <> "/" <> Text.pack (show env.index)) 0 label (KeyMap.fromList [("label", Aeson.String label), ("target", Aeson.String (hop <> "/" <> Text.pack (show env.index)))])
+      topic = TopicName (topicOf env.config)
       spec =
         ConsumerSpec
-          { brokers = env.config.brokers,
+          { brokers = brokersOf env.config,
             topic = topicOf env.config,
             group = groupOf env.config,
             processor = topicOf env.config <> "-consumer",
@@ -438,7 +445,9 @@ consumerRole sideFor database topicOf groupOf env = withContextStore (database e
             case outcome of
               IntakeAcknowledged label -> do
                 bump env
-                env.telemetry.signals.observe (topicOf env.config <> "-consumer") (maybe "" id envelope.partition <> ":" <> Text.pack (show envelope.cursor))
+                env.telemetry.signals.observe hop (maybe "" id envelope.partition <> ":" <> offsetText envelope.cursor)
+                first <- atomicModifyIORef' starting (False,)
+                when first (window "consumer-startup" DisturbanceEnd)
                 when ("poison" `Text.isPrefixOf` label) (env.context.send (WrkCustom "intake-poison" (object ["reason" .= label])))
                 pure AckOk
               IntakeTransient problem
@@ -459,8 +468,7 @@ consumerRole sideFor database topicOf groupOf env = withContextStore (database e
           Right SessionEnded -> do
             -- Resumption replays from the committed offsets, so its
             -- redeliveries are declared as a disturbance window.
-            let target = topicOf env.config <> "-consumer/" <> Text.pack (show env.index)
-                edge kind = recordDurable env.ledger kind target 0 "consumer-session" (KeyMap.fromList [("label", Aeson.String "consumer-session"), ("target", Aeson.String target)])
+            let edge = window "consumer-session"
             edge DisturbanceStart
             env.context.send (WrkCustom "consumer-session-ended" (object ["sessions" .= (ended + 1), "reference" .= ("mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-4" :: Text)]))
             requested <- tryReadMVar env.stop
@@ -471,4 +479,9 @@ consumerRole sideFor database topicOf groupOf env = withContextStore (database e
                 _ <- sweepIntake side store
                 edge DisturbanceEnd
                 session (ended + 1)
+  window "consumer-startup" DisturbanceStart
   session 0
+  where
+    offsetText = \case
+      Just (CursorInt offset) -> Text.pack (show offset)
+      other -> Text.pack (show other)

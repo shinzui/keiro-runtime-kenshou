@@ -76,13 +76,13 @@ collectObservations ledgers = foldFacts ledgers Map.empty \observations fact ->
       Just (String hop) -> hop
       _ -> fact.id
 
--- | The windows I5 accepts: injected faults (@fault/…@), supervised restarts
--- and consumer-session resumptions. The supervisor's own signal edges are
+-- | The windows I5 accepts: injected faults (@fault/…@), supervised restarts,
+-- consumer-group start-up and consumer-session resumptions. The supervisor's own signal edges are
 -- excluded because a restart changes their target and leaves them open.
 declaredWindows :: LedgerSet -> IO [DisturbanceWindow]
 declaredWindows ledgers = filter declared <$> loadWindows ledgers
   where
-    declared window = "fault/" `Text.isPrefixOf` window.label || window.label `elem` ["restart", "consumer-session"]
+    declared window = "fault/" `Text.isPrefixOf` window.label || window.label `elem` ["restart", "consumer-startup", "consumer-session"]
 
 -- | Every observation after the first of an identity must be explained by a
 -- window that disturbed its hop. A window's target is @<role>/<index>@ (or

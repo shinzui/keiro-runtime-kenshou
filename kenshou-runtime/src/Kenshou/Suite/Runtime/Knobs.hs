@@ -73,7 +73,8 @@ systemConfigFrom knobs =
   SystemConfig
     { shopDatabase = "",
       warehouseDatabase = "",
-      brokers = [],
+      shopBrokers = [],
+      warehouseBrokers = [],
       topicPrefix = "",
       shopTopic = "",
       warehouseTopic = "",
