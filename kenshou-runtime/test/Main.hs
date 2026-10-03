@@ -10,12 +10,14 @@ import Kafka.Types (PartitionId (..), TopicName (..), headersFromList)
 import Keiro.Codec (Codec (..))
 import Keiro.Integration.Event (IntegrationEvent (..))
 import Keiro.Outbox qualified
+import Kenshou.Check.Window (DisturbanceWindow (..))
 import Kenshou.Core.Id (mkSeed)
 import Kenshou.Core.Knob (resolveKnobs)
 import Kenshou.Suite.Runtime.Correctness.OrderFlow qualified as OrderFlow
 import Kenshou.Suite.Runtime.Driver qualified as Driver
 import Kenshou.Suite.Runtime.Knobs (runtimeKnobs, systemConfigFrom)
 import Kenshou.Suite.Runtime.Oracle qualified as Oracle
+import Kenshou.Suite.Runtime.Oracle.Duplicates qualified as Duplicates
 import Kenshou.Suite.Runtime.Oracle.Ops qualified as OpsOracle
 import Kenshou.Suite.Runtime.Oracle.Pure qualified as PureOracle
 import Kenshou.Suite.Runtime.Oracle.Sql qualified as Sql
@@ -37,6 +39,24 @@ import Test.Hspec
 
 main :: IO ()
 main = hspec do
+  describe "bounded duplicates (I5)" do
+    let window = DisturbanceWindow "fault/sigkill" "b-jobs/0" 1000 (Just 2000)
+        allowances = [Duplicates.HopAllowance "pick" ["b-jobs"] 500]
+        judge windows observations = (Duplicates.judgeDuplicates windows allowances (Map.fromList observations)).violations
+    it "accepts identities observed once" do
+      judge [] [(("pick", "o-1"), [10]), (("pick", "o-2"), [20])] `shouldBe` 0
+    it "fails a redelivery that no declared window explains" do
+      judge [] [(("pick", "o-1"), [10, 20])] `shouldBe` 1
+      judge [window] [(("pick", "o-1"), [10, 20])] `shouldBe` 1
+      judge [window] [(("pick", "o-1"), [3000, 3100])] `shouldBe` 1
+    it "accepts a replay of a delivery first handled before the window ended" do
+      judge [window] [(("pick", "o-1"), [900, 1500])] `shouldBe` 0
+      judge [window] [(("pick", "o-1"), [2400, 9000])] `shouldBe` 0
+      judge [window {end = Nothing}] [(("pick", "o-1"), [900, 99999])] `shouldBe` 0
+    it "applies a window only to the hops its target delivers on" do
+      judge [window {target = "b-resume/0"}] [(("pick", "o-1"), [900, 1500])] `shouldBe` 1
+      judge [window {target = "*"}] [(("pick", "o-1"), [900, 1500])] `shouldBe` 0
+      judge [window {target = "other/1"}] [(("other", "o-1"), [900, 1500])] `shouldBe` 0
   describe "trace continuity controls (I7)" do
     let span' process name trace spanId parent = SpanRecord {process, name, kind = "Consumer", traceId = trace, spanId, parentSpanId = parent, attributes = Map.empty, startNs = 0, endNs = 1}
         send = span' "runtime/a-publisher-0" (TraceOracle.sendSpanName "t") "tr" "s1" (Just "d1")

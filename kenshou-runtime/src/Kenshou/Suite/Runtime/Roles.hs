@@ -14,11 +14,13 @@ import Control.Exception (SomeException, displayException, finally, try)
 import Control.Monad (forever, void, when)
 import Data.Aeson (FromJSON, ToJSON, object, (.=))
 import Data.Aeson qualified as Aeson
+import Data.Aeson.KeyMap qualified as KeyMap
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.Int (Int64)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
+import Data.UUID qualified as UUID
 import Effectful (liftIO)
 import GHC.Generics (Generic)
 import GHC.IO.Handle (hDuplicate, hDuplicateTo)
@@ -31,6 +33,9 @@ import Keiro.Subscription.Shard.Worker (RetryDelay (..), ShardAck (..), ShardDel
 import Keiro.Timer (TimerWorkerOptions (..), defaultTimerWorkerOptions, drainDueTimersWith)
 import Keiro.Workflow.Resume (WorkflowResumeOptions (..), defaultWorkflowResumeOptions, runWorkflowResumeWorkerPush, runWorkflowResumeWorkerWith)
 import Keiro.Workflow.Sleep (workflowSleepFireAction)
+import Kenshou.Check.Fact (FactKind (..), ProcId (..))
+import Kenshou.Check.Ledger (LedgerWriter, defaultLedgerConfig, recordDurable, withLedger)
+import Kenshou.Core.Id (renderRunId)
 import Kenshou.Core.Role (ControlMessage (..), RoleContext (..), RoleName, WorkerInit (..), WorkerMessage (..), WorkerRole (..), mkRoleName)
 import Kenshou.Suite.Runtime.Driver (DriverReport (..), runDriver)
 import Kenshou.Suite.Runtime.System.Config
@@ -40,17 +45,20 @@ import Kenshou.Suite.Runtime.System.KafkaBridge (ConsumerExit (..), ConsumerSpec
 import Kenshou.Suite.Runtime.System.Shop (handleShopDelivery)
 import Kenshou.Suite.Runtime.System.Store (ContextEff, ContextStore (..), runContext, withContextStore)
 import Kenshou.Suite.Runtime.System.Trace (Signals (..), TraceSabotage (..), workflowRunOptions)
-import Kenshou.Suite.Runtime.System.Warehouse (WarehouseEnv (..), cancelOrphanedAwakeables, fireDeadline, fulfilmentRegistry, handlePick, handleWarehouseDelivery, pickJob, pickTuning)
+import Kenshou.Suite.Runtime.System.Warehouse (PickJob (..), WarehouseEnv (..), cancelOrphanedAwakeables, fireDeadline, fulfilmentRegistry, handlePick, handleWarehouseDelivery, pickJob, pickTuning)
 import Kenshou.Suite.Runtime.Telemetry (RoleTelemetry (..), withRoleTelemetry)
 import Kiroku.Store (runStoreIO)
 import Kiroku.Store.Subscription.Types (RetryPolicy (..), SubscriptionName (..), SubscriptionTarget (..))
-import Kiroku.Store.Types (CategoryName (..))
+import Kiroku.Store.Types (CategoryName (..), EventId (..), RecordedEvent (..))
 import Options.Applicative (ParserResult (..), execParserPure, prefs, renderFailure, subparserInline)
 import Shibuya.App (SupervisionStrategy (..), stopApp)
 import Shibuya.Core.Ack (AckDecision (..), HaltReason (..))
 import Shibuya.Core.Ack qualified as Ack
+import Shibuya.Core.Types (Envelope (..))
 import System.Exit (ExitCode (..))
+import System.FilePath ((</>))
 import System.IO (IOMode (WriteMode), hClose, hFlush, stdout, withFile)
+import System.Posix.Process (getProcessID)
 
 -- | Each role process receives the whole system description and its own
 -- index within the role.
@@ -71,7 +79,10 @@ data RoleEnv = RoleEnv
     handled :: !(IORef Int64),
     -- | Tracer, Keiro metrics and telemetry handles for the run's
     -- telemetry dimensions; empty when both are @off@.
-    telemetry :: !RoleTelemetry
+    telemetry :: !RoleTelemetry,
+    -- | This process's own fact ledger (delivery observations and
+    -- consumer-session windows).
+    ledger :: !LedgerWriter
   }
 
 -- | The twelve long-running roles, in start order.
@@ -181,8 +192,13 @@ runtimeRole name summary body = WorkerRole (roleName name) summary \context -> c
     when started do
       stop <- newEmptyMVar
       handled <- newIORef 0
-      withRoleTelemetry (traceSabotageFrom args.config.traceSabotage) context \telemetry -> do
-        let env = RoleEnv context args.config args.index stop handled telemetry
+      pid <- getProcessID
+      -- The incarnation is the process identifier: a restarted process
+      -- receives the same initialisation and must not reuse a segment name.
+      let proc = ProcId (roleNameText name) args.index (fromIntegral pid)
+          ledgerConfig = defaultLedgerConfig (context.init.outDir </> "verdicts" </> "ledger") proc (renderRunId context.init.runId)
+      withLedger ledgerConfig \ledger -> withRoleTelemetry (traceSabotageFrom args.config.traceSabotage) (observeDelivery ledger) context \telemetry -> do
+        let env = RoleEnv context args.config args.index stop handled telemetry ledger
         withAsync (watchControl context stop) \_ -> withAsync (heartbeat env) \_ -> do
           outcome <- try @SomeException (body env)
           final <- tryReadMVar stop
@@ -190,6 +206,10 @@ runtimeRole name summary body = WorkerRole (roleName name) summary \context -> c
             (Left exception, _) -> ioError (userError (displayException exception))
             (Right (), Just (Left reason)) -> ioError (userError (Text.unpack reason))
             (Right (), _) -> pure ()
+
+-- | One handled delivery on a hop, keyed by the delivery's identity.
+observeDelivery :: LedgerWriter -> Text -> Text -> IO ()
+observeDelivery ledger hop identity = recordDurable ledger Observed identity 0 hop (KeyMap.singleton "hop" (Aeson.String hop))
 
 awaitStart :: RoleContext -> IO Bool
 awaitStart context =
@@ -272,7 +292,10 @@ dispatchLoop env store subscription category handle = case shardOptions env cate
       runShardedSubscriptionGroupAck store.store (SubscriptionName subscription) options \delivery -> do
         result <- try @SomeException (handle delivery)
         case result of
-          Right (Right ()) -> bump env >> pure ShardAckOk
+          Right (Right ()) -> do
+            bump env
+            env.telemetry.signals.observe ("dispatch-" <> subscription) (let EventId value = delivery.event.eventId in UUID.toText value)
+            pure ShardAckOk
           Right (Left problem) -> retry problem
           Left exception -> retry (Text.pack (displayException exception))
   where
@@ -336,7 +359,9 @@ jobsRole env = withWarehouseEnv env \warehouse -> do
   let tuning = pickTuning (timeouts env).jobVisibilitySeconds env.config.queueBatchSize
       handler jobContext job = do
         outcome <- handlePick warehouse jobContext job
-        liftIO (bump env)
+        liftIO do
+          bump env
+          env.telemetry.signals.observe "pick" job.orderId
         pure outcome
   result <- runJobEff warehouse.jobs do
     started <- runJobWorkers StopAllOnFailure 16 [jobProcessorWithContext tuning pickJob handler]
@@ -413,6 +438,7 @@ consumerRole sideFor database topicOf groupOf env = withContextStore (database e
             case outcome of
               IntakeAcknowledged label -> do
                 bump env
+                env.telemetry.signals.observe (topicOf env.config <> "-consumer") (maybe "" id envelope.partition <> ":" <> Text.pack (show envelope.cursor))
                 when ("poison" `Text.isPrefixOf` label) (env.context.send (WrkCustom "intake-poison" (object ["reason" .= label])))
                 pure AckOk
               IntakeTransient problem
@@ -431,6 +457,11 @@ consumerRole sideFor database topicOf groupOf env = withContextStore (database e
           Left problem -> void (tryPutMVar env.stop (Left problem))
           Right (StoppedWith _) -> pure ()
           Right SessionEnded -> do
+            -- Resumption replays from the committed offsets, so its
+            -- redeliveries are declared as a disturbance window.
+            let target = topicOf env.config <> "-consumer/" <> Text.pack (show env.index)
+                edge kind = recordDurable env.ledger kind target 0 "consumer-session" (KeyMap.fromList [("label", Aeson.String "consumer-session"), ("target", Aeson.String target)])
+            edge DisturbanceStart
             env.context.send (WrkCustom "consumer-session-ended" (object ["sessions" .= (ended + 1), "reference" .= ("mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-4" :: Text)]))
             requested <- tryReadMVar env.stop
             case requested of
@@ -438,5 +469,6 @@ consumerRole sideFor database topicOf groupOf env = withContextStore (database e
               Nothing -> do
                 threadDelay 500000
                 _ <- sweepIntake side store
+                edge DisturbanceEnd
                 session (ended + 1)
   session 0

@@ -8,17 +8,24 @@ module Kenshou.Suite.Runtime.Topology
     processesOf,
     signalRole,
     stopRoles,
+    RestartRecord (..),
+    killAndRestart,
+    restartsOf,
+    recordWindow,
     driverReports,
     consumerSessionsEnded,
   )
 where
 
 import Control.Concurrent (threadDelay)
+import Control.Concurrent.Async (withAsync)
+import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, withMVar)
 import Control.Concurrent.STM (atomically)
 import Control.Exception (SomeException, displayException, finally, try)
-import Control.Monad (forM, forM_, void)
+import Control.Monad (forM, forM_, forever, unless, void)
 import Data.Aeson (ToJSON (..), Value, object, (.=))
 import Data.Aeson qualified as Aeson
+import Data.Aeson.KeyMap qualified as KeyMap
 import Data.IORef (IORef, atomicModifyIORef', modifyIORef', newIORef, readIORef)
 import Data.Int (Int64)
 import Data.List.NonEmpty qualified as NonEmpty
@@ -26,12 +33,14 @@ import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Data.Time (NominalDiffTime, diffUTCTime, getCurrentTime)
+import Data.Time (NominalDiffTime, UTCTime, diffUTCTime, getCurrentTime)
 import Kafka.Consumer.Types (ConsumerGroupId (..))
 import Kafka.Types (BrokerAddress (..), PartitionId (..), TopicName (..))
 import Keiro.PGMQ.Runtime (withJobRuntime)
-import Kenshou.Check.Process (Child, ChildSignal, ProgressSnapshot (..), Supervisor, awaitReady, progress, readChildMessages, roleProcess, sendCommand, signalChild, spawn, stopGracefully, withSupervisor)
-import Kenshou.Check.Scenario (CheckEnv, withCheck)
+import Kenshou.Check.Fact (FactKind (..), ProcId (..))
+import Kenshou.Check.Ledger (recordDurable)
+import Kenshou.Check.Process (Child, ChildSignal, ProgressSnapshot (..), Supervisor, awaitReady, childExitCode, childPid, childProc, killChild, progress, readChildMessages, reapChild, restartChild, roleProcess, sendCommand, signalChild, spawn, stopGracefully, withSupervisor)
+import Kenshou.Check.Scenario (CheckEnv (..), withCheck)
 import Kenshou.Core.Context (RunContext (..))
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Role (ControlMessage (..), WorkerMessage (..))
@@ -64,8 +73,26 @@ data RunningSystem = RunningSystem
     children :: !(IORef (Map Text [Child])),
     -- | Numbers on-demand role invocations, such as the operator console, so
     -- that each gets its own log and output files.
-    invocations :: !(IORef Int)
+    invocations :: !(IORef Int),
+    -- | Serialises restarts with stopping, so no replacement starts after
+    -- the roles were stopped.
+    lifecycle :: !(MVar Bool),
+    restarts :: !(IORef [RestartRecord])
   }
+
+-- | One role process replaced by the supervision loop or a fault injector.
+data RestartRecord = RestartRecord
+  { role :: !Text,
+    index :: !Int,
+    cause :: !Text,
+    exitCode :: !Text,
+    diedAt :: !UTCTime,
+    readyAt :: !UTCTime
+  }
+  deriving stock (Eq, Show)
+
+instance ToJSON RestartRecord where
+  toJSON record = object ["role" .= record.role, "index" .= record.index, "cause" .= record.cause, "exitCode" .= record.exitCode, "diedAt" .= record.diedAt, "readyAt" .= record.readyAt, "seconds" .= (realToFrac (diffUTCTime record.readyAt record.diedAt) :: Double)]
 
 -- | Acquire both PostgreSQL environments and the broker, create the topics,
 -- run the application DDL, seed accounts and referrals, and start every role
@@ -99,7 +126,9 @@ withReferenceSystem context spec action =
     withCheck context \check -> withSupervisor check \supervisor -> do
       children <- newIORef Map.empty
       invocations <- newIORef 0
-      let system = RunningSystem config shop warehouse resources.broker check supervisor children invocations
+      lifecycle <- newMVar False
+      restarts <- newIORef []
+      let system = RunningSystem config shop warehouse resources.broker check supervisor children invocations lifecycle restarts
           startRole role = do
             started <- forM [0 .. max 1 config.processesPerRole - 1] \index -> do
               process <- roleProcess check (roleNameText role) index (toJSON (RoleArgs config index))
@@ -108,7 +137,7 @@ withReferenceSystem context spec action =
               sendCommand child CtlStart
               pure child
             modifyIORef' children (Map.insert role started)
-      (mapM_ startRole longRunningRoles >> action system) `finally` stopRoles system
+      (mapM_ startRole longRunningRoles >> withAsync (superviseRoles system) \_ -> action system) `finally` stopRoles system
 
 processesOf :: RunningSystem -> Text -> IO [Child]
 processesOf system role = Map.findWithDefault [] role <$> readIORef system.children
@@ -117,10 +146,83 @@ processesOf system role = Map.findWithDefault [] role <$> readIORef system.child
 -- scenario can read what the processes write when they stop (their span
 -- files) before the system is torn down.
 stopRoles :: RunningSystem -> IO ()
-stopRoles system = do
+stopRoles system = modifyMVar_ system.lifecycle \_ -> do
   running <- atomicModifyIORef' system.children (Map.empty,)
   forM_ (reverse longRunningRoles) \role ->
     forM_ (Map.findWithDefault [] role running) \child -> void (stopGracefully system.supervisor child 10000)
+  pure True
+
+-- | Crash-only supervision: a role process that exits while the system runs
+-- is replaced after a short backoff, as a process supervisor would, and its
+-- replacement resumes from durable state. The crash-only Kafka consumers
+-- rely on this after a persistent transient failure.
+superviseRoles :: RunningSystem -> IO ()
+superviseRoles system = forever do
+  threadDelay 250000
+  running <- readIORef system.children
+  forM_ (Map.toList running) \(role, members) ->
+    forM_ members \child -> do
+      exited <- childExitCode child
+      case exited of
+        Nothing -> pure ()
+        Just code -> withMVar system.lifecycle \stopping -> do
+          -- A fault injector may have replaced this process while the loop
+          -- waited for the lock.
+          current <- processesOf system role
+          unless (stopping || all (\member -> childPid member /= childPid child) current) (restartExited role child code)
+  where
+    restartExited role child code = do
+      diedAt <- getCurrentTime
+      _ <- reapChild system.supervisor child
+      let target = processTarget role child
+      recordWindow system "restart" target DisturbanceStart
+      threadDelay 500000
+      _ <- replace system role child "exited" (Text.pack (show code)) diedAt
+      recordWindow system "restart" target DisturbanceEnd
+
+-- | SIGKILL one process of a role and start its replacement once it has
+-- exited. The window from the signal to the replacement's start is recorded
+-- as @fault/sigkill@. Returns the restart, or nothing when the system is
+-- stopping or the role has no process at that index.
+killAndRestart :: RunningSystem -> Text -> Int -> IO (Maybe RestartRecord)
+killAndRestart system role index = withMVar system.lifecycle \stopping ->
+  if stopping
+    then pure Nothing
+    else do
+      members <- processesOf system role
+      case drop index members of
+        [] -> pure Nothing
+        child : _ -> do
+          let target = processTarget role child
+          recordWindow system "fault/sigkill" target DisturbanceStart
+          diedAt <- getCurrentTime
+          killChild system.supervisor child
+          record <- replace system role child "sigkill" "SIGKILL" diedAt
+          recordWindow system "fault/sigkill" target DisturbanceEnd
+          pure (Just record)
+
+replace :: RunningSystem -> Text -> Child -> Text -> Text -> UTCTime -> IO RestartRecord
+replace system role child cause code diedAt = do
+  replacement <- restartChild system.supervisor child
+  sendCommand replacement CtlStart
+  readyAt <- getCurrentTime
+  modifyIORef' system.children (Map.adjust (fmap (\member -> if childPid member == childPid child then replacement else member)) role)
+  let record = RestartRecord role (childProc child).index cause code diedAt readyAt
+  modifyIORef' system.restarts (record :)
+  pure record
+
+restartsOf :: RunningSystem -> IO [RestartRecord]
+restartsOf system = reverse <$> readIORef system.restarts
+
+-- | Disturbance windows are identified by their label and target, so a
+-- window survives a process restart. The role and index name the target.
+processTarget :: Text -> Child -> Text
+processTarget role child = role <> "/" <> Text.pack (show (childProc child).index)
+
+-- | Record one edge of a labelled disturbance window in the harness ledger.
+recordWindow :: RunningSystem -> Text -> Text -> FactKind -> IO ()
+recordWindow system label target kind =
+  recordDurable system.check.ledger kind target 0 label (KeyMap.fromList [("label", Aeson.String label), ("target", Aeson.String target)])
 
 -- | Deliver a signal to every process of a long-running role. The supervisor
 -- records each delivery as a disturbance window.
@@ -217,14 +319,18 @@ awaitQuiescence system driverDeadline deadline = do
       warehouseCounts <- either (const (StatusCounts 0 [] 0)) id <$> runSql system.warehouse fulfilmentStatusCountsTx
       shopBacklog <- either (const Nothing) Just <$> runSql system.shop (backlogTx Shop)
       warehouseBacklog <- either (const Nothing) Just <$> runSql system.warehouse (backlogTx Warehouse)
+      -- A restarted driver resubmits its share and sees earlier placements as
+      -- duplicates, so completeness is judged against the configured order
+      -- count, while the drivers' acceptances are reported.
       let submitted = sum [report.accepted | report <- reports]
+          expected = if system.config.orders > 0 then system.config.orders else system.config.durationSeconds * max 1 system.config.ratePerSecond
           nonTerminal counts statuses = sum [count | (status, count) <- counts.byStatus, status `elem` statuses]
           drained backlog = case backlog of
             Just value -> value == Backlog 0 0 0 0 0 0
             Nothing -> False
           reached =
             finished
-              && shopCounts.total == fromIntegral submitted
+              && shopCounts.total == fromIntegral expected
               && warehouseCounts.total == shopCounts.total
               && nonTerminal shopCounts ["placed"] == (0 :: Int64)
               && nonTerminal warehouseCounts ["requested"] == 0

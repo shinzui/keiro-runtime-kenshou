@@ -233,16 +233,20 @@ requestPick env order facts aid = do
     Just provider -> enqueueTraced provider pickJob (MessageHeaders (object ["x-pgmq-group" .= facts.sku])) job
     Nothing -> enqueueToGroup pickJob facts.sku job
   either (ioError . userError . show) (const (pure ())) enqueued
+  -- A step body that runs again after a crash, before its result was
+  -- journaled, is a redelivery for invariant I5.
+  env.signals.observe "step-request-pick" (orderText order)
 
 ship :: WarehouseEnv -> WorkflowId -> IO Text
 ship env (WorkflowId order) = do
   options <- commandOptions env.signals
   result <- runContextOrThrow env.store (dispatchFulfilmentCommand options ("ship/" <> order) (OrderId order) (ShipFulfilment (ShipFulfilmentData (OrderId order))))
+  let decided outcome = env.signals.observe "step-ship" order >> pure outcome
   case result of
-    DispatchAppended -> pure "shipped"
-    DispatchDuplicate -> pure "shipped"
+    DispatchAppended -> decided "shipped"
+    DispatchDuplicate -> decided "shipped"
     -- The deadline won the race; the aggregate already decided the order.
-    DispatchRejected -> pure "already-decided"
+    DispatchRejected -> decided "already-decided"
     DispatchFailed problem -> ioError (userError ("ship failed: " <> show problem))
 
 fulfilmentRegistry :: WarehouseEnv -> WorkflowRegistry '[Store, Error StoreError, IOE]

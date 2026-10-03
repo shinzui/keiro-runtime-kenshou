@@ -45,7 +45,10 @@ data Signals = Signals
   { tracer :: !(Maybe Tracer),
     provider :: !(Maybe TracerProvider),
     metrics :: !(Maybe KeiroMetrics),
-    sabotage :: !TraceSabotage
+    sabotage :: !TraceSabotage,
+    -- | Record that a delivery on a hop was handled: the hop name and the
+    -- delivery's identity. Invariant I5 counts repeated identities.
+    observe :: Text -> Text -> IO ()
   }
 
 -- | Sabotage controls for trace continuity only: each removes one link that
@@ -60,7 +63,7 @@ data TraceSabotage
   deriving stock (Eq, Show)
 
 noSignals :: Signals
-noSignals = Signals Nothing Nothing Nothing NoTraceSabotage
+noSignals = Signals Nothing Nothing Nothing NoTraceSabotage (\_ _ -> pure ())
 
 -- | The trace context an outbox draft carries: the one recorded with the
 -- source event. Keiro's producer identity includes the trace class

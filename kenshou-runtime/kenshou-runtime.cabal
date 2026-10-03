@@ -39,6 +39,8 @@ library
   hs-source-dirs: src
   exposed-modules:
     Kenshou.Suite.Runtime
+    Kenshou.Suite.Runtime.Concurrency
+    Kenshou.Suite.Runtime.Concurrency.Workers
     Kenshou.Suite.Runtime.Correctness.Ops
     Kenshou.Suite.Runtime.Correctness.OrderFlow
     Kenshou.Suite.Runtime.Correctness.Telemetry
@@ -47,6 +49,7 @@ library
     Kenshou.Suite.Runtime.Knobs
     Kenshou.Suite.Runtime.Ops
     Kenshou.Suite.Runtime.Oracle
+    Kenshou.Suite.Runtime.Oracle.Duplicates
     Kenshou.Suite.Runtime.Oracle.Ops
     Kenshou.Suite.Runtime.Oracle.Pure
     Kenshou.Suite.Runtime.Oracle.Sql
@@ -110,6 +113,7 @@ library
     stm,
     text,
     time,
+    unix,
     unliftio-core,
     unordered-containers,
     uuid,
@@ -127,6 +131,7 @@ test-suite kenshou-runtime-test
     hw-kafka-client,
     keiro,
     keiro-core,
+    kenshou-check,
     kenshou-core,
     kenshou-runtime,
     text,

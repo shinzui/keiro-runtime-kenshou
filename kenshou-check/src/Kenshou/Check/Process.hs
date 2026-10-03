@@ -21,6 +21,8 @@ module Kenshou.Check.Process
     crashWindows,
     childPid,
     childProc,
+    childExitCode,
+    reapChild,
     readChildMessages,
     sweepOrphans,
   )
@@ -240,6 +242,19 @@ crashWindows supervisor = reverse <$> readIORef supervisor.windows
 
 childPid :: Child -> CPid
 childPid = (.pid)
+
+-- | The exit code of a child that has exited, without waiting.
+childExitCode :: Child -> IO (Maybe ExitCode)
+childExitCode child = getProcessExitCode child.processHandle
+
+-- | Collect a child that has already exited (or wait for it to exit) and
+-- remove it from the supervisor, without signalling it. A restart loop uses
+-- this for a process that died on its own.
+reapChild :: Supervisor -> Child -> IO ExitCode
+reapChild supervisor child = do
+  code <- waitExit child
+  retireChild supervisor child
+  pure code
 
 childProc :: Child -> ProcId
 childProc child = child.spec.proc

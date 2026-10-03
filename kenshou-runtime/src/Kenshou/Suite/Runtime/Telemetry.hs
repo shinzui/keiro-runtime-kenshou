@@ -48,14 +48,14 @@ noRoleTelemetry = RoleTelemetry noSignals Nothing
 -- in-memory span probe exists, every retained span to
 -- @children/<instance>/spans.jsonl@ when it stops, so that cross-process
 -- trace assertions can read all processes' spans after the run.
-withRoleTelemetry :: TraceSabotage -> RoleContext -> (RoleTelemetry -> IO a) -> IO a
-withRoleTelemetry sabotage context action = case telemetrySpecFromWorker context directory of
+withRoleTelemetry :: TraceSabotage -> (Text -> Text -> IO ()) -> RoleContext -> (RoleTelemetry -> IO a) -> IO a
+withRoleTelemetry sabotage observe context action = case telemetrySpecFromWorker context directory of
   Left problem -> ioError (userError ("invalid role telemetry: " <> Text.unpack problem))
   Right spec
-    | spec.tracing == TracingOff && spec.metrics == MetricsOff -> action noRoleTelemetry
+    | spec.tracing == TracingOff && spec.metrics == MetricsOff -> action noRoleTelemetry {signals = noSignals {observe}}
     | otherwise -> withTelemetry spec \handles -> do
         metrics <- traverse newKeiroMetrics handles.meter
-        action (RoleTelemetry (Signals handles.tracer handles.tracerProvider metrics sabotage) (Just handles)) `finally` writeSpans handles
+        action (RoleTelemetry (Signals handles.tracer handles.tracerProvider metrics sabotage observe) (Just handles)) `finally` writeSpans handles
   where
     directory = context.init.outDir </> "children" </> Text.unpack (Text.replace "/" "-" context.init.instanceName)
     writeSpans handles = case handles.spans of
