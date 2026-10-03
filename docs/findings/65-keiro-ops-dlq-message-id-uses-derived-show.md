@@ -3,7 +3,9 @@
 Status: reproduced on the released cohort (keiro-ops 0.17.0.0, pgmq-core
 0.6.1.0) and still present in the keiro source at `82988ae6` (keiro-ops
 0.19.0.0). Classified as an implementation-class observation about the
-operator console's JSON surface. No owner record has been filed yet.
+operator console's JSON surface. Filed on 2026-10-03 as
+`mori://shinzui/keiro/okf/bug-reports/concepts/BUG-9` (keiro `4b01af10`),
+status `reported`, severity `degraded`.
 
 `keiro-ops --json pgmq dlq read --queue <q>` is part of the automation
 surface that keiro's operations guide (`docs/user/operations.md` in
@@ -27,8 +29,6 @@ implementation-class, so it does not change the outcome. I8 accepts the
 rendering by parsing it, and it still compares the identifier set with
 `pgmq.q_pick_dlq` exactly.
 
-Disposition needed: an improvement request or bug report in the keiro corpus
-that asks for `dlq_message_id` to be rendered as a number, or a documented
-decision that the rendering is intended. The cross-check's parser accepts both
-forms, so the scenario keeps working after a fix. Only the
-implementation verdict changes, to `held`.
+Disposition: owner record BUG-9 asks for `dlq_message_id` to be rendered as
+a number. The cross-check's parser accepts both forms, so the scenario keeps
+working after a fix. Only the implementation verdict changes, to `held`.

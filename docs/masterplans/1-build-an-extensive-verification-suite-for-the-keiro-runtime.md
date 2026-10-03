@@ -532,7 +532,7 @@ Cross-plan baseline handoff gates remain open:
   owner record or a documented non-bug disposition. Unresolved investigations
   keep this gate open and must be explicit in the working report. The register
   contains 59 numbered findings (1–56 and 63–65),
-  33 distinct owner bug records and ten improvement requests; a count of
+  34 distinct owner bug records and ten improvement requests; a count of
   reports is not a count of repairs or verified fixes.
 - [ ] Supply independent replayable verdict checks for the selected evidence
   and publish the final baseline report. EP-18 and EP-19 are Complete, but
@@ -731,7 +731,7 @@ disposition changes.
 - EP-11 observed a slow drain (about three records per second) after a partition moves by rebalance, with and without the harness proxy. It is unattributed until a head-cohort run separates the released `hw-kafka-client` from the fork.
 - EP-16 live acceptance (2026-10-03): the cell agent decodes the descriptor with `deny_unknown_fields`, so adding an optional `broker` role crash-looped the older PostgreSQL and monitoring agents and sealed three runs, including a broker-free one, as `infrastructure-failure`/`reset-failed`. Any descriptor addition must ship matched images for every role until the agents tolerate unknown fields or upgrades refuse incompatible descriptors.
 - EP-17's payload depended on an ambient `rpk`; the cell driver's 26.1.7 rejects a flag the harness uses ([finding 64](../findings/64-kenshou-payload-relies-on-ambient-rpk.md)). Every external tool a cell-run scenario invokes must come from the payload closure, not the cell image.
-- EP-15's operator cross-check (2026-10-03) found that `keiro-ops --json pgmq dlq read` renders `dlq_message_id` with pgmq-core's derived `Show` ([finding 65](../findings/65-keiro-ops-dlq-message-id-uses-derived-show.md)). This is a shape defect in the documented automation surface, not a value disagreement. It is still present at keiro HEAD, and no owner record has been filed, so the finding-attribution gate counts it as open.
+- EP-15's operator cross-check (2026-10-03) found that `keiro-ops --json pgmq dlq read` renders `dlq_message_id` with pgmq-core's derived `Show` ([finding 65](../findings/65-keiro-ops-dlq-message-id-uses-derived-show.md)). This is a shape defect in the documented automation surface, not a value disagreement. It is still present at keiro HEAD; it is filed as `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-9`.
 - EP-15's I7 work (2026-10-03) found that the released runtime propagates a trace on its own only from a Kafka record to shibuya's consumer span and from `enqueueTraced` to the job span. It does not propagate across the event store, an outbox row, or a workflow resume. Keiro's outbox publish span is a root span covering a whole batch. Producer identity includes the trace class (`mori://shinzui/keiro/okf/adrs/concepts/ADR-42`), so a handler must take the outbox trace from its source event rather than from its current span. EP-13, EP-14 and EP-7 telemetry assertions that assume end-to-end traces should expect these gaps.
 - EP-15 added two exports to EP-5's `Kenshou.Check.Process` on 2026-10-03: `childExitCode` and `reapChild`, so a supervisor loop can replace a process that died on its own. The change is additive; EP-5's existing callers are unaffected.
 
