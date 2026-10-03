@@ -251,6 +251,11 @@ provenance:
       at: 2026-10-03T13:10:43Z
       mode: "implement"
       note: "Coordinated the parallel EP-11/12/14/15/16 pass, merged its branches, added ADR-22 and extended ADR-8"
+    - model: "claude-opus-5-5"
+      harness: "claude-code"
+      at: 2026-10-03T17:46:19Z
+      mode: "implement"
+      note: "EP-15 coordination: keiro-ops role and I8 delivered, component graph edge added, finding 65 registered"
 ---
 
 # Build an extensive verification suite for the keiro runtime
@@ -507,7 +512,7 @@ unrelated infrastructure cleanup.
 
 | Child plan | Remaining deliverable | Current constraint |
 |---|---|---|
-| [EP-15 — assembled runtime](../plans/15-verify-the-assembled-runtime-end-to-end-and-under-soak.md) | Remaining Milestone 1 interfaces (per-role telemetry, `batch-enqueue`, Poisson arrival, `keiro-ops` role), invariants I5/I7/I8, the Milestone 3 failure matrix, gated soaks, benchmarks and whole-system telemetry comparison. | Milestone 1 is delivered: twelve worker roles across two PostgreSQL servers and a private broker, and the smoke scenario passes. Milestone 2 delivered I1–I4 and I6 with unit and live sabotage controls; five order-flow scenarios passed locally as functional evidence only. EP-1 added `keiro-ops` 0.17.0.0 to both cohorts on 2026-10-03, so I8 and the `keiro-ops` role are implementation work. |
+| [EP-15 — assembled runtime](../plans/15-verify-the-assembled-runtime-end-to-end-and-under-soak.md) | Remaining Milestone 1 interfaces (per-role telemetry, `batch-enqueue`, Poisson arrival), invariants I5 and I7, the Milestone 3 failure matrix, gated soaks, benchmarks and whole-system telemetry comparison. | Milestone 1 is delivered: twelve worker roles across two PostgreSQL servers and a private broker, and the smoke scenario passes. Milestone 2 delivered I1–I4, I6 and I8 with unit and live sabotage controls. Five order-flow scenarios and `keiro-ops-cross-check` passed locally, as functional evidence only. The on-demand `runtime/keiro-ops` role runs keiro-ops 0.17.0.0 from the kenshou binary; the component graph now has a `keiro-ops` component and a `runtime-assembly` build edge to it. |
 | [EP-12 — write side](../plans/12-cover-the-keiro-command-processor-process-managers-and-routers.md) | Run the four `specs/keiro-write-side-*.json` isolation controls and paired benchmark matrices on a quiet cell, finish multi-process benchmark load, the full telemetry soak and ADR/outcome distillation. | Generalized roles and oracles, drain-budget and stage-backlog controls for finding 44, writer-only and generate-only isolation for finding 46, and all telemetry arms are implemented and pass local smokes. Attribution needs a quiet cell. Kiroku BUG-3, fixed in kiroku-store 0.9.0.1 and pinned by neither cohort, is the leading finding-46 suspect. |
 | [EP-14 — durable execution](../plans/14-cover-keiro-durable-execution-timers-and-sharded-subscriptions.md) | Add the awakeable signal/cancel races, GC-versus-append scenario, terminal-race rotation arm and one metrics arm, then Milestone 4 benchmarks, soaks, telemetry and acceptance. | Crash-window, terminal-race and replay-identity scenarios and the shard checkpoint/order/duplicate assertions are delivered. [Finding 63](../findings/63-keiro-child-completion-crash-strands-parent.md) reproduces a stranded parent after a child completion crash; it is filed as `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-8` and scoped on the scenario as a nonblocking known defect. |
 | [EP-11 — Kafka](../plans/11-cover-the-kafka-transport-edge-with-a-disposable-broker.md) | Head-cohort repetitions, attribution of the slow post-rebalance drain, full-rate churn and longer soaks, controlled benchmark and telemetry comparisons, and assembled-runtime integration proof. | Released three-seed clean repetitions of all eleven unscoped broker scenarios passed, every judged oracle has a failing live sabotage control, and BUG-5 reproduced on a clean local run and, on 2026-10-03, on broker-capable alpha (nested run `01a10261-71cd-765f-a5da-23514e17523e`, same counter-example, nonblocking). The head build blocker is repaired at `db5aec9`. Alpha now has a broker, so controlled Kafka cell runs are unblocked. |
@@ -526,7 +531,7 @@ Cross-plan baseline handoff gates remain open:
 - [ ] Close finding attribution and reporting gaps with an existing or new
   owner record or a documented non-bug disposition. Unresolved investigations
   keep this gate open and must be explicit in the working report. The register
-  contains 58 numbered findings (1–56, 63 and 64),
+  contains 59 numbered findings (1–56 and 63–65),
   33 distinct owner bug records and ten improvement requests; a count of
   reports is not a count of repairs or verified fixes.
 - [ ] Supply independent replayable verdict checks for the selected evidence
@@ -726,6 +731,7 @@ disposition changes.
 - EP-11 observed a slow drain (about three records per second) after a partition moves by rebalance, with and without the harness proxy. It is unattributed until a head-cohort run separates the released `hw-kafka-client` from the fork.
 - EP-16 live acceptance (2026-10-03): the cell agent decodes the descriptor with `deny_unknown_fields`, so adding an optional `broker` role crash-looped the older PostgreSQL and monitoring agents and sealed three runs, including a broker-free one, as `infrastructure-failure`/`reset-failed`. Any descriptor addition must ship matched images for every role until the agents tolerate unknown fields or upgrades refuse incompatible descriptors.
 - EP-17's payload depended on an ambient `rpk`; the cell driver's 26.1.7 rejects a flag the harness uses ([finding 64](../findings/64-kenshou-payload-relies-on-ambient-rpk.md)). Every external tool a cell-run scenario invokes must come from the payload closure, not the cell image.
+- EP-15's operator cross-check (2026-10-03) found that `keiro-ops --json pgmq dlq read` renders `dlq_message_id` with pgmq-core's derived `Show` ([finding 65](../findings/65-keiro-ops-dlq-message-id-uses-derived-show.md)). This is a shape defect in the documented automation surface, not a value disagreement. It is still present at keiro HEAD, and no owner record has been filed, so the finding-attribution gate counts it as open.
 
 ## Decision Log
 

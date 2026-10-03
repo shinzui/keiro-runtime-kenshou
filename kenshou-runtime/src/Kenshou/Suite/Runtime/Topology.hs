@@ -6,6 +6,7 @@ module Kenshou.Suite.Runtime.Topology
     QuiescenceReport (..),
     awaitQuiescence,
     processesOf,
+    signalRole,
     driverReports,
     consumerSessionsEnded,
   )
@@ -28,7 +29,7 @@ import Data.Time (NominalDiffTime, diffUTCTime, getCurrentTime)
 import Kafka.Consumer.Types (ConsumerGroupId (..))
 import Kafka.Types (BrokerAddress (..), PartitionId (..), TopicName (..))
 import Keiro.PGMQ.Runtime (withJobRuntime)
-import Kenshou.Check.Process (Child, ProgressSnapshot (..), Supervisor, awaitReady, progress, readChildMessages, roleProcess, sendCommand, spawn, stopGracefully, withSupervisor)
+import Kenshou.Check.Process (Child, ChildSignal, ProgressSnapshot (..), Supervisor, awaitReady, progress, readChildMessages, roleProcess, sendCommand, signalChild, spawn, stopGracefully, withSupervisor)
 import Kenshou.Check.Scenario (CheckEnv, withCheck)
 import Kenshou.Core.Context (RunContext (..))
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
@@ -59,7 +60,10 @@ data RunningSystem = RunningSystem
     broker :: !RuntimeBroker,
     check :: !CheckEnv,
     supervisor :: !Supervisor,
-    children :: !(IORef (Map Text [Child]))
+    children :: !(IORef (Map Text [Child])),
+    -- | Numbers on-demand role invocations, such as the operator console, so
+    -- that each gets its own log and output files.
+    invocations :: !(IORef Int)
   }
 
 -- | Acquire both PostgreSQL environments and the broker, create the topics,
@@ -93,7 +97,8 @@ withReferenceSystem context spec action =
     withJobRuntime config.warehouseDatabase Nothing \jobs -> seedWarehouse warehouse jobs skuCount
     withCheck context \check -> withSupervisor check \supervisor -> do
       children <- newIORef Map.empty
-      let system = RunningSystem config shop warehouse resources.broker check supervisor children
+      invocations <- newIORef 0
+      let system = RunningSystem config shop warehouse resources.broker check supervisor children invocations
           startRole role = do
             started <- forM [0 .. max 1 config.processesPerRole - 1] \index -> do
               process <- roleProcess check (roleNameText role) index (toJSON (RoleArgs config index))
@@ -110,6 +115,11 @@ withReferenceSystem context spec action =
 
 processesOf :: RunningSystem -> Text -> IO [Child]
 processesOf system role = Map.findWithDefault [] role <$> readIORef system.children
+
+-- | Deliver a signal to every process of a long-running role. The supervisor
+-- records each delivery as a disturbance window.
+signalRole :: RunningSystem -> ChildSignal -> Text -> IO ()
+signalRole system signal role = processesOf system role >>= mapM_ \child -> signalChild system.supervisor child signal
 
 -- | How often a consumer session ended without a stop request (the
 -- adapter's known rebalance exit) and was resumed, per consumer role.

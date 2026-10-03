@@ -17,6 +17,7 @@ module Kenshou.Suite.Runtime.Oracle
     -- * Running the oracle
     verifyEndToEnd,
     verdictFor,
+    checkCell,
 
     -- * Sabotage controls
     Sabotage (..),
@@ -335,6 +336,28 @@ verdictFor name description judgement = do
         parameters = object [],
         counterExamples = judgement.examples,
         counterExamplesTruncated = judgement.violations > fromIntegral (length judgement.examples),
+        inputs = [],
+        replay = Nothing,
+        checkedAt = now,
+        durationMillis = 0
+      }
+
+-- | A single held-or-violated check with one counter-example when violated.
+checkCell :: (InvariantClass, Text, Bool, Value) -> IO Verdict
+checkCell (invariantClass, name, held, detail) = do
+  now <- getCurrentTime
+  pure
+    Verdict
+      { checker = name,
+        invariant = name,
+        cls = invariantClass,
+        status = if held then Held else Violated,
+        reason = Nothing,
+        summary = if held then "Runtime check held" else "Runtime check failed",
+        counts = Map.fromList [("examined", 1), ("violations", if held then 0 else 1)],
+        parameters = object [],
+        counterExamples = [detail | not held],
+        counterExamplesTruncated = False,
         inputs = [],
         replay = Nothing,
         checkedAt = now,

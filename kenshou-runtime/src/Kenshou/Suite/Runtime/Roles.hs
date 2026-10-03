@@ -1,6 +1,7 @@
 module Kenshou.Suite.Runtime.Roles
   ( roles,
     RoleArgs (..),
+    OpsArgs (..),
     longRunningRoles,
     roleNameText,
   )
@@ -9,7 +10,7 @@ where
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (race, withAsync)
 import Control.Concurrent.MVar (MVar, newEmptyMVar, readMVar, tryPutMVar, tryReadMVar)
-import Control.Exception (SomeException, displayException, try)
+import Control.Exception (SomeException, displayException, finally, try)
 import Control.Monad (forever, void, when)
 import Data.Aeson (FromJSON, ToJSON, object, (.=))
 import Data.Aeson qualified as Aeson
@@ -20,7 +21,9 @@ import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
 import Effectful (liftIO)
 import GHC.Generics (Generic)
+import GHC.IO.Handle (hDuplicate, hDuplicateTo)
 import Kafka.Types (BrokerAddress (..), TopicName (..))
+import Keiro.Ops (emptyAppHooks, opsCommandTree, runOpsInvocation)
 import Keiro.Outbox (BackoffSchedule (..), OrderingPolicy (..), OutboxMaintenanceOptions (..), OutboxPublishOptions (..), OutboxPublishSummary (..), defaultPublishOptions, outboxMaintenancePass, publishClaimedOutbox)
 import Keiro.PGMQ.Job (jobProcessorWithContext, runJobWorkers)
 import Keiro.PGMQ.Runtime (runJobEff, withJobRuntime)
@@ -41,9 +44,12 @@ import Kenshou.Suite.Runtime.System.Warehouse (WarehouseEnv (..), cancelOrphaned
 import Kiroku.Store (runStoreIO)
 import Kiroku.Store.Subscription.Types (RetryPolicy (..), SubscriptionName (..), SubscriptionTarget (..))
 import Kiroku.Store.Types (CategoryName (..))
+import Options.Applicative (ParserResult (..), execParserPure, prefs, renderFailure, subparserInline)
 import Shibuya.App (SupervisionStrategy (..), stopApp)
 import Shibuya.Core.Ack (AckDecision (..), HaltReason (..))
 import Shibuya.Core.Ack qualified as Ack
+import System.Exit (ExitCode (..))
+import System.IO (IOMode (WriteMode), hClose, hFlush, stdout, withFile)
 
 -- | Each role process receives the whole system description and its own
 -- index within the role.
@@ -97,8 +103,59 @@ roles =
     runtimeRole "b-timer" "Fires workflow sleeps and fulfilment deadlines." timerRole,
     runtimeRole "b-jobs" "Processes pick jobs and confirms picks through awakeables." jobsRole,
     runtimeRole "b-publisher" "Publishes the warehouse outbox to Kafka with per-record acknowledgement." (publisherRole (.warehouseDatabase)),
-    runtimeRole "b-maintenance" "Reclaims stale warehouse outbox claims and cancels awakeables left by terminal workflows." (maintenanceRole (.warehouseDatabase) (void (cancelOrphanedAwakeables Nothing)))
+    runtimeRole "b-maintenance" "Reclaims stale warehouse outbox claims and cancels awakeables left by terminal workflows." (maintenanceRole (.warehouseDatabase) (void (cancelOrphanedAwakeables Nothing))),
+    keiroOpsRole
   ]
+
+-- | One operator-console invocation against one context's database.
+data OpsArgs = OpsArgs
+  { database :: !Text,
+    arguments :: ![Text],
+    -- | Where the console's standard output is written.
+    output :: !FilePath
+  }
+  deriving stock (Generic, Eq, Show)
+  deriving anyclass (FromJSON, ToJSON)
+
+-- | The operator console, invoked on demand from the one deployed binary. It
+-- parses its arguments with keiro-ops' own command tree, as the standalone
+-- @keiro-ops@ executable does, writes the console's standard output to a
+-- file in the run directory, reports the exit code, and waits to be stopped.
+keiroOpsRole :: WorkerRole
+keiroOpsRole = WorkerRole (roleName "keiro-ops") "Runs one keiro-ops invocation against a context database and records its output." \context -> case Aeson.fromJSON context.init.args of
+  Aeson.Error problem -> context.send (WrkError ("invalid keiro-ops arguments: " <> Text.pack problem))
+  Aeson.Success (args :: OpsArgs) -> do
+    context.send WrkReady
+    started <- awaitStart context
+    when started do
+      let argv = ["--database-url", Text.unpack args.database] <> fmap Text.unpack args.arguments
+      result <- case execParserPure (prefs subparserInline) (opsCommandTree emptyAppHooks) argv of
+        Success invocation -> do
+          code <- withStdoutTo args.output (runOpsInvocation emptyAppHooks invocation)
+          pure (object ["exitCode" .= exitNumber code, "output" .= args.output])
+        Failure failure ->
+          let (message, code) = renderFailure failure "keiro-ops"
+           in pure (object ["exitCode" .= exitNumber code, "error" .= message])
+        CompletionInvoked _ -> pure (object ["exitCode" .= (2 :: Int), "error" .= ("completion requested" :: Text)])
+      context.send (WrkCustom "keiro-ops-finished" result)
+      stop <- newEmptyMVar
+      watchControl context stop
+  where
+    exitNumber = \case
+      ExitSuccess -> 0 :: Int
+      ExitFailure n -> n
+
+-- | Run an action with this process's standard output redirected to a file.
+-- The worker protocol has already moved its own channel off standard output.
+withStdoutTo :: FilePath -> IO a -> IO a
+withStdoutTo path action = withFile path WriteMode \handle -> do
+  hFlush stdout
+  saved <- hDuplicate stdout
+  hDuplicateTo handle stdout
+  action `finally` do
+    hFlush stdout
+    hDuplicateTo saved stdout
+    hClose saved
 
 roleName :: Text -> RoleName
 roleName = either (error . Text.unpack) id . mkRoleName . roleNameText

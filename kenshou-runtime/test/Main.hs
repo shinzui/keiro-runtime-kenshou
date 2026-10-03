@@ -1,7 +1,7 @@
 module Main (main) where
 
 import Control.Exception (evaluate)
-import Data.Aeson (toJSON)
+import Data.Aeson (Value (..), object, toJSON, (.=))
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
@@ -16,6 +16,7 @@ import Kenshou.Suite.Runtime.Correctness.OrderFlow qualified as OrderFlow
 import Kenshou.Suite.Runtime.Driver qualified as Driver
 import Kenshou.Suite.Runtime.Knobs (runtimeKnobs, systemConfigFrom)
 import Kenshou.Suite.Runtime.Oracle qualified as Oracle
+import Kenshou.Suite.Runtime.Oracle.Ops qualified as OpsOracle
 import Kenshou.Suite.Runtime.Oracle.Pure qualified as PureOracle
 import Kenshou.Suite.Runtime.Oracle.Sql qualified as Sql
 import Kenshou.Suite.Runtime.System.Config (SystemConfig (..))
@@ -34,6 +35,35 @@ import Test.Hspec
 
 main :: IO ()
 main = hspec do
+  describe "keiro-ops cross-check controls (I8)" do
+    let backlog n = object ["metric" .= ("outbox_backlog" :: Text), "count" .= (n :: Int)]
+        agreement reported stored = (OpsOracle.judgeOpsAgreement "outbox-backlog" Schema.Warehouse reported stored).violations
+    it "accepts a console count equal to the SQL count" do
+      agreement (OpsOracle.extractCount (backlog 3)) ["3"] `shouldBe` 0
+    it "fails on an altered backlog count" do
+      agreement (OpsOracle.extractCount (backlog 4)) ["3"] `shouldBe` 1
+    it "fails when the console failed or printed something else" do
+      agreement (Left "keiro-ops exited 1") ["3"] `shouldBe` 1
+      agreement (OpsOracle.extractCount (object ["metric" .= ("outbox_backlog" :: Text)])) ["3"] `shouldBe` 1
+    it "compares listings as multisets, independent of order" do
+      let workflows = toJSON [object ["workflow_name" .= ("fulfilment" :: Text), "workflow_id" .= ("o-" <> show i), "status" .= ("suspended" :: Text)] | i <- [1 :: Int, 2]]
+      OpsOracle.extractWorkflows workflows `shouldBe` Right ["fulfilment/o-1/suspended", "fulfilment/o-2/suspended"]
+      agreement (OpsOracle.extractWorkflows workflows) ["fulfilment/o-2/suspended", "fulfilment/o-1/suspended"] `shouldBe` 0
+      agreement (OpsOracle.extractWorkflows workflows) ["fulfilment/o-1/suspended"] `shouldBe` 1
+    it "reads shard ownership with unowned buckets and shard-count groups" do
+      let status = object ["subscription" .= ("shop-dispatch" :: Text), "shard_counts" .= [object ["shard_count" .= (2 :: Int), "rows" .= (2 :: Int)]], "ownership" .= [object ["bucket" .= (0 :: Int), "owner" .= ("6f1c0e4e-0000-4000-8000-000000000001" :: Text)], object ["bucket" .= (1 :: Int), "owner" .= Null]]]
+      OpsOracle.extractShardStatus status `shouldBe` Right ["bucket/0/6f1c0e4e-0000-4000-8000-000000000001", "bucket/1/unowned", "shards/2/2"]
+    it "reads subscription checkpoints with the captured store position" do
+      let inventory = object ["store_position" .= (42 :: Int), "visible_store_head" .= (42 :: Int), "checkpoints" .= [object ["subscription" .= ("shop-dispatch" :: Text), "member" .= (3 :: Int), "checkpoint_position" .= (40 :: Int)]]]
+      OpsOracle.extractCheckpoints inventory `shouldBe` Right ["store/42", "checkpoint/shop-dispatch/3/40"]
+    it "reads DLQ message ids in the derived-Show rendering and flags that shape" do
+      OpsOracle.parseDlqMessageId (String "MessageId {unMessageId = 7}") `shouldBe` Right "7"
+      OpsOracle.parseDlqMessageId (Number 7) `shouldBe` Right "7"
+      OpsOracle.parseDlqMessageId (String "MessageId {unMessageId = }") `shouldSatisfy` either (const True) (const False)
+      length (OpsOracle.dlqShapeProblems (toJSON [object ["dlq_message_id" .= ("MessageId {unMessageId = 7}" :: Text)]])) `shouldBe` 1
+      OpsOracle.dlqShapeProblems (toJSON [object ["dlq_message_id" .= (7 :: Int)]]) `shouldBe` []
+    it "declares the compared commands for both contexts" do
+      length OpsOracle.opsChecks `shouldBe` 13
   describe "end-to-end oracle controls" do
     let outcome order first terminals kind status quantity = Sql.StreamOutcome order first terminals kind (Just status) (Just quantity)
         completedOrder = outcome "o-1" 1 1 (Just "OrderCompleted") "completed" 2

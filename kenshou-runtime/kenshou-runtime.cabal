@@ -39,11 +39,14 @@ library
   hs-source-dirs: src
   exposed-modules:
     Kenshou.Suite.Runtime
+    Kenshou.Suite.Runtime.Correctness.Ops
     Kenshou.Suite.Runtime.Correctness.OrderFlow
     Kenshou.Suite.Runtime.Correctness.WireRoundtrip
     Kenshou.Suite.Runtime.Driver
     Kenshou.Suite.Runtime.Knobs
+    Kenshou.Suite.Runtime.Ops
     Kenshou.Suite.Runtime.Oracle
+    Kenshou.Suite.Runtime.Oracle.Ops
     Kenshou.Suite.Runtime.Oracle.Pure
     Kenshou.Suite.Runtime.Oracle.Sql
     Kenshou.Suite.Runtime.Roles
@@ -83,12 +86,15 @@ library
     keiki,
     keiro,
     keiro-core,
+    keiro-ops,
     keiro-pgmq,
     kenshou-check,
     kenshou-core,
     kenshou-kafka,
     kenshou-keiro,
     kiroku-store,
+    optparse-applicative,
+    scientific,
     shibuya-core,
     shibuya-kafka-adapter,
     splitmix,

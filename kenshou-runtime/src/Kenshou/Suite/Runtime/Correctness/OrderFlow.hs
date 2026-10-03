@@ -4,7 +4,7 @@ module Kenshou.Suite.Runtime.Correctness.OrderFlow
   )
 where
 
-import Data.Aeson (Value, object, toJSON, (.=))
+import Data.Aeson (object, toJSON, (.=))
 import Data.Aeson.Key qualified as Key
 import Data.Int (Int64)
 import Data.List (foldl')
@@ -13,9 +13,8 @@ import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Data.Time (getCurrentTime)
 import Kenshou.Check.Scenario (finishWithVerdicts)
-import Kenshou.Check.Verdict (InvariantClass (..), Verdict (..), VerdictStatus (..))
+import Kenshou.Check.Verdict (InvariantClass (..))
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Id (Seed, parseScenarioId)
@@ -24,7 +23,7 @@ import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..))
 import Kenshou.Suite.Runtime.Driver (DriverReport (..), GeneratedOrder (..), generateOrder)
 import Kenshou.Suite.Runtime.Knobs (quiescenceDeadlineFrom, runtimeKnobName, runtimeKnobsWith)
-import Kenshou.Suite.Runtime.Oracle (applySabotage, sabotageFrom, verifyEndToEnd, withCheckpointMonitor)
+import Kenshou.Suite.Runtime.Oracle (applySabotage, checkCell, sabotageFrom, verifyEndToEnd, withCheckpointMonitor)
 import Kenshou.Suite.Runtime.Roles (longRunningRoles, roleNameText)
 import Kenshou.Suite.Runtime.System.Config (SystemConfig (..))
 import Kenshou.Suite.Runtime.System.Context (runtimeRequirements)
@@ -200,7 +199,7 @@ runOrderFlow expectation context = withReferenceSystem context (systemSpecFrom c
       missingLogs = [role | (role, False) <- logs]
   putSummary context Verdicts "outcomeMix" (object ["observed" .= observed, "predicted" .= predicted])
   cells <-
-    traverse cell $
+    traverse checkCell $
       [ (Contract, "quiescence-reached", report.reached, toJSON report),
         (Contract, "outcome-mix", mixHeld, object ["observed" .= observed, "predicted" .= predicted]),
         (Contract, "worker-logs-present", null missingLogs, toJSON missingLogs)
@@ -212,24 +211,3 @@ runOrderFlow expectation context = withReferenceSystem context (systemSpecFrom c
 -- incarnation; the first incarnation is zero.
 logLabel :: Text -> Int -> FilePath
 logLabel role index = Text.unpack (Text.replace "/" "-" (roleNameText role)) <> "-" <> show index <> ".0.stderr.log"
-
-cell :: (InvariantClass, Text, Bool, Value) -> IO Verdict
-cell (invariantClass, name, held, detail) = do
-  now <- getCurrentTime
-  pure
-    Verdict
-      { checker = name,
-        invariant = name,
-        cls = invariantClass,
-        status = if held then Held else Violated,
-        reason = Nothing,
-        summary = if held then "Runtime check held" else "Runtime check failed",
-        counts = Map.fromList [("examined", 1), ("violations", if held then 0 else 1)],
-        parameters = object [],
-        counterExamples = [detail | not held],
-        counterExamplesTruncated = False,
-        inputs = [],
-        replay = Nothing,
-        checkedAt = now,
-        durationMillis = 0
-      }
