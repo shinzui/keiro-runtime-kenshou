@@ -72,6 +72,12 @@ main = hspec do
     it "fails no-orphans on a pending outbox row" do
       violations (Oracle.judgeOrphans "shop" [("outbox-unsent", 0), ("inbox-unfinished", 0)]) `shouldBe` 0
       violations (Oracle.judgeOrphans "shop" [("outbox-unsent", 1), ("inbox-unfinished", 0)]) `shouldBe` 1
+    it "fails checkpoints-monotonic on a decreased checkpoint" do
+      let key = Sql.CheckpointKey "shop-dispatch" 0 1
+          (marks, first) = Oracle.judgeCheckpointSample "shop" Map.empty [(key, 10)]
+          (marks', advanced) = Oracle.judgeCheckpointSample "shop" marks [(key, 12)]
+          (_, decreased) = Oracle.judgeCheckpointSample "shop" marks' [(key, 11)]
+      (violations first, violations advanced, violations decreased) `shouldBe` (0, 0, 1)
     it "predicts the outcome mix from the seed alone" do
       let seed = either (error . show) id (mkSeed 42)
           config = (systemConfigFrom (either (error . show) id (resolveKnobs runtimeKnobs []))) {orders = 600, refuseFraction = 0.2, expireFraction = 0.1}

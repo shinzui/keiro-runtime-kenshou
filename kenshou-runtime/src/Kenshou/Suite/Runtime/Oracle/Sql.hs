@@ -11,6 +11,8 @@ module Kenshou.Suite.Runtime.Oracle.Sql
     skuStockTx,
     deadLetterExamplesTx,
     orphanCountsTx,
+    CheckpointKey (..),
+    checkpointsTx,
   )
 where
 
@@ -251,6 +253,29 @@ orphanCountsTx schema warehouse =
             ]
           else []
     )
+
+-- | One subscription member's durable checkpoint.
+data CheckpointKey = CheckpointKey
+  { subscription :: !Text,
+    member :: !Int64,
+    size :: !Int64
+  }
+  deriving stock (Eq, Ord, Show)
+
+checkpointsTx :: Tx.Transaction [(CheckpointKey, Int64)]
+checkpointsTx =
+  Tx.statement () $
+    Statement.preparable
+      "SELECT subscription_name, consumer_group_member::bigint, consumer_group_size::bigint, last_seen FROM kiroku.subscriptions ORDER BY 1, 2, 3"
+      Encoders.noParams
+      ( Decoders.rowList
+          ( (\name member size seen -> (CheckpointKey name member size, seen))
+              <$> Decoders.column (Decoders.nonNullable Decoders.text)
+              <*> Decoders.column (Decoders.nonNullable Decoders.int8)
+              <*> Decoders.column (Decoders.nonNullable Decoders.int8)
+              <*> Decoders.column (Decoders.nonNullable Decoders.int8)
+          )
+      )
 
 scalar :: Text -> Tx.Transaction Int64
 scalar query = Tx.statement () (Statement.preparable query Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8))))

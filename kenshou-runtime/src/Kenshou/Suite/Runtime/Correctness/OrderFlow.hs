@@ -24,7 +24,7 @@ import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..))
 import Kenshou.Suite.Runtime.Driver (DriverReport (..), GeneratedOrder (..), generateOrder)
 import Kenshou.Suite.Runtime.Knobs (quiescenceDeadlineFrom, runtimeKnobName, runtimeKnobsWith)
-import Kenshou.Suite.Runtime.Oracle (applySabotage, sabotageFrom, verifyEndToEnd)
+import Kenshou.Suite.Runtime.Oracle (applySabotage, sabotageFrom, verifyEndToEnd, withCheckpointMonitor)
 import Kenshou.Suite.Runtime.Roles (longRunningRoles, roleNameText)
 import Kenshou.Suite.Runtime.System.Config (SystemConfig (..))
 import Kenshou.Suite.Runtime.System.Context (runtimeRequirements)
@@ -158,7 +158,7 @@ predictedMix seed config = foldl' add Map.empty [0 .. total - 1]
        in Map.insertWith (+) outcome 1 counts
 
 runOrderFlow :: MixExpectation -> RunContext -> IO ScenarioReport
-runOrderFlow expectation context = withReferenceSystem context (systemSpecFrom context) \system -> do
+runOrderFlow expectation context = withReferenceSystem context (systemSpecFrom context) \system -> withCheckpointMonitor system.shop system.warehouse \checkpoints -> do
   let config = system.config
       submissionSeconds = fromIntegral config.orders / fromIntegral (max 1 config.ratePerSecond) :: Double
   report <- awaitQuiescence system (realToFrac (submissionSeconds + 120)) (quiescenceDeadlineFrom context.knobs)
@@ -168,7 +168,9 @@ runOrderFlow expectation context = withReferenceSystem context (systemSpecFrom c
   let sabotage = sabotageFrom (knobText context.knobs (runtimeKnobName "oracle.sabotage"))
   applySabotage sabotage system.shop
   putSummary context Verdicts "sabotage" (toJSON (show sabotage))
-  invariants <- verifyEndToEnd config system.shop system.warehouse
+  monotonic <- checkpoints
+  endToEnd <- verifyEndToEnd config system.shop system.warehouse
+  let invariants = endToEnd <> [monotonic]
   logs <-
     traverse
       (\(role, index) -> (role,) <$> doesFileExist (context.outDir </> "logs" </> logLabel role index))

@@ -10,6 +10,9 @@ module Kenshou.Suite.Runtime.Oracle
     judgeShopConservation,
     judgeWarehouseConservation,
     judgeOrphans,
+    judgeCheckpointSample,
+    CheckpointMonitor,
+    withCheckpointMonitor,
 
     -- * Running the oracle
     verifyEndToEnd,
@@ -22,7 +25,11 @@ module Kenshou.Suite.Runtime.Oracle
   )
 where
 
+import Control.Concurrent (threadDelay)
+import Control.Concurrent.Async (withAsync)
+import Control.Monad (forever)
 import Data.Aeson (Value, object, (.=))
+import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.Int (Int64)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
@@ -210,6 +217,40 @@ judgeWarehouseConservation seeded completedQuantity stocks =
 -- | I4: nothing is left behind.
 judgeOrphans :: Text -> [(Text, Int64)] -> Judgement
 judgeOrphans context counts = foldMap (\(name, count) -> single [name | count /= 0] (object ["context" .= context, "kind" .= name, "count" .= count])) counts
+
+-- | I6 for one sample: no subscription member's checkpoint is below the
+-- value it had in the previous sample of the same context. Returns the new
+-- high-water marks.
+judgeCheckpointSample :: Text -> Map CheckpointKey Int64 -> [(CheckpointKey, Int64)] -> (Map CheckpointKey Int64, Judgement)
+judgeCheckpointSample context previous sample = (Map.union (Map.fromList sample) previous, foldMap judge sample)
+  where
+    judge (key, seen) = case Map.lookup key previous of
+      Just earlier
+        | seen < earlier ->
+            Judgement 1 1 [object ["context" .= context, "subscription" .= key.subscription, "member" .= key.member, "size" .= key.size, "previous" .= earlier, "observed" .= seen]]
+      _ -> Judgement 1 0 []
+
+-- | Samples both contexts' checkpoints every five seconds while a scenario
+-- runs, folding each sample into a running judgement.
+newtype CheckpointMonitor = CheckpointMonitor (IORef (Map CheckpointKey Int64, Map CheckpointKey Int64, Judgement, Int))
+
+withCheckpointMonitor :: ContextStore -> ContextStore -> (IO Verdict -> IO a) -> IO a
+withCheckpointMonitor shop warehouse action = do
+  state <- newIORef (Map.empty, Map.empty, mempty, 0 :: Int)
+  let sampleOnce = do
+        shopSample <- runSql shop checkpointsTx
+        warehouseSample <- runSql warehouse checkpointsTx
+        atomicModifyIORef' state \(shopMarks, warehouseMarks, judgement, samples) ->
+          let (shopMarks', shopJudged) = either (const (shopMarks, mempty)) (judgeCheckpointSample "shop" shopMarks) shopSample
+              (warehouseMarks', warehouseJudged) = either (const (warehouseMarks, mempty)) (judgeCheckpointSample "warehouse" warehouseMarks) warehouseSample
+           in ((shopMarks', warehouseMarks', judgement <> shopJudged <> warehouseJudged, samples + 1), ())
+      loop = forever (sampleOnce >> threadDelay 5000000)
+      finish = do
+        sampleOnce
+        (_, _, judgement, samples) <- readIORef state
+        verdict <- verdictFor "checkpoints-monotonic" "Subscription checkpoints sampled every five seconds never decrease." judgement
+        pure verdict {parameters = object ["samples" .= samples, "intervalSeconds" .= (5 :: Int)]}
+  withAsync loop \_ -> action finish
 
 seededLedgers :: SystemConfig -> SeededLedgers
 seededLedgers config =
