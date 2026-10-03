@@ -1,4 +1,4 @@
-module Kenshou.Suite.Keiro.Shard.Concurrency (scenarios) where
+module Kenshou.Suite.Keiro.Shard.Concurrency (scenarios, deliveryCells, checkpointStatement, firstDeliveryReversalsStatement, bucketDuplicatesStatement) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM (atomically, retry)
@@ -33,7 +33,7 @@ import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Role (ControlMessage (..), WorkerMessage (..))
 import Kenshou.Core.Scenario (CohortScope (..), KnownDefect (..), Placement (..), Scenario (..), ScenarioReport, Tier (..))
 import Kenshou.Suite.Keiro.Shard.Knobs (shardKnobName, shardKnobs)
-import Kenshou.Suite.Keiro.Shard.Oracle (ShardTiming (..), checkpointsMonotonic, failoverDeadline, recordShardCells, recordShardTimingCells)
+import Kenshou.Suite.Keiro.Shard.Oracle (ShardTiming (..), checkpointsMonotonic, duplicatesWithinBound, failoverDeadline, recordShardCells, recordShardTimingCells)
 import Kenshou.Suite.Keiro.Workflow.Fixture (durableKirokuStore, ensureDurableTables, runDurable, withDurableStore)
 import Kiroku.Store (defaultConnectionSettings, runStoreIO, runTransaction)
 import Kiroku.Store.Subscription.Types (SubscriptionName (..))
@@ -142,13 +142,14 @@ runFairShare context = withCheck context \check ->
         streamCount = fromIntegral (knobInt context.knobs (shardKnobName "shard.streams")) :: Int
         ownership = runStoreIO store (ownershipSnapshotFor name)
         sinkCount = runDurable fixture (runTransaction (Tx.statement () sinkCountStatement))
+        checkpoints = runDurable fixture (runTransaction (Tx.statement "kenshouShardFairShare" checkpointStatement))
         partlyOwned = \case
           Right rows -> length rows == bucketCount && let occupied = length [() | (_, Just _, _) <- rows] in occupied == (bucketCount + 1) `div` 2 + 1 && occupied < bucketCount
           Left _ -> False
         covered = \case
           Right rows -> length rows == bucketCount && all (\(_, owner, _) -> owner /= Nothing) rows
           Left _ -> False
-    (joinedBeforeCoverage, shedBucketMoved, inFlightEvent, allCovered, fair, appenderDone, drained) <- withSupervisor check \supervisor -> do
+    (joinedBeforeCoverage, shedBucketMoved, inFlightEvent, allCovered, fair, appenderDone, drained, checkpointSamples) <- withSupervisor check \supervisor -> do
       let start index = do
             spec <- roleProcess check "keiro/shard-worker" index (object ["subscription" .= ("kenshouShardFairShare" :: Text), "shardCount" .= bucketCount, "delivery" .= True, "handlerDelayMicros" .= if index == (0 :: Int) then Just (3000000 :: Int) else Nothing])
             worker <- spawn supervisor spec
@@ -171,9 +172,11 @@ runFairShare context = withCheck context \check ->
       let inFlightEvent = case Map.lookup mark firstState.marks of
             Just (Object fields) -> case KeyMap.lookup "eventId" fields of Just (String value) -> Just value; _ -> Nothing
             _ -> Nothing
+      c0 <- checkpoints
       second <- start 1
       allCovered <- waitUntil (covered <$> ownership) 120
       snapshot <- ownership
+      c1 <- checkpoints
       let distribution = case snapshot of
             Right rows -> Map.fromListWith (+) [(owner, 1 :: Int) | (_, Just owner, _) <- rows]
             Left _ -> Map.empty
@@ -192,20 +195,26 @@ runFairShare context = withCheck context \check ->
           Just (WrkError _) -> pure False
           _ -> retry
       drained <- waitUntil ((== Right eventCount) <$> sinkCount) (max 160 (eventCount `div` 25))
+      c2 <- checkpoints
       _ <- stopGracefully supervisor second 5000
-      pure (joinedBeforeCoverage, shedBucketMoved, inFlightEvent, allCovered, fair, appenderDone == Just True, drained)
+      pure (joinedBeforeCoverage, shedBucketMoved, inFlightEvent, allCovered, fair, appenderDone == Just True, drained, [c0, c1, c2])
     sealLedger check.ledger
     ledgers <- discoverLedgers check.ledgerDirectory
     effects <- foldFacts ledgers Map.empty \counts fact ->
       pure if fact.kind == Effect then Map.insertWith (+) fact.key (1 :: Int) counts else counts
-    recordShardCells
-      check
-      [ ("second-joined-before-complete-coverage", joinedBeforeCoverage),
-        ("full-bucket-coverage", allCovered),
-        ("fair-share-cap", fair),
-        ("no-event-loss", appenderDone && drained),
-        ("shed-in-flight-event-redelivered", shedBucketMoved && maybe False (\key -> Map.findWithDefault 0 key effects >= 2) inFlightEvent)
-      ]
+    reversals <- runDurable fixture (runTransaction (Tx.statement () firstDeliveryReversalsStatement))
+    duplicates <- runDurable fixture (runTransaction (Tx.statement () bucketDuplicatesStatement))
+    let batchSize = fromIntegral (knobInt context.knobs (shardKnobName "shard.batch-size"))
+    -- Two membership changes: the join that sheds a bucket, and the first
+    -- worker's graceful stop.
+    recordShardCells check $
+      deliveryCells batchSize 2 checkpointSamples reversals duplicates
+        <> [ ("second-joined-before-complete-coverage", joinedBeforeCoverage),
+             ("full-bucket-coverage", allCovered),
+             ("fair-share-cap", fair),
+             ("no-event-loss", appenderDone && drained),
+             ("shed-in-flight-event-redelivered", shedBucketMoved && maybe False (\key -> Map.findWithDefault 0 key effects >= 2) inFlightEvent)
+           ]
 
 coverageAfterMembershipChange :: Scenario
 coverageAfterMembershipChange =
@@ -236,6 +245,7 @@ runMembershipChange context = withCheck context \check ->
         transferred prior current = covered current && Set.null (Set.intersection (owners prior) (owners current))
         workerSpec index = roleProcess check "keiro/shard-worker" index (object ["subscription" .= ("kenshouShardMembership" :: Text), "shardCount" .= bucketCount, "delivery" .= True])
         sinkCount = runDurable fixture (runTransaction (Tx.statement () sinkCountStatement))
+        checkpoints = runDurable fixture (runTransaction (Tx.statement "kenshouShardMembership" checkpointStatement))
         waitOwnership predicate = go (0 :: Int) True
           where
             go attempts allValid = do
@@ -247,7 +257,7 @@ runMembershipChange context = withCheck context \check ->
                   if attempts >= 200
                     then pure (False, allValid && validNow)
                     else threadDelay 100000 >> go (attempts + 1) (allValid && validNow)
-    (initial, gracefulGap, gracefulValid, killedGap, killedValid, appenderDone, drained) <- withSupervisor check \supervisor -> do
+    (initial, gracefulGap, gracefulValid, killedGap, killedValid, appenderDone, drained, checkpointSamples) <- withSupervisor check \supervisor -> do
       let start index = do
             spec <- workerSpec index
             worker <- spawn supervisor spec
@@ -261,12 +271,14 @@ runMembershipChange context = withCheck context \check ->
       awaitReady appender 10000
       sendCommand appender CtlStart
       gracefulSurvivor <- start 1
+      c0 <- checkpoints
       beforeGrace <- ownership
       _ <- stopGracefully supervisor first 5000
       graceAt <- getCurrentTime
       (_, gracefulValid) <- waitOwnership (transferred beforeGrace)
       afterGrace <- ownership
       graceDone <- getCurrentTime
+      c1 <- checkpoints
       killedSurvivor <- start 2
       beforeKill <- ownership
       killChild supervisor gracefulSurvivor
@@ -274,6 +286,7 @@ runMembershipChange context = withCheck context \check ->
       (_, killedValid) <- waitOwnership (transferred beforeKill)
       afterKill <- ownership
       killDone <- getCurrentTime
+      c2 <- checkpoints
       appenderDone <- timeout 180000000 $ atomically do
         state <- progress appender
         case state.lastMessage of
@@ -281,17 +294,47 @@ runMembershipChange context = withCheck context \check ->
           Just (WrkError _) -> pure False
           _ -> retry
       drained <- waitUntil ((== Right eventCount) <$> sinkCount) (max 160 (eventCount `div` 25))
+      c3 <- checkpoints
       _ <- stopGracefully supervisor killedSurvivor 5000
-      pure (initial, if transferred beforeGrace afterGrace then Just (diffUTCTime graceDone graceAt) else Nothing, gracefulValid, if transferred beforeKill afterKill then Just (diffUTCTime killDone killAt) else Nothing, killedValid, appenderDone == Just True, drained)
+      pure (initial, if transferred beforeGrace afterGrace then Just (diffUTCTime graceDone graceAt) else Nothing, gracefulValid, if transferred beforeKill afterKill then Just (diffUTCTime killDone killAt) else Nothing, killedValid, appenderDone == Just True, drained, [c0, c1, c2, c3])
+    reversals <- runDurable fixture (runTransaction (Tx.statement () firstDeliveryReversalsStatement))
+    duplicates <- runDurable fixture (runTransaction (Tx.statement () bucketDuplicatesStatement))
+    let batchSize = fromIntegral (knobInt context.knobs (shardKnobName "shard.batch-size"))
     recordShardTimingCells
       check
-      [ ("initial-coverage", initial, Nothing),
-        ("graceful-coverage-by-deadline", maybe False (<= fromIntegral (bucketCount + 2) * renewSeconds) gracefulGap, gracefulGap),
-        ("graceful-samples-disjoint", gracefulValid, Nothing),
-        ("killed-coverage-by-deadline", maybe False (<= failoverDeadline (ShardTiming leaseSeconds renewSeconds) bucketCount 1) killedGap, killedGap),
-        ("killed-samples-disjoint", killedValid, Nothing),
-        ("all-appended-events-delivered", appenderDone && drained, Nothing)
-      ]
+      $ [(cell, held, Nothing) | (cell, held) <- deliveryCells batchSize 2 checkpointSamples reversals duplicates]
+        <> [ ("initial-coverage", initial, Nothing),
+             ("graceful-coverage-by-deadline", maybe False (<= fromIntegral (bucketCount + 2) * renewSeconds) gracefulGap, gracefulGap),
+             ("graceful-samples-disjoint", gracefulValid, Nothing),
+             ("killed-coverage-by-deadline", maybe False (<= failoverDeadline (ShardTiming leaseSeconds renewSeconds) bucketCount 1) killedGap, killedGap),
+             ("killed-samples-disjoint", killedValid, Nothing),
+             ("all-appended-events-delivered", appenderDone && drained, Nothing)
+           ]
+
+-- | First deliveries of one stream must follow its global order. The sink's
+-- identity column records when each event was first delivered.
+firstDeliveryReversalsStatement :: Statement.Statement () Int
+firstDeliveryReversalsStatement =
+  Statement.preparable
+    "SELECT count(*)::int FROM (SELECT global_position < lag(global_position) OVER (PARTITION BY stream_id ORDER BY first_delivery_seq) AS reversed FROM kenshou_durable.shard_sink) ordered WHERE reversed"
+    Encoders.noParams
+    (fromIntegral <$> Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int4)))
+
+bucketDuplicatesStatement :: Statement.Statement () [(Int, Int)]
+bucketDuplicatesStatement =
+  Statement.preparable
+    "SELECT bucket, sum(deliveries - 1)::int FROM kenshou_durable.shard_sink GROUP BY bucket ORDER BY bucket"
+    Encoders.noParams
+    (Decoders.rowList ((,) <$> (fromIntegral <$> Decoders.column (Decoders.nonNullable Decoders.int4)) <*> (fromIntegral <$> Decoders.column (Decoders.nonNullable Decoders.int4))))
+
+-- | The delivery cells every shard concurrency scenario shares, judged after
+-- the pool has drained. @changes@ is the number of membership changes.
+deliveryCells :: Int -> Int -> [Either e [(Int, Int64)]] -> Either e Int -> Either e [(Int, Int)] -> [(Text, Bool)]
+deliveryCells batchSize changes samples reversals duplicates =
+  [ ("checkpoints-never-regressed", not (null samples) && all (either (const False) (not . null)) samples && checkpointsMonotonic [(Text.pack (show member), position) | Right rows <- samples, (member, position) <- rows]),
+    ("first-deliveries-in-stream-order", either (const False) (== 0) reversals),
+    ("duplicates-within-batch-per-change", either (const False) (duplicatesWithinBound batchSize changes) duplicates)
+  ]
 
 sinkCountStatement :: Statement.Statement () Int
 sinkCountStatement =

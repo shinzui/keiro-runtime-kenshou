@@ -498,6 +498,11 @@ main = hspec do
     it "rejects a regressing checkpoint for one member" do
       ShardOracle.checkpointsMonotonic [("a", 1), ("b", 5), ("a", 2), ("b", 5)] `shouldBe` True
       ShardOracle.checkpointsMonotonic [("a", 2), ("b", 5), ("a", 1)] `shouldBe` False
+    it "bounds duplicate deliveries by one batch per bucket per membership change" do
+      ShardOracle.duplicatesWithinBound 100 2 [(0, 0), (1, 200)] `shouldBe` True
+      ShardOracle.duplicatesWithinBound 100 2 [(0, 0), (1, 201)] `shouldBe` False
+      ShardOracle.duplicatesWithinBound 100 0 [(0, 1)] `shouldBe` False
+      ShardOracle.duplicatesWithinBound 100 1 [(0, -1)] `shouldBe` False
   describe "shard knobs" do
     it "maps resolved defaults to valid short leases" do
       case resolveKnobs ShardKnobs.shardKnobs [] of

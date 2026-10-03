@@ -3,6 +3,7 @@ module Kenshou.Suite.Keiro.Shard.Oracle
     failoverDeadline,
     coverageAndDisjointness,
     checkpointsMonotonic,
+    duplicatesWithinBound,
     recordShardCells,
     recordShardTimingCells,
   )
@@ -45,6 +46,13 @@ checkpointsMonotonic = snd . foldl step (Map.empty, True)
     step (previous, held) (member, position) =
       let old = Map.lookup member previous
        in (Map.insert member position previous, held && maybe True (<= position) old)
+
+-- | A checkpoint is saved at the tail of each fetched batch, so one
+-- membership change can redeliver at most one batch per bucket. Each pair
+-- is a bucket and its duplicate deliveries.
+duplicatesWithinBound :: Int -> Int -> [(Int, Int)] -> Bool
+duplicatesWithinBound batchSize changes =
+  all (\(_, duplicates) -> duplicates >= 0 && duplicates <= batchSize * max 0 changes)
 
 recordShardCells :: CheckEnv -> [(Text, Bool)] -> IO ScenarioReport
 recordShardCells check cells = recordShardTimingCells check [(name, held, Nothing) | (name, held) <- cells]

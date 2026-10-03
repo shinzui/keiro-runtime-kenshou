@@ -46,13 +46,16 @@ seed. Keiro's plan
 made the link transition and the parent append one transaction; this window
 is the step before that transaction and is not covered by its tests.
 
-Evidence (local, PostgreSQL 18 `durable`, functional validation on a dirty
-harness tree; not published to the evidence bundle):
+Evidence (local, PostgreSQL 18 `durable`, under the shared host lock; not
+published to the evidence bundle). The first two runs used a dirty harness
+tree during development; the third used a clean tree at harness revision
+`cb9f003d0dc60a3463213593855846922c2f28c0`.
 
-| Run | Seed | Result |
-| --- | ---: | --- |
-| `01a10018-e79a-713d-b832-07dc38133015` | default | only `parent-completes-after-child-marker-crash` violated |
-| `01a1003a-a622-750b-82a4-be08f2a490e6` | 7 | only `parent-completes-after-child-marker-crash` violated |
+| Run | Seed | Harness | Result |
+| --- | ---: | --- | --- |
+| `01a10018-e79a-713d-b832-07dc38133015` | default | dirty | only `parent-completes-after-child-marker-crash` violated |
+| `01a1003a-a622-750b-82a4-be08f2a490e6` | 7 | dirty | only `parent-completes-after-child-marker-crash` violated |
+| `01a10041-1c12-7327-b58a-812d0f118088` | 11 | clean | only `parent-completes-after-child-marker-crash` violated |
 
 Reproduce:
 
