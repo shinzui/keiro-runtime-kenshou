@@ -246,6 +246,11 @@ provenance:
       at: 2026-10-01T20:31:38Z
       mode: "implement"
       note: "Advanced EP-13 inbox persistence and effect acceptance."
+    - model: "claude-opus-5-5"
+      harness: "claude-code"
+      at: 2026-10-03T13:10:43Z
+      mode: "implement"
+      note: "Coordinated the parallel EP-11/12/14/15/16 pass, merged its branches, added ADR-22 and extended ADR-8"
 ---
 
 # Build an extensive verification suite for the keiro runtime
@@ -446,8 +451,10 @@ The following cross-plan decisions should become ADRs in `docs/adr/` when the ow
 
 ## Progress
 
-Coordination checkpoint (2026-10-03 UTC): eleven of nineteen child plans are Complete;
-EP-8, EP-10–12 and EP-14–17 remain In Progress. The initiative is not blocked on owners
+Coordination checkpoint (2026-10-03 UTC, after the parallel pass): eleven of nineteen child
+plans are Complete; EP-8, EP-10–12 and EP-14–17 remain In Progress. EP-15 now has its
+two-context reference system and five end-to-end order-flow scenarios; EP-11, EP-12 and
+EP-14 closed local criteria; EP-16's broker role awaits live cell acceptance. The initiative is not blocked on owners
 fixing the bugs found in the released-cohort baseline. This pass still owns
 unfinished scenario implementation, coverage, controlled runs, finding
 classification, and evidence acceptance. Repairs belong to the owning
@@ -500,13 +507,13 @@ unrelated infrastructure cleanup.
 
 | Child plan | Remaining deliverable | Current constraint |
 |---|---|---|
-| [EP-15 — assembled runtime](../plans/15-verify-the-assembled-runtime-end-to-end-and-under-soak.md) | Build the two-context worker topology and persistent business flow, independent SQL money/stock/terminal-state oracles, failure matrix, gated one/four/twenty-four-hour soaks, benchmarks, and whole-system telemetry comparison. | Domain, wire, ledger and broker seams exist, and the local two-topic wire smoke passed. That smoke does not exercise the two databases or establish an end-to-end order outcome. Controlled cell execution needs the required broker capability. |
-| [EP-12 — write side](../plans/12-cover-the-keiro-command-processor-process-managers-and-routers.md) | Finish generalized fixture roles/oracles, the remaining matrix, benchmarks, telemetry, full soak, and guide/acceptance. | Finding 44 needs capacity-versus-drain-budget isolation; finding 46 needs writer-only or profile isolation. Low-rate business checks passed; the default-rate run still missed its drain deadline. Existing Kiroku leak reports do not excuse unrelated failures. |
-| [EP-14 — durable execution](../plans/14-cover-keiro-durable-execution-timers-and-sharded-subscriptions.md) | Complete workflow definitions, crash/fault schedules, shard checkpoint and metrics assertions, benchmarks, soak pairs, telemetry, and final guide/acceptance. | Missing coverage and assertions remain implementation work; no blanket wait for a runtime fix is recorded. |
-| [EP-11 — Kafka](../plans/11-cover-the-kafka-transport-edge-with-a-disposable-broker.md) | Finish broader repetitions and acceptance, full-rate churn/longer soaks, controlled benchmark and telemetry comparisons, and assembled-runtime integration proof. | Alpha and beta's recorded descriptors have no broker. Clean private-broker local correctness can proceed; controlled Kafka cell runs require EP-16's broker role. Existing scoped owner defects remain observable baseline outcomes. |
+| [EP-15 — assembled runtime](../plans/15-verify-the-assembled-runtime-end-to-end-and-under-soak.md) | Remaining Milestone 1 interfaces (per-role telemetry, `batch-enqueue`, Poisson arrival, `keiro-ops` role), invariants I5/I7/I8, the Milestone 3 failure matrix, gated soaks, benchmarks and whole-system telemetry comparison. | Milestone 1 is delivered: twelve worker roles across two PostgreSQL servers and a private broker, and the smoke scenario passes. Milestone 2 delivered I1–I4 and I6 with unit and live sabotage controls; five order-flow scenarios passed locally as functional evidence only. I8 and the `keiro-ops` role need `keiro-ops` in the pinned cohort (an EP-1 cohort change). |
+| [EP-12 — write side](../plans/12-cover-the-keiro-command-processor-process-managers-and-routers.md) | Run the four `specs/keiro-write-side-*.json` isolation controls and paired benchmark matrices on a quiet cell, finish multi-process benchmark load, the full telemetry soak and ADR/outcome distillation. | Generalized roles and oracles, drain-budget and stage-backlog controls for finding 44, writer-only and generate-only isolation for finding 46, and all telemetry arms are implemented and pass local smokes. Attribution needs a quiet cell. Kiroku BUG-3, fixed in kiroku-store 0.9.0.1 and pinned by neither cohort, is the leading finding-46 suspect. |
+| [EP-14 — durable execution](../plans/14-cover-keiro-durable-execution-timers-and-sharded-subscriptions.md) | Add the awakeable signal/cancel races, GC-versus-append scenario, terminal-race rotation arm and one metrics arm, then Milestone 4 benchmarks, soaks, telemetry and acceptance. | Crash-window, terminal-race and replay-identity scenarios and the shard checkpoint/order/duplicate assertions are delivered. [Finding 63](../findings/63-keiro-child-completion-crash-strands-parent.md) reproduces a stranded parent after a child completion crash; it needs an owner record before the scenario can carry a scoped known defect. |
+| [EP-11 — Kafka](../plans/11-cover-the-kafka-transport-edge-with-a-disposable-broker.md) | Head-cohort repetitions, attribution of the slow post-rebalance drain, full-rate churn and longer soaks, controlled benchmark and telemetry comparisons, and assembled-runtime integration proof. | Released three-seed clean repetitions of all eleven unscoped broker scenarios passed, every judged oracle has a failing live sabotage control, and BUG-5 reproduced on a clean local run. The head build blocker is repaired at `db5aec9`. Controlled runs need EP-16's broker role on a cell. |
 | [EP-10 — Shibuya](../plans/10-cover-shibuya-core-and-its-pgmq-and-kiroku-adapters.md) | Finish the core batch-key duration verdict, three other soak pairs, controlled cell benchmark calibration, full telemetry overhead matrix, finding audit, and outcome/ADR distillation. | Local comparison intervals are inconclusive; finding 25 still needs a clean historical reproduction or deterministic control. These are measurement and attribution gaps, not prerequisites for owner repairs. |
 | [EP-8 — PGMQ](../plans/8-cover-pgmq-hs-in-isolation.md) | Finish remaining quiet-cell A/A controls, including the corrected grouped-read workload, and repeat slow-handler sensitivity on an isolated cell. | Read/ack and invisible-backlog A/A controls passed. Layer-ladder p99 remains inconclusive under the unchanged policy. Busy-workstation sensitivity ratios and invalid grouped-read slices are excluded. |
-| [EP-16 — cell infrastructure](../plans/16-provide-leased-verification-cells-in-load-testing-infra.md) | Close the wider live acceptance matrix: broker role, forced health-failure branches, lifecycle/fencing and multi-driver checks, timing measurements, long-run collector rotation, and disposable-lane compatibility. | Passing reset, lease-race, recovery, health and collector slices exist. Broker provisioning is a concrete blocker for controlled Kafka/runtime runs; the wider matrix still needs its own evidence. Ownership is `mori://shinzui/load-testing-infra`. |
+| [EP-16 — cell infrastructure](../plans/16-provide-leased-verification-cells-in-load-testing-infra.md) | Live broker acceptance on alpha, then forced health-failure branches, lifecycle/fencing and multi-driver checks, timing measurements, long-run collector rotation, and disposable-lane compatibility. | The broker role is implemented and locally validated at `mori://shinzui/load-testing-infra` `fae376a`; building, registering and attaching it to a cell requires the owner's go-ahead for GCP actions. Kenshou needs no code change to consume it. |
 | [EP-17 — remote execution](../plans/17-run-kenshou-on-leased-cells-with-payloads-submission-and-retrieval.md) | Finish the wider remote/diagnostic acceptance and operator-guide clean-checkout proof against the supported cell lifecycle. | Released/head and diagnostic payload smokes, four local/cell parity cases, one-lease pairing, telemetry, sealed traces and profiles have passed. Remaining coverage depends on specific EP-16 capabilities and acceptance, with finding 47's guest termination/lease-loss cause still unattributed. |
 
 Cross-plan baseline handoff gates remain open:
@@ -519,7 +526,7 @@ Cross-plan baseline handoff gates remain open:
 - [ ] Close finding attribution and reporting gaps with an existing or new
   owner record or a documented non-bug disposition. Unresolved investigations
   keep this gate open and must be explicit in the working report. The register
-  contains 56 numbered findings,
+  contains 57 numbered findings (1–56 and 63),
   32 distinct owner bug records and ten improvement requests; a count of
   reports is not a count of repairs or verified fixes.
 - [ ] Supply independent replayable verdict checks for the selected evidence
@@ -712,6 +719,12 @@ disposition changes.
 - EP-13 process telemetry exposed [local finding 56](../findings/56-bounded-trace-probe-retains-evicted-spans.md): lazy bounded-probe state retains evicted spans. The focused test fails before and passes after strict-state repair; matched twenty-minute queue/inbox controls hold all nineteen business checks and produce all per-process diagnoses. The queue worker slopes fall sharply, but residual resource flags remain unattributed; the baseline handoff stays open. This repairs an existing soak acceptance blocker without adding a child plan or owner report.
 - EP-13 polling recovery gap: [local finding 55](../findings/55-polling-recovery-reuses-pre-fault-completions.md). Revision 3 now requires fresh work after every fault, including the last, and independently replays lifecycle and SQL coverage. Nineteen controls and the full verification gate pass their expected outcomes; short interruptions reproduce existing owner failures while explicit restart recovers after five long outages. Six clean polling investigations now have confirmed independent attestations, preserving four failures and two explicit-restart passes.
 
+- Parallel pass (2026-10-03): Keiro's owner marked `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-1` and `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-2` as duplicates of `mori://shinzui/kiroku/okf/bug-reports/concepts/BUG-3`, fixed in kiroku-store 0.9.0.1. Both cohorts still pin 0.8.0.1, so leak signals attributed to BUG-3 (EP-12 router and writer heaps, finding 46's leading suspect) can be confirmed only by the post-fix verification pass.
+- The released shibuya-core 0.9.0.3 and the head revision `6461c74` share a version number but give `Processing` different arities, so version CPP cannot separate the cohorts. The head CLI did not compile after EP-13's queue metrics work; `db5aec9` reads the in-flight count through the state's JSON form. Any layer matching shibuya constructors must compile on both cohorts.
+- EP-14 [finding 63](../findings/63-keiro-child-completion-crash-strands-parent.md): on keiro 0.17.0.0 a child killed after its completion marker commits and before the parent wake leaves the parent suspended forever (three of three runs, one clean); a one-boundary-earlier control completes. No owner record exists yet.
+- EP-15's assembled system hits `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-4` within seconds of start-up with no injected fault, confirming that the defect reaches a realistic deployment; the consumer resumes and counts each session end per [ADR-22](../adr/0022-build-the-assembled-runtime-on-replay-stable-application-defaults.md). Keiro's documented non-cascading cancellation also leaves awakeables pending unless the application cancels them.
+- EP-11 observed a slow drain (about three records per second) after a partition moves by rebalance, with and without the harness proxy. It is unattributed until a head-cohort run separates the released `hw-kafka-client` from the fork.
+
 ## Decision Log
 
 - Decision: Maintain a dated technical baseline report during the initial
@@ -821,6 +834,15 @@ disposition changes.
 - Decision: Use `mori://shinzui/settei` for any persistent or layered operator configuration, with precedence built-ins < ordered strict-YAML files < explicitly bound environment variables < named flags; never use it as an ambient source of scenario knobs, dimensions, seeds, policies, or versioned documents.
   Rationale: Settei gives typed declarations, deterministic precedence, origin explanations and secret-safe diagnostics, removing ad hoc configuration code from the CLI. The boundary preserves the suite's central reproducibility guarantee: everything that can change the experiment is explicit in a versioned effective document before work starts.
   Date: 2026-09-20
+
+
+- Decision: Run the unblocked EP-11, EP-12, EP-14, EP-15 and EP-16 work in parallel isolated worktrees, serialize every live scenario behind one host lock, and integrate with merge commits.
+  Rationale: The streams own disjoint packages, and only the coordinator edits this MasterPlan and ADRs. A shared lock keeps concurrent builds from invalidating timing-sensitive correctness runs; merges preserve the commit identities recorded in run results. No local benchmark, soak or overhead result from the pass counts as baseline evidence, and no cloud resource was used without the owner's approval.
+  Date: 2026-10-03
+
+- Decision: Keep finding 63's number although 57–62 are unused.
+  Rationale: Numbers were reserved per parallel stream, and the number is cited in an immutable provenance entry of EP-14. Renumbering would rewrite that entry.
+  Date: 2026-10-03
 
 
 ## Outcomes & Retrospective

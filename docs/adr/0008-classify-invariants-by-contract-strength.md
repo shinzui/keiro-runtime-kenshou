@@ -2,7 +2,7 @@
 type: Architecture Decision Record
 title: Classify invariants by contract strength
 description: Kenshou labels every correctness invariant as a public contract or an implementation property and only contract failures block a release.
-timestamp: 2026-09-21T16:51:32Z
+timestamp: 2026-10-03T13:08:57Z
 generated:
   by: process:codex
   at: "2026-09-21T16:51:32Z"
@@ -40,6 +40,16 @@ A checker that selects no relevant facts is `not-evaluated` with reason
 `vacuous` unless it explicitly allows empty input. Every checker also has a
 targeted non-vacuity test showing that a doctored ledger produces a violation.
 
+A scenario whose verdict is computed from live external state, such as broker
+offsets, two databases in the assembled runtime, or a process killed inside a
+crash window, also carries a live control recorded as run evidence. An oracle
+over live state has a sabotage knob that corrupts the gathered evidence before
+judging, and that sabotage run must fail with exactly the oracle's normal
+violation label. A crash-window scenario also has a control arm that kills the
+process one durable boundary earlier, together with a check that the kill
+landed in the intended window, so that a failure implicates the window rather
+than the harness.
+
 For Kiroku, acknowledged append durability, strict global order, no subscription
 loss, and monotonic subscription checkpoints are contract checks. Contiguous
 global positions and the current duplicate limits are implementation checks:
@@ -58,5 +68,8 @@ Kiroku scenario verdicts.
   blockers.
 - Missing workloads, broken selectors, and empty ledgers cannot produce green
   correctness results.
+- Live controls show that a passing broker, assembled-runtime or crash-window
+  verdict could have failed, which a unit test over doctored data cannot show
+  for the evidence-gathering path.
 - Scenario authors must state and justify the class when registering an
   invariant.
