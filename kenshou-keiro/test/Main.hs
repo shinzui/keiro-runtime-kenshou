@@ -315,7 +315,12 @@ main = hspec do
       let pid = ShibuyaMetrics.ProcessorId "worker"
           expected = Map.singleton pid (QueueMetrics.WorkerCounts 5 4 1 0)
           completed = (ShibuyaMetrics.emptyProcessorMetrics now) {ShibuyaMetrics.stats = ShibuyaMetrics.StreamStats 5 4 1}
-          active = completed {ShibuyaMetrics.state = ShibuyaMetrics.Processing (ShibuyaMetrics.InFlightInfo 1 1) now}
+          -- Built through FromJSON because the released and head shibuya
+          -- revisions give 'Processing' different arities.
+          processing = case Aeson.fromJSON (object ["status" .= ("processing" :: Text), "inFlight" .= (1 :: Int), "maxConcurrency" .= (1 :: Int), "lastActivity" .= now]) of
+            Aeson.Success state -> state
+            Aeson.Error problem -> error problem
+          active = completed {ShibuyaMetrics.state = processing}
           retryNotCounted = completed {ShibuyaMetrics.stats = ShibuyaMetrics.StreamStats 5 3 1}
       QueueMetrics.metricsMatch expected (Map.singleton pid completed) `shouldBe` True
       QueueMetrics.metricsMatch expected Map.empty `shouldBe` False
