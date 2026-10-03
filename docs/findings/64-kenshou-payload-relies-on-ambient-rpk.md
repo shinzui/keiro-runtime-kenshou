@@ -26,8 +26,8 @@ routing history of this plan.
 Repair: `nix/kenshou/packages.nix` now prefixes the payload wrapper's `PATH`
 with nixpkgs `redpanda-rpk` 26.2.2, allowing only that unfree package. The
 `aarch64-darwin` and `x86_64-linux` payload derivations both evaluate with
-`redpanda-rpk-26.2.2/bin` in the wrapper. A payload rebuilt from the repair and
-a rerun of the same plan on a broker-capable cell remain open.
+`redpanda-rpk-26.2.2/bin` in the wrapper. The rebuilt payload and the rerun
+are recorded below.
 
 Verification (2026-10-03): released payload bundle
 `4b12979164d319e0cba81b38600ba3166a0e4454883bc474b1f46e6fa970552a` (store path
