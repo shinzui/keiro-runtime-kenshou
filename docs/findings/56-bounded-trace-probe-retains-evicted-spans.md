@@ -1,7 +1,7 @@
 # Bounded trace probe retains evicted spans
 
-Status: repaired in source; focused regression and full repository checks pass. Matched process-soak
-confirmation is pending.
+Status: repaired in source; focused regression and full repository checks pass.
+Matched process-soak controls are complete; residual heap slopes remain unattributed.
 Owner: this repository's in-memory tracing probe. No runtime owner defect is
 assigned and no dependency version changes.
 
@@ -43,7 +43,7 @@ this in-memory tracing defect.
 
 Validation: the full `nix develop -c just verify` gate and all 20 telemetry
 examples pass. The focused regression fails before the strict-state repair
-and passes after it. Matched reduced process runs remain pending.
+and passes after it. Matched reduced process runs are recorded below.
 
 The pre-repair twenty-minute inbox control
 `01a0ffae-f01d-7084-8cb9-cb607361cd77` also held all nine business checks:
@@ -51,4 +51,16 @@ The pre-repair twenty-minute inbox control
 4,842 effects, with zero classification/GC errors or pending work. Both
 consumer heaps grew (second-half slopes approximately 14.2 and 27.2 MB/hour);
 the bounded main probes were stable. All twelve schemas and 64 artifact
-checks pass. The matched repaired queue and inbox controls are running.
+checks pass. The matched repaired queue and inbox controls have completed.
+
+The repaired queue control `01a0ffc3-f90a-70b4-a2fb-1cb43d85faeb` holds all ten
+business checks and reduces the worker second-half slopes to 1.31/1.75 MB/hour,
+with insufficient-data/leak-suspected verdicts. Its main heap remains flagged.
+The repaired inbox control `01a0ffc3-f90b-7664-aafb-655d267a8a4f` holds all nine
+business checks; the main process is stable but both consumers remain flagged.
+All 25 schemas and 127 artifacts validate, and 15,642 worker scrapes succeed.
+The inbox fresh consumer produces only 2,421 spans against capacity 4,096,
+so this window includes buffer filling. This does not establish the cause of
+every residual slope. The probe eviction defect is independently repaired;
+resource acceptance of selected baseline evidence remains a separate, open
+MasterPlan attribution gate. Thresholds and historical outcomes are unchanged.

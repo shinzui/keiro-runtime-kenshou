@@ -27,4 +27,6 @@ okf_version: "0.2"
 - [Keep Kafka brokers private to a run](0017-keep-kafka-brokers-private-to-a-run.md) - Local Kafka verification uses a disposable run-owned Redpanda container; cells use their provisioned brokers, and the machine-global broker is never mutated.
 - [Keep verification records immutable and derive baselines](0018-keep-verification-records-immutable-and-derive-baselines.md) - Verification records are immutable events that link to digest-pinned data, while baselines are selected from confirmed compatible history.
 - [Relax the evidence profile after records are committed](0019-relax-the-evidence-profile-after-records-are-committed.md) - Once an evidence record is committed, its type and field names stay stable and later profile revisions may only relax validation.
+- [Pin cell payloads to verified cohort identities](0020-pin-cell-payloads-to-verified-cohort-identities.md) - A cell payload pins runtime packages from the cohort descriptor and is accepted only after its resolved Nix identity passes the cohort check.
+- [Address cell runs by submission and nested run](0021-address-cell-runs-by-submission-and-nested-run.md) - A cell run is identified by its submission and nested run IDs, with cell evidence linked to sealed results and infrastructure failure governing the effective outcome.
 

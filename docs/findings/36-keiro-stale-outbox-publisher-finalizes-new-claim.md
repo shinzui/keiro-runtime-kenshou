@@ -14,3 +14,10 @@ the failed/succeeded/dead stale outcomes and the strict-known-defect exit path;
 all replay exactly. See [the messaging plan](../plans/13-cover-the-keiro-outbox-inbox-and-job-queue.md#independent-stale-publisher-replay).
 The older published revision-1 attestation remains incomplete; no historical
 raw data or owner-fix status is changed.
+
+The representative clean revision-2 investigation at source and attester
+`db58cb18f7f3c57cdf8acffe206058d12ffebedf` is now [recorded](../verification/runs/keiro/2026/10/01a0ffd8-d4ef-776c-9c78-07ad90d64ae7.md)
+and [independently confirmed](../verification/attestations/2026/10/01a0ffdb-f71f-77b6-84be-7c35f4c6ff1b.md). All six evidence
+checks pass, with seven schema and sixteen artifact checks. It preserves both
+scoped BUG-5 failures and exit 0; confirmation verifies the evidence, not a
+runtime fix. The historical revision-1 attestation remains incomplete.

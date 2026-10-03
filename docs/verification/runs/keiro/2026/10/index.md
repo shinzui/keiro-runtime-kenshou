@@ -140,4 +140,5 @@
 - [keiro/queue/concurrency/workers-survive-transient-polling-error failed on released](01a0ff63-0ecd-76dc-ad80-a31f0db1622a.md) - Recorded keiro/queue/concurrency/workers-survive-transient-polling-error run against cohort released with digest-pinned data.
 - [keiro/queue/concurrency/fifo-heads-strict-order passed on released](01a0ff82-6476-7751-8075-eb86501b5c97.md) - Recorded keiro/queue/concurrency/fifo-heads-strict-order run against cohort released with digest-pinned data.
 - [keiro/outbox/correctness/producer-identity passed on released](01a0ff82-ad76-7587-8de5-927552849f59.md) - Recorded keiro/outbox/correctness/producer-identity run against cohort released with digest-pinned data.
+- [keiro/outbox/concurrency/zombie-publisher-finalization failed on released](01a0ffd8-d4ef-776c-9c78-07ad90d64ae7.md) - Recorded keiro/outbox/concurrency/zombie-publisher-finalization run against cohort released with digest-pinned data.
 

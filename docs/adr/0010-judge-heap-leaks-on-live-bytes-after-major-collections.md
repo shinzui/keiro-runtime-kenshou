@@ -2,10 +2,10 @@
 type: Architecture Decision Record
 title: Judge heap leaks on live bytes after major collections
 description: Heap leak verdicts use forced-major-collection samples or the lower envelope of post-major live bytes, while native memory is reported separately.
-timestamp: 2026-10-01T16:37:00Z
+timestamp: 2026-10-03T03:45:52Z
 generated:
   by: process:codex
-  at: "2026-10-01T16:37:00Z"
+  at: "2026-10-03T03:45:52Z"
 docId: ADR-10
 status: Accepted
 date: 2026-09-21
@@ -68,3 +68,11 @@ the major-collection basis for a Haskell heap verdict.
   fresh clocks and heaps, so their series must not be joined. Preserve
   insufficient-data verdicts for short incarnations and keep a continuous
   surviving worker when a soak needs a full-window process control.
+
+- Bounded diagnostic buffers must enforce eviction when observations arrive,
+  even if nobody reads the buffer during a run. A strict reference update does
+  not force lazy fields inside a record. A weak-reference regression should
+  verify that evicted observations become unreachable while the probe stays
+  alive. A short run that is still filling its configured buffer cannot by
+  itself establish a stable long-run heap; preserve that limit alongside the
+  unchanged statistical verdict.

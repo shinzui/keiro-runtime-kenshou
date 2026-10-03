@@ -1,5 +1,9 @@
 # Bundle Update Log
 
+## 2026-10-03
+* **Update**: ADR-10: enforce bounded-buffer eviction on ingestion and preserve incomplete buffer-fill evidence.
+* **Update**: ADR-15: keep messaging synthetic brokers inside the Keiro fixture; reserve real brokers for transport and assembled-runtime suites.
+
 ## 2026-10-01
 * **Update**: Require retired child reachability checks and separate resource series per process incarnation.
 

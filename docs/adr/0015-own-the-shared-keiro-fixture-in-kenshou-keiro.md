@@ -2,10 +2,10 @@
 type: Architecture Decision Record
 title: Own the shared keiro fixture in kenshou-keiro
 description: The kenshou-keiro layer owns the ledger aggregate, workload, and independent oracles consumed by later Keiro runtime verification plans.
-timestamp: 2026-09-23T19:55:00Z
+timestamp: 2026-10-03T03:45:52Z
 generated:
   by: process:codex
-  at: "2026-09-23T19:55:00Z"
+  at: "2026-10-03T03:45:52Z"
 docId: ADR-15
 status: Accepted
 date: 2026-09-23
@@ -36,6 +36,15 @@ Changes to those signatures must update the dependent plans and their usage.
 One account event represents one target effect. The model checks that balances
 remain nonnegative and that the sum of balances changes only for openings,
 deposits, withdrawals, bonuses, and transfers still in flight.
+
+
+Messaging scenarios in this layer own their synthetic broker. Single-process
+controls use an in-memory wire log; multi-process and crash controls use a
+harness-owned PostgreSQL broker table with partition offsets. Both preserve
+Keiro's released outbox wire mapping. They do not import the Kafka layer or
+claim broker fidelity: real transport and assembled-runtime behavior belong to
+the Kafka and runtime suites. This preserves attributable layer failures and
+implements [ADR-1](0001-layer-packages-never-import-one-another.md).
 
 ## Consequences
 

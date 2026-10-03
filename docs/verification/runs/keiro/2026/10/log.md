@@ -1,6 +1,7 @@
 # runs/keiro/2026/10 Update Log
 
 ## 2026-10-03
+* **Addition**: Recorded run 01a0ffd8-d4ef-776c-9c78-07ad90d64ae7 (keiro/outbox/concurrency/zombie-publisher-finalization, failed).
 * **Addition**: Recorded run 01a0ff82-ad76-7587-8de5-927552849f59 (keiro/outbox/correctness/producer-identity, passed).
 * **Addition**: Recorded run 01a0ff82-6476-7751-8075-eb86501b5c97 (keiro/queue/concurrency/fifo-heads-strict-order, passed).
 * **Addition**: Recorded run 01a0fdea-68ff-704b-bc96-176ee5235120 (keiro/outbox/soak/table-growth, passed).

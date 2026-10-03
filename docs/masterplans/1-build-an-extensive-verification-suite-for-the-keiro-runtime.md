@@ -314,7 +314,7 @@ There is no local ADR corpus yet: `docs/adr/` does not exist in this repository,
 | 10 | Cover shibuya core and its PGMQ and kiroku adapters | docs/plans/10-cover-shibuya-core-and-its-pgmq-and-kiroku-adapters.md | EP-2, EP-4, EP-5, EP-6, EP-7 | EP-3, EP-8, EP-9 | In Progress |
 | 11 | Cover the Kafka transport edge with a disposable broker | docs/plans/11-cover-the-kafka-transport-edge-with-a-disposable-broker.md | EP-2, EP-4, EP-5, EP-6, EP-7 | EP-3, EP-10 | In Progress |
 | 12 | Cover the keiro command processor, process managers and routers | docs/plans/12-cover-the-keiro-command-processor-process-managers-and-routers.md | EP-2, EP-4, EP-5, EP-6, EP-7 | EP-3, EP-9 | In Progress |
-| 13 | Cover the keiro outbox, inbox and job queue | docs/plans/13-cover-the-keiro-outbox-inbox-and-job-queue.md | EP-12 | EP-3, EP-8, EP-10 | In Progress |
+| 13 | Cover the keiro outbox, inbox and job queue | docs/plans/13-cover-the-keiro-outbox-inbox-and-job-queue.md | EP-12 | EP-3, EP-8, EP-10 | Complete |
 | 14 | Cover keiro durable execution, timers and sharded subscriptions | docs/plans/14-cover-keiro-durable-execution-timers-and-sharded-subscriptions.md | EP-12 | EP-3, EP-9 | In Progress |
 | 15 | Verify the assembled runtime end to end and under soak | docs/plans/15-verify-the-assembled-runtime-end-to-end-and-under-soak.md | EP-11, EP-12 | EP-3, EP-13, EP-14, EP-17 | In Progress |
 | 16 | Provide leased verification cells in load-testing-infra | docs/plans/16-provide-leased-verification-cells-in-load-testing-infra.md | None | EP-2 | In Progress |
@@ -446,8 +446,8 @@ The following cross-plan decisions should become ADRs in `docs/adr/` when the ow
 
 ## Progress
 
-Coordination checkpoint (2026-09-30): ten of nineteen child plans are Complete;
-EP-8 and EP-10–17 remain In Progress. The initiative is not blocked on owners
+Coordination checkpoint (2026-10-03 UTC): eleven of nineteen child plans are Complete;
+EP-8, EP-10–12 and EP-14–17 remain In Progress. The initiative is not blocked on owners
 fixing the bugs found in the released-cohort baseline. This pass still owns
 unfinished scenario implementation, coverage, controlled runs, finding
 classification, and evidence acceptance. Repairs belong to the owning
@@ -471,8 +471,10 @@ repeat until `pass`. This does not relax explicit passing A/A criteria in
 EP-8, EP-15 or EP-17. Precisely scoped runtime defects can close verification
 work through the already-defined owner-report path; repairing the runtime or
 retesting a future release remains outside this pass. Harness defects that
-invalidate the claimed evidence still require repair. The registry remains
-ten Complete and nine In Progress; no child plan is closed by this clarification.
+invalidate the claimed evidence still require repair. EP-13 subsequently met
+its written milestone and package/guide criteria; the
+registry now has eleven Complete and eight In Progress. Parent baseline gates
+remain open, including selected evidence replay and resource attribution.
 
 A baseline records what the pinned cohort actually does, including failures.
 A reproduced owner defect can remain a failed, precisely scoped nonblocking
@@ -483,8 +485,10 @@ bug. [ADR-14](../adr/0014-distinguish-documented-limitations-from-known-defects.
 and [ADR-18](../adr/0018-keep-verification-records-immutable-and-derive-baselines.md)
 govern these distinctions.
 
-The next work is EP-13's remaining messaging acceptance and the EP-11/EP-12
-interfaces and acceptance needed by EP-15's assembled-runtime path. EP-15 has
+The next work is the EP-11/EP-12 interfaces and acceptance needed by EP-15's
+assembled-runtime path. EP-13's messaging implementation is complete; its
+historical and residual resource limits stay in the baseline handoff below.
+EP-15 has
 already started consuming the delivered broker and ledger seams, but its
 predecessors remain In Progress and their full acceptance is still open.
 Continue independent fixture, oracle, and business-flow implementation where
@@ -496,7 +500,6 @@ unrelated infrastructure cleanup.
 
 | Child plan | Remaining deliverable | Current constraint |
 |---|---|---|
-| [EP-13 — messaging](../plans/13-cover-the-keiro-outbox-inbox-and-job-queue.md#acceptance-reconciliation-and-finite-remaining-work) | Confirm repaired process resource controls, finish independent replay for selected baseline evidence and finding 3 disposition, and close final guide/package acceptance. | The child acceptance table reconciles the existing outbox/inbox/queue matrices and required negative controls; no open-ended matrix expansion remains. The two representative SQL controls have confirmed independent attestations. Both overhead reports and a permitted inconclusive A/A exist. All three repaired full-soak artifact sets pass; their independent business replay remains open. All three process-role telemetry implementations and short endpoint controls exist; finding 56 repair needs matched queue/inbox resource confirmation. Outbox process reports preserve insufficient-duration results for killed incarnations. Runtime repairs and a further standard/unlogged performance comparison are outside these completion gates. |
 | [EP-15 — assembled runtime](../plans/15-verify-the-assembled-runtime-end-to-end-and-under-soak.md) | Build the two-context worker topology and persistent business flow, independent SQL money/stock/terminal-state oracles, failure matrix, gated one/four/twenty-four-hour soaks, benchmarks, and whole-system telemetry comparison. | Domain, wire, ledger and broker seams exist, and the local two-topic wire smoke passed. That smoke does not exercise the two databases or establish an end-to-end order outcome. Controlled cell execution needs the required broker capability. |
 | [EP-12 — write side](../plans/12-cover-the-keiro-command-processor-process-managers-and-routers.md) | Finish generalized fixture roles/oracles, the remaining matrix, benchmarks, telemetry, full soak, and guide/acceptance. | Finding 44 needs capacity-versus-drain-budget isolation; finding 46 needs writer-only or profile isolation. Low-rate business checks passed; the default-rate run still missed its drain deadline. Existing Kiroku leak reports do not excuse unrelated failures. |
 | [EP-14 — durable execution](../plans/14-cover-keiro-durable-execution-timers-and-sharded-subscriptions.md) | Complete workflow definitions, crash/fault schedules, shard checkpoint and metrics assertions, benchmarks, soak pairs, telemetry, and final guide/acceptance. | Missing coverage and assertions remain implementation work; no blanket wait for a runtime fix is recorded. |
@@ -521,9 +524,10 @@ Cross-plan baseline handoff gates remain open:
   reports is not a count of repairs or verified fixes.
 - [ ] Supply independent replayable verdict checks for the selected evidence
   and publish the final baseline report. EP-18 and EP-19 are Complete, but
-  that does not make every later scenario independently attestable. The
-  recorded Keiro stale-claim run and Kafka rebalance/stability runs still
-  expose VC-1 recomputation gaps; Kafka fencing has a working replay oracle
+  that does not make every later scenario independently attestable. Historical
+  Keiro stale-claim and Kafka rebalance/stability records retain their VC-1
+  gaps. A new revision-2 stale-claim record is independently confirmed; Kafka
+  fencing has a working replay oracle
   and confirmed records. Preserve incomplete attestations and add new
   attestations when verification becomes possible.
 
@@ -532,9 +536,10 @@ including the full 1,600-job FIFO-heads case. They cover ordering modes and work
 kills. Eleven clean revision-4 investigations add confirmed scripted-retry
 replay. Revision 5 adds validated SQL lease and handler-overlap evidence with
 independent replay. Representative clean ordering and producer-identity controls
-are independently confirmed; remaining EP-13 acceptance stays open.
+are independently confirmed. EP-13 is complete; remaining baseline evidence
+acceptance stays open in this MasterPlan.
 
-The historical bundle currently contains 190 run/comparison records: 184 sealed
+The historical bundle currently contains 191 run/comparison records: 185 sealed
 individual runs and six comparisons. The
 [working baseline report](../reports/2026-09-29-runtime-baseline.md) and child
 plans hold the detailed runs and findings. Owner projects can use this as-is
@@ -704,7 +709,7 @@ disposition changes.
 - EP-13 retry-budget oracle finding: [local finding 53](../findings/53-outbox-terminal-oracle-rejects-single-attempt-exhaustion.md); owner is this repository. A transient failure correctly ends dead when only one attempt is allowed. The repaired terminal oracle and independent replay accept that boundary and reject premature exhaustion at two attempts; sixteen policy/key/budget controls pass. No upstream owner issue is added.
 
 - EP-13 terminal replay identity gap: [local finding 54](../findings/54-terminal-replay-accepts-duplicate-final-row-substitution.md); owner is this repository. The recomputer previously accepted a same-size final-row substitution. Exact final identity coverage and four policy-specific mutations now address that local gap; no upstream owner issue is added.
-- EP-13 process telemetry exposed [local finding 56](../findings/56-bounded-trace-probe-retains-evicted-spans.md): lazy bounded-probe state retains evicted spans. The focused test fails before and passes after strict-state repair; matched process resource confirmation remains pending. This repairs an existing soak acceptance blocker without adding a child plan or owner report.
+- EP-13 process telemetry exposed [local finding 56](../findings/56-bounded-trace-probe-retains-evicted-spans.md): lazy bounded-probe state retains evicted spans. The focused test fails before and passes after strict-state repair; matched twenty-minute queue/inbox controls hold all nineteen business checks and produce all per-process diagnoses. The queue worker slopes fall sharply, but residual resource flags remain unattributed; the baseline handoff stays open. This repairs an existing soak acceptance blocker without adding a child plan or owner report.
 - EP-13 polling recovery gap: [local finding 55](../findings/55-polling-recovery-reuses-pre-fault-completions.md). Revision 3 now requires fresh work after every fault, including the last, and independently replays lifecycle and SQL coverage. Nineteen controls and the full verification gate pass their expected outcomes; short interruptions reproduce existing owner failures while explicit restart recovers after five long outages. Six clean polling investigations now have confirmed independent attestations, preserving four failures and two explicit-restart passes.
 
 ## Decision Log
@@ -931,3 +936,5 @@ Revision note (2026-10-02 UTC): Strengthened revision-4 delegated inbox expectat
 Revision note (2026-10-02): EP-13 job-outcome revision 4 seals the remaining observations and independently replays all 43 drain/worker checks. Durable capture, mutation tests and full repository verification pass; the clean run is published with a confirmed independent VC-1 attestation. Historical incomplete attestations remain unchanged.
 
 Revision note (2026-10-02): EP-13 expands FIFO ordering to four modes with worker-kill controls and independently replayed SQL spans. All eight durable controls and the full verification gate pass, with unordered inversions retained as explicit nonblocking observations. Clean publication and scripted retry/overlap coverage remain open.
+
+Revision note (2026-10-03 UTC): EP-13 is Complete against its written acceptance, with 44 messaging scenarios, both overhead reports, per-process soak diagnoses and passing guide/package checks. The registry is eleven Complete/eight In Progress. A new clean stale-publisher investigation has confirmed independent replay. Selected-soak replay, historical finding 3 and residual local telemetry heap signals remain explicit parent baseline gates; no failed or inconclusive result was relabeled.

@@ -92,7 +92,12 @@ To see it working after implementation, run `cabal run kenshou -- list 'keiro/ou
 
 ## Progress
 
-The scenario, benchmark, telemetry and process-soak implementations are in place. Remaining acceptance is bounded by the reconciliation table below: confirm the repaired process resource controls, finish independent replay for selected baseline evidence and finding 3 disposition, then complete the guide/package handoff. Historical entries preserve what was pending at their recorded dates; they do not add further work beyond that table.
+EP-13 is complete against its four milestones and final package/guide
+acceptance. It delivers 44 registered messaging scenarios. The acceptance
+reconciliation below names the evidence and preserves failed and inconclusive
+outcomes. Historical entries retain what was pending at their recorded dates.
+Final baseline selection, independent attestation of selected remaining evidence
+and unresolved resource attribution remain explicit MasterPlan handoff gates.
 
 - [x] (2026-09-24) Outbox baseline: eleven correctness/concurrency/crash scenarios are registered and passed the default durable sweep, with the documented inline-order limitation and BUG-5 recorded as scoped expected failures. Publisher, enqueuer, maintenance, subscription replay, and synthetic broker roles are wired.
 - [x] (2026-09-24) Inbox baseline: envelope, effectively-once matrix, poison accounting, batch intake, process race, and GC race scenarios have durable evidence. The GC race reproduces the documented retention-window failure under a realised schedule.
@@ -131,13 +136,13 @@ The scenario, benchmark, telemetry and process-soak implementations are in place
 - [x] (2026-10-02 UTC) Recorded ten clean revision-3 table-backed inbox controls with independent VC-1 attestations; all six evidence checks confirm each result, including two deliberate double-effect failures. The matrix passes 160 schema and 170 artifact integrity checks.
 - [x] (2026-10-02 UTC) Sealed revision-5 delegated intake/stream observations and independently reconstructed all ten checks. Four clean policy arms are digest-linked with confirmed VC-1 attestations; all 56 schemas and 60 artifact checks pass. The full verification gate and 50 Keiro/52 CLI tests pass.
 - [x] (2026-10-02 UTC) Collected and digest-linked the full queue/DLQ soak: all nine business checks hold over 72,051 exactly-once jobs and 3,603 archived dead jobs. Its heap evidence is insufficient and legacy verdict schemas are invalid under finding 50, so resource and artifact acceptance remain open.
-- [ ] Finish the process-role telemetry and selected-evidence replay gaps in the acceptance reconciliation below, then validate affected scenarios and package tests.
+- [x] (2026-10-03 UTC) Completed process-role telemetry, raw stale-publisher replay, affected controls and the full repository gate. Selected historical evidence gaps remain in the MasterPlan handoff, not additional child milestones.
 - [x] (2026-10-01) Full inbox soak sealed with passing business/resource observations and was digest-linked; finding 50 qualifies its legacy verdict schema, and the first timed-out attempt remains excluded.
 - [x] (2026-10-01) Implemented revision-3 process-isolated outbox soak with per-incarnation diagnosis and message-specific crash duplicate budgets.
 - [x] (2026-10-02 UTC) Collected and digest-linked the repaired-payload four-hour inbox run: all eight business checks and six bounded resource probes pass, with 27 artifact checks and all 11 schemas valid. This closes inbox full-soak artifact acceptance; independent soak VC-1 remains open. The follow-on queue GC diagnostic is submitted.
 - [x] (2026-10-02 UTC) Collected and digest-linked the repaired four-hour queue GC diagnostic: nine business checks, six bounded resource probes, twelve schemas and 29 artifact checks pass. This closes its artifact and diagnostic heap-data gaps; independent soak replay and default-GC limits remain explicit. The matched full outbox diagnostic is submitted.
 - [x] (2026-10-03 UTC) Collected and digest-linked the repaired four-hour outbox GC diagnostic: eight business checks, six bounded resource probes, eleven schemas and 28 artifact checks pass. All three repaired full-soak artifact gaps are closed; default-GC attribution and independent soak replay remain open.
-- [ ] Confirm repaired queue/inbox process resource evidence, finish finding 3 disposition and independent verification of selected soak evidence, and close the guide/package handoff; preserve short-incarnation uncertainty.
+- [x] (2026-10-03 UTC) Collected both twenty-minute process controls and their per-worker/table verdicts; checked all 44 scenario names and the effective-knob guide command; passed 65 Keiro, 128 CLI and 20 telemetry examples plus the full verification gate. Resource failures and historical attestation limits remain visible in the MasterPlan handoff.
 
 The five Keiro owner reports for worker exits, read-attempt accounting, stale outbox claims, pool starvation, and missing process spans now have local finding records [34](../findings/34-keiro-job-worker-exits-after-polling-backend-termination.md), [35](../findings/35-keiro-long-poll-consumes-read-attempt-without-handler.md), [36](../findings/36-keiro-stale-outbox-publisher-finalizes-new-claim.md), [37](../findings/37-keiro-long-poll-processors-starve-runtime-pool.md), and [38](../findings/38-keiro-pre-handler-dead-letter-lacks-process-span.md). Each finding has its canonical owner URI; the MasterPlan register counts those records separately from the scenarios that cite them.
 
@@ -1570,9 +1575,9 @@ both worker resource reports are stable. This short signal is preserved and
 is not an attributed runtime leak or a completed twenty-minute acceptance.
 The in-process off control `01a0ff9c-08a9-759f-b1d6-469aa3bf5577` holds all nine
 business checks and is inconclusive. All 25 schema checks and 92 artifact
-checks pass. The full repository verification gate passes, including 65 Keiro,
-35 telemetry and 121 CLI examples. The twenty-minute reduced process run is
-in progress; its resource result remains pending.
+checks pass. The full repository verification gate passes, including 65 Keiro
+and 121 CLI examples at that checkpoint. The twenty-minute controls are now
+collected under “Completed process-diagnosis acceptance” below.
 
 This implements the existing Milestone 4 per-worker diagnosis requirement,
 following [ADR-7](../adr/0007-record-measurements-independently-of-the-feature-under-test.md)
@@ -1595,7 +1600,7 @@ processes 141 fresh and late deliveries, suppresses 141 early deliveries, and
 retains exactly 282 effects with no classification/GC errors or pending work.
 Both overall results are inconclusive; all six bounded main probes and both
 process-worker reports are stable. All 23 schemas and 92 artifacts validate.
-The twenty-minute process run is in progress.
+The twenty-minute pre- and post-repair process controls are now collected below.
 
 Outbox soak revision 4 removes the process arm's telemetry-off restriction.
 Child publishers own their providers, native endpoints and output directories.
@@ -1647,8 +1652,44 @@ failure and independently replay it:
 All 28 schema and 64 artifact checks pass. Focused mutations detect missing
 reclamation, changed claims and missing/duplicated appends, and reject mixed
 identities or reversed chronology. The full repository gate passes, including
-65 Keiro and 128 CLI examples. Clean selected publication is pending. This closes an existing implementation gap
+65 Keiro and 128 CLI examples.
+
+The representative clean revision-2 investigation at source and attester
+`db58cb18f7f3c57cdf8acffe206058d12ffebedf` is now [recorded](../verification/runs/keiro/2026/10/01a0ffd8-d4ef-776c-9c78-07ad90d64ae7.md)
+and [independently confirmed](../verification/attestations/2026/10/01a0ffdb-f71f-77b6-84be-7c35f4c6ff1b.md). All six evidence
+checks pass, with seven schema and sixteen artifact checks. It preserves both
+scoped BUG-5 failures and exit 0; confirmation verifies the evidence, not a
+runtime fix. The historical revision-1 attestation remains incomplete. This closes an existing implementation gap
 in the baseline replay criterion; it adds no scenario or acceptance criterion.
+
+### Completed process-diagnosis acceptance
+
+The post-repair twenty-minute controls use the same seed, durable PostgreSQL
+18, in-memory tracing, one-second endpoint scraping and five-second major GC.
+Queue `01a0ffc3-f90a-70b4-a2fb-1cb43d85faeb` holds all ten business checks over
+6,051 exactly-once jobs and 303 archived dead jobs. Inbox
+`01a0ffc3-f90b-7664-aafb-655d267a8a4f` holds all nine over 2,421 fresh, early
+and late deliveries and exactly 4,842 effects. Both workers participate in each
+run, all native/OTel counter checks match SQL, and 15,642 worker endpoint
+scrapes complete without failure. All 25 schemas and 127 artifact checks pass.
+
+Both overall outcomes remain `failed` under the unchanged resource policy.
+The queue worker second-half heap slopes fall from approximately 83.8/85.7
+MB/hour before probe repair to 1.31/1.75 MB/hour; one worker is insufficient-data
+and the other leak-suspected. The main queue process remains leak-suspected.
+The inbox main process is stable, but both consumers remain leak-suspected.
+Its fresh consumer generates only 2,421 spans against the 4,096-span retention
+capacity, so this window includes buffer filling. Neither that fact nor the
+focused eviction regression establishes the cause of every residual slope.
+These local exploratory runs are not clean controlled baseline evidence.
+
+This meets Milestone 4's explicit requirement to produce a leak verdict per
+worker and table-growth verdicts. It does not establish universal resource
+stability. Finding 56 records the confirmed probe repair and remaining
+attribution limit; finding 3's historical default-GC signal stays separate.
+Selected baseline resource attribution and independent soak replay stay at the
+MasterPlan handoff gate. No thresholds were relaxed and no failed result was
+relabeled as passed.
 
 ### Acceptance reconciliation and finite remaining work
 
@@ -1664,18 +1705,18 @@ that every old artifact qualifies for the final baseline.
 | Milestone 2: inbox policy/persistence/idempotence matrix, three race faults, staged GC race and double-effect control | The table and delegated matrix evidence and deliberate failures are recorded above. Both receipt owners have all three race arms: table `01a0d497-b0fd-7414-9a05-bde8ceb49068`, `01a0d498-b9a1-75b0-a5ad-cf8188565639`, `01a0d498-893d-75dc-8e4c-62666a139fd5`; delegated `01a0d50e-a775-7646-9352-a22aec12bd01`, `01a0d510-94a7-70cc-a64c-0f5dde091cb0`, `01a0d512-2adf-7275-b33a-b8c7d9f746b7`. Staged GC runs `01a0d55b-0d2e-76c5-8648-95d750c77b54` and `01a0d55b-4447-7243-9099-fd53a3026153` realise the schedule and expose the documented second effect. No unspecified additional inbox matrix is required. |
 | Milestone 3: queue outcomes, windows, cadence, polling faults and ignored-extension control | The recorded default sweep and revised outcome, SQL-lease and polling controls exercise these criteria. Ordinary crash cadence passes; window, long-poll and short-interruption failures retain their precise owner references. Five ten-second outages visibly exit and recover through explicit restarts. The four lease controls include deliberate ignored-extension failures. The initial released-cohort baseline does not wait for owner fixes. |
 | Milestone 4: benchmark artifacts, durability refusal, A/A and two overhead reports | All seven benchmark identifiers produce measurement artifacts. Existing registry checks reject benchmark support for `fsync-off`. The recorded A/A is inconclusive, satisfying the stated `pass` or `inconclusive` criterion. Both three-block overhead reports exist. Standard/unlogged functional controls are implemented; a further performance comparison is follow-up work, not an additional stated acceptance gate. |
-| Milestone 4: telemetry adaptation and process soak diagnosis | Both telemetry contracts and native endpoint controls exist; the pre-handler missing span is reported as `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-7`. Queue/inbox process diagnosis and all three process-role telemetry implementations now exist, with passing short business/endpoint controls. Matched reduced resource confirmation after finding 56 remains open. Outbox already emits separate incarnation reports, preserving insufficient-duration results for killed workers. |
+| Milestone 4: telemetry adaptation and process soak diagnosis | Both telemetry contracts and native endpoint controls exist; the pre-handler missing span is reported as `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-7`. Queue/inbox process diagnosis and all three process-role telemetry implementations now exist, with passing short business/endpoint controls. The two matched twenty-minute post-repair runs now produce all required process and table verdicts; their residual heap findings remain explicit, as recorded above. Outbox already emits separate incarnation reports, preserving insufficient-duration results for killed workers. |
 | MasterPlan baseline handoff: trustworthy selected evidence | The three repaired full-soak artifact sets pass schema and digest checks. Independent business replay for selected soaks and remaining selected scenario families is still missing. Historical finding 3 remains unattributed; its default-GC signal must receive an evidenced disposition, not be erased by forced-GC passes. Final selection must keep pre-finding-50 schema limitations and incomplete attestations visible. |
 
-The remaining work is bounded by those last two rows and the original final
-package/guide gate: implement the missing process-role diagnosis and telemetry,
-validate the affected reduced runs, complete independent replay for the chosen
-baseline evidence, and give finding 3 an evidenced disposition. Then refresh the
-guide and final outcomes, run the package and evidence checks, and distil any
-durable decisions into the existing ADR corpus. New scenarios, new performance
-questions and future-release fix verification do not extend this list without
-an explicit change of scope. Full-duration runs are repeated only if a concrete
-repair invalidates the evidence needed for their existing acceptance criterion.
+The first five rows and the final package/guide checks close this child plan.
+The final row is the MasterPlan's baseline handoff: choose and attest clean
+released-cohort evidence and account for unresolved findings, including finding
+3 and residual telemetry-arm resource signals. These obligations remain open in
+the parent; moving them to their existing owner does not waive them. Original
+Milestone 4 requires per-process diagnoses, not an unqualified stable verdict
+from every telemetry configuration. Additional matrices, repeat-until-pass A/A
+runs and owner fixes are outside this child's completion boundary.
+
 
 ### Evidence at a glance
 
@@ -1853,7 +1894,29 @@ repair invalidates the evidence needed for their existing acceptance criterion.
 
 The durable baseline now exercises the outbox, inbox, and queue through correctness, process-failure, concurrency, telemetry, and benchmark scenarios. All seven planned benchmark identifiers are registered. The package suite passes 54 examples. Queue throughput now supports continuous workers, both polling modes, standard/unlogged provision variation, and native metrics collection and serving, with oracles that detect duplicate calls and incorrect physical persistence. The eight-arm worker metrics contract passes; its new short local smokes are functional evidence only. Known defects remain visible as scoped expected failures rather than silent passes; the local finding records above retain their canonical owner references. The documented inline ordering, inbox GC, and DLQ/redrive windows also remain scoped expected failures.
 
-The plan is still in progress. The concrete non-soak gaps are listed in Progress. The repaired-payload full inbox run has a digest-linked record with eight held business checks, six stable resource probes and all eleven schemas valid. This closes inbox full-soak artifact acceptance; independent soak VC-1 remains open. All three repaired full-soak artifact gaps are closed, with passing queue/outbox forced-GC resource diagnostics. Full acceptance still requires historical default-GC attribution, controlled process-isolation evidence, remaining matrix coverage and independent Keiro verdict verification. The earlier producer comparison remains inconclusive under its three-pair policy. New clean five-pair queue comparisons preserve execution-shape p99 uncertainty and measure a latency/memory tradeoff for 100 ms long polling; both are durably recorded and independently confirmed for VC-2/VC-3, with individual business-oracle attestation still open. The earlier overhead reports remain local evidence. The new clean outbox metrics investigation has sixteen digest-linked runs and three independently confirmed VC-2/VC-3 comparisons, while serving and A/A tail latency remain inconclusive. The matched reduced process/in-process diagnostics are also recorded; short killed incarnations and historical default-GC attribution remain open. No configuration experiment measures an upstream release change.
+The four milestones and the final package/guide gate are complete. The suite
+registers 17 outbox, nine inbox and eighteen queue scenarios, covering the
+specified scenarios, seven benchmarks, three full/reduced soak pairs and
+telemetry contracts. Deliberate sabotage controls prove that the outbox and
+inbox oracles detect the specified failures. Both required overhead reports
+exist, and the accepted A/A result remains inconclusive on p99.
+
+The package and repository checks pass. Each reduced soak now emits process
+resource verdicts and table-growth verdicts, with SQL-checked native metrics.
+The repaired full-soak artifacts remain intact. Resource failures in the local
+SDK controls, short killed-process insufficiency and historical default-GC
+uncertainty are preserved; completion of the suite is not a claim that the
+runtime or harness is universally leak-free. Independent replay now covers the
+selected SQL scenario families and the new stale-publisher record. Historical
+incomplete attestations and remaining selected-soak replay belong to the
+MasterPlan's still-open baseline handoff.
+
+The closing ADR review distilled the synthetic-broker boundary into ADR-15 and
+bounded trace-buffer eviction into ADR-10. ADR-7 already owns independent
+measurement, ADR-9/16 own externally terminated crash windows, ADR-14 owns
+scoped defect reporting and realised schedules, and ADR-18 owns immutable
+records and independently selected baselines. No new child plan or upstream
+runtime repair was introduced.
 
 
 ## Context and Orientation
@@ -1874,7 +1937,7 @@ The job queue is the package `keiro-pgmq` (`mori://shinzui/keiro/packages/keiro-
 
 Observability seams. Tracing is switched per call site with `Maybe Tracer`: `OutboxPublishOptions.tracer` opens one Producer-kind span named `send <destination>` per publish call with the attribute `keiro.outbox.batch.size`; `Keiro.Telemetry.withConsumerSpan :: Maybe Tracer -> Maybe Text -> KafkaInboundRecord -> Maybe IntegrationEvent -> (Maybe Span -> m a) -> m a` opens a Consumer-kind span `process <topic>` parented from the record's W3C headers; `withJobRuntime connStr (Just tracer)` gives one Consumer-kind span `<jobName> process` per delivery on both execution shapes with `messaging.*` attributes and `shibuya.ack.decision` (`mori://shinzui/keiro/okf/adrs/concepts/ADR-1`), plus lower-level PGMQ operation spans. Metrics are OpenTelemetry instruments built once with `Keiro.Telemetry.newKeiroMetrics :: Meter -> m KeiroMetrics` and passed as `Maybe KeiroMetrics`: `keiro.outbox.backlog`, `.published`, `.rejected`, `.retried`, `.deadlettered`, `.reclaimed`, `.identity.conflict` (recorded only when the caller invokes `recordProducerEnqueueOutcome`), and `keiro.inbox.processed`, `.duplicates`, `.failed`, `.poisoned`, `.backlog` (via `sampleInboxBacklog`). keiro exposes no HTTP endpoint; `keiro-pgmq` has no instruments, only SQL-backed `jobQueueMetrics`, `jobDlqMetrics` and `queueDepth`.
 
-There is no local ADR corpus yet: `docs/adr/` does not exist until `docs/plans/1-bootstrap-the-kenshou-repository-and-pin-the-runtime-cohort.md` creates it as a profile-governed OKF bundle. The cross-repository decisions this plan relies on are: `mori://shinzui/keiro/okf/adrs/concepts/ADR-37` (outbox rejection is terminal, releases ordered successors, and finalization is conditional and counted only when committed); `mori://shinzui/keiro/okf/adrs/concepts/ADR-42` (producer outbox identity is a frozen, versioned function of source-event coordinates; differing retained content is refused, never overwritten), which with `mori://shinzui/keiro/okf/adrs/concepts/ADR-24` gives the checkers exact expected identifiers; `mori://shinzui/keiro/okf/adrs/concepts/ADR-43` (delegated inbox intake needs one downstream event receipt covering the whole atomic operation); `mori://shinzui/keiro/okf/adrs/concepts/ADR-44` (every job declares its ordering; only group heads batch safely); `mori://shinzui/keiro/okf/adrs/concepts/ADR-45` (PGMQ provisioning preserves upstream SQL; partitioned queues need `pg_partman`, which the suite's extension-free PGMQ install does not provide, so partitioned queues are out of scope here); `mori://shinzui/keiro/okf/adrs/concepts/ADR-25` (worker loops survive per-pass and per-item failures), which the transient-polling-error scenario tests; and `mori://shinzui/keiro/okf/adrs/concepts/ADR-1` (one process span per delivery on both job paths). The documented limitations are referenced as `mori://shinzui/keiro/okf/user-documentation/concepts/DOC-16` (Durable Outbox), `mori://shinzui/keiro/okf/user-documentation/concepts/DOC-10` (Idempotent Inbox) and `mori://shinzui/keiro/okf/user-documentation/concepts/DOC-25` (Work Queues). `mori://shinzui/keiro/okf/improvement-requests/concepts/IR-38` (guarded recovery of dead outbox deliveries) is context for what `dead` means operationally. Two decisions of this plan deserve new local ADRs once `docs/adr/` exists: "keiro messaging scenarios use a synthetic broker; the Kafka fixture is reserved for the kafka and runtime layers", and "a documented limitation is verified by asserting the ideal property behind a realised-schedule guard with a KnownDefect reference" (check first whether `docs/plans/5-…`, `9-…` or `12-…` already recorded the second; amend rather than duplicate). Allocate handles with `okf id next docs/adr --profile docs/adr/profile.dhall ADR` and validate with `okf validate docs/adr --strict --profile docs/adr/profile.dhall --profile-enforce --log-enforce`.
+The local profile-governed ADR corpus exists. ADR-7, ADR-9/10, ADR-14/15/16 and ADR-18 govern independent measurement, crash/resource evidence, scoped findings, fixture ownership and immutable verification records. The cross-repository decisions this plan relies on are: `mori://shinzui/keiro/okf/adrs/concepts/ADR-37` (outbox rejection is terminal, releases ordered successors, and finalization is conditional and counted only when committed); `mori://shinzui/keiro/okf/adrs/concepts/ADR-42` (producer outbox identity is a frozen, versioned function of source-event coordinates; differing retained content is refused, never overwritten), which with `mori://shinzui/keiro/okf/adrs/concepts/ADR-24` gives the checkers exact expected identifiers; `mori://shinzui/keiro/okf/adrs/concepts/ADR-43` (delegated inbox intake needs one downstream event receipt covering the whole atomic operation); `mori://shinzui/keiro/okf/adrs/concepts/ADR-44` (every job declares its ordering; only group heads batch safely); `mori://shinzui/keiro/okf/adrs/concepts/ADR-45` (PGMQ provisioning preserves upstream SQL; partitioned queues need `pg_partman`, which the suite's extension-free PGMQ install does not provide, so partitioned queues are out of scope here); `mori://shinzui/keiro/okf/adrs/concepts/ADR-25` (worker loops survive per-pass and per-item failures), which the transient-polling-error scenario tests; and `mori://shinzui/keiro/okf/adrs/concepts/ADR-1` (one process span per delivery on both job paths). The documented limitations are referenced as `mori://shinzui/keiro/okf/user-documentation/concepts/DOC-16` (Durable Outbox), `mori://shinzui/keiro/okf/user-documentation/concepts/DOC-10` (Idempotent Inbox) and `mori://shinzui/keiro/okf/user-documentation/concepts/DOC-25` (Work Queues). `mori://shinzui/keiro/okf/improvement-requests/concepts/IR-38` (guarded recovery of dead outbox deliveries) is context for what `dead` means operationally. The closing distillation extends [ADR-15](../adr/0015-own-the-shared-keiro-fixture-in-kenshou-keiro.md) with synthetic broker ownership and [ADR-10](../adr/0010-judge-heap-leaks-on-live-bytes-after-major-collections.md) with ingestion-time buffer eviction. [ADR-14](../adr/0014-distinguish-documented-limitations-from-known-defects.md) already covers scoped limitations; no duplicate decision is created.
 
 
 ## Plan of Work
@@ -2235,3 +2298,5 @@ Revision note (2026-09-30): Queue throughput revision 3 collects and serves nati
 Revision note (2026-10-01 UTC): Queue throughput revision 4 adds standard/unlogged provision variation with an independent SQL metadata oracle before and after load. Ten durable local arms held all four checks over 7,345 exactly-once jobs; all 30 schema checks and 264 artifact hashes/sizes passed. The 41-example package suite and full `nix develop -c just verify` pass. Controlled storage-performance comparison and the other acceptance gaps remain open.
 
 Revision note (2026-10-01 UTC): Published clean messaging metrics and matched restart diagnostics with unchanged uncertainty limits. The historical bundle now has 95 run/comparison records; the three new comparison attestations confirm measurement and policy recomputation, not individual Keiro business oracles.
+
+Revision note (2026-10-03 UTC): Closed the four milestone and guide/package criteria, preserving residual resource failures. MasterPlan baseline selection, attribution and independent replay remain open under their existing parent gates rather than prolonging this child plan.
