@@ -50,7 +50,8 @@ The plan also turns several facts discovered by reading keiro's source into exec
 - [x] (2026-09-24) Timer baseline: all six planned scenarios are registered and pass both PostgreSQL durability modes, including real process kills, competing claims, and foreground resume tokens.
 - [x] (2026-09-24) Shard baseline: ten registered scenarios exercise delivery, failover, membership changes, and database faults; local runs pass or reproduce scoped upstream defects.
 - [x] (2026-09-24) Workflow baseline: linear replay, timer and awakeable semantics, patch decisions, child workflows, discovery, and initial process-crash/race scenarios have durable evidence.
-- [ ] Complete workflow definitions, broader crash and fault schedules, shared oracles, shard checkpoint and metrics assertions, and any confirmed upstream findings.
+- [x] (2026-10-02) Added four Milestone 1 concurrency scenarios and the `keiro/workflow-driver` role (child runs with a commit-hook crash, operator cancels). `sleep-fire-crash-window` passed: the killed timer was left `firing` with the sleep journaled, then requeued, fired at `attempts = 2`, and the workflow completed with one `sleep:nap` entry. `lease-loss-stops-side-effects` passed in both `sigstop` and `slow-step` arms: the held step ran twice inside the window, the next step once in the new owner, and the stale owner reported a lease skip with no attempt consumed. `terminal-marker-first-writer-wins` passed four of five local runs, with both outcomes exercised in its completion and failure arms; the fifth exposed a documented in-flight step journaled after the cancel marker, so the invariant was corrected (see Surprises). `child-completion-crash-window` reproduced the suspected defect twice: the parent stays `suspended` after a kill between the child's completion marker and the parent wake, while its control arm completes; recorded as [finding 63](../findings/63-keiro-child-completion-crash-strands-parent.md). Unit tests cover the new pure oracles with doctored inputs; the 69-example package suite passes. All runs were local functional validation on a dirty tree under the shared host lock, not baseline evidence.
+- [ ] Complete workflow definitions, broader crash and fault schedules, shared oracles, shard checkpoint and metrics assertions, and any confirmed upstream findings. Remaining workflow scenarios: `replay-and-journal-identity`, `awakeable-signal-and-cancel-races`, `gc-vs-concurrent-appends`, and the rotation arm of `terminal-marker-first-writer-wins`. Shard concurrency scenarios other than the zombie still lack `checkpointsMonotonic`, and `ack-coupled-handler-variants` lacks its metrics arm. Finding 63 still needs an owner record before it becomes a scoped `KnownDefect`.
 - [ ] Deliver the remaining benchmarks, soak pairs, telemetry adaptation, layer guide, ADRs, and final acceptance. The parked-population pass-cost benchmark has an initial durable run.
 
 ## Surprises & Discoveries
@@ -67,6 +68,9 @@ The plan also turns several facts discovered by reading keiro's source into exec
 - `pg_stat_statements(false)` omits query text, so a query-text filter silently matched no rows and initially reported a zero delta. Switching the observer to `pg_stat_statements(true)` produced the expected one pending-awakeable count call per idle pass; the scenario now checks the sample.
 - A whole-number `VDouble` knob is encoded as a JSON number and decoded as `VInt` in a worker init message. This made the shard worker reject its three-second default lease with `knobDouble: missing or wrong type`. The shared `knobDouble` accessor now accepts an integer value as a double; the worker JSON round trip has a regression test.
 - The first shard delivery probe sampled ownership after stopping its worker, so it observed correctly relinquished buckets and falsely failed the ownership verdict. The scenario now samples before stop and separately checks that every bucket is unowned after the control stop.
+- A cancelled linear workflow's journal read `WorkflowCancelled` followed by `StepRecorded s0` (run `01a10036-4977-75bd-ba31-79137c7aee8e`, instance `race-complete-10`). The step action was executing when the cancel committed, and its append landed after the marker. `cancelWorkflow`'s haddock allows exactly this: "a step action already in flight may finish and journal idempotently; no later boundary may start." The first invariant, "the marker is the last event", was stricter than the contract. It now allows at most one `StepRecorded` after the marker and nothing else. The count is reported as `inFlightStepsJournaledAfterMarker`.
+- Workflow failure at the attempt ceiling happens on a worker's first claim of a flaky instance. While the workers were still draining the linear backlog, every cancel won and the failure arm never raced. The race now has two phases. The flaky instances are seeded only after the linear phase is terminal, one poll (`workflow.race.fail-lead-ms`, 100) before their cancellers start. A local run then produced seven cancelled and one failed flaky instance.
+- `signalChild` records `SIGSTOP`/`SIGCONT` disturbance windows in the harness ledger. Sealing that ledger before the supervisor runs, as the self-kill probes do, made the lease-loss scenario error with `record: ledger is sealed`. Scenarios that signal children seal the ledger after the supervisor block instead.
 - Polling a live resume worker's ledger for its first effect raised an EOF while the next JSON line was being written. The step-boundary probe now waits for a `WrkCustom` mark sent after the effect ledger flush, then sends the random kill during an explicit pause before the step returns. This avoids treating an actively written ledger as a stable artifact.
 
 
@@ -79,6 +83,18 @@ The plan also turns several facts discovered by reading keiro's source into exec
 - Decision: Park sleep and child populations for 60 seconds of wall time, then drain only ten timers with a virtual `now` 61 seconds ahead. Run a separate second pass for child completion and third pass for parent completion.
   Rationale: The short sleeper fixture becomes due while a 2,000-instance population is being created, so it cannot demonstrate an idle pass. The virtual drain selects a bounded wake set without waiting a minute, and the two passes preserve the observable child-to-parent propagation sequence.
   Date: 2026-09-24
+
+- Decision: Reach `AfterChildCompletionMarker` by counting `onJournalAppend` callbacks in a dedicated `keiro/workflow-driver` process, and pair the crash with a control that kills the same runner at the child's first append.
+  Rationale: The resume worker overwrites `onJournalAppend`, so only a direct `runChildWorkflow` call can host the hook. The hook fires after each committed fresh append, so the fixture child's second append is its completion marker. A precondition verdict confirms the child is `completed` while its link is `running`. The control arm proves that a parent healed after a child crash is detected, so a stranded parent is attributable to the window rather than to the harness.
+  Date: 2026-10-02
+
+- Decision: `terminal-marker-first-writer-wins` races completion and ceiling failure, not rotation, in this pass, and its cancellers are separate `keiro/workflow-driver` processes.
+  Rationale: Completion and failure cover the two lifecycle markers a resume worker writes. Rotation needs a rotator definition with a cancel-sensitive generation boundary that the fixture does not yet have, so it stays in the remaining work. Separate processes give each cancel its own connection pool and timing, which is the condition the first-writer lock serializes.
+  Date: 2026-10-02
+
+- Decision: Do not attach a `KnownDefect` to `child-completion-crash-window` or file the owner record from this repository's implementation pass. Record the evidence as finding 63 instead.
+  Rationale: The plan attaches a reference only after an upstream artifact exists. Filing in `mori://shinzui/keiro` is a separate owner-facing step for the coordinator.
+  Date: 2026-10-02
 
 - Decision: Begin EP-14 against EP-12's delivered fixture modules while EP-12 finishes unrelated benchmark and soak acceptance. Use the working build and required registered scenarios as the dependency gate. Register new worker roles with the delivered `keiro/<name>` format and keep the intended workflow/timer/shard suffixes.
   Rationale: The fixture domain and CLI bundle already compile and expose the interfaces EP-14 consumes. `mkRoleName` rejects the dotted role names proposed before the kernel implementation existed.
@@ -137,9 +153,14 @@ late join and shard-count mismatch report their declared upstream defects.
 The workflow suite covers linear replay, real process kills, timers, awakeables,
 rotation, patches, children, discovery and the first process race cases. A
 100-instance step-boundary run completed after three worker deaths with exact
-journals and three crash-bounded duplicate effects. The remaining workflow
-kinds and concurrency matrix, benchmarks, soaks and ADR distillation remain
-open.
+journals and three crash-bounded duplicate effects. On 2026-10-02 the sleep
+fire, lease loss and terminal marker crash windows gained passing scenarios.
+The child completion window confirmed the source-reading hypothesis: a parent
+is stranded when its child dies between its completion marker and the parent
+wake ([finding 63](../findings/63-keiro-child-completion-crash-strands-parent.md)).
+Still open: the all-kind replay, awakeable races, collection races, rotation
+races, shard checkpoint and metrics assertions, benchmarks, soaks, and ADR
+distillation.
 
 
 ## Context and Orientation

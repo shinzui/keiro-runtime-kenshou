@@ -73,15 +73,15 @@ resumeWorker context = case context.init.postgres of
 timerWorker :: RoleContext -> IO ()
 timerWorker context = case context.init.postgres of
   Nothing -> context.send (WrkError "timer worker requires PostgreSQL")
-  Just postgres -> case parseMaybe (withObject "timer worker args" (\value -> (,,) <$> value .:? "killAfterFire" <*> value .:? "slowFireMicros" <*> value .:? "fireDelayMicros")) context.init.args of
+  Just postgres -> case parseMaybe (withObject "timer worker args" (\value -> (,,,) <$> value .:? "killAfterFire" <*> value .:? "slowFireMicros" <*> value .:? "fireDelayMicros" <*> value .:? "killAfterSleepFire")) context.init.args of
     Nothing -> context.send (WrkError "invalid timer worker arguments")
-    Just (killAfterFire, slowFireMicros, fireDelayMicros) -> case timerOptionsFrom context.init.knobs of
+    Just (killAfterFire, slowFireMicros, fireDelayMicros, killAfterSleepFire) -> case timerOptionsFrom context.init.knobs of
       Left err -> context.send (WrkError (Text.pack (show err)))
       Right options -> do
         context.send WrkReady
         context.receive >>= \case
           Just CtlStart -> withDurableStore (defaultConnectionSettings postgres.connectionString) \fixture ->
-            withEffectSink context (if killAfterFire == Just True then [CrashPlan AfterTimerFire 1] else []) \sink -> do
+            withEffectSink context ([CrashPlan AfterTimerFire 1 | killAfterFire == Just True] <> [CrashPlan AfterSleepJournalAppend 1 | killAfterSleepFire == Just True]) \sink -> do
               let store = durableKirokuStore fixture
                   tick = do
                     now <- getCurrentTime
@@ -125,7 +125,10 @@ timerWorker context = case context.init.postgres of
 fire :: EffectSink -> TimerRow -> Eff '[Store, Error StoreError, IOE] (Maybe EventId)
 fire sink row =
   workflowSleepFireAction row >>= \case
-    Just produced -> pure (Just produced)
+    Just produced -> do
+      -- The sleep completion is journaled; markTimerFired has not run yet.
+      liftIO $ sink.boundary AfterSleepJournalAppend
+      pure (Just produced)
     Nothing -> do
       let eid = businessEventId row.timerId
           event = EventData (Just eid) (EventType "kenshou.timer.fired") (object ["timerId" .= timerText row.timerId]) Nothing Nothing Nothing
