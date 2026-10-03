@@ -21,7 +21,7 @@ import Kenshou.Core.Dimension
 import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (parseScenarioId, unSeed)
-import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobValue (..), knobDouble, knobInt, mkKnobName, renderKnobName)
+import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobBool, knobDouble, knobInt, mkKnobName, renderKnobName)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..))
 import Kenshou.Suite.Keiro.Command.Correctness (recordCells)
@@ -175,8 +175,9 @@ perKeyOrderSerialized :: Scenario
 perKeyOrderSerialized =
   terminalStateMatrix
     { id = either (error . show) id (parseScenarioId "keiro/outbox/correctness/per-key-order-serialized"),
+      revision = 4,
       summary = "Checks serialized inline enqueues publish in key order despite transient failures.",
-      knobs = map serializedKnob OutboxKnobs.outboxKnobs,
+      knobs = map serializedKnob OutboxKnobs.outboxKnobs <> [KnobSpec (knobName "outbox.sabotage-successors") "Deliberately append same-key successors after a failed head to validate the order oracle" KnobBool (VBool False) (OneOf (VBool False :| [VBool True])) []],
       run = runPerKeyOrderSerialized
     }
 
@@ -209,6 +210,7 @@ runPerKeyOrderSerialized context =
         keyCount = fromIntegral (knobInt context.knobs (knobName "outbox.key-cardinality"))
         entries = [(Text.pack (show i), Just ("key-" <> Text.pack (show (i `mod` keyCount))), i) | i <- [1 .. rowCount]]
         policy = options.orderingPolicy
+        sabotage = knobBool context.knobs (knobName "outbox.sabotage-successors")
         plan = Broker.FaultPlan (unSeed context.seed) (knobDouble context.knobs (knobName "broker.fail-ratio")) 0 0 0 0
         model = Broker.BrokerModel (fromIntegral (knobInt context.knobs (knobName "broker.invocation-micros"))) (fromIntegral (knobInt context.knobs (knobName "broker.per-record-micros"))) (fromIntegral (knobInt context.knobs (knobName "broker.partitions")))
         hooks = Broker.PublishHook (const (pure ())) (const (pure ()))
@@ -221,7 +223,11 @@ runPerKeyOrderSerialized context =
           case outcomes of
             [(_, PublishFailed _)] -> pure outcomes
             _ -> (outcomes <>) <$> publishSource rest
-        callback = if policy == PerSourceStream then publishSource else Broker.publishCallback broker model plan hooks "publisher"
+        sabotagedDecision row = if row.event.messageId == "1" && row.attemptCount == 1 then Broker.FailOnce else Broker.Succeed
+        callback
+          | sabotage = Broker.publishScriptedWithPolicy BestEffort broker model sabotagedDecision hooks "sabotaged-publisher"
+          | policy == PerSourceStream = publishSource
+          | otherwise = Broker.publishCallback broker model plan hooks "publisher"
         drain = do
           backlog <- runFixture countOutboxBacklog >>= either (fail . show) pure
           if backlog == 0

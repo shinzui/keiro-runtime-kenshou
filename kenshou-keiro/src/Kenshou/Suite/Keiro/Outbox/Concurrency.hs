@@ -61,6 +61,7 @@ zombiePublisherFinalization :: Scenario
 zombiePublisherFinalization =
   crashBetweenPublishAndMark
     { id = either (error . show) id (parseScenarioId "keiro/outbox/concurrency/zombie-publisher-finalization"),
+      revision = 1,
       summary = "Checks that a publisher resumed after maintenance cannot finalize another publisher's claim.",
       knobs = [KnobSpec (knobName "outbox.zombie-outcome") "Outcome reported by the stale publisher" KnobText (VText "failed") (OneOf (VText "failed" :| [VText "succeeded", VText "dead"])) [VText "succeeded", VText "dead"]],
       knownDefect = Just (KnownDefect "mori://shinzui/keiro/okf/bug-reports/concepts/BUG-5" "Stale publishers can finalize a row after maintenance and another publisher re-claim it" ["stale-finalization-no-effect", "terminal-consistent-with-success"] AllCohorts),
@@ -125,6 +126,7 @@ concurrentInlineEnqueueOrder :: Scenario
 concurrentInlineEnqueueOrder =
   crashBetweenPublishAndMark
     { id = either (error . show) id (parseScenarioId "keiro/outbox/concurrency/concurrent-inline-enqueue-order"),
+      revision = 1,
       summary = "Stages opposite transaction-start and commit order for inline events, with a serialized producer-path control.",
       tier = TierSmoke,
       knobs = [KnobSpec (knobName "outbox.enqueue-path") "Inline race or serialized producer control" KnobText (VText "inline") (OneOf (VText "inline" :| [VText "producer", VText "producer-direct"])) [VText "producer", VText "producer-direct"]],
@@ -333,6 +335,7 @@ multiProcessPublishers :: Scenario
 multiProcessPublishers =
   crashBetweenPublishAndMark
     { id = either (error . show) id (parseScenarioId "keiro/outbox/concurrency/multi-process-publishers"),
+      revision = 1,
       summary = "Checks four live publisher processes claim disjoint rows and preserve key order.",
       knobs =
         [ KnobSpec (knobName "outbox.rows") "Number of integration events" KnobInt (VInt 20000) (IntRange 32 20000) [],
@@ -405,7 +408,7 @@ crashBetweenPublishAndMark :: Scenario
 crashBetweenPublishAndMark =
   Scenario
     { id = either (error . show) id (parseScenarioId "keiro/outbox/concurrency/crash-between-publish-and-mark"),
-      revision = 1,
+      revision = 2,
       summary = "Kills a publisher before or after broker append and checks maintenance reclamation and bounded replay.",
       tier = TierStandard,
       placement = PlaceEither,
@@ -414,6 +417,7 @@ crashBetweenPublishAndMark =
           KnobSpec (knobName "outbox.kills") "Number of publisher processes killed" KnobInt (VInt 3) (IntRange 1 8) [],
           KnobSpec (knobName "outbox.key-cardinality") "Number of partition keys" KnobInt (VInt 20) (IntRange 1 200) [],
           KnobSpec (knobName "outbox.crash-point") "Publisher interruption point" KnobText (VText "after-broker-append") (OneOf (VText "after-broker-append" :| [VText "after-claim", VText "backend-kill-during-mark"])) [VText "after-claim", VText "backend-kill-during-mark"],
+          KnobSpec (knobName "outbox.sabotage-no-maintenance") "Deliberately omit reclamation after one kill to validate the no-loss oracle" KnobBool (VBool False) (OneOf (VBool False :| [VBool True])) [],
           KnobSpec (knobName "outbox.exhaust-attempts") "Make the last kill consume the attempt ceiling" KnobBool (VBool False) (OneOf (VBool False :| [VBool True])) []
         ],
       dimensions =
@@ -444,6 +448,7 @@ runCrashBetweenPublishAndMark context =
             afterClaim = knobText context.knobs (knobName "outbox.crash-point") == "after-claim"
             backendKill = knobText context.knobs (knobName "outbox.crash-point") == "backend-kill-during-mark"
             exhaustAttempts = knobBool context.knobs (knobName "outbox.exhaust-attempts")
+            sabotage = knobBool context.knobs (knobName "outbox.sabotage-no-maintenance")
             keyCardinality = fromIntegral (knobInt context.knobs (knobName "outbox.key-cardinality"))
             entries = [(Text.pack (show index), Just ("key-" <> Text.pack (show (index `mod` keyCardinality))), index) | index <- [1 .. rowCount :: Int]]
             options = defaultPublishOptions {batchSize = 32, backoff = ConstantBackoff 0}
@@ -484,18 +489,21 @@ runCrashBetweenPublishAndMark context =
               threadDelay (if index == 0 then 6000000 else 1500000)
               stillStranded <- readRows
               preMaintenance <- runFixture (publishClaimedOutbox callback options Nothing) >>= either (fail . show) pure
-              maintenance <- runFixture (outboxMaintenancePass (OutboxMaintenanceOptions (if exhaustAttempts then killCount else 10) 1) Nothing) >>= either (fail . show) pure
+              maintenance <-
+                if sabotage
+                  then pure Nothing
+                  else Just <$> (runFixture (outboxMaintenancePass (OutboxMaintenanceOptions (if exhaustAttempts then killCount else 10) 1) Nothing) >>= either (fail . show) pure)
               reclaimed <- readRows
               let publishing rows = Set.fromList [TextEncoding.encodeUtf8 row.event.messageId | row <- rows, row.status == OutboxPublishing]
                   newIds = if afterClaim then Set.toList (publishing stranded) else drop (length before) (recordIds after)
                   failed rows = Set.fromList [TextEncoding.encodeUtf8 row.event.messageId | row <- rows, row.status == OutboxFailed]
                   dead rows = Set.fromList [TextEncoding.encodeUtf8 row.event.messageId | row <- rows, row.status == OutboxDead]
                   exhausted = exhaustAttempts && index == killCount - 1
-                  reclaimedCorrectly = if exhausted then maintenance.deadLettered == 32 && Set.fromList newIds `Set.isSubsetOf` dead reclaimed else maintenance.requeued == 32 && Set.fromList newIds `Set.isSubsetOf` failed reclaimed
+                  reclaimedCorrectly = maybe False (\result -> if exhausted then result.deadLettered == 32 && Set.fromList newIds `Set.isSubsetOf` dead reclaimed else result.requeued == 32 && Set.fromList newIds `Set.isSubsetOf` failed reclaimed) maintenance
                   brokerWindow = if afterClaim then length after == length before else length after == length before + 32
                   held = brokerWindow && length newIds == 32 && publishing stranded == Set.fromList newIds && publishing stillStranded == Set.fromList newIds && preMaintenance.claimed == 0 && reclaimedCorrectly
               pure (newIds, held, fromIntegral (childPid child) :: Int)
-        kills <- traverse killOne [0 .. killCount - 1]
+        kills <- traverse killOne [0 .. (if sabotage then 1 else killCount) - 1]
         let drain = do
               backlog <- runFixture countOutboxBacklog >>= either (fail . show) pure
               if backlog == 0
@@ -504,7 +512,7 @@ runCrashBetweenPublishAndMark context =
                   _ <- runFixture (publishClaimedOutbox callback options Nothing) >>= either (fail . show) pure
                   threadDelay 10000
                   drain
-        finished <- timeout (300 * 1000000) drain
+        finished <- if sabotage then pure Nothing else timeout (300 * 1000000) drain
         rows <- readRows
         records <- Broker.readBroker broker
         let messageIds = recordIds records
@@ -526,4 +534,4 @@ runCrashBetweenPublishAndMark context =
                 ("per-key-order", length observedOrder == length sentRows && Oracle.perKeyOrder observedOrder)
               ]
             evidence = Map.fromList [("enqueued", fromIntegral rowCount), ("brokerRecords", fromIntegral (length records)), ("killedPublishers", fromIntegral killCount), ("deadRows", fromIntegral (length deadRows)), ("duplicatedMessages", fromIntegral (length [() | count <- Map.elems counts, count > 1]))]
-        recordMessagingCells context evidence (object ["crashPoint" .= knobText context.knobs (knobName "outbox.crash-point"), "killedPids" .= [pid | (_, _, pid) <- kills]]) cells
+        recordMessagingCells context evidence (object ["crashPoint" .= knobText context.knobs (knobName "outbox.crash-point"), "maintenanceSuppressed" .= sabotage, "killedPids" .= [pid | (_, _, pid) <- kills]]) cells

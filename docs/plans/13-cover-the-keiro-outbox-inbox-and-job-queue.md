@@ -131,13 +131,13 @@ The non-soak baseline is in place. The remaining work is to deepen specific scen
 - [x] (2026-10-02 UTC) Recorded ten clean revision-3 table-backed inbox controls with independent VC-1 attestations; all six evidence checks confirm each result, including two deliberate double-effect failures. The matrix passes 160 schema and 170 artifact integrity checks.
 - [x] (2026-10-02 UTC) Sealed revision-5 delegated intake/stream observations and independently reconstructed all ten checks. Four clean policy arms are digest-linked with confirmed VC-1 attestations; all 56 schemas and 60 artifact checks pass. The full verification gate and 50 Keiro/52 CLI tests pass.
 - [x] (2026-10-02 UTC) Collected and digest-linked the full queue/DLQ soak: all nine business checks hold over 72,051 exactly-once jobs and 3,603 archived dead jobs. Its heap evidence is insufficient and legacy verdict schemas are invalid under finding 50, so resource and artifact acceptance remain open.
-- [ ] Finish the remaining non-soak acceptance work listed below, then rerun the affected scenarios and package tests.
+- [ ] Finish the process-role telemetry and selected-evidence replay gaps in the acceptance reconciliation below, then validate affected scenarios and package tests.
 - [x] (2026-10-01) Full inbox soak sealed with passing business/resource observations and was digest-linked; finding 50 qualifies its legacy verdict schema, and the first timed-out attempt remains excluded.
 - [x] (2026-10-01) Implemented revision-3 process-isolated outbox soak with per-incarnation diagnosis and message-specific crash duplicate budgets.
 - [x] (2026-10-02 UTC) Collected and digest-linked the repaired-payload four-hour inbox run: all eight business checks and six bounded resource probes pass, with 27 artifact checks and all 11 schemas valid. This closes inbox full-soak artifact acceptance; independent soak VC-1 remains open. The follow-on queue GC diagnostic is submitted.
 - [x] (2026-10-02 UTC) Collected and digest-linked the repaired four-hour queue GC diagnostic: nine business checks, six bounded resource probes, twelve schemas and 29 artifact checks pass. This closes its artifact and diagnostic heap-data gaps; independent soak replay and default-GC limits remain explicit. The matched full outbox diagnostic is submitted.
 - [x] (2026-10-03 UTC) Collected and digest-linked the repaired four-hour outbox GC diagnostic: eight business checks, six bounded resource probes, eleven schemas and 28 artifact checks pass. All three repaired full-soak artifact gaps are closed; default-GC attribution and independent soak replay remain open.
-- [ ] Finish default-GC resource attribution, process isolation acceptance, remaining matrix arms, and independent evidence verification.
+- [ ] Finish finding 3 attribution, queue/inbox process diagnosis, and independent verification of selected soak evidence; preserve short-incarnation uncertainty.
 
 The five Keiro owner reports for worker exits, read-attempt accounting, stale outbox claims, pool starvation, and missing process spans now have local finding records [34](../findings/34-keiro-job-worker-exits-after-polling-backend-termination.md), [35](../findings/35-keiro-long-poll-consumes-read-attempt-without-handler.md), [36](../findings/36-keiro-stale-outbox-publisher-finalizes-new-claim.md), [37](../findings/37-keiro-long-poll-processors-starve-runtime-pool.md), and [38](../findings/38-keiro-pre-handler-dead-letter-lacks-process-span.md). Each finding has its canonical owner URI; the MasterPlan register counts those records separately from the scenarios that cite them.
 
@@ -1417,7 +1417,37 @@ linked above; they were not repeated merely to increase published run counts.
 | ordering-default | [01a0ff82-6476-7751-8075-eb86501b5c97](../verification/runs/keiro/2026/10/01a0ff82-6476-7751-8075-eb86501b5c97.md) | [confirmed](../verification/attestations/2026/10/01a0ff89-c5f5-708f-a622-48a947c324ff.md) |
 | producer-identity | [01a0ff82-ad76-7587-8de5-927552849f59](../verification/runs/keiro/2026/10/01a0ff82-ad76-7587-8de5-927552849f59.md) | [confirmed](../verification/attestations/2026/10/01a0ff8a-8e80-7483-992e-1bc52bf6a2f7.md) |
 
-### Remaining non-soak work
+### Required outbox negative controls
+
+The two explicit Milestone 1 sabotage checks now have reproducible controls.
+Crash revision 2 accepts `outbox.sabotage-no-maintenance=true`; after one
+publisher kill it omits reclamation, retains the stranded rows and skips the
+otherwise impossible drain. Serialized-order revision 4 accepts
+`outbox.sabotage-successors=true`; its broker fails the first head once but
+appends successors, exposing the intended order violation. Both default to
+false and are excluded from automatic variants. Other scenarios inheriting
+the crash definition keep revision 1 explicitly.
+
+All four durable PostgreSQL 18 controls use 64 rows, one key and seed
+`8102429385822254`; the crash controls use one kill. Under
+`runs/ep13-outbox-sabotage/`, both ordinary controls pass and both sabotage
+controls fail with CLI exit 1. All 36 schemas and 48 artifact checks pass.
+The maintenance negative fails reclamation, drain, no-loss and order; the
+broker negative fails exact coverage, duplicate and order checks. These
+are expected consequences of the deliberate fixture changes, not owner bugs.
+
+| Control | Local run | Outcome |
+| --- | --- | --- |
+| maintenance-control | `01a0ff82-ce82-7015-b6b4-dd27ddec58ad` | passed |
+| maintenance-suppressed | `01a0ff82-f79e-7189-a8f3-f06d7fb60764` | failed |
+| order-control | `01a0ff83-1d58-73c1-8f44-bb09bcc46431` | passed |
+| order-sabotaged | `01a0ff83-29e5-75bb-a756-c48d8d9a3874` | failed |
+
+Reproduction commands are in [the layer guide](../layers/keiro.md#outbox).
+The full repository verification gate passes, including 65 Keiro and 121 CLI
+examples. These controls add no published baseline record.
+
+### Benchmark and metrics evidence
 
 Queue throughput revision 2 now implements bounded versus continuous-worker
 execution, ordinary versus long polling, actual runtime batch sizing, and
@@ -1517,12 +1547,32 @@ as clean controlled comparisons.
 | standard / workers / unordered / long-poll | `01a0f5d0-200e-778e-8385-84a92dbecc9d` | 733 |
 | unlogged / workers / unordered / long-poll | `01a0f5d0-5f9e-76a6-96f1-33f393f2b862` | 737 |
 
-1. Complete the outbox scenario knobs, producer-path SQL oracles, and generalized role/oracle modules. Broaden the remaining concurrency fault and ordering controls beyond the passing default sweep.
-2. Complete inbox effect/persistence oracles and the remaining documented correctness arms. The current table and delegated runs establish the baseline, but the planned matrix is wider.
-3. Complete queue worker-path outcomes, fault modes, ordering controls, and richer DLQ/acknowledgement oracles. Native worker counter and endpoint checks are implemented; the broader fault and pre-handler paths remain open.
-4. Extend the implemented outbox/inbox native metrics serving to remaining process roles and finish queue fault and pre-handler coverage. The messaging contract and all four outbox/inbox benchmarks now serve their native store and OpenTelemetry endpoints; controlled overhead acceptance remains open. The inbox `InboxInProgress` case now has a passing durable contract run; the queue pre-handler DLQ case observed zero process spans and is recorded as `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-7`.
-5. Run a clean controlled standard/unlogged provision comparison and finish broader performance acceptance. Revision 4 implements provision variation and its SQL oracle; the local matrix below establishes functional coverage. Five-pair worker/polling configuration comparisons have clean saved results: execution shape remains inconclusive at p99, and long polling with a 100 ms interval trades lower allocation and live memory for a handler-start latency regression. Both comparisons are durably recorded and independently confirmed for VC-2/VC-3; individual business-oracle attestation remains open. The separate idle-poll benchmark covers polling cost.
-6. Refresh `docs/layers/keiro.md`, resolve whether any local ADRs are actually required, validate the bundle, and record final non-soak outcomes. Full plan acceptance also depends on the planned soaks.
+### Acceptance reconciliation and finite remaining work
+
+This table reconciles the original acceptance criteria with the implemented
+scenarios and saved runs. It replaces the former six broad requests to
+“broaden” controls, matrices and performance coverage. Historical evidence
+keeps its recorded schema and attestation limitations; coverage is not a claim
+that every old artifact qualifies for the final baseline.
+
+| Existing criterion | Evidence and remaining obligation |
+| --- | --- |
+| Milestone 1: eleven outbox scenarios, scoped inline/zombie outcomes and two sabotage checks | The default durable sweep, producer replay and crash schedules are recorded above. Publisher ownership includes complete callback intervals and disjointness, with the 20,000-row run `01a0d504-353c-7684-9790-4e3ca6d58dde`. Both required sabotage controls and their passing controls are now recorded under “Required outbox negative controls.” Producer identity has confirmed SQL replay. No unspecified additional outbox matrix is required. |
+| Milestone 2: inbox policy/persistence/idempotence matrix, three race faults, staged GC race and double-effect control | The table and delegated matrix evidence and deliberate failures are recorded above. Both receipt owners have all three race arms: table `01a0d497-b0fd-7414-9a05-bde8ceb49068`, `01a0d498-b9a1-75b0-a5ad-cf8188565639`, `01a0d498-893d-75dc-8e4c-62666a139fd5`; delegated `01a0d50e-a775-7646-9352-a22aec12bd01`, `01a0d510-94a7-70cc-a64c-0f5dde091cb0`, `01a0d512-2adf-7275-b33a-b8c7d9f746b7`. Staged GC runs `01a0d55b-0d2e-76c5-8648-95d750c77b54` and `01a0d55b-4447-7243-9099-fd53a3026153` realise the schedule and expose the documented second effect. No unspecified additional inbox matrix is required. |
+| Milestone 3: queue outcomes, windows, cadence, polling faults and ignored-extension control | The recorded default sweep and revised outcome, SQL-lease and polling controls exercise these criteria. Ordinary crash cadence passes; window, long-poll and short-interruption failures retain their precise owner references. Five ten-second outages visibly exit and recover through explicit restarts. The four lease controls include deliberate ignored-extension failures. The initial released-cohort baseline does not wait for owner fixes. |
+| Milestone 4: benchmark artifacts, durability refusal, A/A and two overhead reports | All seven benchmark identifiers produce measurement artifacts. Existing registry checks reject benchmark support for `fsync-off`. The recorded A/A is inconclusive, satisfying the stated `pass` or `inconclusive` criterion. Both three-block overhead reports exist. Standard/unlogged functional controls are implemented; a further performance comparison is follow-up work, not an additional stated acceptance gate. |
+| Milestone 4: telemetry adaptation and process soak diagnosis | Both telemetry contracts and native endpoint controls exist; the pre-handler missing span is reported as `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-7`. Remaining implementation is resource diagnosis for queue/inbox worker processes and telemetry adaptation for the process roles. Outbox already emits separate incarnation reports, preserving insufficient-duration results for killed workers. |
+| MasterPlan baseline handoff: trustworthy selected evidence | The three repaired full-soak artifact sets pass schema and digest checks. Independent business replay for selected soaks and remaining selected scenario families is still missing. Historical finding 3 remains unattributed; its default-GC signal must receive an evidenced disposition, not be erased by forced-GC passes. Final selection must keep pre-finding-50 schema limitations and incomplete attestations visible. |
+
+The remaining work is bounded by those last two rows and the original final
+package/guide gate: implement the missing process-role diagnosis and telemetry,
+validate the affected reduced runs, complete independent replay for the chosen
+baseline evidence, and give finding 3 an evidenced disposition. Then refresh the
+guide and final outcomes, run the package and evidence checks, and distil any
+durable decisions into the existing ADR corpus. New scenarios, new performance
+questions and future-release fix verification do not extend this list without
+an explicit change of scope. Full-duration runs are repeated only if a concrete
+repair invalidates the evidence needed for their existing acceptance criterion.
 
 ### Evidence at a glance
 

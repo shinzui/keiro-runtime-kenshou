@@ -405,6 +405,10 @@ ordered publication after a transient failure, skipped successor attempts,
 publisher callback errors, and stable producer identity.
 The identity probe also asserts the literal UUID and message ID vector from
 `mori://shinzui/keiro/okf/adrs/concepts/ADR-42`.
+Revision 2 seals complete SQL rows before and after each replay/conflict in
+`logs/outbox-producer-identity.json`. Independent attestation reconstructs the
+versioned hash identity, requires exactly the eight conflict classes, and
+compares every retained SQL column, including each intermediate conflict read.
 The failure-skip probe exercises per-key, per-source, and stop-the-line
 ordering, including the summary's halted pivot for stop-the-line.
 Terminal rejection leaves successors publishable under all three ordered
@@ -426,6 +430,24 @@ revisions lack the observations required for independent VC-1 attestation.
 The serialized-order probe passed all three
 ordered policies at 5,000 rows; its per-source broker callback stops dispatch
 after a source failure so later rows are never appended and then marked skipped.
+Two explicit sabotage knobs demonstrate that the outbox checks detect the
+planned failures. They default to false and are excluded from automatic knob
+variants. `outbox.sabotage-no-maintenance=true` on the crash scenario suppresses
+reclamation after the first kill and returns immediately with a failed no-loss
+check instead of waiting for a queue that cannot drain. Use `outbox.kills=1`
+for the matched control. `outbox.sabotage-successors=true` on the serialized
+order scenario fails the first head once while deliberately publishing its
+same-key successors; ordering and duplicate checks fail when that head retries.
+These are harness negative controls, not runtime defect reproductions.
+
+```bash
+nix develop -c cabal run kenshou -- run keiro/outbox/concurrency/crash-between-publish-and-mark --dim pg.durability=durable --set outbox.rows=64 --set outbox.key-cardinality=1 --set outbox.kills=1 --set outbox.sabotage-no-maintenance=true --out runs/no-maintenance
+nix develop -c cabal run kenshou -- run keiro/outbox/correctness/per-key-order-serialized --dim pg.durability=durable --set outbox.rows=64 --set outbox.key-cardinality=1 --set outbox.sabotage-successors=true --out runs/broken-publish-order
+```
+
+Both commands should exit 1. Remove the sabotage setting for the passing
+control. The crash scenario is revision 2; serialized ordering is revision 4.
+
 The `telemetry-contract` scenario publishes one successful, one rejected, and
 one retryable row in a single batch, then delivers the successful broker record
 twice to the inbox. It matches the producer span's messaging and batch
@@ -888,11 +910,18 @@ batch identities, decoded/raw DLQ disagreement, residual source rows, extra
 handler calls, missing cases and shortened retry intervals. Older captures
 remain incomplete because they lack the full observation set.
 
-`workers-survive-transient-polling-error` runs a continuous supervised job
-worker and terminates its PostgreSQL polling backend. The current released
-cohort stops after the first termination with an unexpected row-count error;
-the next batch stays queued. The scenario records contract verdicts and tracks
-the upstream finding at `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-3`.
+`workers-survive-transient-polling-error` revision 3 targets an observed blocked
+polling request with `queue.fault=backend-kill|proxy-reset|postmaster-restart`.
+`queue.outage-seconds` supports the verified zero- and ten-second controls,
+`queue.fault-count` defaults to five, and both ordinary/long polling and
+supervision strategies are supported. Twenty fresh jobs follow each fault,
+including the final one. Short controls require the original app to continue;
+ten-second postmaster controls require a visible exit and explicit restart.
+The released cohort stops after short interruptions with an unexpected
+row-count error and leaves the fresh batch queued, matching
+`mori://shinzui/keiro/okf/bug-reports/concepts/BUG-3`. Five long outages recover
+through explicit restarts. The sealed `logs/queue-polling-observations.json`
+supports independent replay of targeting, lifecycle, timing and SQL coverage.
 
 `crash-redelivery-cadence` kills three worker processes while their handlers
 hold the same job. With ordinary polling, deliveries occur about three seconds
@@ -998,7 +1027,7 @@ subscription run is needed to determine whether this is retained runtime
 state or a true leak.
 
 
-The FIFO ordering fixture revision 3 accepts `queue.ordering=fifo-heads`,
+The FIFO ordering fixture revision 5 accepts `queue.ordering=fifo-heads`,
 `unordered`, `fifo-throughput` or `fifo-round-robin`, plus a read batch knob.
 Legacy modes always use batch one, reported as `effectiveBatchSize`. Every
 mode checks exact completed job identities, no residual rows, competing-group
@@ -1008,5 +1037,11 @@ order as an implementation observation. `queue-ordering-observations.json`
 seals the SQL spans and schedule. The CLI independently replays exact coverage,
 order, competing-group progress and the schedule, binds capture parameters to
 the resolved run specification and verifies the order verdict's status/class.
-These controls do not yet cover
-scripted retry ordering or every permitted visibility-expiry overlap.
+`queue.retry-heads=true` adds an explicit head retry in every group. Captured
+attempt spans check delivery order and retry delay independently of completion
+order. Revision 5 also captures physical message IDs, read counts, SQL read
+times and visibility boundaries at handler entry. Every overlapping handler
+must be justified by a later read after the prior lease expired. The CLI binds
+these lease captures to the attempt ledger and independently rejects early
+redelivery, missing lease facts and rebound message identities. Legacy ordering
+revisions retain their original replay rules.
