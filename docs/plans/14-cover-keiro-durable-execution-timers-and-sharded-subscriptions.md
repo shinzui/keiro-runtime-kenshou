@@ -27,6 +27,11 @@ provenance:
       at: 2026-09-24T22:53:08Z
       mode: "update"
       note: "Consolidated Progress into delivered outcomes and remaining acceptance"
+    - model: "claude-opus-5-5"
+      harness: "claude-code"
+      at: 2026-10-03T05:58:59Z
+      mode: "implement"
+      note: "Added crash-window, terminal-race and replay scenarios, the shard delivery oracle, and finding 63"
 ---
 
 # Cover keiro durable execution, timers and sharded subscriptions
