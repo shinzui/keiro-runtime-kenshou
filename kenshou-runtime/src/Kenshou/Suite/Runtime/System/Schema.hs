@@ -254,7 +254,8 @@ data Backlog = Backlog
     inboxUnfinished :: !Int64,
     intakeUndispatched :: !Int64,
     workflowsUnfinished :: !Int64,
-    timersPending :: !Int64
+    timersPending :: !Int64,
+    awakeablesPending :: !Int64
   }
   deriving stock (Eq, Show)
 
@@ -266,6 +267,7 @@ backlogTx context =
     <*> count ("SELECT count(*) FROM " <> contextSchema context <> ".intake WHERE dispatched_at IS NULL")
     <*> count "SELECT count(*) FROM keiro.keiro_workflows WHERE status NOT IN ('completed', 'cancelled')"
     <*> count "SELECT count(*) FROM keiro.keiro_timers WHERE status IN ('scheduled', 'firing')"
+    <*> count "SELECT count(*) FROM keiro.keiro_awakeables WHERE status = 'pending'"
   where
     count sql = Tx.statement () (Statement.preparable sql Encoders.noParams (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8))))
 

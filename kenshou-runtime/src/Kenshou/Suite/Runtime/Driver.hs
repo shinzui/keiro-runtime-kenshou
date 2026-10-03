@@ -107,14 +107,21 @@ runDriver store seed config k stop observe = do
   start <- getCurrentTime
   let rate = max 1 config.ratePerSecond
       total = if config.orders > 0 then config.orders else config.durationSeconds * rate
-      intended i = addUTCTime (fromIntegral i / fromIntegral rate) start
+      processes = max 1 config.processesPerRole
+      -- Each driver issues its share of the rate; position p of its own
+      -- sequence is due at p / (rate / processes) after the start.
+      intended position = addUTCTime (fromIntegral position * fromIntegral processes / fromIntegral rate) start
+      indices
+        | config.replicatedDrivers = [0 .. total - 1]
+        | otherwise = driverIndices total processes k
+      sequence' = zip [0 :: Int ..] (concat (replicate (max 1 config.submissionRounds) indices))
       go report [] = pure report
-      go report (i : rest) = do
+      go report ((position, i) : rest) = do
         requested <- tryReadMVar stop
         case requested of
           Just _ -> pure report {stopped = True}
           Nothing -> do
-            waitUntil (intended i)
+            waitUntil (intended position)
             let order = generateOrder seed config i
             outcome <- submitOrder store order
             observe order outcome
@@ -123,7 +130,7 @@ runDriver store seed config k stop observe = do
                   SubmitDuplicate -> report {attempted = report.attempted + 1, duplicates = report.duplicates + 1}
                   SubmitFailed _ -> report {attempted = report.attempted + 1, failed = report.failed + 1}
             go next rest
-  go (DriverReport 0 0 0 0 False) (driverIndices total config.processesPerRole k)
+  go (DriverReport 0 0 0 0 False) sequence'
 
 waitUntil :: UTCTime -> IO ()
 waitUntil target = do

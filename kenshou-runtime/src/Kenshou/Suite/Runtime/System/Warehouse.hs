@@ -17,6 +17,7 @@ module Kenshou.Suite.Runtime.System.Warehouse
     warehouseIntakeCommand,
     dispatchFulfilmentCommand,
     seedWarehouse,
+    cancelOrphanedAwakeables,
     isDiscontinued,
     skuAccount,
     openingStock,
@@ -280,8 +281,7 @@ handleWarehouseDelivery env prefix recorded = case fulfilmentCodec.decode record
       FulfilmentExpired d -> withFulfilment d.orderId \sku quantity -> do
         stock <- runStock (StockInput sourceId d.orderId StockRelease sku quantity)
         void (cancelWorkflow fulfilmentWorkflowName (WorkflowId (orderText d.orderId)))
-        pending <- runTransaction (Tx.statement (orderText d.orderId) pickAwakeableStatement)
-        forM_ (pending >>= UUID.fromText) (void . cancelAwakeable . AwakeableId)
+        void (cancelOrphanedAwakeables (Just (orderText d.orderId)))
         produced <- produce (FulfilmentExpiredV1 d.orderId)
         pure (stock <> produced)
     pure case outcome of
@@ -318,12 +318,23 @@ fulfilmentDetailsStatement =
     (Encoders.param (Encoders.nonNullable Encoders.text))
     (Decoders.rowMaybe ((,) <$> Decoders.column (Decoders.nonNullable Decoders.text) <*> (fromIntegral <$> Decoders.column (Decoders.nonNullable Decoders.int4))))
 
-pickAwakeableStatement :: Statement.Statement Text (Maybe Text)
-pickAwakeableStatement =
+-- | Keiro's workflow cancellation does not cascade to awakeables, and an
+-- allocation already in flight may commit after the cancellation marker. The
+-- application therefore cancels every pending awakeable whose owning
+-- workflow is terminal: for one order when its fulfilment expires, and for
+-- all orders on every warehouse maintenance pass.
+cancelOrphanedAwakeables :: Maybe Text -> ContextEff Int
+cancelOrphanedAwakeables order = do
+  pending <- runTransaction (Tx.statement order orphanedAwakeablesStatement)
+  cancelled <- traverse (cancelAwakeable . AwakeableId) pending
+  pure (length (filter id cancelled))
+
+orphanedAwakeablesStatement :: Statement.Statement (Maybe Text) [UUID.UUID]
+orphanedAwakeablesStatement =
   Statement.preparable
-    "SELECT awakeable_id FROM warehouse.pick_requests WHERE order_id = $1"
-    (Encoders.param (Encoders.nonNullable Encoders.text))
-    (Decoders.rowMaybe (Decoders.column (Decoders.nonNullable Decoders.text)))
+    "SELECT a.awakeable_id FROM keiro.keiro_awakeables a JOIN keiro.keiro_workflows w ON w.workflow_name = a.owner_workflow_name AND w.workflow_id = a.owner_workflow_id WHERE a.status = 'pending' AND a.owner_workflow_name = 'fulfilment' AND w.status IN ('completed', 'cancelled', 'failed') AND ($1::text IS NULL OR a.owner_workflow_id = $1)"
+    (Encoders.param (Encoders.nullable Encoders.text))
+    (Decoders.rowList (Decoders.column (Decoders.nonNullable Decoders.uuid)))
 
 -- | Translate one intake row into the fulfilment command it stands for. The
 -- decision uses only the inbound message and the static catalogue.

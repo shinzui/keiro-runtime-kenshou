@@ -22,7 +22,7 @@ import Kenshou.Core.Id (Seed, parseScenarioId)
 import Kenshou.Core.Knob (KnobValue (..), knobText)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..))
-import Kenshou.Suite.Runtime.Driver (GeneratedOrder (..), generateOrder)
+import Kenshou.Suite.Runtime.Driver (DriverReport (..), GeneratedOrder (..), generateOrder)
 import Kenshou.Suite.Runtime.Knobs (quiescenceDeadlineFrom, runtimeKnobName, runtimeKnobsWith)
 import Kenshou.Suite.Runtime.Oracle (applySabotage, sabotageFrom, verifyEndToEnd)
 import Kenshou.Suite.Runtime.Roles (longRunningRoles, roleNameText)
@@ -30,12 +30,12 @@ import Kenshou.Suite.Runtime.System.Config (SystemConfig (..))
 import Kenshou.Suite.Runtime.System.Context (runtimeRequirements)
 import Kenshou.Suite.Runtime.System.Schema (StatusCounts (..))
 import Kenshou.Suite.Runtime.System.Warehouse (isDiscontinued)
-import Kenshou.Suite.Runtime.Topology (QuiescenceReport (..), RunningSystem (..), awaitQuiescence, consumerSessionsEnded, systemSpecFrom, withReferenceSystem)
+import Kenshou.Suite.Runtime.Topology (QuiescenceReport (..), RunningSystem (..), awaitQuiescence, consumerSessionsEnded, driverReports, systemSpecFrom, withReferenceSystem)
 import System.Directory (doesFileExist)
 import System.FilePath ((</>))
 
 scenarios :: [Scenario]
-scenarios = [singleOrderRoundtrip, happyPath, mixedOutcomes]
+scenarios = [singleOrderRoundtrip, happyPath, mixedOutcomes, completionExpiryRace, duplicateSubmission]
 
 -- | What a scenario expects of the terminal mix, beyond I1 to I4.
 data MixExpectation
@@ -43,6 +43,12 @@ data MixExpectation
     AllCompleted
   | -- | The observed mix equals the one the seed predicts.
     SeedPredicted
+  | -- | Every order ends completed or expired, in any proportion; the race
+    -- itself is judged by I1 to I4.
+    CompletedOrExpired
+  | -- | Every order completes, and every submission beyond the first per
+    -- order is recognised as a duplicate.
+    DuplicatesRecognised
 
 singleOrderRoundtrip :: Scenario
 singleOrderRoundtrip =
@@ -83,6 +89,36 @@ mixedOutcomes =
       ("runtime.fulfilment-deadline-seconds", VInt 5)
     ]
     SeedPredicted
+
+completionExpiryRace :: Scenario
+completionExpiryRace =
+  orderFlowScenario
+    "completion-expiry-race"
+    1
+    "Sets the cooling-off just under the deadline so shipping races expiry for every order; no order is both shipped and released, or neither."
+    TierStandard
+    [ ("runtime.refuse-fraction", VDouble 0),
+      ("runtime.expire-fraction", VDouble 0),
+      ("runtime.fulfilment-deadline-seconds", VInt 3),
+      ("runtime.cooling-off-ms", VInt 2600),
+      ("runtime.orders", VInt 300)
+    ]
+    CompletedOrExpired
+
+duplicateSubmission :: Scenario
+duplicateSubmission =
+  orderFlowScenario
+    "duplicate-submission"
+    1
+    "Two drivers submit the same seeded orders three times each; every order is placed exactly once."
+    TierStandard
+    [ ("runtime.refuse-fraction", VDouble 0),
+      ("runtime.expire-fraction", VDouble 0),
+      ("runtime.orders", VInt 200),
+      ("runtime.driver-partitioning", VText "replicated"),
+      ("runtime.submission-rounds", VInt 3)
+    ]
+    DuplicatesRecognised
 
 orderFlowScenario :: Text -> Int -> Text -> Tier -> [(Text, KnobValue)] -> MixExpectation -> Scenario
 orderFlowScenario name revision summary tier overrides expectation =
@@ -137,19 +173,37 @@ runOrderFlow expectation context = withReferenceSystem context (systemSpecFrom c
     traverse
       (\(role, index) -> (role,) <$> doesFileExist (context.outDir </> "logs" </> logLabel role index))
       [(role, index) | role <- longRunningRoles, index <- [0 .. max 1 config.processesPerRole - 1]]
+  drivers <- driverReports system
   let observed = Map.fromList report.shopOrders.byStatus
-      predicted = case expectation of
-        AllCompleted -> Map.singleton "completed" (fromIntegral report.submitted)
-        SeedPredicted -> predictedMix context.seed config
+      expectedOrders = fromIntegral (if config.orders > 0 then config.orders else config.durationSeconds * max 1 config.ratePerSecond) :: Int64
+      completedOnly = Map.singleton "completed" expectedOrders
+      submissions = [value | Just value <- drivers]
+      (mixHeld, predicted) = case expectation of
+        AllCompleted -> (observed == completedOnly, toJSON completedOnly)
+        DuplicatesRecognised -> (observed == completedOnly, toJSON completedOnly)
+        SeedPredicted -> let mix = predictedMix context.seed config in (observed == mix, toJSON mix)
+        CompletedOrExpired -> (all (`elem` ["completed", "expired"]) (Map.keys observed) && sum (Map.elems observed) == expectedOrders, toJSON ("completed or expired" :: Text))
+      extraCells = case expectation of
+        DuplicatesRecognised ->
+          let copies = fromIntegral (length submissions * max 1 config.submissionRounds)
+              accepted = sum [value.accepted | value <- submissions]
+              duplicates = sum [value.duplicates | value <- submissions]
+              failed = sum [value.failed | value <- submissions]
+           in [(Contract, "duplicates-recognised", fromIntegral accepted == expectedOrders && fromIntegral duplicates == expectedOrders * (copies - 1) && failed == 0, object ["accepted" .= accepted, "duplicates" .= duplicates, "failed" .= failed, "drivers" .= length submissions, "rounds" .= config.submissionRounds])]
+        CompletedOrExpired ->
+          -- Whether both sides of the race won at least once depends on timing,
+          -- so it is reported as an implementation property.
+          [(Implementation, "race-exercised", Map.findWithDefault 0 "completed" observed > 0 && Map.findWithDefault 0 "expired" observed > 0, object ["observed" .= observed])]
+        _ -> []
       missingLogs = [role | (role, False) <- logs]
   putSummary context Verdicts "outcomeMix" (object ["observed" .= observed, "predicted" .= predicted])
   cells <-
-    traverse
-      cell
-      [ ("quiescence-reached", report.reached, toJSON report),
-        ("outcome-mix", observed == predicted, object ["observed" .= observed, "predicted" .= predicted]),
-        ("worker-logs-present", null missingLogs, toJSON missingLogs)
+    traverse cell $
+      [ (Contract, "quiescence-reached", report.reached, toJSON report),
+        (Contract, "outcome-mix", mixHeld, object ["observed" .= observed, "predicted" .= predicted]),
+        (Contract, "worker-logs-present", null missingLogs, toJSON missingLogs)
       ]
+        <> extraCells
   finishWithVerdicts system.check (cells <> invariants)
 
 -- | The supervisor names each process log after its role, index and
@@ -157,14 +211,14 @@ runOrderFlow expectation context = withReferenceSystem context (systemSpecFrom c
 logLabel :: Text -> Int -> FilePath
 logLabel role index = Text.unpack (Text.replace "/" "-" (roleNameText role)) <> "-" <> show index <> ".0.stderr.log"
 
-cell :: (Text, Bool, Value) -> IO Verdict
-cell (name, held, detail) = do
+cell :: (InvariantClass, Text, Bool, Value) -> IO Verdict
+cell (invariantClass, name, held, detail) = do
   now <- getCurrentTime
   pure
     Verdict
       { checker = name,
         invariant = name,
-        cls = Contract,
+        cls = invariantClass,
         status = if held then Held else Violated,
         reason = Nothing,
         summary = if held then "Runtime check held" else "Runtime check failed",

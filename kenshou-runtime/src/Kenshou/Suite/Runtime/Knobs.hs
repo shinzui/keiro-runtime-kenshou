@@ -45,6 +45,8 @@ runtimeKnobs =
     integer "workflow.max-concurrent-advances" "Workflows one resume pass may advance concurrently." 4 1 32,
     integer "shard.count" "Shards of each context's dispatch subscription." 8 1 256,
     integer "queue.batch-size" "Pick jobs read per poll." 1 1 100,
+    choices "runtime.driver-partitioning" "Whether drivers split the orders or each submits all of them." "partitioned" ["replicated"],
+    integer "runtime.submission-rounds" "How many times each driver submits its orders; later rounds are duplicates." 1 1 10,
     choices "oracle.sabotage" "Doctor durable state after quiescence so one invariant must fail (sabotage control only)." "none" ["double-capture", "stale-read-model", "pending-outbox"]
   ]
   where
@@ -90,7 +92,9 @@ systemConfigFrom knobs =
       maxConcurrentAdvances = int "workflow.max-concurrent-advances",
       queueBatchSize = int "queue.batch-size",
       orderingPolicy = text "outbox.ordering-policy",
-      processesPerRole = int "runtime.processes-per-role"
+      processesPerRole = int "runtime.processes-per-role",
+      replicatedDrivers = text "runtime.driver-partitioning" == "replicated",
+      submissionRounds = int "runtime.submission-rounds"
     }
   where
     int name = fromIntegral (knobInt knobs (runtimeKnobName name))
