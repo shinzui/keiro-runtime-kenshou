@@ -27,6 +27,11 @@ provenance:
       at: 2026-09-30T01:17:52Z
       mode: "implement"
       note: "Verified the effective five-minute soak diagnosis window on a clean cell."
+    - model: "claude-opus-5-5"
+      harness: "claude-code"
+      at: 2026-10-03T05:20:35Z
+      mode: "implement"
+      note: "Generalized fixture roles and oracles, added finding 44/46 soak controls, telemetry arms, benchmark matrices and the write-side guide"
 ---
 
 # Cover the keiro command processor, process managers and routers
