@@ -191,16 +191,18 @@ fulfilmentWorkflow env wid@(WorkflowId order) = do
 loadFacts :: WarehouseEnv -> OrderId -> IO OrderFacts
 loadFacts env (OrderId order) = do
   found <- runContextOrThrow env.store (runTransaction (Tx.statement order orderFactsStatement))
-  case found >>= parseMaybe (withObject "order.placed.v1" \value -> OrderFacts <$> value .: "sku" <*> value .: "quantity" <*> value .: "slowPick") of
+  case found of
     Just facts -> pure facts
-    Nothing -> ioError (userError ("no warehouse intake for order " <> Text.unpack order))
+    Nothing -> ioError (userError ("no fulfilment request for order " <> Text.unpack order))
 
-orderFactsStatement :: Statement.Statement Text (Maybe Value)
+-- | The order facts recorded in the append transaction of the request, so
+-- the workflow does not depend on which inbox mode delivered the order.
+orderFactsStatement :: Statement.Statement Text (Maybe OrderFacts)
 orderFactsStatement =
   Statement.preparable
-    "SELECT payload FROM warehouse.intake WHERE order_id = $1 AND kind = 'order.placed.v1' ORDER BY received_at LIMIT 1"
+    "SELECT sku, quantity, slow_pick FROM warehouse.fulfilments WHERE order_id = $1 AND sku IS NOT NULL"
     (Encoders.param (Encoders.nonNullable Encoders.text))
-    (Decoders.rowMaybe (Decoders.column (Decoders.nonNullable Decoders.jsonb)))
+    (Decoders.rowMaybe (OrderFacts <$> Decoders.column (Decoders.nonNullable Decoders.text) <*> (fromIntegral <$> Decoders.column (Decoders.nonNullable Decoders.int4)) <*> Decoders.column (Decoders.nonNullable Decoders.bool)))
 
 requestPick :: WarehouseEnv -> OrderId -> OrderFacts -> AwakeableId -> IO ()
 requestPick env order facts aid = do
@@ -329,7 +331,7 @@ warehouseIntakeCommand :: IntakeRow -> Either Text FulfilmentCommand
 warehouseIntakeCommand row = case (row.kind, Aeson.fromJSON row.payload) of
   ("order.placed.v1", Aeson.Success (message :: ShopMessage))
     | isDiscontinued message.sku -> Right (RefuseFulfilment (RefuseFulfilmentData message.orderId "discontinued"))
-    | otherwise -> Right (RequestFulfilment (RequestFulfilmentData message.orderId message.sku message.quantity))
+    | otherwise -> Right (RequestFulfilment (RequestFulfilmentData message.orderId message.sku message.quantity message.slowPick))
   (kind, Aeson.Error problem) -> Left ("undecodable warehouse intake " <> kind <> ": " <> Text.pack problem)
   (kind, _) -> Left ("unexpected warehouse intake kind " <> kind)
 

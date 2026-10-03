@@ -8,22 +8,27 @@ module Kenshou.Suite.Runtime.System.Intake
   )
 where
 
+import Control.Exception (throwIO)
 import Data.Aeson (Value, toJSON)
 import Data.ByteString (ByteString)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (UTCTime)
+import Effectful (liftIO)
 import Kafka.Types (TopicName (..))
 import Keiro.Command (defaultRunCommandOptions)
-import Keiro.Inbox (InboxDedupePolicy (..), InboxResult (..), runInboxTransactionWithRetries)
-import Keiro.Inbox.Types (KafkaDeliveryRef (..))
+import Keiro.Inbox (InboxDedupePolicy (..), InboxResult (..), runInboxDelegatedWithRetries, runInboxTransactionWithRetries)
+import Keiro.Inbox.Types (DelegatedOutcome, KafkaDeliveryRef (..), mkDelegatedRetryContext)
 import Keiro.Integration.Event (IntegrationEvent (..))
+import Kenshou.Suite.Runtime.System.Config (InboxMode (..))
 import Kenshou.Suite.Runtime.System.Contracts (OrderId (..), ShopMessage (..), TopicPrefix, WarehouseMessage (..))
-import Kenshou.Suite.Runtime.System.Dispatch (Dispatched (..))
+import Kenshou.Suite.Runtime.System.Dispatch (Dispatched (..), dispatchDelegated)
+import Kenshou.Suite.Runtime.System.Fulfilment (fulfilmentEventStream, fulfilmentStream)
 import Kenshou.Suite.Runtime.System.KafkaBridge (decodeEnvelope)
-import Kenshou.Suite.Runtime.System.Schema (ContextName (..), IntakeRow (..), insertIntakeTx, insertPoisonTx, markIntakeDispatchedTx, pendingIntakeTx, undispatchedIntakeTx)
+import Kenshou.Suite.Runtime.System.Order (orderEventStream, orderStream)
+import Kenshou.Suite.Runtime.System.Schema (ContextName (..), IntakeRow (..), fulfilmentProjection, insertIntakeTx, insertPoisonTx, markIntakeDispatchedTx, orderProjection, pendingIntakeTx, undispatchedIntakeTx)
 import Kenshou.Suite.Runtime.System.Shop (dispatchOrderCommand, shopIntakeCommand)
-import Kenshou.Suite.Runtime.System.Store (ContextStore, runContext, runSql)
+import Kenshou.Suite.Runtime.System.Store (ContextEff, ContextStore, runContext, runSql)
 import Kenshou.Suite.Runtime.System.Warehouse (dispatchFulfilmentCommand, warehouseIntakeCommand)
 import Kenshou.Suite.Runtime.System.Wire (KeyCheck (..), decodeShopEventWith, decodeWarehouseEventWith)
 import Shibuya.Core.Types (Envelope)
@@ -41,7 +46,10 @@ data IntakeSide = IntakeSide
   { context :: !ContextName,
     consumer :: !Text,
     decode :: TopicPrefix -> IntegrationEvent -> Either Text (Value, OrderId),
-    dispatch :: IntakeRow -> IO (Either Text Dispatched)
+    dispatch :: IntakeRow -> IO (Either Text Dispatched),
+    -- | Delegated mode: dispatch the command so that its first event is the
+    -- receipt, given the inbox dedupe key and the message source.
+    delegate :: IntakeRow -> Text -> Text -> ContextEff (Either Text (DelegatedOutcome ()))
   }
 
 shopIntakeSide :: ContextStore -> IntakeSide
@@ -54,7 +62,10 @@ shopIntakeSide store =
         Right message -> Right (toJSON message, messageOrder message),
       dispatch = \row -> case shopIntakeCommand row of
         Left problem -> pure (Left problem)
-        Right command -> either (Left . Text.pack . show) Right <$> runContext store (dispatchOrderCommand defaultRunCommandOptions row command)
+        Right command -> either (Left . Text.pack . show) Right <$> runContext store (dispatchOrderCommand defaultRunCommandOptions row command),
+      delegate = \row dedupe source -> case shopIntakeCommand row of
+        Left problem -> pure (Left problem)
+        Right command -> dispatchDelegated "shop-consumer" source dedupe "order-command" orderEventStream (orderStream (OrderId row.orderId)) command [orderProjection]
     }
   where
     messageOrder = \case
@@ -72,7 +83,10 @@ warehouseIntakeSide store =
         Right message -> Right (toJSON message, message.orderId),
       dispatch = \row -> case warehouseIntakeCommand row of
         Left problem -> pure (Left problem)
-        Right command -> either (Left . Text.pack . show) Right <$> runContext store (dispatchFulfilmentCommand defaultRunCommandOptions ("intake/" <> row.messageId) (OrderId row.orderId) command)
+        Right command -> either (Left . Text.pack . show) Right <$> runContext store (dispatchFulfilmentCommand defaultRunCommandOptions ("intake/" <> row.messageId) (OrderId row.orderId) command),
+      delegate = \row dedupe source -> case warehouseIntakeCommand row of
+        Left problem -> pure (Left problem)
+        Right command -> dispatchDelegated "warehouse-consumer" source dedupe "fulfilment-command" fulfilmentEventStream (fulfilmentStream (OrderId row.orderId)) command [fulfilmentProjection]
     }
 
 -- | Inbox intake with application-table idempotence. The inbox transaction
@@ -80,18 +94,31 @@ warehouseIntakeSide store =
 -- command is then dispatched under an identifier derived from the intake row,
 -- and the row is marked dispatched. A redelivery of an already-recorded
 -- message re-attempts only an unfinished dispatch.
-consumeEnvelope :: IntakeSide -> ContextStore -> TopicPrefix -> TopicName -> Envelope (Maybe ByteString) -> UTCTime -> IO IntakeOutcome
-consumeEnvelope side store prefix topic envelope now = case decodeEnvelope topic envelope now of
+--
+-- In delegated mode no inbox or intake row is written: the command's first
+-- event carries a marker identifier derived from the delivery, and a
+-- redelivery finds it in the target stream.
+consumeEnvelope :: InboxMode -> Int -> IntakeSide -> ContextStore -> TopicPrefix -> TopicName -> Envelope (Maybe ByteString) -> UTCTime -> IO IntakeOutcome
+consumeEnvelope mode attempt side store prefix topic envelope now = case decodeEnvelope topic envelope now of
   Left problem -> poison (-1) (-1) ("undecodable record: " <> Text.pack (show problem))
   Right (event, ref) -> case side.decode prefix event of
     Left problem -> poison (fromIntegral ref.partition) ref.offset ("unsupported message: " <> problem)
     Right (message, OrderId order) -> do
       let row = IntakeRow {messageId = event.messageId, orderId = order, kind = event.eventType, payload = message}
-      recorded <- runContext store (runInboxTransactionWithRetries Nothing 5 PreferIntegrationMessageId event (Just ref) (\_ -> insertIntakeTx side.context row))
+      recorded <- case mode of
+        InboxTable -> runContext store (runInboxTransactionWithRetries Nothing 5 PreferIntegrationMessageId event (Just ref) (\_ -> insertIntakeTx side.context row))
+        InboxDelegated -> case mkDelegatedRetryContext 5 (max 1 attempt) of
+          Left problem -> pure (Right (Right (InboxHandlerFailed problem attempt)))
+          Right retry ->
+            runContext store $
+              runInboxDelegatedWithRetries Nothing retry PreferIntegrationMessageId event (Just ref) \dedupe delivered ->
+                side.delegate row dedupe delivered.source >>= either (liftIO . throwIO . userError . Text.unpack) pure
       case recorded of
         Left storeError -> pure (IntakeTransient ("inbox store failure: " <> Text.pack (show storeError)))
         Right (Left inboxError) -> poison (fromIntegral ref.partition) ref.offset ("inbox refused message: " <> Text.pack (show inboxError))
         Right (Right result) -> case result of
+          InboxProcessed () | mode == InboxDelegated -> pure (IntakeAcknowledged "delegated-fresh")
+          InboxDuplicate | mode == InboxDelegated -> pure (IntakeAcknowledged "delegated-duplicate")
           InboxProcessed () -> finish event.messageId "processed"
           InboxDuplicate -> finish event.messageId "duplicate"
           InboxInProgress -> pure (IntakeTransient "inbox row in progress")

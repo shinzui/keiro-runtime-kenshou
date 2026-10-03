@@ -53,7 +53,7 @@ main = hspec do
     it "decides refusal from the inbound message and the static catalogue alone" do
       let row sku = Schema.IntakeRow "m-1" "o-1" "order.placed.v1" (toJSON (OrderPlacedV1 (OrderId "o-1") (CustomerId "customer-1") (Sku sku) 2 900 False))
       Warehouse.warehouseIntakeCommand (row "discontinued-1") `shouldBe` Right (Fulfilment.RefuseFulfilment (Fulfilment.RefuseFulfilmentData (OrderId "o-1") "discontinued"))
-      Warehouse.warehouseIntakeCommand (row "sku-1") `shouldBe` Right (Fulfilment.RequestFulfilment (Fulfilment.RequestFulfilmentData (OrderId "o-1") (Sku "sku-1") 2))
+      Warehouse.warehouseIntakeCommand (row "sku-1") `shouldBe` Right (Fulfilment.RequestFulfilment (Fulfilment.RequestFulfilmentData (OrderId "o-1") (Sku "sku-1") 2 False))
     it "maps each warehouse outcome to exactly one order command" do
       let row kind message = Schema.IntakeRow "m-1" "o-1" kind (toJSON message)
       Shop.shopIntakeCommand (row "fulfilment.shipped.v1" (FulfilmentShippedV1 (OrderId "o-1") (Sku "sku-1") 2)) `shouldBe` Right (Order.CompleteOrder (Order.CompleteOrderData (OrderId "o-1")))
@@ -158,7 +158,7 @@ main = hspec do
     it "round-trips every event through its versioned codec" do
       let identifier = OrderId "order-1"
           events =
-            [ Fulfilment.FulfilmentRequested (Fulfilment.FulfilmentRequestedData identifier (Sku "sku-1") 2),
+            [ Fulfilment.FulfilmentRequested (Fulfilment.FulfilmentRequestedData identifier (Sku "sku-1") 2 False),
               Fulfilment.FulfilmentRefused (Fulfilment.FulfilmentRefusedData identifier "discontinued"),
               Fulfilment.FulfilmentShipped (Fulfilment.FulfilmentShippedData identifier),
               Fulfilment.FulfilmentExpired (Fulfilment.FulfilmentExpiredData identifier)

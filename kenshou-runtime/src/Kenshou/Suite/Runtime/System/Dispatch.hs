@@ -2,14 +2,19 @@ module Kenshou.Suite.Runtime.System.Dispatch
   ( Dispatched (..),
     dispatchOnce,
     dispatchSucceeded,
+    dispatchDelegated,
   )
 where
 
 import Data.List.NonEmpty (NonEmpty (..))
+import Data.Text (Text)
+import Data.Text qualified as Text
 import Keiki.Core (BoolAlg, RegFile)
-import Keiro.Command (CommandError (..), RunCommandOptions (..))
+import Keiro.Command (CommandError (..), RunCommandOptions (..), defaultRunCommandOptions)
 import Keiro.EventStream (EventStream)
 import Keiro.EventStream.Validate (ValidatedEventStream)
+import Keiro.Inbox.Delegated (delegatedCommand, delegatedEventId)
+import Keiro.Inbox.Types (DelegatedOutcome (..))
 import Keiro.ProcessManager (dispatchDeduplicatedCommand)
 import Keiro.Projection (InlineProjection, runCommandWithProjections)
 import Keiro.Stream (Stream)
@@ -57,3 +62,27 @@ dispatchOnce options eventStream target eventId command projections =
     classify = \case
       CommandRejected -> DispatchRejected
       other -> DispatchFailed other
+
+-- | Delegated idempotence: the command's first event is the inbox receipt.
+-- The marker identifier is derived from the consumer, the message source,
+-- its dedupe key, the target stream and the operation, so a redelivery finds
+-- the receipt in the target stream instead of an inbox row.
+dispatchDelegated ::
+  (BoolAlg phi (RegFile rs, ci), Eq co) =>
+  Text ->
+  Text ->
+  Text ->
+  Text ->
+  ValidatedEventStream phi rs s ci co ->
+  Stream (EventStream phi rs s ci co) ->
+  ci ->
+  [InlineProjection co] ->
+  ContextEff (Either Text (DelegatedOutcome ()))
+dispatchDelegated consumer source dedupe operation eventStream target command projections = do
+  let name = Stream.streamName target
+      marker = delegatedEventId consumer source dedupe name operation
+  result <- delegatedCommand defaultRunCommandOptions name marker \options -> runCommandWithProjections options eventStream target command projections
+  pure case result of
+    Left problem -> Left (Text.pack (show problem))
+    Right (DelegatedFresh _) -> Right (DelegatedFresh ())
+    Right DelegatedDuplicate -> Right DelegatedDuplicate

@@ -62,7 +62,8 @@ data FulfilmentEvent
 data RequestFulfilmentData = RequestFulfilmentData
   { orderId :: !OrderId,
     sku :: !Sku,
-    quantity :: !Int
+    quantity :: !Int,
+    slowPick :: !Bool
   }
   deriving stock (Generic, Eq, Show)
   deriving anyclass (FromJSON, ToJSON)
@@ -82,7 +83,8 @@ newtype ExpireFulfilmentData = ExpireFulfilmentData {orderId :: OrderId}
 data FulfilmentRequestedData = FulfilmentRequestedData
   { orderId :: !OrderId,
     sku :: !Sku,
-    quantity :: !Int
+    quantity :: !Int,
+    slowPick :: !Bool
   }
   deriving stock (Generic, Eq, Show)
   deriving anyclass (FromJSON, ToJSON)
@@ -111,7 +113,7 @@ fulfilmentTransducer =
     B.from NotRequested do
       B.onCmd inCtorRequestFulfilment $ \d -> B.do
         B.requireGuard (d.quantity .> K.lit (0 :: Int))
-        B.emit wireFulfilmentRequested FulfilmentRequestedTermFields {orderId = d.orderId, sku = d.sku, quantity = d.quantity}
+        B.emit wireFulfilmentRequested FulfilmentRequestedTermFields {orderId = d.orderId, sku = d.sku, quantity = d.quantity, slowPick = d.slowPick}
         B.goto Requested
       B.onCmd inCtorRefuseFulfilment $ \d -> B.do
         B.emit wireFulfilmentRefused FulfilmentRefusedTermFields {orderId = d.orderId, reason = d.reason}

@@ -340,7 +340,7 @@ consumerRole sideFor database topicOf groupOf env = withContextStore (database e
       handle envelope now = attempt (3 :: Int) (500000 :: Int)
         where
           attempt remaining delay = do
-            outcome <- consumeEnvelope side store (prefixOf env.config) topic envelope now
+            outcome <- consumeEnvelope env.config.inboxMode (4 - remaining) side store (prefixOf env.config) topic envelope now
             case outcome of
               IntakeAcknowledged label -> do
                 bump env

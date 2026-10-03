@@ -61,7 +61,7 @@ ensureShopTables = runTransaction do
 ensureWarehouseTables :: (Store :> es) => Eff es ()
 ensureWarehouseTables = runTransaction do
   Tx.sql "CREATE SCHEMA IF NOT EXISTS warehouse"
-  Tx.sql "CREATE TABLE IF NOT EXISTS warehouse.fulfilments (order_id text PRIMARY KEY, sku text, quantity integer, status text NOT NULL, terminal_count integer NOT NULL DEFAULT 0, updated_at timestamptz NOT NULL DEFAULT clock_timestamp())"
+  Tx.sql "CREATE TABLE IF NOT EXISTS warehouse.fulfilments (order_id text PRIMARY KEY, sku text, quantity integer, slow_pick boolean, status text NOT NULL, terminal_count integer NOT NULL DEFAULT 0, updated_at timestamptz NOT NULL DEFAULT clock_timestamp())"
   Tx.sql "CREATE TABLE IF NOT EXISTS warehouse.pick_requests (order_id text PRIMARY KEY, sku text NOT NULL, quantity integer NOT NULL, awakeable_id text NOT NULL, slow_pick boolean NOT NULL, requested_at timestamptz NOT NULL DEFAULT clock_timestamp())"
   intakeTables "warehouse"
 
@@ -98,7 +98,7 @@ fulfilmentProjection =
         FulfilmentRequested d ->
           let OrderId order = d.orderId
               Sku sku = d.sku
-           in Tx.statement (object ["order" .= order, "sku" .= sku, "quantity" .= d.quantity]) insertFulfilmentStatement
+           in Tx.statement (object ["order" .= order, "sku" .= sku, "quantity" .= d.quantity, "slow" .= d.slowPick]) insertFulfilmentStatement
         FulfilmentRefused d -> refused (orderText d.orderId)
         FulfilmentShipped d -> terminal "warehouse" (orderText d.orderId) "shipped"
         FulfilmentExpired d -> terminal "warehouse" (orderText d.orderId) "expired"
@@ -117,7 +117,7 @@ insertOrderStatement =
 insertFulfilmentStatement :: Statement.Statement Value ()
 insertFulfilmentStatement =
   jsonStatement
-    "INSERT INTO warehouse.fulfilments (order_id, sku, quantity, status) SELECT x->>'order', x->>'sku', (x->>'quantity')::integer, 'requested' FROM (SELECT $1::jsonb AS x) input"
+    "INSERT INTO warehouse.fulfilments (order_id, sku, quantity, slow_pick, status) SELECT x->>'order', x->>'sku', (x->>'quantity')::integer, (x->>'slow')::boolean, 'requested' FROM (SELECT $1::jsonb AS x) input"
 
 -- A refusal is itself terminal, and it is the first event of its stream.
 refusedFulfilmentStatement :: Statement.Statement Value ()

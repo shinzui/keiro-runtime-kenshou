@@ -33,7 +33,7 @@ runtimeKnobs =
     integer "runtime.cooling-off-ms" "Durable workflow sleep before a pick is requested." 200 0 600000,
     integer "runtime.fulfilment-deadline-seconds" "Deadline timer after which a fulfilment expires." 30 1 86400,
     integer "runtime.quiescence-deadline-seconds" "Time allowed after the driver stops for all work to finish." 120 1 86400,
-    choices "runtime.inbox-idempotence" "Inbox idempotence mechanism of both Kafka consumers (delegated is not wired yet)." "table" [],
+    choices "runtime.inbox-idempotence" "Inbox idempotence mechanism of both Kafka consumers." "table" ["delegated"],
     choices "runtime.kafka-transient-policy" "Kafka consumer reaction to a transient database failure." "crash-only" ["ack-retry"],
     choices "runtime.publish-mode" "Outbox publisher wiring (batch-enqueue arrives with its known-defect scenario)." "sync-per-record" [],
     choices "runtime.ttl-profile" "Lease and timeout profile of every runtime component." "short" ["production"],
