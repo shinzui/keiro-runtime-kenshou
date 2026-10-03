@@ -29,7 +29,6 @@ import Keiro.PGMQ.Job (jobProcessorWithContext, runJobWorkers)
 import Keiro.PGMQ.Runtime (runJobEff, withJobRuntime)
 import Keiro.Subscription.Shard.Worker (RetryDelay (..), ShardAck (..), ShardDelivery (..), ShardedWorkerOptions (..), defaultShardedWorkerOptions, mkShardedWorkerOptions, runShardedSubscriptionGroupAck)
 import Keiro.Timer (TimerWorkerOptions (..), defaultTimerWorkerOptions, drainDueTimersWith)
-import Keiro.Workflow (defaultWorkflowRunOptions)
 import Keiro.Workflow.Resume (WorkflowResumeOptions (..), defaultWorkflowResumeOptions, runWorkflowResumeWorkerPush, runWorkflowResumeWorkerWith)
 import Keiro.Workflow.Sleep (workflowSleepFireAction)
 import Kenshou.Core.Role (ControlMessage (..), RoleContext (..), RoleName, WorkerInit (..), WorkerMessage (..), WorkerRole (..), mkRoleName)
@@ -40,7 +39,9 @@ import Kenshou.Suite.Runtime.System.Intake (IntakeOutcome (..), IntakeSide, cons
 import Kenshou.Suite.Runtime.System.KafkaBridge (ConsumerExit (..), ConsumerSpec (..), publishToBrokers, runKafkaInboxConsumer)
 import Kenshou.Suite.Runtime.System.Shop (handleShopDelivery)
 import Kenshou.Suite.Runtime.System.Store (ContextEff, ContextStore (..), runContext, withContextStore)
+import Kenshou.Suite.Runtime.System.Trace (Signals (..), TraceSabotage (..), workflowRunOptions)
 import Kenshou.Suite.Runtime.System.Warehouse (WarehouseEnv (..), cancelOrphanedAwakeables, fireDeadline, fulfilmentRegistry, handlePick, handleWarehouseDelivery, pickJob, pickTuning)
+import Kenshou.Suite.Runtime.Telemetry (RoleTelemetry (..), withRoleTelemetry)
 import Kiroku.Store (runStoreIO)
 import Kiroku.Store.Subscription.Types (RetryPolicy (..), SubscriptionName (..), SubscriptionTarget (..))
 import Kiroku.Store.Types (CategoryName (..))
@@ -67,7 +68,10 @@ data RoleEnv = RoleEnv
     -- | Filled with @Right ()@ on a stop request, or @Left reason@ when the
     -- role decides to exit after an unrecoverable failure.
     stop :: !(MVar (Either Text ())),
-    handled :: !(IORef Int64)
+    handled :: !(IORef Int64),
+    -- | Tracer, Keiro metrics and telemetry handles for the run's
+    -- telemetry dimensions; empty when both are @off@.
+    telemetry :: !RoleTelemetry
   }
 
 -- | The twelve long-running roles, in start order.
@@ -86,6 +90,12 @@ longRunningRoles =
     "b-consumer",
     "driver"
   ]
+
+traceSabotageFrom :: Text -> TraceSabotage
+traceSabotageFrom = \case
+  "untraced-outbox" -> UntracedOutbox
+  "untraced-producer" -> UntracedProducer
+  _ -> NoTraceSabotage
 
 roleNameText :: Text -> Text
 roleNameText name = "runtime/" <> name
@@ -171,14 +181,15 @@ runtimeRole name summary body = WorkerRole (roleName name) summary \context -> c
     when started do
       stop <- newEmptyMVar
       handled <- newIORef 0
-      let env = RoleEnv context args.config args.index stop handled
-      withAsync (watchControl context stop) \_ -> withAsync (heartbeat env) \_ -> do
-        outcome <- try @SomeException (body env)
-        final <- tryReadMVar stop
-        case (outcome, final) of
-          (Left exception, _) -> ioError (userError (displayException exception))
-          (Right (), Just (Left reason)) -> ioError (userError (Text.unpack reason))
-          (Right (), _) -> pure ()
+      withRoleTelemetry (traceSabotageFrom args.config.traceSabotage) context \telemetry -> do
+        let env = RoleEnv context args.config args.index stop handled telemetry
+        withAsync (watchControl context stop) \_ -> withAsync (heartbeat env) \_ -> do
+          outcome <- try @SomeException (body env)
+          final <- tryReadMVar stop
+          case (outcome, final) of
+            (Left exception, _) -> ioError (userError (displayException exception))
+            (Right (), Just (Left reason)) -> ioError (userError (Text.unpack reason))
+            (Right (), _) -> pure ()
 
 awaitStart :: RoleContext -> IO Bool
 awaitStart context =
@@ -235,7 +246,7 @@ prefixOf config = TopicPrefix config.topicPrefix
 
 driverRole :: RoleEnv -> IO ()
 driverRole env = withContextStore env.config.shopDatabase env.config.poolSize \store -> do
-  report <- runDriver store env.context.init.seed env.config env.index env.stop \_ outcome -> do
+  report <- runDriver env.telemetry.signals store env.context.init.seed env.config env.index env.stop \_ outcome -> do
     bump env
     case outcome of
       _ -> pure ()
@@ -271,18 +282,19 @@ dispatchLoop env store subscription category handle = case shardOptions env cate
 
 shopDispatchRole :: RoleEnv -> IO ()
 shopDispatchRole env = withContextStore env.config.shopDatabase env.config.poolSize \store ->
-  dispatchLoop env store "shop-dispatch" "order" \delivery -> handleShopDelivery store (prefixOf env.config) delivery.event
+  dispatchLoop env store "shop-dispatch" "order" \delivery -> handleShopDelivery env.telemetry.signals store (prefixOf env.config) delivery.event
 
 withWarehouseEnv :: RoleEnv -> (WarehouseEnv -> IO a) -> IO a
 withWarehouseEnv env action =
   withContextStore env.config.warehouseDatabase env.config.poolSize \store ->
-    withJobRuntime env.config.warehouseDatabase Nothing \jobs ->
+    withJobRuntime env.config.warehouseDatabase env.telemetry.signals.tracer \jobs ->
       action
         WarehouseEnv
           { store,
             jobs,
             coolingOff = fromIntegral env.config.coolingOffMillis / 1000,
-            deadline = fromIntegral env.config.fulfilmentDeadlineSeconds
+            deadline = fromIntegral env.config.fulfilmentDeadlineSeconds,
+            signals = env.telemetry.signals
           }
 
 warehouseDispatchRole :: RoleEnv -> IO ()
@@ -293,7 +305,7 @@ resumeRole :: RoleEnv -> IO ()
 resumeRole env = withWarehouseEnv env \warehouse -> do
   let options =
         defaultWorkflowResumeOptions
-          { runOptions = defaultWorkflowRunOptions,
+          { runOptions = workflowRunOptions env.telemetry.signals,
             pollInterval = 200000,
             leaseTtl = realToFrac (timeouts env).workflowLeaseSeconds,
             maxConcurrentAdvances = env.config.maxConcurrentAdvances
@@ -309,10 +321,10 @@ timerRole env = withContextStore env.config.warehouseDatabase env.config.poolSiz
       fire row =
         workflowSleepFireAction row >>= \case
           Just fired -> pure (Just fired)
-          Nothing -> liftIO (fireDeadline store row)
+          Nothing -> liftIO (fireDeadline env.telemetry.signals store row)
   untilStopped env 100000 do
     now <- getCurrentTime
-    fired <- runContext store (drainDueTimersWith Nothing options now 100 fire)
+    fired <- runContext store (drainDueTimersWith env.telemetry.signals.metrics options now 100 fire)
     case fired of
       Left problem -> env.context.send (WrkCustom "timer-pass-failed" (object ["problem" .= show problem])) >> pure False
       Right count -> do
@@ -351,7 +363,7 @@ publisherRole database env = withContextStore (database env.config) env.config.p
           }
       brokers = fmap BrokerAddress env.config.brokers
   untilStopped env 50000 do
-    summary <- runContext store (publishClaimedOutbox (liftIO . publishToBrokers brokers policy) options Nothing)
+    summary <- runContext store (publishClaimedOutbox (liftIO . publishToBrokers env.telemetry.signals brokers policy) options env.telemetry.signals.metrics)
     case summary of
       Left problem -> env.context.send (WrkCustom "publish-pass-failed" (object ["problem" .= show problem])) >> pure False
       Right value -> do
@@ -368,7 +380,7 @@ orderingPolicyFrom = \case
 maintenanceRole :: (SystemConfig -> Text) -> ContextEff () -> RoleEnv -> IO ()
 maintenanceRole database extra env = withContextStore (database env.config) env.config.poolSize \store ->
   untilStopped env 1000000 do
-    result <- runContext store (outboxMaintenancePass (OutboxMaintenanceOptions 10 (realToFrac (timeouts env).publishingTimeoutSeconds)) Nothing >> extra)
+    result <- runContext store (outboxMaintenancePass (OutboxMaintenanceOptions 10 (realToFrac (timeouts env).publishingTimeoutSeconds)) env.telemetry.signals.metrics >> extra)
     case result of
       Left problem -> env.context.send (WrkCustom "maintenance-pass-failed" (object ["problem" .= show problem]))
       Right _ -> bump env
@@ -378,9 +390,9 @@ maintenanceRole database extra env = withContextStore (database env.config) env.
 -- transient database failure is retried in place three times; after that the
 -- process exits non-zero so that consumption resumes from the committed
 -- offset when it is restarted.
-consumerRole :: (ContextStore -> IntakeSide) -> (SystemConfig -> Text) -> (SystemConfig -> Text) -> (SystemConfig -> Text) -> RoleEnv -> IO ()
+consumerRole :: (Signals -> ContextStore -> IntakeSide) -> (SystemConfig -> Text) -> (SystemConfig -> Text) -> (SystemConfig -> Text) -> RoleEnv -> IO ()
 consumerRole sideFor database topicOf groupOf env = withContextStore (database env.config) env.config.poolSize \store -> do
-  let side = sideFor store
+  let side = sideFor env.telemetry.signals store
   swept <- sweepIntake side store
   case swept of
     Left problem -> ioError (userError ("intake sweep failed: " <> Text.unpack problem))
@@ -414,7 +426,7 @@ consumerRole sideFor database topicOf groupOf env = withContextStore (database e
       -- answers it the way a supervisor would: start a fresh session, which
       -- resumes from the committed offsets after the intake sweep.
       session (ended :: Int) = do
-        result <- runKafkaInboxConsumer spec env.stop handle
+        result <- runKafkaInboxConsumer env.telemetry.signals.tracer spec env.stop handle
         case result of
           Left problem -> void (tryPutMVar env.stop (Left problem))
           Right (StoppedWith _) -> pure ()

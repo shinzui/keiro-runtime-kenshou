@@ -25,7 +25,7 @@ module Kenshou.Suite.Runtime.System.Warehouse
 where
 
 import Control.Monad (forM, forM_, void)
-import Data.Aeson (FromJSON, ToJSON, Value, object, (.:), (.=))
+import Data.Aeson (FromJSON, ToJSON, object, (.:), (.=))
 import Data.Aeson qualified as Aeson
 import Data.Aeson.Types (parseMaybe, withObject)
 import Data.ByteString qualified as ByteString
@@ -47,13 +47,14 @@ import Hasql.Transaction qualified as Tx
 import Keiki.Core (HsPred)
 import Keiro.Codec (Codec (..))
 import Keiro.Command (RunCommandOptions, defaultRunCommandOptions)
+import Keiro.Integration.Event (TraceContext (..))
 import Keiro.Outbox (IntegrationProducer (..), ProducerEnqueueOutcome (..), enqueueProducerEventTx, mkIntegrationProducer)
 import Keiro.PGMQ.Codec (aesonJobCodec)
-import Keiro.PGMQ.Job (Job (..), JobContext, JobOrdering (..), JobOutcome (..), JobPolling (..), JobTuning (..), RetryDelay (..), defaultJobTuning, defaultRetryPolicy, enqueueToGroup, ensureOrderedJobQueue)
+import Keiro.PGMQ.Job (Job (..), JobContext, JobOrdering (..), JobOutcome (..), JobPolling (..), JobTuning (..), RetryDelay (..), defaultJobTuning, defaultRetryPolicy, enqueueToGroup, enqueueTraced, ensureOrderedJobQueue)
 import Keiro.PGMQ.Runtime (JobRuntime, queueRef, runJobEff)
 import Keiro.ProcessManager (PMCommand (..), PMCommandResult (..), ProcessManager (..), ProcessManagerAction (..), ProcessManagerResult (..), runProcessManagerOnce)
 import Keiro.Timer (TimerId (..), TimerRequest (..), TimerRow (..), cancelTimer)
-import Keiro.Workflow (StepName (..), Workflow, WorkflowId (..), WorkflowName, WorkflowOutcome (..), defaultWorkflowRunOptions, mkWorkflowName, runWorkflowWith, step)
+import Keiro.Workflow (StepName (..), Workflow, WorkflowId (..), WorkflowName, WorkflowOutcome (..), mkWorkflowName, runWorkflowWith, step)
 import Keiro.Workflow.Awakeable (AwakeableId (..), awakeableIdText, awakeableNamed, cancelAwakeable, signalAwakeable)
 import Keiro.Workflow.Instance (cancelWorkflow)
 import Keiro.Workflow.Resume (WorkflowDef (..), WorkflowRegistry)
@@ -66,10 +67,12 @@ import Kenshou.Suite.Runtime.System.Ledger qualified as Ledger
 import Kenshou.Suite.Runtime.System.SagaLog (ObserveSagaData (..), SagaCommand (..), SagaEvent, SagaState, sagaEventStream, sagaStream)
 import Kenshou.Suite.Runtime.System.Schema (IntakeRow (..), ensureWarehouseTables, fulfilmentProjection, upsertPickRequestTx)
 import Kenshou.Suite.Runtime.System.Store (ContextEff, ContextStore, deterministicEventId, runContext, runContextOrThrow)
-import Kenshou.Suite.Runtime.System.Wire (warehouseEventDraft)
+import Kenshou.Suite.Runtime.System.Trace (Signals (..), commandOptions, currentTraceContext, draftTraceContext, withEventTrace, withStoredTrace, workflowRunOptions)
+import Kenshou.Suite.Runtime.System.Wire (tracedDraft, warehouseEventDraft)
 import Kiroku.Store (Store, runTransaction)
 import Kiroku.Store.Error (StoreError)
 import Kiroku.Store.Types (EventId (..), RecordedEvent (..))
+import Pgmq.Types (MessageHeaders (..))
 
 -- Accounts of the warehouse's stock ledger.
 
@@ -167,7 +170,8 @@ data WarehouseEnv = WarehouseEnv
   { store :: !ContextStore,
     jobs :: !JobRuntime,
     coolingOff :: !NominalDiffTime,
-    deadline :: !NominalDiffTime
+    deadline :: !NominalDiffTime,
+    signals :: !Signals
   }
 
 fulfilmentWorkflowName :: WorkflowName
@@ -181,13 +185,27 @@ data OrderFacts = OrderFacts {sku :: !Text, quantity :: !Int, slowPick :: !Bool}
 -- awakeable, then shipping. A slow pick never signals, so the deadline timer
 -- decides the order instead; the fulfilment aggregate serialises the race.
 fulfilmentWorkflow :: (IOE :> es, Store :> es) => WarehouseEnv -> WorkflowId -> Eff (Workflow : es) Text
+--
+-- A resumed run starts a new root trace: the runtime does not carry trace
+-- context across a sleep or an awakeable. The first step journals the trace
+-- of the run that started the workflow, and the later steps re-attach it, so
+-- the pick job and the ship command stay in the order's trace.
 fulfilmentWorkflow env wid@(WorkflowId order) = do
+  origin <- step (StepName "trace-origin") (liftIO (fmap (fmap traceOrigin) currentTraceContext))
+  let parent = fmap fromTraceOrigin origin
   facts <- step (StepName "load-order") (liftIO (loadFacts env (OrderId order)))
   sleepNamed (StepName "cooling-off") env.coolingOff
   (aid, await) <- awakeableNamed (StepName "pick-confirmation")
-  _ <- step (StepName "request-pick") (liftIO (requestPick env (OrderId order) facts aid))
+  _ <- step (StepName "request-pick") (liftIO (withStoredTrace env.signals parent (requestPick env (OrderId order) facts aid)))
   (_ :: Text) <- await
-  step (StepName "ship") (liftIO (ship env wid))
+  step (StepName "ship") (liftIO (withStoredTrace env.signals parent (ship env wid)))
+
+-- | A journaled trace context: @traceparent@ and @tracestate@.
+traceOrigin :: TraceContext -> (Text, Maybe Text)
+traceOrigin context = (context.traceparent, context.tracestate)
+
+fromTraceOrigin :: (Text, Maybe Text) -> TraceContext
+fromTraceOrigin (parent, state) = TraceContext parent state
 
 loadFacts :: WarehouseEnv -> OrderId -> IO OrderFacts
 loadFacts env (OrderId order) = do
@@ -208,12 +226,18 @@ orderFactsStatement =
 requestPick :: WarehouseEnv -> OrderId -> OrderFacts -> AwakeableId -> IO ()
 requestPick env order facts aid = do
   runContextOrThrow env.store (runTransaction (upsertPickRequestTx order (Sku facts.sku) facts.quantity (awakeableIdText aid) facts.slowPick))
-  enqueued <- runJobEff env.jobs (enqueueToGroup pickJob facts.sku (PickJob (orderText order) facts.sku facts.quantity (awakeableIdText aid) facts.slowPick))
+  let job = PickJob (orderText order) facts.sku facts.quantity (awakeableIdText aid) facts.slowPick
+  -- The traced enqueue writes the current trace into the message headers;
+  -- the group header keeps the job in its SKU's FIFO group.
+  enqueued <- runJobEff env.jobs case env.signals.provider of
+    Just provider -> enqueueTraced provider pickJob (MessageHeaders (object ["x-pgmq-group" .= facts.sku])) job
+    Nothing -> enqueueToGroup pickJob facts.sku job
   either (ioError . userError . show) (const (pure ())) enqueued
 
 ship :: WarehouseEnv -> WorkflowId -> IO Text
 ship env (WorkflowId order) = do
-  result <- runContextOrThrow env.store (dispatchFulfilmentCommand defaultRunCommandOptions ("ship/" <> order) (OrderId order) (ShipFulfilment (ShipFulfilmentData (OrderId order))))
+  options <- commandOptions env.signals
+  result <- runContextOrThrow env.store (dispatchFulfilmentCommand options ("ship/" <> order) (OrderId order) (ShipFulfilment (ShipFulfilmentData (OrderId order))))
   case result of
     DispatchAppended -> pure "shipped"
     DispatchDuplicate -> pure "shipped"
@@ -241,11 +265,12 @@ handlePick env _ job
 -- | The fallback fire action for non-sleep timers: an expired deadline asks
 -- the fulfilment aggregate to expire. If shipping already won, the command is
 -- refused and the timer is still settled.
-fireDeadline :: ContextStore -> TimerRow -> IO (Maybe EventId)
-fireDeadline context row = case parseMaybe (withObject "deadline" \value -> (,) <$> value .: "kind" <*> value .: "orderId") row.payload of
+fireDeadline :: Signals -> ContextStore -> TimerRow -> IO (Maybe EventId)
+fireDeadline signals context row = case parseMaybe (withObject "deadline" \value -> (,) <$> value .: "kind" <*> value .: "orderId") row.payload of
   Just ("fulfilment-deadline" :: Text, order) -> do
     let identity = "expire/" <> order
-    outcome <- runContext context (dispatchFulfilmentCommand defaultRunCommandOptions identity (OrderId order) (ExpireFulfilment (ExpireFulfilmentData (OrderId order))))
+    options <- commandOptions signals
+    outcome <- runContext context (dispatchFulfilmentCommand options identity (OrderId order) (ExpireFulfilment (ExpireFulfilmentData (OrderId order))))
     pure case outcome of
       Right DispatchAppended -> Just (deterministicEventId ("warehouse/" <> identity))
       Right DispatchDuplicate -> Just (deterministicEventId ("warehouse/" <> identity))
@@ -262,14 +287,24 @@ dispatchFulfilmentCommand options identity order command =
 handleWarehouseDelivery :: WarehouseEnv -> TopicPrefix -> RecordedEvent -> IO (Either Text ())
 handleWarehouseDelivery env prefix recorded = case fulfilmentCodec.decode recorded.eventType recorded.payload of
   Left problem -> pure (Left ("undecodable fulfilment event: " <> problem))
-  Right event -> do
+  Right event -> withEventTrace env.signals "dispatch warehouse-dispatch" recorded do
+    options <- commandOptions env.signals
+    let trace = draftTraceContext env.signals recorded
+    let runStock input = do
+          result <- runProcessManagerOnce options stockManager recorded input
+          pure case result of
+            Left problem -> ["stock manager state: " <> Text.pack (show problem)]
+            Right value -> [Text.pack (show stream) <> ": " <> Text.pack (show problem) | PMCommandFailed stream problem <- value.commandResults]
+        produce message = do
+          enqueued <- runTransaction (enqueueProducerEventTx warehouseProducer recorded 0 (tracedDraft trace (warehouseEventDraft prefix recorded.createdAt message)))
+          pure (producedProblems enqueued)
     outcome <- runContext env.store case event of
       FulfilmentRequested d -> do
         let deadline = addUTCTime env.deadline recorded.createdAt
         stock <- runStock (StockInput sourceId d.orderId (StockReserve deadline) d.sku d.quantity)
         if null stock
           then do
-            started <- runWorkflowWith defaultWorkflowRunOptions fulfilmentWorkflowName (WorkflowId (orderText d.orderId)) (fulfilmentWorkflow env (WorkflowId (orderText d.orderId)))
+            started <- runWorkflowWith (workflowRunOptions env.signals) fulfilmentWorkflowName (WorkflowId (orderText d.orderId)) (fulfilmentWorkflow env (WorkflowId (orderText d.orderId)))
             pure (workflowProblems started)
           else pure stock
       FulfilmentRefused d -> produce (FulfilmentRefusedV1 d.orderId d.reason)
@@ -290,21 +325,16 @@ handleWarehouseDelivery env prefix recorded = case fulfilmentCodec.decode record
       Right problems -> Left (Text.intercalate "; " problems)
   where
     sourceId = let EventId value = recorded.eventId in UUID.toText value
-    runStock input = do
-      result <- runProcessManagerOnce defaultRunCommandOptions stockManager recorded input
-      pure case result of
-        Left problem -> ["stock manager state: " <> Text.pack (show problem)]
-        Right value -> [Text.pack (show stream) <> ": " <> Text.pack (show problem) | PMCommandFailed stream problem <- value.commandResults]
-    produce message = do
-      enqueued <- runTransaction (enqueueProducerEventTx warehouseProducer recorded 0 (warehouseEventDraft prefix recorded.createdAt message))
-      pure case enqueued of
-        ProducerIdentityConflict identity fields -> ["producer identity conflict " <> Text.pack (show identity) <> " " <> Text.pack (show fields)]
-        _ -> []
     withFulfilment order continue = do
       found <- runTransaction (Tx.statement (orderText order) fulfilmentDetailsStatement)
       case found of
         Just (sku, quantity) -> continue (Sku sku) (fromIntegral quantity)
         Nothing -> pure ["fulfilment read model has no reservation for " <> orderText order]
+
+producedProblems :: ProducerEnqueueOutcome -> [Text]
+producedProblems = \case
+  ProducerIdentityConflict identity fields -> ["producer identity conflict " <> Text.pack (show identity) <> " " <> Text.pack (show fields)]
+  _ -> []
 
 workflowProblems :: WorkflowOutcome Text -> [Text]
 workflowProblems = \case

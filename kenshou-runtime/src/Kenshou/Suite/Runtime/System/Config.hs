@@ -70,7 +70,9 @@ data SystemConfig = SystemConfig
     -- | Every driver submits every order instead of its own share.
     replicatedDrivers :: !Bool,
     -- | How many times each driver submits its sequence.
-    submissionRounds :: !Int
+    submissionRounds :: !Int,
+    -- | A trace-continuity sabotage control; @none@ outside those runs.
+    traceSabotage :: !Text
   }
   deriving stock (Generic, Eq, Show)
   deriving anyclass (FromJSON, ToJSON)

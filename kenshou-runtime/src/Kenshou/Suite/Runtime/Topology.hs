@@ -7,6 +7,7 @@ module Kenshou.Suite.Runtime.Topology
     awaitQuiescence,
     processesOf,
     signalRole,
+    stopRoles,
     driverReports,
     consumerSessionsEnded,
   )
@@ -18,7 +19,7 @@ import Control.Exception (SomeException, displayException, finally, try)
 import Control.Monad (forM, forM_, void)
 import Data.Aeson (ToJSON (..), Value, object, (.=))
 import Data.Aeson qualified as Aeson
-import Data.IORef (IORef, modifyIORef', newIORef, readIORef)
+import Data.IORef (IORef, atomicModifyIORef', modifyIORef', newIORef, readIORef)
 import Data.Int (Int64)
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map.Strict (Map)
@@ -107,14 +108,19 @@ withReferenceSystem context spec action =
               sendCommand child CtlStart
               pure child
             modifyIORef' children (Map.insert role started)
-          stopAll = do
-            running <- readIORef children
-            forM_ (reverse longRunningRoles) \role ->
-              forM_ (Map.findWithDefault [] role running) \child -> void (stopGracefully supervisor child 10000)
-      (mapM_ startRole longRunningRoles >> action system) `finally` stopAll
+      (mapM_ startRole longRunningRoles >> action system) `finally` stopRoles system
 
 processesOf :: RunningSystem -> Text -> IO [Child]
 processesOf system role = Map.findWithDefault [] role <$> readIORef system.children
+
+-- | Stop every long-running role in reverse start order and forget it, so a
+-- scenario can read what the processes write when they stop (their span
+-- files) before the system is torn down.
+stopRoles :: RunningSystem -> IO ()
+stopRoles system = do
+  running <- atomicModifyIORef' system.children (Map.empty,)
+  forM_ (reverse longRunningRoles) \role ->
+    forM_ (Map.findWithDefault [] role running) \child -> void (stopGracefully system.supervisor child 10000)
 
 -- | Deliver a signal to every process of a long-running role. The supervisor
 -- records each delivery as a disturbance window.

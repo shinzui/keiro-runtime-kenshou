@@ -4,16 +4,19 @@ module Kenshou.Suite.Runtime.Knobs
     runtimeKnobName,
     systemConfigFrom,
     partitionsFrom,
+    traceSabotageKnob,
     quiescenceDeadlineFrom,
   )
 where
 
 import Data.List.NonEmpty (NonEmpty (..))
+import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (NominalDiffTime)
-import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), ResolvedKnobs, knobDouble, knobInt, knobText, mkKnobName)
+import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), ResolvedKnobs, knobDouble, knobInt, knobText, mkKnobName, resolvedKnobsMap)
 import Kenshou.Suite.Runtime.System.Config
+import Kenshou.Telemetry (telemetryKnobs)
 
 runtimeKnobName :: Text -> KnobName
 runtimeKnobName = either (error . Text.unpack) id . mkKnobName
@@ -49,6 +52,9 @@ runtimeKnobs =
     integer "runtime.submission-rounds" "How many times each driver submits its orders; later rounds are duplicates." 1 1 10,
     choices "oracle.sabotage" "Doctor durable state after quiescence so one invariant must fail (sabotage control only)." "none" ["double-capture", "stale-read-model", "pending-outbox"]
   ]
+    -- Every role process builds its providers from these, so every scenario
+    -- declares them even when it supports only the off arms.
+    <> telemetryKnobs
   where
     integer name summary value low high = KnobSpec (runtimeKnobName name) summary KnobInt (VInt value) (IntRange low high) []
     decimal name summary value low high = KnobSpec (runtimeKnobName name) summary KnobDouble (VDouble value) (DoubleRange low high) []
@@ -94,11 +100,20 @@ systemConfigFrom knobs =
       orderingPolicy = text "outbox.ordering-policy",
       processesPerRole = int "runtime.processes-per-role",
       replicatedDrivers = text "runtime.driver-partitioning" == "replicated",
-      submissionRounds = int "runtime.submission-rounds"
+      submissionRounds = int "runtime.submission-rounds",
+      -- Declared only by the trace-continuity scenario.
+      traceSabotage = case Map.lookup (runtimeKnobName "trace.sabotage") (resolvedKnobsMap knobs) of
+        Just (VText value) -> value
+        _ -> "none"
     }
   where
     int name = fromIntegral (knobInt knobs (runtimeKnobName name))
     text name = knobText knobs (runtimeKnobName name)
+
+-- | A sabotage control for trace continuity: each value removes one link an
+-- application must provide, so I7 must fail.
+traceSabotageKnob :: KnobSpec
+traceSabotageKnob = KnobSpec (runtimeKnobName "trace.sabotage") "Remove one trace link an application must provide so I7 must fail (sabotage control only)." KnobText (VText "none") (OneOf (VText "none" :| [VText "untraced-outbox", VText "untraced-producer"])) []
 
 partitionsFrom :: ResolvedKnobs -> Int
 partitionsFrom knobs = fromIntegral (knobInt knobs (runtimeKnobName "kafka.partitions"))

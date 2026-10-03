@@ -41,6 +41,7 @@ library
     Kenshou.Suite.Runtime
     Kenshou.Suite.Runtime.Correctness.Ops
     Kenshou.Suite.Runtime.Correctness.OrderFlow
+    Kenshou.Suite.Runtime.Correctness.Telemetry
     Kenshou.Suite.Runtime.Correctness.WireRoundtrip
     Kenshou.Suite.Runtime.Driver
     Kenshou.Suite.Runtime.Knobs
@@ -49,6 +50,7 @@ library
     Kenshou.Suite.Runtime.Oracle.Ops
     Kenshou.Suite.Runtime.Oracle.Pure
     Kenshou.Suite.Runtime.Oracle.Sql
+    Kenshou.Suite.Runtime.Oracle.Trace
     Kenshou.Suite.Runtime.Roles
     Kenshou.Suite.Runtime.System.Broker
     Kenshou.Suite.Runtime.System.Config
@@ -65,8 +67,10 @@ library
     Kenshou.Suite.Runtime.System.Schema
     Kenshou.Suite.Runtime.System.Shop
     Kenshou.Suite.Runtime.System.Store
+    Kenshou.Suite.Runtime.System.Trace
     Kenshou.Suite.Runtime.System.Warehouse
     Kenshou.Suite.Runtime.System.Wire
+    Kenshou.Suite.Runtime.Telemetry
     Kenshou.Suite.Runtime.Topology
 
   build-depends:
@@ -81,6 +85,8 @@ library
     filepath,
     hasql,
     hasql-transaction,
+    hs-opentelemetry-api,
+    hs-opentelemetry-propagator-w3c,
     hw-kafka-client,
     kafka-effectful,
     keiki,
@@ -92,8 +98,11 @@ library
     kenshou-core,
     kenshou-kafka,
     kenshou-keiro,
+    kenshou-telemetry,
+    kiroku-otel,
     kiroku-store,
     optparse-applicative,
+    pgmq-core,
     scientific,
     shibuya-core,
     shibuya-kafka-adapter,
@@ -101,6 +110,8 @@ library
     stm,
     text,
     time,
+    unliftio-core,
+    unordered-containers,
     uuid,
 
 test-suite kenshou-runtime-test

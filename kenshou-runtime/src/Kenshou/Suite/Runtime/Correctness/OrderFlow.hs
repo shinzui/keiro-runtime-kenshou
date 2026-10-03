@@ -130,8 +130,8 @@ orderFlowScenario name revision summary tier overrides expectation =
       knobs = runtimeKnobsWith overrides,
       dimensions =
         DimensionSupport
-          { tracing = Supported (Support (TracingOff :| []) TracingOff),
-            metrics = Supported (Support (MetricsOff :| []) MetricsOff),
+          { tracing = Supported (Support (TracingOff :| [TracingNoop, TracingSdkInMemory, TracingSdkOtlp]) TracingOff),
+            metrics = Supported (Support (MetricsOff :| [MetricsCollect, MetricsServe, MetricsServeScraped]) MetricsOff),
             pgDurability = Supported (Support (PgFsyncOff :| [PgDurable]) PgFsyncOff),
             pgVersion = Supported (Support (Pg18 :| []) Pg18)
           },

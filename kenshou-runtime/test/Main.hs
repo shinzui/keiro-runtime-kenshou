@@ -19,6 +19,7 @@ import Kenshou.Suite.Runtime.Oracle qualified as Oracle
 import Kenshou.Suite.Runtime.Oracle.Ops qualified as OpsOracle
 import Kenshou.Suite.Runtime.Oracle.Pure qualified as PureOracle
 import Kenshou.Suite.Runtime.Oracle.Sql qualified as Sql
+import Kenshou.Suite.Runtime.Oracle.Trace qualified as TraceOracle
 import Kenshou.Suite.Runtime.System.Config (SystemConfig (..))
 import Kenshou.Suite.Runtime.System.Contracts (CustomerId (..), OrderId (..), ShopMessage (..), Sku (..), TopicPrefix (..), WarehouseMessage (..), shopTopic, warehouseTopic)
 import Kenshou.Suite.Runtime.System.Fulfilment qualified as Fulfilment
@@ -31,10 +32,38 @@ import Kenshou.Suite.Runtime.System.Schema qualified as Schema
 import Kenshou.Suite.Runtime.System.Shop qualified as Shop
 import Kenshou.Suite.Runtime.System.Warehouse qualified as Warehouse
 import Kenshou.Suite.Runtime.System.Wire qualified as Wire
+import Kenshou.Suite.Runtime.Telemetry (SpanRecord (..))
 import Test.Hspec
 
 main :: IO ()
 main = hspec do
+  describe "trace continuity controls (I7)" do
+    let span' process name trace spanId parent = SpanRecord {process, name, kind = "Consumer", traceId = trace, spanId, parentSpanId = parent, attributes = Map.empty, startNs = 0, endNs = 1}
+        send = span' "runtime/a-publisher-0" (TraceOracle.sendSpanName "t") "tr" "s1" (Just "d1")
+        consume = span' "runtime/b-consumer-0" (TraceOracle.consumerSpanName "t") "tr" "c1" (Just "s1")
+        dispatch = span' "runtime/a-dispatch-0" "dispatch shop-dispatch" "tr" "d1" Nothing
+        hop spans = (TraceOracle.judgeKafkaHop "t" (TraceOracle.indexSpans spans) spans).violations
+    it "accepts a consumer span whose parent is the topic's send span in another process" do
+      hop [dispatch, send, consume] `shouldBe` 0
+    it "fails a severed traceparent: the consumer's parent is missing or is not a send span" do
+      hop [dispatch, consume] `shouldBe` 1
+      hop [dispatch, send, consume {parentSpanId = Just "d1"}] `shouldBe` 1
+      hop [dispatch, send, consume {parentSpanId = Nothing}] `shouldBe` 1
+    it "fails a pick span that does not continue another process's span" do
+      let pick = span' "runtime/b-jobs-0" TraceOracle.pickSpanName "tr" "p1" (Just "d1")
+          judge spans = (TraceOracle.judgeJobHop (TraceOracle.indexSpans spans) spans).violations
+      judge [dispatch, pick] `shouldBe` 0
+      judge [pick] `shouldBe` 1
+      judge [dispatch {process = "runtime/b-jobs-0"}, pick] `shouldBe` 1
+    it "fails outbox rows without a traceparent" do
+      (TraceOracle.judgeOutboxTrace "shop" (10, 0, [])).violations `shouldBe` 0
+      (TraceOracle.judgeOutboxTrace "shop" (10, 2, ["a", "b"])).violations `shouldBe` 2
+    it "judges a journey single only when both streams share one trace" do
+      let command name trace = span' "runtime/a-dispatch-0" name trace (name <> trace) Nothing
+          journeys spans = (TraceOracle.judgeJourneys ["o-1"] spans).violations
+      journeys [command "order-o-1" "tr", command "fulfilment-o-1" "tr"] `shouldBe` 0
+      journeys [command "order-o-1" "tr", command "fulfilment-o-1" "other"] `shouldBe` 1
+      journeys [command "order-o-1" "tr"] `shouldBe` 1
   describe "keiro-ops cross-check controls (I8)" do
     let backlog n = object ["metric" .= ("outbox_backlog" :: Text), "count" .= (n :: Int)]
         agreement reported stored = (OpsOracle.judgeOpsAgreement "outbox-backlog" Schema.Warehouse reported stored).violations

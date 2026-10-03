@@ -46,7 +46,8 @@ import Kenshou.Suite.Runtime.System.Order
 import Kenshou.Suite.Runtime.System.SagaLog (ObserveSagaData (..), SagaCommand (..), SagaEvent, SagaState, sagaEventStream, sagaStream)
 import Kenshou.Suite.Runtime.System.Schema (IntakeRow (..), ensureShopTables, insertReferralsTx, orderProjection, referrersTx)
 import Kenshou.Suite.Runtime.System.Store (ContextEff, ContextStore, deterministicEventId, runContext, runContextOrThrow)
-import Kenshou.Suite.Runtime.System.Wire (shopEventDraft)
+import Kenshou.Suite.Runtime.System.Trace (Signals, commandOptions, draftTraceContext, withEventTrace)
+import Kenshou.Suite.Runtime.System.Wire (shopEventDraft, tracedDraft)
 import Kiroku.Store (Store, runTransaction)
 import Kiroku.Store.Types (EventId (..), RecordedEvent (..))
 
@@ -160,10 +161,20 @@ shopProducer = either (error . show) id (mkIntegrationProducer (IntegrationProdu
 -- | One idempotent handler per order event: the payment manager, the loyalty
 -- router and the integration producer. Every write is keyed by a
 -- deterministic identifier, so a redelivered event appends nothing new.
-handleShopDelivery :: ContextStore -> TopicPrefix -> RecordedEvent -> IO (Either Text ())
-handleShopDelivery context prefix recorded = case orderCodec.decode recorded.eventType recorded.payload of
+-- | Each delivery runs in a span that continues the trace recorded in the
+-- event's metadata, so the commands and the outbox row it produces join the
+-- order's trace.
+handleShopDelivery :: Signals -> ContextStore -> TopicPrefix -> RecordedEvent -> IO (Either Text ())
+handleShopDelivery signals context prefix recorded = case orderCodec.decode recorded.eventType recorded.payload of
   Left problem -> pure (Left ("undecodable order event: " <> problem))
-  Right event -> do
+  Right event -> withEventTrace signals "dispatch shop-dispatch" recorded do
+    options <- commandOptions signals
+    let trace = draftTraceContext signals recorded
+    let runPayment input = do
+          result <- runProcessManagerOnce options paymentManager recorded input
+          pure case result of
+            Left problem -> ["payment manager state: " <> Text.pack (show problem)]
+            Right value -> commandProblems value.commandResults
     outcome <- runContext context case event of
       OrderPlaced d -> do
         payment <- runPayment (PaymentInput sourceId d.orderId PaymentHold d.customer d.amountCents)
@@ -173,12 +184,12 @@ handleShopDelivery context prefix recorded = case orderCodec.decode recorded.eve
                 shopProducer
                 recorded
                 0
-                (shopEventDraft prefix recorded.createdAt (OrderPlacedV1 d.orderId d.customer d.sku d.quantity d.amountCents d.slowPick))
+                (tracedDraft trace (shopEventDraft prefix recorded.createdAt (OrderPlacedV1 d.orderId d.customer d.sku d.quantity d.amountCents d.slowPick)))
             )
         pure (payment <> producerProblems enqueued)
       OrderCompleted d -> withOrder d.orderId \customer amount -> do
         payment <- runPayment (PaymentInput sourceId d.orderId PaymentCapture customer amount)
-        loyalty <- runRouterOnce defaultRunCommandOptions loyaltyRouter recorded (LoyaltyInput d.orderId customer amount)
+        loyalty <- runRouterOnce options loyaltyRouter recorded (LoyaltyInput d.orderId customer amount)
         pure (payment <> commandProblems loyalty.commandResults)
       OrderRejected d -> withOrder d.orderId \customer amount -> runPayment (PaymentInput sourceId d.orderId PaymentRefund customer amount)
       OrderExpired d -> withOrder d.orderId \customer amount -> runPayment (PaymentInput sourceId d.orderId PaymentRefund customer amount)
@@ -188,11 +199,6 @@ handleShopDelivery context prefix recorded = case orderCodec.decode recorded.eve
       Right problems -> Left (Text.intercalate "; " problems)
   where
     sourceId = let EventId value = recorded.eventId in UUID.toText value
-    runPayment input = do
-      result <- runProcessManagerOnce defaultRunCommandOptions paymentManager recorded input
-      pure case result of
-        Left problem -> ["payment manager state: " <> Text.pack (show problem)]
-        Right value -> commandProblems value.commandResults
     withOrder order continue = do
       found <- runTransaction (orderDetailsTx order)
       case found of

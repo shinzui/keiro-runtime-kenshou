@@ -26,6 +26,7 @@ import Effectful (Limit (..), Persistence (..), UnliftStrategy (..), liftIO, run
 import Effectful.Error.Static (runError, tryError)
 import Kafka.Consumer.Types (ConsumerGroupId (..), ConsumerRecord (..), Offset (..))
 import Kafka.Effectful.Consumer qualified as Consumer
+import Kafka.Effectful.OpenTelemetry.Producer.Interpreter (runKafkaProducerTraced)
 import Kafka.Effectful.Producer qualified as Producer
 import Kafka.Types (BrokerAddress (..), KafkaError, PartitionId (..), Timeout (..), TopicName (..), headersFromList, headersToList)
 import Keiro.Inbox.Kafka (KafkaDecodeError, KafkaInboundRecord (..), integrationEventFromKafka)
@@ -35,34 +36,42 @@ import Keiro.Outbox (OrderingPolicy (..), OutboxId, OutboxRow (..), PublishOutco
 import Keiro.Outbox.Kafka (KafkaProducerRecord (..), outboxRowToKafkaRecord)
 import Keiro.Telemetry (injectTraceContext)
 import Kenshou.Env.Kafka (BrokerLane (..), KafkaEnv (..))
+import Kenshou.Suite.Runtime.System.Trace (Signals (..), TraceSabotage (..), noSignals, withStoredTrace)
+import OpenTelemetry.Trace.Core (Tracer)
 import Shibuya.Adapter.Kafka (defaultConfig, kafkaAdapterWith, kafkaRebalanceHandler, newKafkaAdapterState)
 import Shibuya.App (ProcessorId (..), defaultAppConfig, mkProcessor, runApp, stopApp, waitApp)
 import Shibuya.Core.Ack (AckDecision)
 import Shibuya.Core.Ingested (Message (..))
 import Shibuya.Core.Types (Cursor (..), Envelope (..))
-import Shibuya.Telemetry.Effect (runTracingNoop)
+import Shibuya.Telemetry.Effect (runTracing, runTracingNoop)
 import Text.Read (readMaybe)
 
 -- | Publish through the run's first broker lane. See 'publishToBrokers'.
 publishToKafka :: KafkaEnv -> OrderingPolicy -> [OutboxRow] -> IO [(OutboxId, PublishOutcome)]
-publishToKafka environment = publishToBrokers (NonEmpty.head environment.lanes).laneBrokers
+publishToKafka environment = publishToBrokers noSignals (NonEmpty.head environment.lanes).laneBrokers
 
 -- | Publish one record at a time with broker acknowledgement, through one
 -- producer per claimed batch. A failed ordering group is blocked for the
 -- rest of the batch, while independent groups continue so their rows do not
 -- consume attempts without a publish.
-publishToBrokers :: [BrokerAddress] -> OrderingPolicy -> [OutboxRow] -> IO [(OutboxId, PublishOutcome)]
-publishToBrokers _ _ [] = pure []
-publishToBrokers brokers policy rows = do
+--
+-- With a tracer, each record is sent by the traced producer inside the
+-- trace stored on its outbox row: the producer's @send <topic>@ span joins
+-- the order's trace and its context replaces the stored trace headers, so
+-- the consumer's process span becomes the send span's child. Without one,
+-- the stored headers are published as they are.
+publishToBrokers :: Signals -> [BrokerAddress] -> OrderingPolicy -> [OutboxRow] -> IO [(OutboxId, PublishOutcome)]
+publishToBrokers _ _ _ [] = pure []
+publishToBrokers signals brokers policy rows = do
+  let properties = Producer.brokersList brokers <> Producer.sendTimeout (Timeout 10000) <> Producer.extraProp "acks" "all"
   result <-
     runEff . runError @KafkaError $
-      Producer.runKafkaProducer
-        (Producer.brokersList brokers <> Producer.sendTimeout (Timeout 10000) <> Producer.extraProp "acks" "all")
-        (go Set.empty rows)
+      maybe Producer.runKafkaProducer runKafkaProducerTraced tracer properties (go Set.empty rows)
   pure case result of
     Right outcomes -> outcomes
     Left (_, problem) -> [(row.outboxId, PublishFailed ("producer unavailable: " <> Text.pack (show problem))) | row <- rows]
   where
+    tracer = if signals.sabotage == UntracedProducer then Nothing else signals.tracer
     go _ [] = pure []
     go failedGroups (row : rest) = do
       let group = orderingGroup policy row
@@ -70,8 +79,10 @@ publishToBrokers brokers policy rows = do
         then ((row.outboxId, PublishFailed "earlier record in ordering group failed") :) <$> go failedGroups rest
         else do
           let wire = outboxRowToKafkaRecord row
-          headers <- liftIO (liveTraceHeaders wire.headers)
-          sent <- tryError @KafkaError (Producer.produceMessageSync (producerRecord wire headers))
+          headers <- case tracer of
+            Nothing -> liftIO (liveTraceHeaders wire.headers)
+            Just _ -> pure (filter (not . isTraceHeader . fst) wire.headers)
+          sent <- withStoredTrace noSignals {tracer} row.event.traceContext (tryError @KafkaError (Producer.produceMessageSync (producerRecord wire headers)))
           case sent of
             Left (_, problem) ->
               ((row.outboxId, PublishFailed (Text.pack (show problem))) :)
@@ -98,12 +109,15 @@ producerRecord record headers =
 liveTraceHeaders :: [(ByteString, ByteString)] -> IO [(ByteString, ByteString)]
 liveTraceHeaders stored = do
   let decoded = [(TextEncoding.decodeUtf8 name, TextEncoding.decodeUtf8 value) | (name, value) <- stored]
-      withoutTrace = filter (not . isTraceHeader . fst) decoded
+      withoutTrace = filter (not . isTraceName . fst) decoded
   currentTrace <- injectTraceContext []
   let selected = if null currentTrace then decoded else withoutTrace <> currentTrace
   pure [(TextEncoding.encodeUtf8 name, TextEncoding.encodeUtf8 value) | (name, value) <- selected]
   where
-    isTraceHeader name = name == "traceparent" || name == "tracestate"
+    isTraceName name = name == "traceparent" || name == "tracestate"
+
+isTraceHeader :: ByteString -> Bool
+isTraceHeader name = name == "traceparent" || name == "tracestate"
 
 data ConsumerDecodeError
   = MissingKafkaPayload
@@ -174,8 +188,12 @@ data ConsumerSpec = ConsumerSpec
 -- | Consume one topic through shibuya-kafka-adapter under serial processing,
 -- with offsets stored only after the handler's acknowledgement. The loop
 -- runs until the stop variable is filled; its value is returned.
-runKafkaInboxConsumer :: ConsumerSpec -> MVar result -> (Envelope (Maybe ByteString) -> UTCTime -> IO AckDecision) -> IO (Either Text (ConsumerExit result))
-runKafkaInboxConsumer spec stop handle = do
+--
+-- With a tracer, shibuya opens a @<processor> process@ consumer span per
+-- record, parented to the trace in the record's headers, and the handler
+-- runs inside it.
+runKafkaInboxConsumer :: Maybe Tracer -> ConsumerSpec -> MVar result -> (Envelope (Maybe ByteString) -> UTCTime -> IO AckDecision) -> IO (Either Text (ConsumerExit result))
+runKafkaInboxConsumer tracer spec stop handle = do
   state <- newKafkaAdapterState
   let topic = TopicName spec.topic
       props =
@@ -185,7 +203,7 @@ runKafkaInboxConsumer spec stop handle = do
           <> mconcat [Consumer.extraProp name value | (name, value) <- spec.properties]
           <> Consumer.setCallback (Consumer.rebalanceCallback (kafkaRebalanceHandler state))
       subscription = Consumer.topics [topic] <> Consumer.offsetReset Consumer.Earliest
-  outcome <- runEff . runError @KafkaError . runTracingNoop $
+  outcome <- runEff . runError @KafkaError . maybe runTracingNoop runTracing tracer $
     Consumer.runKafkaConsumer props subscription do
       adapter <- kafkaAdapterWith state (defaultConfig [topic])
       let handler Message {envelope} = liftIO do

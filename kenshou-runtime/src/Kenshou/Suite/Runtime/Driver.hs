@@ -17,7 +17,6 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (UTCTime, addUTCTime, diffUTCTime, getCurrentTime)
 import GHC.Generics (Generic)
-import Keiro.Command (defaultRunCommandOptions)
 import Kenshou.Core.Id (Seed, deriveGen)
 import Kenshou.Suite.Runtime.System.Config (SystemConfig (..), customerCount, skuCount)
 import Kenshou.Suite.Runtime.System.Contracts (CustomerId (..), OrderId (..), Sku (..))
@@ -25,6 +24,7 @@ import Kenshou.Suite.Runtime.System.Dispatch (Dispatched (..), dispatchOnce)
 import Kenshou.Suite.Runtime.System.Order (OrderCommand (..), PlaceOrderData (..), orderEventStream, orderStream)
 import Kenshou.Suite.Runtime.System.Schema (orderProjection)
 import Kenshou.Suite.Runtime.System.Store (ContextStore, deterministicEventId, runContext)
+import Kenshou.Suite.Runtime.System.Trace (Signals, commandOptions, withRootSpan)
 import System.Random.SplitMix (nextDouble, nextWord64)
 
 data GeneratedOrder = GeneratedOrder
@@ -72,13 +72,15 @@ data SubmitOutcome = SubmitAccepted | SubmitDuplicate | SubmitFailed !Text
 
 -- | The event identifier is fixed per order, so a resubmission after a
 -- driver restart is recognised as a duplicate rather than a second order.
-submitOrder :: ContextStore -> GeneratedOrder -> IO SubmitOutcome
-submitOrder store order = attempt (5 :: Int)
+-- With tracing, each submission is the root span of the order's trace.
+submitOrder :: Signals -> ContextStore -> GeneratedOrder -> IO SubmitOutcome
+submitOrder signals store order = withRootSpan signals ("submit order " <> identifier) (attempt (5 :: Int))
   where
     OrderId identifier = order.orderId
     command = PlaceOrder (PlaceOrderData order.orderId order.customer order.sku order.quantity order.amountCents order.slowPick)
     attempt remaining = do
-      result <- runContext store (dispatchOnce defaultRunCommandOptions orderEventStream (orderStream order.orderId) (deterministicEventId ("place/" <> identifier)) command [orderProjection])
+      options <- commandOptions signals
+      result <- runContext store (dispatchOnce options orderEventStream (orderStream order.orderId) (deterministicEventId ("place/" <> identifier)) command [orderProjection])
       case result of
         Right DispatchAppended -> pure SubmitAccepted
         Right DispatchDuplicate -> pure SubmitDuplicate
@@ -102,8 +104,8 @@ data DriverReport = DriverReport
 
 -- | Open-loop submission: order @i@ is due at @start + i / rate@ whether or
 -- not earlier submissions have finished. A stop request ends submission.
-runDriver :: ContextStore -> Seed -> SystemConfig -> Int -> MVar stop -> (GeneratedOrder -> SubmitOutcome -> IO ()) -> IO DriverReport
-runDriver store seed config k stop observe = do
+runDriver :: Signals -> ContextStore -> Seed -> SystemConfig -> Int -> MVar stop -> (GeneratedOrder -> SubmitOutcome -> IO ()) -> IO DriverReport
+runDriver signals store seed config k stop observe = do
   start <- getCurrentTime
   let rate = max 1 config.ratePerSecond
       total = if config.orders > 0 then config.orders else config.durationSeconds * rate
@@ -123,7 +125,7 @@ runDriver store seed config k stop observe = do
           Nothing -> do
             waitUntil (intended position)
             let order = generateOrder seed config i
-            outcome <- submitOrder store order
+            outcome <- submitOrder signals store order
             observe order outcome
             let next = case outcome of
                   SubmitAccepted -> report {attempted = report.attempted + 1, accepted = report.accepted + 1}

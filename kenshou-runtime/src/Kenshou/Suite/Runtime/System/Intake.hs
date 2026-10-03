@@ -16,7 +16,6 @@ import Data.Text qualified as Text
 import Data.Time (UTCTime)
 import Effectful (liftIO)
 import Kafka.Types (TopicName (..))
-import Keiro.Command (defaultRunCommandOptions)
 import Keiro.Inbox (InboxDedupePolicy (..), InboxResult (..), runInboxDelegatedWithRetries, runInboxTransactionWithRetries)
 import Keiro.Inbox.Types (DelegatedOutcome, KafkaDeliveryRef (..), mkDelegatedRetryContext)
 import Keiro.Integration.Event (IntegrationEvent (..))
@@ -29,6 +28,7 @@ import Kenshou.Suite.Runtime.System.Order (orderEventStream, orderStream)
 import Kenshou.Suite.Runtime.System.Schema (ContextName (..), IntakeRow (..), fulfilmentProjection, insertIntakeTx, insertPoisonTx, markIntakeDispatchedTx, orderProjection, pendingIntakeTx, undispatchedIntakeTx)
 import Kenshou.Suite.Runtime.System.Shop (dispatchOrderCommand, shopIntakeCommand)
 import Kenshou.Suite.Runtime.System.Store (ContextEff, ContextStore, runContext, runSql)
+import Kenshou.Suite.Runtime.System.Trace (Signals, commandOptions)
 import Kenshou.Suite.Runtime.System.Warehouse (dispatchFulfilmentCommand, warehouseIntakeCommand)
 import Kenshou.Suite.Runtime.System.Wire (KeyCheck (..), decodeShopEventWith, decodeWarehouseEventWith)
 import Shibuya.Core.Types (Envelope)
@@ -52,8 +52,8 @@ data IntakeSide = IntakeSide
     delegate :: IntakeRow -> Text -> Text -> ContextEff (Either Text (DelegatedOutcome ()))
   }
 
-shopIntakeSide :: ContextStore -> IntakeSide
-shopIntakeSide store =
+shopIntakeSide :: Signals -> ContextStore -> IntakeSide
+shopIntakeSide signals store =
   IntakeSide
     { context = Shop,
       consumer = "shop-consumer",
@@ -62,10 +62,12 @@ shopIntakeSide store =
         Right message -> Right (toJSON message, messageOrder message),
       dispatch = \row -> case shopIntakeCommand row of
         Left problem -> pure (Left problem)
-        Right command -> either (Left . Text.pack . show) Right <$> runContext store (dispatchOrderCommand defaultRunCommandOptions row command),
+        Right command -> do
+          options <- commandOptions signals
+          either (Left . Text.pack . show) Right <$> runContext store (dispatchOrderCommand options row command),
       delegate = \row dedupe source -> case shopIntakeCommand row of
         Left problem -> pure (Left problem)
-        Right command -> dispatchDelegated "shop-consumer" source dedupe "order-command" orderEventStream (orderStream (OrderId row.orderId)) command [orderProjection]
+        Right command -> commandOptions signals >>= \options -> dispatchDelegated options "shop-consumer" source dedupe "order-command" orderEventStream (orderStream (OrderId row.orderId)) command [orderProjection]
     }
   where
     messageOrder = \case
@@ -73,8 +75,8 @@ shopIntakeSide store =
       FulfilmentRefusedV1 {orderId} -> orderId
       FulfilmentExpiredV1 {orderId} -> orderId
 
-warehouseIntakeSide :: ContextStore -> IntakeSide
-warehouseIntakeSide store =
+warehouseIntakeSide :: Signals -> ContextStore -> IntakeSide
+warehouseIntakeSide signals store =
   IntakeSide
     { context = Warehouse,
       consumer = "warehouse-consumer",
@@ -83,10 +85,12 @@ warehouseIntakeSide store =
         Right message -> Right (toJSON message, message.orderId),
       dispatch = \row -> case warehouseIntakeCommand row of
         Left problem -> pure (Left problem)
-        Right command -> either (Left . Text.pack . show) Right <$> runContext store (dispatchFulfilmentCommand defaultRunCommandOptions ("intake/" <> row.messageId) (OrderId row.orderId) command),
+        Right command -> do
+          options <- commandOptions signals
+          either (Left . Text.pack . show) Right <$> runContext store (dispatchFulfilmentCommand options ("intake/" <> row.messageId) (OrderId row.orderId) command),
       delegate = \row dedupe source -> case warehouseIntakeCommand row of
         Left problem -> pure (Left problem)
-        Right command -> dispatchDelegated "warehouse-consumer" source dedupe "fulfilment-command" fulfilmentEventStream (fulfilmentStream (OrderId row.orderId)) command [fulfilmentProjection]
+        Right command -> commandOptions signals >>= \options -> dispatchDelegated options "warehouse-consumer" source dedupe "fulfilment-command" fulfilmentEventStream (fulfilmentStream (OrderId row.orderId)) command [fulfilmentProjection]
     }
 
 -- | Inbox intake with application-table idempotence. The inbox transaction

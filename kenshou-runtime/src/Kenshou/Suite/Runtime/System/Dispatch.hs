@@ -10,7 +10,7 @@ import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Keiki.Core (BoolAlg, RegFile)
-import Keiro.Command (CommandError (..), RunCommandOptions (..), defaultRunCommandOptions)
+import Keiro.Command (CommandError (..), RunCommandOptions (..))
 import Keiro.EventStream (EventStream)
 import Keiro.EventStream.Validate (ValidatedEventStream)
 import Keiro.Inbox.Delegated (delegatedCommand, delegatedEventId)
@@ -69,6 +69,7 @@ dispatchOnce options eventStream target eventId command projections =
 -- the receipt in the target stream instead of an inbox row.
 dispatchDelegated ::
   (BoolAlg phi (RegFile rs, ci), Eq co) =>
+  RunCommandOptions ->
   Text ->
   Text ->
   Text ->
@@ -78,10 +79,10 @@ dispatchDelegated ::
   ci ->
   [InlineProjection co] ->
   ContextEff (Either Text (DelegatedOutcome ()))
-dispatchDelegated consumer source dedupe operation eventStream target command projections = do
+dispatchDelegated base consumer source dedupe operation eventStream target command projections = do
   let name = Stream.streamName target
       marker = delegatedEventId consumer source dedupe name operation
-  result <- delegatedCommand defaultRunCommandOptions name marker \options -> runCommandWithProjections options eventStream target command projections
+  result <- delegatedCommand base name marker \options -> runCommandWithProjections options eventStream target command projections
   pure case result of
     Left problem -> Left (Text.pack (show problem))
     Right (DelegatedFresh _) -> Right (DelegatedFresh ())

@@ -2,6 +2,7 @@ module Kenshou.Suite.Runtime.System.Wire
   ( WireError (..),
     shopEventDraft,
     warehouseEventDraft,
+    tracedDraft,
     KeyCheck (..),
     decodeShopEvent,
     decodeWarehouseEvent,
@@ -14,8 +15,9 @@ import Data.Aeson qualified as Aeson
 import Data.ByteString.Lazy qualified as Lazy
 import Data.Text (Text)
 import Data.Time (UTCTime)
-import Keiro.Integration.Event (IntegrationContentType (..), IntegrationEvent (..), IntegrationEventError, decodeJsonIntegrationEvent)
+import Keiro.Integration.Event (IntegrationContentType (..), IntegrationEvent (..), IntegrationEventError, TraceContext, decodeJsonIntegrationEvent)
 import Keiro.Outbox (IntegrationEventDraft (..))
+import Keiro.Outbox qualified as Outbox
 import Kenshou.Suite.Runtime.System.Contracts (OrderId (..), ShopMessage (..), TopicPrefix, WarehouseMessage (..), shopTopic, warehouseTopic)
 
 data WireError
@@ -58,6 +60,12 @@ draft destination key eventType occurredAt message =
       traceContext = Nothing,
       attributes = Nothing
     }
+
+-- | Carry a trace context on a draft. Keiro stores it in the outbox row's
+-- @traceparent@ and @tracestate@ columns and the publisher emits it as
+-- record headers; it never captures the active span by itself.
+tracedDraft :: Maybe TraceContext -> IntegrationEventDraft -> IntegrationEventDraft
+tracedDraft context value = value {Outbox.traceContext = context}
 
 -- | Whether the delivery path exposes the broker record key. The shibuya
 -- Kafka envelope does not, so consumers built on it decode with
