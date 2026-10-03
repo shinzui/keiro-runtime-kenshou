@@ -47,8 +47,8 @@ allStreamAppendCeiling =
         telemetryKnobs
           <> loadKnobs (defaultLoadDefaults {workers = 8})
           <> measureKnobs Benchmark
-          <> [ intKnob "command.writers" 8 1 64,
-               intKnob "kiroku.pool-size" 13 1 64,
+          <> [ intKnobVariants "command.writers" 8 1 64 [1, 2, 4, 16, 32, 64],
+               intKnobVariants "kiroku.pool-size" 13 1 64 [4, 10, 32],
                intKnob "command.duration-seconds" 120 1 3600
              ],
       run = runCommandBenchmark True
@@ -63,9 +63,9 @@ hydrationCost =
         telemetryKnobs
           <> loadKnobs (defaultLoadDefaults {workers = 1})
           <> measureKnobs Benchmark
-          <> [ intKnob "command.stream-length" 1000 0 10000,
-               KnobSpec (knobName "snapshot.policy") "Snapshot policy" KnobText (VText "never") (OneOf (VText "never" :| [VText "every-100"])) [],
-               intKnob "command.page-size" 256 1 1024,
+          <> [ intKnobVariants "command.stream-length" 1000 0 10000 [0, 100, 10000],
+               KnobSpec (knobName "snapshot.policy") "Snapshot policy" KnobText (VText "never") (OneOf (VText "never" :| [VText "every-100"])) [VText "every-100"],
+               intKnobVariants "command.page-size" 256 1 1024 [64, 1024],
                intKnob "command.duration-seconds" 120 1 3600
              ],
       run = runHydrationCost
@@ -239,3 +239,8 @@ intKnob key def low high = KnobSpec (knobName key) key KnobInt (VInt (fromIntegr
 
 knobName :: Text -> KnobName
 knobName = either (error . show) id . mkKnobName
+
+-- | An integer knob whose listed values the planner's knob-variant policy
+-- sweeps one at a time around the default.
+intKnobVariants :: Text -> Int -> Int -> Int -> [Int] -> KnobSpec
+intKnobVariants key def low high values = (intKnob key def low high) {variants = [VInt (fromIntegral value) | value <- values]}

@@ -2,12 +2,19 @@ module Kenshou.Suite.Keiro.Fixture.Oracle
   ( LoggedEvent (..),
     TimerRow (..),
     DispatchDeadLetter (..),
+    SubscriptionDeadLetter (..),
+    CheckpointRow (..),
+    StageCounts (..),
     readCategoryLog,
     readBalanceTable,
     readActivityTable,
     readSnapshots,
     readTimers,
     readDispatchDeadLetters,
+    readSubscriptionDeadLetters,
+    readCheckpoints,
+    readStageCounts,
+    stageBacklog,
     expectedSagaStateId,
     expectedSagaCommandId,
     expectedRouterCommandId,
@@ -98,6 +105,109 @@ readDispatchDeadLetters connection = do
         Encoders.noParams
         (Decoders.rowList ((,,,,) <$> text <*> text <*> Decoders.column (Decoders.nonNullable Decoders.int4) <*> text <*> text))
     text = Decoders.column (Decoders.nonNullable Decoders.text)
+
+data SubscriptionDeadLetter = SubscriptionDeadLetter
+  { subscriptionName :: !Text,
+    consumerGroupMember :: !Int32,
+    globalPosition :: !Int64,
+    reasonKind :: !(Maybe Text),
+    attemptCount :: !Int32
+  }
+  deriving stock (Eq, Show)
+
+-- | Rows of @kiroku.dead_letters@, read directly from the table rather than
+-- through the subscription API under test.
+readSubscriptionDeadLetters :: Connection.Connection -> IO [SubscriptionDeadLetter]
+readSubscriptionDeadLetters connection = do
+  rows <- Connection.use connection (Session.statement () statement) >>= either (fail . show) pure
+  pure [SubscriptionDeadLetter name member position kind attempts | (name, member, position, kind, attempts) <- rows]
+  where
+    statement =
+      Statement.preparable
+        "SELECT subscription_name, consumer_group_member, global_position, reason->>'kind', attempt_count FROM kiroku.dead_letters ORDER BY dead_letter_id"
+        Encoders.noParams
+        (Decoders.rowList ((,,,,) <$> text <*> int4 <*> Decoders.column (Decoders.nonNullable Decoders.int8) <*> Decoders.column (Decoders.nullable Decoders.text) <*> int4))
+    text = Decoders.column (Decoders.nonNullable Decoders.text)
+    int4 = Decoders.column (Decoders.nonNullable Decoders.int4)
+
+data CheckpointRow = CheckpointRow
+  { subscriptionName :: !Text,
+    consumerGroupMember :: !Int32,
+    consumerGroupSize :: !Int32,
+    lastSeen :: !Int64
+  }
+  deriving stock (Eq, Show)
+
+-- | Durable subscription checkpoints (@kiroku.subscriptions.last_seen@).
+readCheckpoints :: Connection.Connection -> IO [CheckpointRow]
+readCheckpoints connection = do
+  rows <- Connection.use connection (Session.statement () statement) >>= either (fail . show) pure
+  pure [CheckpointRow name member size seen | (name, member, size, seen) <- rows]
+  where
+    statement =
+      Statement.preparable
+        "SELECT subscription_name, consumer_group_member, consumer_group_size, last_seen FROM kiroku.subscriptions ORDER BY subscription_name, consumer_group_member"
+        Encoders.noParams
+        (Decoders.rowList ((,,,) <$> Decoders.column (Decoders.nonNullable Decoders.text) <*> int4 <*> int4 <*> Decoders.column (Decoders.nonNullable Decoders.int8)))
+    int4 = Decoders.column (Decoders.nonNullable Decoders.int4)
+
+-- | Durable counts for every stage of the write-side pipeline. Unlike
+-- 'readCategoryLog' this reads no payloads, so a scenario may sample it while
+-- the system is under load.
+data StageCounts = StageCounts
+  { transferDebited :: !Int64,
+    transferAnnounced :: !Int64,
+    transferCredited :: !Int64,
+    transferConfirmed :: !Int64,
+    sagaEvents :: !Int64,
+    bonusDeclared :: !Int64,
+    bonusCredited :: !Int64,
+    accountEvents :: !Int64,
+    activityApplied :: !Int64
+  }
+  deriving stock (Eq, Show)
+
+readStageCounts :: Connection.Connection -> IO StageCounts
+readStageCounts connection = do
+  rows <- Connection.use connection (Session.statement () statement) >>= either (fail . show) pure
+  applied <- Connection.use connection (Session.statement () activityStatement) >>= either (fail . show) pure
+  let count kind = sum [n | (name, n) <- rows, name == kind]
+      accountKinds = ["AccountOpened", "Deposited", "Withdrawn", "TransferDebited", "TransferAnnounced", "TransferCredited", "TransferConfirmed", "BonusCredited", "AccountClosed"]
+  pure
+    StageCounts
+      { transferDebited = count "TransferDebited",
+        transferAnnounced = count "TransferAnnounced",
+        transferCredited = count "TransferCredited",
+        transferConfirmed = count "TransferConfirmed",
+        sagaEvents = count "DebitObserved" + count "AnnounceObserved",
+        bonusDeclared = count "BonusDeclared",
+        bonusCredited = count "BonusCredited",
+        accountEvents = sum (map count accountKinds),
+        activityApplied = applied
+      }
+  where
+    statement =
+      Statement.preparable
+        "SELECT event_type, count(*) FROM kiroku.events GROUP BY event_type"
+        Encoders.noParams
+        (Decoders.rowList ((,) <$> Decoders.column (Decoders.nonNullable Decoders.text) <*> Decoders.column (Decoders.nonNullable Decoders.int8)))
+    activityStatement =
+      Statement.preparable
+        "SELECT coalesce(sum(events_applied), 0)::bigint FROM kenshou_keiro.account_activity"
+        Encoders.noParams
+        (Decoders.singleRow (Decoders.column (Decoders.nonNullable Decoders.int8)))
+
+-- | Work accepted by an upstream stage but not yet completed downstream, for a
+-- router fanout. Every value is zero exactly when the pipeline is quiescent.
+stageBacklog :: Int64 -> StageCounts -> [(Text, Int64)]
+stageBacklog fanout counts =
+  [ ("announce", counts.transferDebited - counts.transferAnnounced),
+    ("credit", counts.transferDebited - counts.transferCredited),
+    ("confirm", counts.transferDebited - counts.transferConfirmed),
+    ("saga", 2 * counts.transferDebited - counts.sagaEvents),
+    ("bonus", counts.bonusDeclared * fanout - counts.bonusCredited),
+    ("activity", counts.accountEvents - counts.activityApplied)
+  ]
 
 readTimers :: Connection.Connection -> IO [TimerRow]
 readTimers connection = do

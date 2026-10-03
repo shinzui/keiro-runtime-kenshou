@@ -7,6 +7,7 @@ import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString qualified as ByteString
 import Data.Foldable (toList)
 import Data.IORef (modifyIORef', newIORef, readIORef)
+import Data.Int (Int64)
 import Data.List (intersect, sort)
 import Data.Map.Strict qualified as Map
 import Data.Proxy (Proxy (..))
@@ -46,6 +47,7 @@ import Kenshou.Core.Outcome qualified as Outcome
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.RunSpec (RunSpec (..), minimalRunSpec)
 import Kenshou.Core.Scenario (ScenarioReport (..))
+import Kenshou.Suite.Keiro.Command.Backlog qualified as Backlog
 import Kenshou.Suite.Keiro.Command.Correctness (recordCells)
 import Kenshou.Suite.Keiro.Fixture.Account
 import Kenshou.Suite.Keiro.Fixture.Bonus
@@ -630,6 +632,45 @@ main = hspec do
           expected = Oracle.expectedRouterCommandId "bonusRouter" (BonusId "b") source (AccountId "a") 0
       expected `shouldBe` deterministicRouterCommandId "bonusRouter" "b" source (accountStreamName (AccountId "a")) 0
       expected `shouldBe` EventId (read "2fa4be29-7c5d-5665-b5a2-b5a7a6054754")
+  describe "snapshot policy knob" do
+    it "round trips every registered spelling and rejects others" do
+      forM_ ["never", "every-1", "every-10", "every-100", "on-terminal"] \spelling ->
+        fmap renderAccountSnapshotPolicy (parseAccountSnapshotPolicy spelling) `shouldBe` Right spelling
+      forM_ ["every-0", "every-", "every-x", "always", ""] \spelling ->
+        parseAccountSnapshotPolicy spelling `shouldSatisfy` either (const True) (const False)
+  describe "write-side backlog analysis" do
+    let counts debited credited declared bonusCredited =
+          Oracle.StageCounts
+            { Oracle.transferDebited = debited,
+              Oracle.transferAnnounced = debited,
+              Oracle.transferCredited = credited,
+              Oracle.transferConfirmed = credited,
+              Oracle.sagaEvents = 2 * credited,
+              Oracle.bonusDeclared = declared,
+              Oracle.bonusCredited = bonusCredited,
+              Oracle.accountEvents = 100,
+              Oracle.activityApplied = 100
+            }
+        sample at = Backlog.StageSample at "steady"
+    it "is zero exactly at quiescence" do
+      Oracle.stageBacklog 4 (counts 10 10 3 12) `shouldSatisfy` all ((== 0) . snd)
+      lookup "credit" (Oracle.stageBacklog 4 (counts 10 7 3 12)) `shouldBe` Just 3
+      lookup "bonus" (Oracle.stageBacklog 4 (counts 10 10 3 11)) `shouldBe` Just 1
+    it "computes an exact least-squares slope" do
+      Backlog.leastSquaresSlope [(0, 1), (1, 3), (2, 5)] `shouldBe` Just 2
+      Backlog.leastSquaresSlope [(1, 1)] `shouldBe` Nothing
+    it "classifies a stage whose backlog grows with the offered load as falling behind" do
+      let behind = [sample (fromIntegral i) (counts (10 * i) (8 * i) i (4 * i)) | i <- [0 .. 20 :: Int64]]
+          keeping = [sample (fromIntegral i) (counts (10 * i) (10 * i) i (4 * i)) | i <- [0 .. 20 :: Int64]]
+          classify samples = Backlog.classifyCapacity 10 (Backlog.steadyTrends 4 samples)
+      classify behind `shouldBe` Backlog.FallingBehind ["credit", "confirm", "saga"]
+      classify keeping `shouldBe` Backlog.WithinCapacity
+      Backlog.classifyCapacity 3 (Backlog.steadyTrends 4 keeping) `shouldBe` Backlog.InsufficientSamples
+    it "projects remaining drain time from the observed drain rate" do
+      let report = Backlog.drainReport 4 (counts 100 40 0 0) (counts 100 70 0 0) 30 Nothing
+      report.projectedRemainingSeconds `shouldBe` Just 30
+      (Backlog.drainReport 4 (counts 100 40 0 0) (counts 100 100 0 0) 30 (Just 12)).projectedRemainingSeconds `shouldBe` Nothing
+      (Backlog.drainReport 4 (counts 100 40 0 0) (counts 100 40 0 0) 30 Nothing).projectedRemainingSeconds `shouldBe` Nothing
   describe "list adapter" do
     it "records one acknowledgement for every delivery" do
       now <- getCurrentTime

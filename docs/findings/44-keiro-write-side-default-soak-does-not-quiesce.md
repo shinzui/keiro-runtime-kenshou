@@ -7,3 +7,31 @@ The planned 20-minute `keiro/command/soak/write-side-steady-state-reduced` run o
 The same run suspected post-major heap growth in process-manager and router workers, consistent with the already filed released-Kiroku publisher-retention defect `mori://shinzui/kiroku/okf/bug-reports/concepts/BUG-3`; that is tracked separately in [finding 1](1-keiro-write-side-worker-heap-growth.md). The high-rate business failures are not folded into that owner issue. The revised scenario now records each transfer stage, saga count, activity count, inline-balance check, and quiescence result. A [clean five-minute 20-command/s control](../verification/runs/keiro/2026/09/01a0ef66-959a-7183-a9aa-3e4bed4fc7da.md) passed all ten business checks and quiesced. A [same-seed twenty-minute 20-command/s control](../verification/runs/keiro/2026/09/01a0ef66-959b-7285-87b6-1b2924e04d1e.md) also passed all ten, with 2,276 transfer debits matching the announce, credit, confirm, and saga stages, 8,836 bonus credits matching 2,209 bonus events at fanout four, and 35,966 activity applies matching 35,966 account events. Its separate writer heap signal is [finding 46](46-keiro-command-writers-grow-heap-in-low-rate-soak.md). The low-rate functional control narrows the high-rate failure to workload pressure or a rate-sensitive path; the revised default-rate replay below was run to distinguish pending backlog from incorrect effects. One attempted replay sealed an infrastructure failure during cell reset before the scenario started and is excluded.
 
 The revised default-rate replay then completed on clean alpha as verified cell run `01a0eff0-e271-71e1-afbe-3ee4ffb0faba`, [digest-linked nested run](../verification/runs/keiro/2026/09/01a0eff0-81f8-721c-8994-7b922ee544c3.md). Its explicit `quiescentWithinTimeout=false` and stage counts show unfinished work at the fixed two-minute drain deadline: 14,356 transfer debits and announcements, 12,125 credits, 12,124 confirmations, and 14,170 bonus events versus 11,889 credited bonus effects. The same three post-drain checks failed. These counts support backlog as the immediate reason the checks did not hold at that deadline, but they do not prove loss or establish whether all effects would eventually finish. The new run is preserved as a digest-linked investigation record; owner attribution remains pending a bounded-throughput or extended-drain control.
+
+## Isolation controls (2026-10-03)
+
+Scenario revision 3 can now tell a capacity deficit apart from an
+unfinished drain without changing any correctness check. `soak.drain-seconds`
+replaces the fixed two-minute wait after the writers stop. The summary
+records `quiescentAfterSeconds`, the backlog of every stage at writer stop
+and at the end, and `projectedRemainingSeconds` at the slowest stage's
+observed drain rate. `soak.stage-sample-seconds` samples payload-free durable
+stage counts into `series/write-side-stages.csv` throughout the steady window
+and the drain. From those samples the summary computes each stage's arrival
+rate, completion rate and backlog slope, and classifies the run as
+`within-capacity` or `falling-behind`.
+
+The checked-in cell spec `specs/keiro-write-side-extended-drain.json` repeats
+the default-rate run with the earlier seed, a one-hour drain budget and
+ten-second stage samples. Read its result as follows:
+
+- Quiescence within the extended budget, with every effect check passing and
+  a `falling-behind` steady classification, means the default 200 commands/s
+  offered load exceeds the single saga, router and projection workers' drain
+  capacity. That is a workload sizing limit, not lost work.
+- A backlog that stops shrinking while effects are missing would be a
+  correctness signal that justifies an owner report.
+
+Only one-minute local functional smokes of the new controls ran on a busy
+shared workstation, with no performance interpretation. Attribution remains
+pending the quiet-cell run.

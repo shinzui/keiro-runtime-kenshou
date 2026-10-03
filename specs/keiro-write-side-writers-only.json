@@ -1,0 +1,14 @@
+{
+  "schema": "kenshou.run-spec/v1",
+  "scenario": "keiro/command/soak/write-side-steady-state-reduced",
+  "dimensions": { "pg.durability": "durable", "pg.version": "18", "telemetry.tracing": "off", "telemetry.metrics": "off" },
+  "knobs": {
+    "soak.duration-minutes": 20,
+    "command.rate-per-second": 20,
+    "command.accounts": 100,
+    "router.fanout": 4,
+    "soak.topology": "writers-only"
+  },
+  "seed": 7355574763969468,
+  "environment": { "placement": "cell" }
+}
