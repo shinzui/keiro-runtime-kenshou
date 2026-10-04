@@ -37,6 +37,11 @@ provenance:
       at: 2026-10-03T06:05:39Z
       mode: "implement"
       note: "Closed released repetitions, sabotage controls, BUG-5 local reproduction, and the plan-15 broker interface"
+    - model: "claude-opus-5-5"
+      harness: "claude-code"
+      at: 2026-10-04T13:33:34Z
+      mode: "implement"
+      note: "Ran both reduced Kafka soaks on alpha at 500 records/s; churn reproduced the scoped native leak, stability cancelled by lease loss"
 ---
 
 # Cover the Kafka transport edge with a disposable broker
@@ -104,6 +109,14 @@ cabal run kenshou -- run kafka/adapter/concurrency/sigkill-redelivery-window --o
   | `kafka/adapter/concurrency/stale-barrier-after-partition-roundtrip` (revision 2) | 61 `01a10056-c844-7189-822e-541cc40a8bb7`, 62 `01a10057-87d6-724f-86a3-549770de3e93`, 63 `01a10059-119e-72a4-897c-c38af866198a` |
 
   These local run directories are functional acceptance evidence and are not recorded in the historic evidence bundle.
+- [x] (2026-10-04) Ran both reduced soaks on cell alpha at the full default rate of 500 records/s, the baseline that the MasterPlan's 2026-10-03 round-scope decision accepts. The full 4-hour soaks are deferred to a later round by that decision. Payload: released, built from a clean tree at `cce3ce6`, bundle SHA-256 `c605f84e70337fcc60d0ea54d790af3461f5b0747becf012697eefe683fc4b6c`, with `redpanda-rpk-26.2.2` and Hackage `hw-kafka-client` 5.3.0 in its closure. Both runs were in plan `01a1053d-1fe4-7064-a6d8-21c994f3b995` (seed 11), cell session `01a10549-a51e-7126-ad5e-33308191840d` and lease `01a10549-9f64-7187-815c-c44895994d44`, one slice each. Each slice's reset was verified: cold cache, and broker stop, wipe, start, health check and verification all `ok`.
+
+  | Scenario | Cell run / nested run | Cell outcome | Verdict |
+  | --- | --- | --- | --- |
+  | `kafka/consumer/soak/rebalance-churn-native-memory-reduced` | `01a10549-a51e-7126-b15c-9d7c04ca0672` / `01a1053d-1fe6-724e-9700-b18bd1a1099c` | `completed`, entry exit 0, 20/20 health gates `ok`; cell manifest SHA-256 `0e324e367e492c2ca21d568c545be2ea3d950f2ac050c184b27787275ee29407`, nested manifest `520c3d0494ad9cbb9a16a585c1bf53f37bf5329fceaa6cc8ba5b9bb535a0de37` | `failed`, `blocking=false`, exit 0; only `native-memory-leak`, known defect `reproduced` |
+  | `kafka/pipeline/soak/consumer-memory-and-fd-stability-reduced` | `01a10549-a51e-7126-b5b5-fc52375f2e73` / `01a1053d-1fe7-71ff-a78d-07d2879f12ec` | `cancelled` (`lease-lost`, `health-unavailable`) about nine minutes into traffic; cell manifest SHA-256 `666342b3697117332c32c78f5ebdc515f1c71e914b80c64cb6a86f509af06623` | No verdict: the nested run never wrote `run-result.json`. Infrastructure failure, recorded as inconclusive. |
+
+  The churn run acknowledged all 600,000 records with no delivery failure, no missing ID, no worker error and zero final lag. Its continuous consumer (worker 0) gave 122 samples and 41 thirty-second points. The sealed native-memory probe found `LeakSuspected` (`interval-above-floor`) at 3.30e8 bytes/h. Resident memory grew linearly from 38 MB to 157 MB over 20 minutes, while GHC memory in use stayed at 6.3 MB. The sixty short-lived members had `InsufficientData`, as their lifetimes are below the diagnostic window. Following ADR-10, the heap was judged separately on a scratch copy of the sealed series (ADR-11), with the reduced profile's parameters and all five process probes. Live bytes after major collections were `Stable` (41 points, 287–308 KB, below the growth floor), as were Haskell threads (8–9), OS threads (11) and file descriptors (30). Native memory was `leak-suspected` with a bootstrap interval of 3.29e8–3.30e8 bytes/h. The growth is therefore outside the GHC heap, which is the signature of the scoped known defect `mori://shinzui/hw-kafka-client/commits/6caed636898a78e9f6e5a9c93eeb5562cbb2580a`, and the result stays failed but nonblocking. The 100 records/s run `01a0d6b5-212e-73ca-b1ae-70bf7f40d055` was `Stable` on the same probe. The full-rate claim that run left open is now answered for the released cohort: the leak appears at 500 records/s. The head-cohort contrast that would confirm the fork removes it has not been run. The churn run is recorded as [a baseline in the evidence bundle](../verification/runs/kafka/2026/10/01a1053d-1fe6-724e-9700-b18bd1a1099c.md) (`purpose: baseline`, verify-only against the sealed cell prefix). The stability soak's full-rate verdict remains open; rerunning it needs the owner's approval.
 - [ ] Head half of the repetition criterion. It is blocked: the head cohort does not currently build `kenshou-cli`. `kenshou-keiro/src/Kenshou/Suite/Keiro/Queue/Metrics.hs:167` matches `Processing info _`, but the head-pinned shibuya `6461c74` gives that constructor three fields. The module belongs to the Keiro plans, so it is reported to the MasterPlan rather than changed here. The six earlier head fencing runs remain valid evidence for that one scenario.
 
 ## Surprises & Discoveries
@@ -152,6 +165,8 @@ cabal run kenshou -- run kafka/adapter/concurrency/sigkill-redelivery-window --o
 - Every stale-barrier run shows the same drain profile on the moved partition: B handled about 150–200 records in its first second, then about three records per second with occasional bursts. On returning, A drained at the same three-per-second rate. The profile was identical with `environment.kafka.lanes = 0` (diagnostic run `01a10051-fd7d-767f-9174-2e3b4f0f01cf`, no TCP proxy), so the harness proxy does not cause it. The fresh consumers in `ack-ok-commits-and-resumes` and the zombie survivor drained thousands of records per second. The trickle therefore follows an assignment received by rebalance in a group with a pending-barrier member, but neither the adapter nor the binding is attributed yet. It is not filed as a finding: the head-cohort comparison that would separate the released `hw-kafka-client` from the fork is blocked by the head build failure recorded in Progress. Revision 2 records `movedPartitionDrainSeconds`; clean runs took 7.3, 10.3 and 32.3 seconds.
 - Do not edit tracked files while a clean repetition pass is running in the same worktree. `kenshou run` computes `dirty` from `git status --porcelain` at run start, and a rebuild replaces the executable the pass uses. A pass started on `9c8f98e` was stopped and discarded for this reason; all accepted runs above started from a committed, untouched tree.
 - Revision-two run `01a0e3b6-2dc7-7123-a713-3dd2b7d1eedf` acknowledged and handled all 4,000 IDs, ended at zero lag, and found no ordering, duplicate or owner-overlap violation. Two released adapter workers exited before stop, so the run kept `outcome=failed` but sealed `blocking=false` and exit code 0 under BUG-4. Its grouped result lists BUG-4 as reproduced and BUG-6 as not reproduced. A future run can reproduce both without attributing one report's labels to the other; an unfamiliar label still blocks by the core tests.
+- At 500 records/s on alpha, the churn soak's continuous consumer gained native memory at a constant rate of about 92 KB/s (11 MB every two minutes from the first sample to the last), while post-major live bytes stayed near 290 KB. At 100 records/s the same probe was stable. The leak therefore depends on load, which is consistent with the planned deep-backlog trigger for the redirect race. The matched known-defect scope rests on label and cohort. The mechanism itself is attributed only when a head-cohort run with the fork shows the growth gone.
+- On 2026-10-04 the operator's gcloud credentials expired during the stability slice. `kenshou cell run` failed with `gcloud access-token command failed` and exited 4. Its held lease, with a 120-second time-to-live, was no longer renewed, so the cell agent cancelled the running slice as `lease-lost` and sealed it without a nested result. The VMs then stopped through their idle policy. After the operator reauthenticated, `kenshou cell resume` fetched and verified both sealed slices, and the lease was released explicitly. This cancellation is an operator-session interruption. It says nothing about the scenario. Any multi-slice cell session longer than the credential lifetime is exposed to it.
 
 
 ## Decision Log
@@ -270,6 +285,17 @@ attribution of the slow drain after a rebalance; full-rate churn and
 4-hour soaks on a quiet broker-capable cell; controlled benchmark and
 telemetry-overhead comparisons, which need plan 16's broker role; and the
 assembled-runtime integration proof in plan 15.
+
+On 2026-10-04, the reduced churn soak ran on alpha at the default
+500 records/s and gave the full-rate verdict the earlier 100 records/s run
+could not. It delivered all 600,000 records with zero lag. The released
+binding's native memory grew about 330 MB/h while post-major heap live bytes
+stayed stable, which reproduces the scoped known defect as nonblocking. The
+reduced stability soak in the same session was cancelled when the operator's
+credentials expired, and it has no verdict. Under the MasterPlan's
+2026-10-03 round-scope decision, the 4-hour soaks are deferred to a later
+round. This round still needs a full-rate reduced stability verdict and a
+head-cohort churn contrast to attribute the leak.
 
 
 ## Context and Orientation
