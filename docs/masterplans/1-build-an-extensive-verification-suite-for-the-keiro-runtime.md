@@ -486,6 +486,12 @@ Soak and long-running benchmark criteria are met by reduced-duration runs that
 still give a valid verdict, at the scenario's default rate. Full-duration 4-hour
 and 24-hour soaks are deferred to later rounds; see the Decision Log.
 
+Round close (owner decision, 2026-10-04): this round ends with an initial
+findings report built from the evidence already recorded. No further cell or
+local evidence runs belong to this round. Unattributed findings are listed as
+open, and the remaining child-plan criteria and baseline gates carry to the
+next round.
+
 Acceptance follows each criterion's stated result. In particular, EP-13
 Milestone 4 accepts an A/A comparison that is `pass` or `inconclusive`; its
 recorded p99 uncertainty is a baseline limitation, not a new requirement to
@@ -870,6 +876,10 @@ disposition changes.
 - Decision: In this baseline round, each soak or long-running benchmark criterion is met by its reduced-duration variant, or by the shortest duration that still gives a valid verdict, run on a cell at the scenario's default rate. A valid leak verdict needs at least 30 envelope points; a comparison needs benchmark-grade slices. Full-duration runs are deferred to later rounds under [MasterPlan 2](2-close-the-verification-and-repair-loop-for-the-keiro-runtime-in-rounds.md)'s round protocol. They cover the 4-hour and 24-hour soaks of EP-11, EP-12 and EP-15 and the soak pairs of EP-10 and EP-14. A reduced run that cannot give a valid verdict is recorded as inconclusive. It is extended in this round only with the owner's approval.
   Rationale: The owner decided this on 2026-10-03. This round only captures a baseline, and it will be rerun after major changes to every package, so cell time should stay minimal. Every soak already has a reduced variant (the 2026-09-20 double-registration decision). Reduced profiles give valid verdicts: EP-11's 20-minute stability run, rejudged with 30-second windows, gave 41 points. A 30-minute full-profile run would not, because its 60-second windows yield too few points.
   Date: 2026-10-03
+
+- Decision: Close this round with an initial findings report built from the evidence already recorded. Run no further cell or local evidence runs in this round. That includes the EP-11 stability rerun, the EP-15 I5 confirmation and the EP-12 isolation controls. Unattributed findings, such as 44 and 46, are listed as open in the report. The remaining child-plan criteria and the three baseline gates carry to the next round.
+  Rationale: The owner decided this on 2026-10-04. The goal of this round is initial findings, not a complete attributed baseline, and the owner will rerun after major changes to every package.
+  Date: 2026-10-04
 
 
 ## Outcomes & Retrospective
