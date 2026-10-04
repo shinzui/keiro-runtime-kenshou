@@ -246,22 +246,30 @@ disturbAndRestart system label cause disturb role index = withMVar system.lifecy
 -- SIGCONT, recording the window as @fault/pause@. A paused lease holder
 -- keeps its leases until they expire, so another process may take over
 -- while it is frozen.
+--
+-- The lifecycle lock is held only while signalling, so several pauses can
+-- overlap; a paused process does not exit, so supervision ignores it.
 pauseProcess :: RunningSystem -> Text -> Int -> Int -> IO Bool
-pauseProcess system role index micros = withMVar system.lifecycle \stopping ->
-  if stopping
-    then pure False
-    else do
-      members <- processesOf system role
-      case drop index members of
-        [] -> pure False
-        child : _ -> do
-          let target = processTarget role child
-          recordWindow system "fault/pause" target DisturbanceStart
-          signalChild system.supervisor child Stop
-          threadDelay micros
-          signalChild system.supervisor child Cont
-          recordWindow system "fault/pause" target DisturbanceEnd
-          pure True
+pauseProcess system role index micros = do
+  paused <- withMVar system.lifecycle \stopping ->
+    if stopping
+      then pure Nothing
+      else do
+        members <- processesOf system role
+        case drop index members of
+          [] -> pure Nothing
+          child : _ -> do
+            let target = processTarget role child
+            recordWindow system "fault/pause" target DisturbanceStart
+            signalChild system.supervisor child Stop
+            pure (Just (child, target))
+  case paused of
+    Nothing -> pure False
+    Just (child, target) -> do
+      threadDelay micros
+      signalChild system.supervisor child Cont
+      recordWindow system "fault/pause" target DisturbanceEnd
+      pure True
 
 replace :: RunningSystem -> Text -> Child -> Text -> Text -> UTCTime -> IO RestartRecord
 replace system role child cause code diedAt = do

@@ -53,6 +53,10 @@ main = hspec do
       judge [window] [(("pick", "o-1"), [900, 1500])] `shouldBe` 0
       judge [window] [(("pick", "o-1"), [2400, 9000])] `shouldBe` 0
       judge [window {end = Nothing}] [(("pick", "o-1"), [900, 99999])] `shouldBe` 0
+    it "explains a pick enqueued again after its workflow step's resume worker was paused" do
+      let config = systemConfigFrom (either (error . show) id (resolveKnobs runtimeKnobs []))
+          pause = DisturbanceWindow "fault/pause" "b-resume/1" 1000000 (Just 21000000)
+      (Duplicates.judgeDuplicates [pause] (Duplicates.hopAllowances config) (Map.fromList [(("pick", "o-1211"), [500000, 21100000])])).violations `shouldBe` 0
     it "applies a window only to the hops its target delivers on" do
       judge [window {target = "b-resume/0"}] [(("pick", "o-1"), [900, 1500])] `shouldBe` 1
       judge [window {target = "*"}] [(("pick", "o-1"), [900, 1500])] `shouldBe` 0

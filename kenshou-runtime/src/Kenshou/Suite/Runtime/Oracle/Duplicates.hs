@@ -50,7 +50,10 @@ hopAllowances config =
     HopAllowance "dispatch-warehouse-dispatch" ["b-dispatch"] (seconds (timeouts.shardLeaseSeconds + timeouts.shardRenewSeconds)),
     HopAllowance (config.shopTopic <> "-consumer") ["b-consumer"] consumer,
     HopAllowance (config.warehouseTopic <> "-consumer") ["a-consumer"] consumer,
-    HopAllowance "pick" ["b-jobs"] (seconds (fromIntegral timeouts.jobVisibilitySeconds)),
+    -- A pick is redelivered by its worker, and enqueued again when the
+    -- workflow step that enqueues it runs again after a disturbance of the
+    -- dispatcher or a resume worker.
+    HopAllowance "pick" ["b-jobs", "b-resume", "b-dispatch"] (seconds (max (fromIntegral timeouts.jobVisibilitySeconds) timeouts.workflowLeaseSeconds)),
     -- A workflow advances in the dispatcher that starts it and in the
     -- resume workers.
     HopAllowance "step-request-pick" ["b-resume", "b-dispatch"] (seconds timeouts.workflowLeaseSeconds),
