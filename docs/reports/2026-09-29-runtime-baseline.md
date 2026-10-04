@@ -1,309 +1,244 @@
-# Keiro runtime baseline report — 2026-09-29 checkpoint
+# Keiro runtime verification — initial findings, 2026-10-04
 
-**State: baseline in progress.** This is the technical triage report for the initial released-cohort pass of [MasterPlan 1](../masterplans/1-build-an-extensive-verification-suite-for-the-keiro-runtime.md). It records what the suite has established so far and what remains before the baseline can be called complete. It is a dated reading of evidence, not an edit to an immutable run record or a claim that an owner-marked fix has passed Kenshou verification.
+**State: first round closed.** This report answers one question for the
+owners of keiro, kiroku, pgmq-hs, shibuya and the Kafka adapter: what did the
+first verification round of
+[MasterPlan 1](../masterplans/1-build-an-extensive-verification-suite-for-the-keiro-runtime.md)
+find on the pinned released cohort? The owner closed the round on 2026-10-04
+(MasterPlan Decision Log), so this report uses only evidence that was already
+recorded. No run was repeated for it. It is a dated reading of that evidence,
+not an edit to any immutable run record. It does not claim that an owner-marked
+fix passed Kenshou verification.
 
-The [clean outbox metrics and restart investigation](2026-10-01-outbox-metrics-and-restart-controls.md) adds sixteen metrics contract/benchmark runs, three comparisons, and two matched twenty-minute forced-GC restart diagnostics. All three comparison attestations confirm VC-2/VC-3 recomputation. Collection and scraping pass the saved policy; serving and the preserved raw A/A control remain inconclusive on tail latency. Both restart controls hold all applicable business checks over 24,202 unique messages each. The process arm has stable bounded main/survivor resources but insufficient data in short incarnations; the in-process arm passed. These results do not close historical default-GC attribution, full outbox/queue soaks, or independent Keiro business-verdict verification.
+This file began as the 2026-09-29 baseline checkpoint. That version's
+run-by-run narrative is in this file's Git history, in the child plans and in
+the [historical evidence bundle](../verification/).
 
-The [queue lease acceptance](../plans/13-cover-the-keiro-outbox-inbox-and-job-queue.md#queue-lease-sql-evidence-and-replay)
-adds four clean local PostgreSQL 18 investigation records at harness `fed2eca`.
-Worker and drain extension arms pass; deliberately ignored-extension controls
-fail exactly the two extension checks. All 40 schema and 84 artifact checks
-pass, and all four cloud-backed attestations are confirmed with six checks
-passed apiece. The scenario-specific VC-1 verifier uses raw SQL lease rows
-and handler observations; confirmation preserves the deliberate failures.
-Other Keiro business-oracle replay and full soak acceptance remain open.
+## Summary
 
-## Reference cohort and evidence quality
+The round produced 60 numbered findings: 1–56 and 63–66. Numbers 57–62 are
+deliberately unused.
 
-The pinned [released cohort](../../cohort/released.json) includes Keiro 0.17.0.0, Kiroku Store 0.8.0.1 and its Shibuya adapter 0.5.1.2, Shibuya Core and Metrics 0.9.0.3, the Shibuya PGMQ adapter 0.16.0.0, the Shibuya Kafka adapter 0.9.0.1, and pgmq-hs 0.6.1.0. New baseline runs focus on durable PostgreSQL 18; several substrate checks also have PostgreSQL 17 controls. Local results under `runs/` are sealed but ignored by Git. Their IDs and reproduction commands live in the [numbered findings](../findings/) and child plans.
+| Kind | Findings | Count |
+|---|---|---:|
+| Runtime defect, with an owner bug report | 1, 2, 4–12, 15, 17–19, 21, 22, 24, 26–38, 63, 65 | 33 |
+| Documented limitation or unpromised behavior, with an owner improvement request or no owner record | 13, 14, 16, 20, 23, 66 | 6 |
+| Harness defect in this repository, repaired | 39–43, 45, 48–56, 64 | 16 |
+| Unattributed or open | 3, 25, 44, 46, 47 | 5 |
 
-The [historical OKF bundle](../verification/) currently contains 191 digest-linked run/comparison records: 185 individual runs and six comparisons. The individual runs comprise four Kafka runs, six self-tests, 48 Keiro outbox runs, 39 Keiro inbox runs, 84 Keiro queue runs, and four Keiro write-side soaks. The comparisons comprise one self-test, two queue configuration investigations, and three outbox metrics investigations. Two Kafka records preserve failed released-cohort behavior, including [rebalance](../verification/runs/kafka/2026/09/01a0e3bd-ef03-71b4-9486-01ed1bd56a02.md); the [twenty-minute Kafka stability soak](../verification/runs/kafka/2026/09/01a0e3c8-28da-70e4-abcb-81223c70560b.md) passed. The rebalance and soak attestations remain incomplete because their Kafka oracle is not independently replayable from stored artifacts. The [Keiro outbox record](../verification/runs/keiro/2026/09/01a0eec4-bd55-7786-804f-bda62c6ac388.md) also has an [incomplete attestation](../verification/attestations/2026/09/01a0eee9-5ccf-72b7-bcdf-54f5ec80c02a.md): five checks passed, but the independent VC-1 outbox recomputer is unavailable. Most finding-level raw runs have not yet been published to the bundle, so this checkpoint links local sealed evidence and owner reports but is not the final durable baseline handoff. [ADR-18](../adr/0018-keep-verification-records-immutable-and-derive-baselines.md) governs later selection and comparison.
+The 33 runtime-defect findings map to 34 distinct owner bug records, because
+findings 1 and 2 each cite both a Keiro report and the Kiroku report it
+duplicates. By finding, the defects are:
 
-The [MasterPlan issue register](../masterplans/1-build-an-extensive-verification-suite-for-the-keiro-runtime.md#upstream-issue-register) accounts for 56 numbered findings: 31 linked to an owner bug report, six whose primary disposition is an improvement request, fifteen local suite findings, two unattributed runtime observations, and two cell-infrastructure observations whose final attribution remains open. It links 32 distinct owner bug records, including two Keiro reports now marked duplicates of `mori://shinzui/kiroku/okf/bug-reports/concepts/BUG-3`, and ten distinct improvement requests, including complementary requests and non-bug dispositions. Owner status at this checkpoint is 16 reported, 14 fixed, and two duplicate. “Fixed” is the owner's classification; the initial released-cohort baseline preserves the historical result until a separately requested, comparable post-fix run verifies it.
+- keiro: 7 (34–38, 63, 65);
+- kiroku: 3 (1 and 2 through `kiroku-store` BUG-3, and 33);
+- pgmq-hs: 3 (10–12);
+- shibuya: 11 (17–19, 21, 22, 24, 26–30);
+- shibuya-pgmq-adapter: 3 (15, 31, 32);
+- shibuya-kafka-adapter: 6 (4–9).
 
-The corrected PGMQ read/ack benchmark has a passing five-pair leased-cell A/A control, comparison `01a0ee74-7d36-7596-8be9-61eca999e592`. Ten cold-reset slices sealed and verified under one lease; every nested run passed with benchmark grade and zero operation failures on clean released payload `265f35b`. The policy passed p50, p99, message throughput, and allocation. The first three-pair revision-3 control was inconclusive, so the five-pair result is the accepted measurement control. This establishes repeatability for that configuration, not an upstream repair or a cross-version performance result. Its fetched run trees and comparison report remain under ignored `.dev/pair-aa-pgmq-read-ack-r3-5/`; the sealed cell trees are durable in the results bucket, but have not yet been selected into the historical OKF bundle.
+Locally recorded owner status of those 34 records:
 
-A separate local sensitivity check, comparison `01a0ee85-e90e-75c9-8bd2-5269b64fbc9d`, changed only the simulated per-message handler time from zero to five milliseconds at batch size one. Ten PostgreSQL 18 runs passed with benchmark grade and zero operation failures, and the policy classified p50 latency as a regression. Because the shared host was busy with unrelated work, its numerical ratios are diagnostic only and excluded from this baseline. A matched sensitivity comparison on a leased cell is still required.
+- 18 are reported;
+- 14 are marked fixed by their owners: Kiroku BUG-3 and BUG-4, Shibuya BUG-2 to BUG-11, and Shibuya PGMQ adapter BUG-2 and BUG-3;
+- 2 Keiro reports are duplicates of Kiroku BUG-3.
 
-The five-pair layer-ladder cell control under `.dev/pair-aa-pgmq-layer-ladder-r2-5/` was interrupted by GCS HTTP 401 after seven verified slices. Journal resume verified all ten, but the interrupted eighth slice sealed `cancelled` and the resume used a new lease. It is excluded from A/A acceptance and all numerical baseline claims. [Finding 39](../findings/39-kenshou-gcs-token-cache-survives-expiry.md) tracks the harness token-refresh defect; the post-repair control is described below.
-
-That fresh control, session `01a0eea8-735c-7754-9d3a-88b4e426db1a`, completed ten verified, benchmark-grade slices under one lease. Five valid pairs passed p50, message throughput and allocation, while p99 remained inconclusive under the unchanged policy. The initial comparison was emitted while a documentation edit was uncommitted. Clean-worktree replay of the exact sealed trees produced comparison `01a0eeb8-8fbd-74b7-9dbe-25c1d41b64ae`, `harnessDirty=false`, and the same inconclusive p99 result. No layer-ladder performance number is promoted to the baseline.
-
-The PGMQ invisible-backlog control passed in five pairs on alpha: session `01a0eebd-eee2-7542-869e-d51224b4fa6d`, comparison `01a0eec9-b954-7637-a4ff-419acf5efd5c`. All ten slices completed and verified under one lease with benchmark-grade nested runs and zero operation failures. The clean comparison passed p50, p99, unit throughput, and allocation under the unchanged policy. Its three-pair predecessor was inconclusive and is not the accepted control. Neither A/A result measures an upstream version change.
-
-The [revision-3 queue-worker A/A](2026-09-30-queue-worker-comparisons.md) completed five clean alpha pairs at 250 jobs/s with full raw samples. Every run passed its business checks and reached benchmark grade. Throughput, p50, allocation and maximum live bytes passed, while both p99 intervals remained inconclusive under the unchanged policy. All twenty configuration trials passed their business checks and reached benchmark grade; clean replay reproduced inconclusive execution-shape p99 and a handler-start latency regression for 100 ms long polling, with lower allocation and live memory. All twenty configuration arms and both clean comparisons are digest-linked, and both comparison attestations confirm all six checks, including VC-2/VC-3 recomputation. Individual business-oracle attestation remains open. The control does not establish p99 repeatability or a release-performance conclusion.
-
-The grouped-read control is excluded. [Finding 42](../findings/42-kenshou-grouped-read-benchmark-ignored-its-workload-knobs.md) records three verified cell slices that failed on an invalid send/read workload. That revision also ignored its declared group count, strategy, batch, preload, and FIFO-index controls. Scenario revision 3 now preloads and drains a grouped queue, and clean Linux payload `71ddba3` is published. An operator-selected 10,000-message smoke exhausted the queue during measurement; its first verified slice failed `operation-errors` and is excluded. The full-preload A/A remains pending behind Keiro coverage; no grouped-read number is accepted.
-
-A clean released-cohort Keiro outbox run on alpha reproduced `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-5` without using the busy workstation: verified cell run `01a0eed0-4d26-7365-afb3-8a03d234d014`, nested run `01a0eec4-bd55-7786-804f-bda62c6ac388`. After P2 appended its broker record, stale P1 finalized the reclaimed row as failed. The two failed verdicts match the scoped owner defect. This is a functional failure, not a performance measurement; its digest-linked record is preserved, while independent verdict attestation remains incomplete.
-
-The four-hour inbox attempt is excluded from full-soak acceptance. [Finding 49](../findings/49-four-hour-inbox-soak-times-out-before-sealing.md) confirms the cell runner hit its 14,700-second wall-clock limit after measurement and eight held business verdict files. The outer tree verified as infrastructure-failure; no nested result or manifest sealed. The reduced inbox pass remains valid, while the local client now supplies a bounded 15,300-second cap. The fresh same-seed retry, cell `01a0f4f5-7e09-7358-ac15-b2ac2128e990`, sealed and verified using clean payload `9c2c9b8` and unchanged inbox revision 2. Its [digest-linked full run](../verification/runs/keiro/2026/10/01a0f4f4-7b1a-7232-b0ab-f62d19abb0aa.md) passed all eight checks: 28,821 fresh deliveries, 28,821 suppressed early redeliveries, 28,821 late reprocessings and 57,642 effects; classification/GC errors and pending deliveries were zero. Retention was 257 rows; sampled table size stayed at 409,600 bytes and dead tuples at 120. All six bounded resource probes were stable, including 466 post-major heap points. This supplies full-duration business/resource observations, while independent Keiro VC-1 recomputation remains unavailable and finding 50 qualifies the legacy verdict schema. Exploratory soak measurements supply no performance comparison; the first attempt remains excluded.
-
-The first five-minute outbox table-growth cell run did not seal a nested result: alpha's driver guest terminated, the lease was lost, and the cell cancelled the run. Its partial samples and verdict files are excluded from the baseline. [Finding 47](../findings/47-alpha-cell-loses-lease-during-outbox-soak.md) tracks the infrastructure interruption without assigning a Keiro defect. A same-seed longer-lease retry sealed and verified as alpha cell run `01a0f014-6de1-70a5-bb0e-ee6a92a42336`, [digest-linked nested run](../verification/runs/keiro/2026/09/01a0f013-99ac-7155-aa00-bab4827de47e.md): all eight business checks held after 621 accepted messages and ten publisher restarts, with no missing or duplicate broker records and bounded sampled table growth. The overall run failed because the harness thread count rose by ten; its heap probe had no eligible major-GC samples. [Finding 3](../findings/3-keiro-steady-restart-harness-threads.md) keeps that signal local pending a matched control.
-
-A second clean five-minute outbox run, cell `01a0f025-946f-73e8-bfc9-8f7d0b79d871` and [digest-linked nested run](../verification/runs/keiro/2026/09/01a0f01d-96e0-747d-838f-053d4518fb4f.md), repeated all eight passing business checks and the ten-thread rise after ten publisher restarts. [Finding 48](../findings/48-plan-silently-drops-knob-pinned-for-another-scenario.md) shows that its requested forced-major-GC knob was silently omitted because the selected outbox scenario did not declare it. This repeat is excluded as a GC control. The planner now rejects such a pin. The [matched no-restart control](../verification/runs/keiro/2026/09/01a0f02e-688c-7400-a8d6-c2a74ac42e44.md), cell `01a0f062-ff85-74d4-ba79-b9f287a6c58e`, then passed all eight business checks over the same 621 messages while Haskell threads stayed flat at 141. Its overall outcome was inconclusive only because it had no eligible post-major heap samples. This ties the ten-thread signal to the restart path without yet attributing it to the harness or Keiro. The [revision-2 forced-major-GC control](../verification/runs/keiro/2026/09/01a0f055-c3bf-774f-9e85-993b6c0d5bb6.md), cell `01a0f069-e617-717d-a767-e9f4fbd5b134`, sealed and verified with all eight business checks holding over 621 messages and ten restarts. Its resolved 5-second GC interval produced 40 post-major heap points, but the heap interval still straddled the growth floor; the overall result remained inconclusive. Haskell threads stayed between 142 and 144 in the steady window and finished at 143. Forced collection perturbs the runtime, so this control suggests collection timing contributes to the earlier thread count without proving a Keiro or harness leak. It is excluded from throughput comparisons. The [twenty-minute default-rate outbox run](../verification/runs/keiro/2026/09/01a0f01e-9ec4-7335-94e8-280a36cf2eac.md), cell `01a0f070-83c2-75cb-a4f0-515241b13d94`, then sealed and verified with all eight business checks holding over 24,202 messages and 20 restarts. The outbox drained with no missing or duplicate broker records, and sampled table and dead-tuple growth stayed within bounds. The overall outcome failed because main Haskell threads rose from 142 to 157; native bytes, OS threads, descriptors and connections were stable, but the heap still lacked eligible post-major samples. [Finding 3](../findings/3-keiro-steady-restart-harness-threads.md) remains unattributed; the longer run confirms the default-collection signal without proving its owner or retained heap cause.
-
-The clean five-minute inbox dedupe-window cell run `01a0f01c-32aa-73dd-b2b6-f51199d47ddc` [sealed and was digest-linked](../verification/runs/keiro/2026/09/01a0f00a-5f36-746a-b7de-4e66168494da.md). All eight business checks held: 621 fresh messages were processed, all 621 early redeliveries were suppressed, all 621 late redeliveries were processed again, and 1,242 effects were observed without delivery or GC errors. Retention and sampled relation-growth bounds held. The overall outcome is inconclusive because the post-major heap trend straddled the growth threshold in this short window; the twenty-minute default-rate soak below classifies it. No owner issue follows from this result.
-
-The [twenty-minute default-rate inbox cell run](../verification/runs/keiro/2026/09/01a0f027-28c8-74bc-873a-f857e53473cd.md), cell `01a0f04a-bc43-7546-b7b2-20d47c665003`, sealed and verified with an overall pass. All eight business checks held: 2,421 fresh messages were processed, all 2,421 early redeliveries were suppressed, all 2,421 late redeliveries were reprocessed, and 4,842 effects were present with zero delivery or GC errors. The sampled inbox table stayed at 401,408 bytes across the comparison windows, and its growth and dead-tuple bounds held. Forty eligible post-major-GC heap points classified the main heap stable; native memory, thread, descriptor, and connection probes were stable. This closes the default-rate reduced inbox soak gate for the initial released cohort; the later full-duration pass is recorded above; other inbox matrix arms and independent verification remain open.
-
-Four further clean Keiro queue cell runs are digest-linked. [BUG-4's long-poll run](../verification/runs/keiro/2026/09/01a0eef1-bb2c-73f5-b32a-1046f297db83.md) reproduced three scoped redelivery and retry failures. The [first backend-termination run](../verification/runs/keiro/2026/09/01a0eef1-60b7-71f4-bcc1-c4d4eb6ef470.md) injected five faults yet passed. A [revised blocked-read probe](../verification/runs/keiro/2026/09/01a0ef2f-0b70-77e1-9c32-cd4283e1fd4d.md) terminated five worker backends while each was observably blocked in `pgmq.read`; it also passed and left `knownDefect.status=not-reproduced`. Earlier local BUG-3 failures remain open as an environment or error-path reproduction gap. The [pool-isolation run](../verification/runs/keiro/2026/09/01a0eef1-bb33-75d4-a1b7-f167d99951aa.md) passed its characterization checks while observing that the three- and six-processor arms made no progress, consistent with BUG-6. These are correctness and characterization observations, not host performance comparisons.
-
-The clean five-minute queue/DLQ soak cell `01a0f02b-eed5-713b-a6b1-336c5f46b0b4` [sealed and was digest-linked](../verification/runs/keiro/2026/09/01a0f021-2f7f-7272-86c4-938bd4e7663b.md). All nine business checks held: 1,551 accepted jobs were handled once, the main queue drained, and all 78 terminal jobs were archived, with zero worker or maintenance errors. Main and DLQ relation sizes were flat between the sampled windows. The short heap and relation-growth trends were inconclusive.
-
-The [twenty-minute default-rate queue/DLQ cell run](../verification/runs/keiro/2026/09/01a0f027-6fcb-77d8-889d-78ab23e87e4c.md), cell `01a0f032-84d0-7322-9c36-841044f755f1`, also sealed and verified. All nine business checks held: 6,051 jobs were handled once, the main queue drained, all 303 terminal jobs were archived, and no worker or maintenance errors remained. Sampled main-table size was flat; the DLQ grew from 65,536 to 81,920 bytes and stayed within its bound. The overall verdict is inconclusive because there were no eligible post-major-GC heap points; the native, thread, descriptor, and connection checks were stable. This is a passing functional and bounded-table observation, not a leak clearance or an owner defect. The three messaging soak pairs now offer an optional forced-major-GC diagnostic control for the heap question. The [matched forced-major-GC control](../verification/runs/keiro/2026/09/01a0f056-3861-703f-9c5d-f1a689409a8c.md), cell `01a0f089-f6a8-715c-8c36-460f9cc54eeb`, passed all nine business checks over another 6,051 jobs and 303 terminal archive rows. Forty-one eligible post-major heap points classified the main heap stable; Haskell threads stayed at 140 and the other bounded-resource probes were stable. This resolves the reduced queue soak's heap-data gap as a diagnostic control. Forced collection perturbs latency, so these controls are excluded from throughput comparisons.
-
-A subsequent 11-scenario clean queue correctness/concurrency sweep sealed and verified as alpha cell run `01a0ef4f-ce12-74f3-823c-360e44b1ff93`. Nine scenarios passed. The two failed outcomes reproduced the expected `exactly-one-place` failure in Keiro's documented `mori://shinzui/keiro/okf/user-documentation/concepts/DOC-25` [drain](../verification/runs/keiro/2026/09/01a0ef4d-d6ae-76a1-92db-92ce14d11701.md) and [redrive](../verification/runs/keiro/2026/09/01a0ef4d-d6ae-76a1-a8a2-682fa45c5970.md) send-before-delete windows; their known-defect flags make them nonblocking observations, not new owner reports. Its [ordinary-poll crash-redelivery control](../verification/runs/keiro/2026/09/01a0ef4d-d6ae-76a1-9e4e-73634d34e454.md) passed, while the separate long-poll BUG-4 run above failed. All 11 nested trees are verified, remain in the cell results bucket, and are digest-linked in the historical bundle. The telemetry run initially hit [finding 45](../findings/45-verification-record-rejects-empty-string-knob.md), a local empty-knob profile issue that is repaired; the same sealed run is [recorded](../verification/runs/keiro/2026/09/01a0ef4d-d6ae-76a1-8a59-c3c7a8d482e0.md).
-
-The [default twenty-minute reduced write-side soak](../verification/runs/keiro/2026/09/01a0ef1a-d6e9-77d1-aefb-d43eb6460645.md) ran on the clean released cohort and durable PostgreSQL 18 cell. Process-manager and router child reports suspected post-major heap growth, consistent with the already filed `mori://shinzui/kiroku/okf/bug-reports/concepts/BUG-3`. Three post-drain business checks failed at the default 200 commands/second target because the fixed two-minute quiescence wait did not complete. The existing summary cannot distinguish pending backlog from incorrect effects, so [finding 44](../findings/44-keiro-write-side-default-soak-does-not-quiesce.md) remains unattributed until a same-duration lower-rate control and explicit stage counts are available. A separate five-minute override was excluded from baseline interpretation: [finding 43](../findings/43-keiro-write-side-soak-uses-default-diagnosis-window.md) found that its diagnosis window still spanned the static twenty-minute default. The corrected [clean five-minute replay](../verification/runs/keiro/2026/09/01a0ef66-959a-7183-a9aa-3e4bed4fc7da.md) used seconds 5–305, quiesced, and passed all ten business checks at 20 commands/second. Its router-worker leak verdict was suspected, while its main-process heap probe had insufficient major-GC points. This validates the window repair and lower-rate functionality, not a full leak clearance or an explanation for the longer high-rate timeout.
-
-The [same-seed twenty-minute 20-command/s control](../verification/runs/keiro/2026/09/01a0ef66-959b-7285-87b6-1b2924e04d1e.md) also passed all ten business checks after quiescence: every transfer and bonus stage matched, balances and async activity matched, and dead-letter checks passed. Its main and router leak verdicts were suspected, while both command-writer child heaps now had enough post-major-GC samples to show growth; [finding 46](../findings/46-keiro-command-writers-grow-heap-in-low-rate-soak.md) keeps that new signal unattributed pending a writer-only control or profile. A revised default-rate replay was then run to classify the high-rate business failure. One attempted replay sealed `reset-failed` before the scenario executed when the alpha PostgreSQL VM terminated; it is excluded from runtime conclusions.
-
-The revised default-rate twenty-minute replay completed on clean alpha as verified cell run `01a0eff0-e271-71e1-afbe-3ee4ffb0faba`, [digest-linked nested run](../verification/runs/keiro/2026/09/01a0eff0-81f8-721c-8994-7b922ee544c3.md). Its quiescence flag remained false at the two-minute drain deadline, with 14,356 transfer debits and announcements but only 12,125 credits and 12,124 confirmations; the same three post-drain checks failed. The bonus pipeline was also behind. [Finding 44](../findings/44-keiro-write-side-default-soak-does-not-quiesce.md) now treats backlog as the immediate explanation for those deadline failures. Whether the 200-command/s target is beyond the cohort's sustained capacity or a longer drain would expose a functional mismatch remains open. No new owner bug is assigned on these counts alone.
-
-The first alpha cell attempt for the Kafka seek-barrier defect produced no runtime evidence. [Finding 40](../findings/40-kenshou-kafka-scenarios-omit-broker-requirement.md) records that the catalog had omitted Kafka's broker requirement, so route preparation accepted a cell with no broker and the nested scenario errored before its probe. The catalog is repaired and package tests pass. The current alpha and beta descriptors have no broker image; a broker-capable cell or a clean, controlled local correctness run is required before this specific defect has cell-backed baseline evidence.
-
-A provenance audit of findings 1–38 found 21 citing at least one clean local run and 17 citing only dirty-harness local runs (findings 1–9, 14–16, and 34–38). Those historical runs can explain and reproduce owner reports, but they are not a selected clean baseline set. The Kafka seek-barrier finding is in that latter group. Clean reruns and digest-linked records take priority over interpreting further workstation measurements.
+"Fixed" is the owner's classification. This round did not verify any fix:
+both cohorts still pin the affected released versions, and post-fix
+verification belongs to
+[MasterPlan 2](../masterplans/2-close-the-verification-and-repair-loop-for-the-keiro-runtime-in-rounds.md).
 
 ## Priority for owner projects
 
-| Priority | Owner work and evidence | Reason to address it |
+| Priority | Owner record and finding | Why |
 |---|---|---|
-| 1 — data integrity | `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-5`, [finding 8](../findings/8-kafka-later-retry-overwrites-earlier-barrier.md) | The released adapter committed offset 10 with no successful decision for offset 3 after two retries. The owner classifies this as data loss. This is the clearest release-blocking behavior in the current evidence. |
-| 1 — durable publication | `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-5`, [finding 36](../findings/36-keiro-stale-outbox-publisher-finalizes-new-claim.md) | A stale publisher can mark another publisher's successful claim failed or dead after maintenance reclaims it. The broker append and outbox state then disagree. |
-| 2 — continuous consumption | `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-3` and `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-4`, [findings 6](../findings/6-kafka-broker-restart-ends-adapter-consumers.md) and [7](../findings/7-kafka-group-rebalance-ends-adapter-consumers.md); `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-3`, [finding 34](../findings/34-keiro-job-worker-exits-after-polling-backend-termination.md) | Broker restart, group rebalance, or PostgreSQL backend termination can end live workers while acknowledged or queued work remains. Durable backlog survives, but processing stops without external restart. |
-| 2 — queue progress and retry budget | `mori://shinzui/shibuya-pgmq-adapter/okf/bug-reports/concepts/BUG-1`, [finding 15](../findings/15-shibuya-pgmq-long-poll-pool-starvation.md); `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-4` and `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-6`, [findings 35](../findings/35-keiro-long-poll-consumes-read-attempt-without-handler.md) and [37](../findings/37-keiro-long-poll-processors-starve-runtime-pool.md) | Long polls can occupy a shared pool, stall available work, or spend read attempts without handler delivery. The Keiro reports still need root-cause isolation before assigning a common repair. |
-| 2 — failure classification | `mori://shinzui/pgmq-hs/okf/bug-reports/concepts/BUG-1`, [finding 10](../findings/10-pgmq-disconnects-are-classified-as-permanent.md) | A recoverable database interruption is classified as permanent even when the same pool recovers. This is relevant to the Keiro polling-worker failure, although one shared root cause has not been established. |
-| 3 — ordering, lifecycle, and observability | `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-1`, `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-2`, and `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-6`; `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-1`; `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-7`; `mori://shinzui/pgmq-hs/okf/bug-reports/concepts/BUG-3` | Buffered retries and rebalance can reorder or replay work; forced stop can finalize after return; pre-handler DLQ events lack a process span; partitioned notifications exceed their throttle. Their individual evidence and scope are in the issue register. |
+| 1 — data integrity | `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-5`, [finding 8](../findings/8-kafka-later-retry-overwrites-earlier-barrier.md) | Two retries left offset 3 with no successful decision, yet the group committed offset 10. Reproduced on a clean local run and on alpha. |
+| 1 — durable publication | `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-5`, [finding 36](../findings/36-keiro-stale-outbox-publisher-finalizes-new-claim.md) | A stale publisher marks another publisher's successful claim failed after reclaim, so the broker and the outbox disagree. Reproduced on a clean alpha run. |
+| 2 — continuous consumption | `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-3`, `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-4`, [findings 6](../findings/6-kafka-broker-restart-ends-adapter-consumers.md) and [7](../findings/7-kafka-group-rebalance-ends-adapter-consumers.md); `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-3`, [finding 34](../findings/34-keiro-job-worker-exits-after-polling-backend-termination.md) | A broker restart, a group rebalance or a backend termination ends live workers while work remains. BUG-4 also appears in the assembled runtime with no injected fault. |
+| 2 — workflow progress | `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-8`, [finding 63](../findings/63-keiro-child-completion-crash-strands-parent.md) | A child that crashes after its completion marker and before the parent wake leaves the parent suspended forever. The source is unchanged through keiro 0.19.0.0. |
+| 2 — queue progress and retry budget | `mori://shinzui/shibuya-pgmq-adapter/okf/bug-reports/concepts/BUG-1`, [finding 15](../findings/15-shibuya-pgmq-long-poll-pool-starvation.md); `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-4`, `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-6`, [findings 35](../findings/35-keiro-long-poll-consumes-read-attempt-without-handler.md) and [37](../findings/37-keiro-long-poll-processors-starve-runtime-pool.md) | Long polls occupy a shared pool, stall work, or spend read attempts without delivering to the handler. No common root cause has been established. |
+| 2 — failure classification | `mori://shinzui/pgmq-hs/okf/bug-reports/concepts/BUG-1`, [finding 10](../findings/10-pgmq-disconnects-are-classified-as-permanent.md) | A recoverable interruption is classified as permanent although the same pool recovers. |
+| 3 — ordering, lifecycle, observability, operator surface | Kafka adapter BUG-1, BUG-2 and BUG-6; Shibuya BUG-1; Keiro BUG-7 and BUG-9; pgmq-hs BUG-3 (see the register) | Buffered retries and rebalances reorder or replay work. A forced stop finalizes after it returns. Pre-handler DLQ events have no process span. `keiro-ops` JSON renders DLQ ids with a derived `Show`. Partitioned notifications exceed their throttle. |
 
-The table orders investigation by observed impact, then by how broadly the behavior can stop or misstate service work. It does not replace owner severity fields or assert that distinct reports share a fix. Owners should use the exact run IDs, affected versions, controls, and workarounds in each linked finding and bug report.
+The table orders the work by observed impact. It does not replace the owners'
+severity fields or assert that separate reports share a fix.
 
-## Already fixed upstream, awaiting comparable Kenshou verification
+## Findings register
 
-`mori://shinzui/kiroku/okf/bug-reports/concepts/BUG-3` is marked fixed in `kiroku-store` 0.9.0.1. The owner's `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-1` and `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-2` are duplicates of it; [findings 1](../findings/1-keiro-write-side-worker-heap-growth.md) and [2](../findings/2-keiro-seed-backlog-heap-growth.md) retain the released-cohort leak evidence. A full live-worker soak on the published fixed Kiroku version remains necessary. `mori://shinzui/kiroku/okf/bug-reports/concepts/BUG-4` is marked fixed in the Shibuya Kiroku adapter 0.5.1.3, with PostgreSQL 17 and 18 focused controls already passing.
+Cohort `released` means the pinned cohort described under
+[Cohort and environment](#cohort-and-environment). A harness defect is in
+Kenshou itself, so it has no runtime cohort.
 
-The owner marks ten historical Shibuya Core and Metrics reports in the issue register fixed in 0.10.0.0. Focused published-current probes have passed, while the pinned released cohort still reproduces its historical failures. `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-1`, late finalization after forced stop, remains reported and also reproduces on 0.10.0.0. The Shibuya PGMQ adapter marks `mori://shinzui/shibuya-pgmq-adapter/okf/bug-reports/concepts/BUG-2` and `mori://shinzui/shibuya-pgmq-adapter/okf/bug-reports/concepts/BUG-3` fixed in 0.16.1.0; focused controls passed, while the long-poll starvation report `mori://shinzui/shibuya-pgmq-adapter/okf/bug-reports/concepts/BUG-1` remains open. These owner statuses should inform a later fixed-cohort selection, after the initial baseline is complete.
+| # | Finding | Component (owner) | Kind | Owner record | Cohort observed |
+|---:|---|---|---|---|---|
+| 1 | [Write-side worker heap growth](../findings/1-keiro-write-side-worker-heap-growth.md) | kiroku-store via keiro (kiroku) | Runtime defect | `mori://shinzui/kiroku/okf/bug-reports/concepts/BUG-3` (duplicate: `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-1`) | released; owner fixed in kiroku-store 0.9.0.1 |
+| 2 | [Seed-backlog heap growth](../findings/2-keiro-seed-backlog-heap-growth.md) | kiroku-store via keiro (kiroku) | Runtime defect | `mori://shinzui/kiroku/okf/bug-reports/concepts/BUG-3` (duplicate: `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-2`) | released; owner fixed in kiroku-store 0.9.0.1 |
+| 3 | [Harness thread growth during Keiro soaks](../findings/3-keiro-steady-restart-harness-threads.md) | Kenshou or keiro outbox restart path (open) | Unattributed/open | none | released |
+| 4 | [Buffered retry leaves successors uncommitted](../findings/4-kafka-buffered-retry-leaves-successors-uncommitted.md) | shibuya-kafka-adapter | Runtime defect | `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-1` | released (0.9.0.1) |
+| 5 | [Buffered successors run before retry](../findings/5-kafka-buffered-successors-run-before-retry.md) | shibuya-kafka-adapter | Runtime defect | `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-2` | released (0.9.0.1) |
+| 6 | [Broker restart ends consumers](../findings/6-kafka-broker-restart-ends-adapter-consumers.md) | shibuya-kafka-adapter | Runtime defect | `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-3` | released (0.9.0.1) |
+| 7 | [Group rebalance ends consumers](../findings/7-kafka-group-rebalance-ends-adapter-consumers.md) | shibuya-kafka-adapter | Runtime defect | `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-4` | released (0.9.0.1) |
+| 8 | [Later retry overwrites earlier barrier](../findings/8-kafka-later-retry-overwrites-earlier-barrier.md) | shibuya-kafka-adapter | Runtime defect | `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-5` | released (0.9.0.1) |
+| 9 | [Rebalance replays committed offsets out of order](../findings/9-kafka-rebalance-replays-committed-offsets-out-of-order.md) | shibuya-kafka-adapter | Runtime defect | `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-6` | released (0.9.0.1) |
+| 10 | [Recoverable disconnects classified permanent](../findings/10-pgmq-disconnects-are-classified-as-permanent.md) | pgmq-hs | Runtime defect | `mori://shinzui/pgmq-hs/okf/bug-reports/concepts/BUG-1` (and `mori://shinzui/pgmq-hs/okf/improvement-requests/concepts/IR-4`) | released (0.6.1.0), PG 17 and 18 |
+| 11 | [Concurrent reconciliation misreports creators](../findings/11-pgmq-concurrent-reconciliation-misreports-creators.md) | pgmq-hs | Runtime defect | `mori://shinzui/pgmq-hs/okf/bug-reports/concepts/BUG-2` (and `mori://shinzui/pgmq-hs/okf/improvement-requests/concepts/IR-5`) | released (0.6.1.0) |
+| 12 | [Partitioned notifications bypass throttle](../findings/12-pgmq-partitioned-notifications-bypass-throttle.md) | pgmq-hs | Runtime defect | `mori://shinzui/pgmq-hs/okf/bug-reports/concepts/BUG-3` | released (0.6.1.0), PG 17 and 18 |
+| 13 | [Partition recovery exceeds local bound](../findings/13-kiroku-network-partition-recovery-exceeds-local-bound.md) | kiroku-store | Documented limitation | `mori://shinzui/kiroku/okf/improvement-requests/concepts/IR-16` | released (0.8.0.1), PG 17 and 18 |
+| 14 | [Retry and success counters indistinguishable](../findings/14-shibuya-retry-and-success-counters-are-indistinguishable.md) | shibuya-metrics | Documented limitation | `mori://shinzui/shibuya/okf/improvement-requests/concepts/IR-8` | released (0.9.0.3) and 0.10.0.0 |
+| 15 | [Long polls starve acknowledgement](../findings/15-shibuya-pgmq-long-poll-pool-starvation.md) | shibuya-pgmq-adapter | Runtime defect | `mori://shinzui/shibuya-pgmq-adapter/okf/bug-reports/concepts/BUG-1` | released (0.16.0.0) and 0.16.1.0, PG 17 and 18 |
+| 16 | [Same-member duplicate work](../findings/16-shibuya-kiroku-same-member-duplicate-work.md) | shibuya-kiroku-adapter (kiroku) | Documented limitation | `mori://shinzui/kiroku/okf/improvement-requests/concepts/IR-17` (depends on `mori://shinzui/kiroku/okf/improvement-requests/concepts/IR-15`) | released (0.5.1.2) and 0.5.1.3, PG 17 and 18 |
+| 17 | [Forced stop can finalize late](../findings/17-shibuya-forced-stop-can-finalize-late.md) | shibuya-core | Runtime defect | `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-1` | released (0.9.0.3) and 0.10.0.0 |
+| 18 | [Duplicate processor IDs drop a handle](../findings/18-shibuya-duplicate-processor-ids-drop-a-live-handle.md) | shibuya-core | Runtime defect | `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-2` | released (0.9.0.3); owner fixed in 0.10.0.0 |
+| 19 | [Nonpositive concurrency removes bound](../findings/19-shibuya-nonpositive-concurrency-removes-handler-bound.md) | shibuya-core | Runtime defect | `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-3` | released (0.9.0.3); owner fixed in 0.10.0.0 |
+| 20 | [Keyed worker failure awaits input exhaustion](../findings/20-shibuya-keyed-worker-failure-awaits-input-exhaustion.md) | shibuya-core | Documented limitation | `mori://shinzui/shibuya/okf/improvement-requests/concepts/IR-6` | released (0.9.0.3); passes on 0.10.0.0 |
+| 21 | [Halt does not wake idle intake](../findings/21-shibuya-halt-does-not-wake-idle-intake.md) | shibuya-core | Runtime defect | `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-4` | released (0.9.0.3); owner fixed in 0.10.0.0 |
+| 22 | [Exhausted finalizer reported as graceful halt](../findings/22-shibuya-exhausted-finalizer-is-reported-as-graceful-halt.md) | shibuya-core | Runtime defect | `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-5` | released (0.9.0.3); owner fixed in 0.10.0.0 |
+| 23 | [Blocking adapter shutdown has no total deadline](../findings/23-shibuya-blocking-adapter-shutdown-has-no-total-deadline.md) | shibuya-core | Documented limitation | `mori://shinzui/shibuya/okf/improvement-requests/concepts/IR-6` | released (0.9.0.3); passes on 0.10.0.0 |
+| 24 | [Throwing adapter shutdown skips siblings](../findings/24-shibuya-throwing-adapter-shutdown-skips-siblings.md) | shibuya-core | Runtime defect | `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-6` | released (0.9.0.3); owner fixed in 0.10.0.0 |
+| 25 | [Startup cancellation evidence gap](../findings/25-shibuya-startup-cancellation-historical-evidence-gap.md) | shibuya-core | Unattributed/open | `mori://shinzui/shibuya/okf/improvement-requests/concepts/IR-6` (review `mori://shinzui/shibuya/okf/reviews/concepts/REV-3`) | released (0.9.0.3) |
+| 26 | [Stale activity marks healthy work stuck](../findings/26-shibuya-stale-activity-marks-healthy-work-stuck.md) | shibuya-metrics | Runtime defect | `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-7` | released (0.9.0.3); owner fixed in 0.10.0.0 |
+| 27 | [Health probes ignore terminal lifecycle](../findings/27-shibuya-health-probes-ignore-terminal-lifecycle.md) | shibuya-metrics | Runtime defect | `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-8` | released (0.9.0.3); owner fixed in 0.10.0.0 |
+| 28 | [WebSocket disconnect leaks slots](../findings/28-shibuya-websocket-disconnect-leaks-slots.md) | shibuya-metrics | Runtime defect | `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-9` | released (0.9.0.3); owner fixed in 0.10.0.0 |
+| 29 | [Disabled WebSocket still upgrades](../findings/29-shibuya-disabled-websocket-still-upgrades.md) | shibuya-metrics | Runtime defect | `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-10` | released (0.9.0.3); owner fixed in 0.10.0.0 |
+| 30 | [WebSocket unsubscribe still delivers](../findings/30-shibuya-websocket-unsubscribe-still-delivers-updates.md) | shibuya-metrics | Runtime defect | `mori://shinzui/shibuya/okf/bug-reports/concepts/BUG-11` | released (0.9.0.3); owner fixed in 0.10.0.0 |
+| 31 | [Exhausted acknowledgement skips hook](../findings/31-shibuya-pgmq-exhausted-acknowledgement-skips-hook.md) | shibuya-pgmq-adapter | Runtime defect | `mori://shinzui/shibuya-pgmq-adapter/okf/bug-reports/concepts/BUG-2` | released (0.16.0.0); owner fixed in 0.16.1.0 |
+| 32 | [Dead-letter retry duplicates a copy](../findings/32-shibuya-pgmq-dead-letter-retry-duplicates-copy.md) | shibuya-pgmq-adapter | Runtime defect | `mori://shinzui/shibuya-pgmq-adapter/okf/bug-reports/concepts/BUG-3` | released (0.16.0.0); owner fixed in 0.16.1.0 |
+| 33 | [Partial group acquisition strands members](../findings/33-shibuya-kiroku-partial-group-acquisition-leaks.md) | shibuya-kiroku-adapter (kiroku) | Runtime defect | `mori://shinzui/kiroku/okf/bug-reports/concepts/BUG-4` | released (0.5.1.2); owner fixed in 0.5.1.3 |
+| 34 | [Job worker exits after backend termination](../findings/34-keiro-job-worker-exits-after-polling-backend-termination.md) | keiro job queue | Runtime defect | `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-3` | released (0.17.0.0) |
+| 35 | [Long poll consumes read attempt](../findings/35-keiro-long-poll-consumes-read-attempt-without-handler.md) | keiro job queue | Runtime defect | `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-4` | released (0.17.0.0) |
+| 36 | [Stale outbox publisher finalizes new claim](../findings/36-keiro-stale-outbox-publisher-finalizes-new-claim.md) | keiro outbox | Runtime defect | `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-5` | released (0.17.0.0) |
+| 37 | [Long-poll processors starve runtime pool](../findings/37-keiro-long-poll-processors-starve-runtime-pool.md) | keiro job queue | Runtime defect | `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-6` | released (0.17.0.0) |
+| 38 | [Pre-handler dead-letter lacks process span](../findings/38-keiro-pre-handler-dead-letter-lacks-process-span.md) | keiro telemetry | Runtime defect | `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-7` | released (0.17.0.0) |
+| 39 | [GCS token cache survives expiry](../findings/39-kenshou-gcs-token-cache-survives-expiry.md) | Kenshou cell client | Harness defect repaired | none | — |
+| 40 | [Kafka scenarios omitted broker requirement](../findings/40-kenshou-kafka-scenarios-omit-broker-requirement.md) | Kenshou catalog | Harness defect repaired | none | — |
+| 41 | [Evidence destination checked after upload](../findings/41-kenshou-cell-evidence-base-uri-check-runs-after-uploads.md) | Kenshou recorder | Harness defect repaired | none | — |
+| 42 | [Grouped-read benchmark ignored its knobs](../findings/42-kenshou-grouped-read-benchmark-ignored-its-workload-knobs.md) | Kenshou PGMQ scenario | Harness defect repaired | none | — |
+| 43 | [Write-side soak used default diagnosis window](../findings/43-keiro-write-side-soak-uses-default-diagnosis-window.md) | Kenshou Keiro scenario | Harness defect repaired | none | — |
+| 44 | [Write-side default soak does not quiesce](../findings/44-keiro-write-side-default-soak-does-not-quiesce.md) | keiro write side or capacity (open) | Unattributed/open | none | released |
+| 45 | [Recorder rejects empty-string knob](../findings/45-verification-record-rejects-empty-string-knob.md) | Kenshou verification profile | Harness defect repaired | none | — |
+| 46 | [Command writers grow heap in low-rate soak](../findings/46-keiro-command-writers-grow-heap-in-low-rate-soak.md) | Kenshou writer role or keiro/kiroku command path (open) | Unattributed/open | none | released |
+| 47 | [Alpha loses its lease during outbox soak](../findings/47-alpha-cell-loses-lease-during-outbox-soak.md) | cell lease client, GCS or idle stop (open) | Unattributed/open | none | released (infrastructure) |
+| 48 | [Planner drops knob pinned for another scenario](../findings/48-plan-silently-drops-knob-pinned-for-another-scenario.md) | Kenshou planner | Harness defect repaired | none | — |
+| 49 | [Four-hour inbox soak times out before sealing](../findings/49-four-hour-inbox-soak-times-out-before-sealing.md) | Kenshou cell wall-clock cap | Harness defect repaired; finalization cost unattributed | none | — |
+| 50 | [Verdict writers omit assertion counters](../findings/50-verdict-writers-omit-required-assertion-counters.md) | Kenshou verdict writers | Harness defect repaired | none | — |
+| 51 | [Inbox handler counter counts unused sequence](../findings/51-inbox-handler-counter-counts-an-unused-sequence.md) | Kenshou inbox scenarios | Harness defect repaired | none | — |
+| 52 | [Best-effort fixture propagates key failures](../findings/52-outbox-best-effort-fixture-propagates-key-failures.md) | Kenshou synthetic broker | Harness defect repaired | none | — |
+| 53 | [Terminal oracle rejects single-attempt exhaustion](../findings/53-outbox-terminal-oracle-rejects-single-attempt-exhaustion.md) | Kenshou terminal oracle | Harness defect repaired | none | — |
+| 54 | [Terminal replay accepts duplicate final row](../findings/54-terminal-replay-accepts-duplicate-final-row-substitution.md) | Kenshou terminal recomputer | Harness defect repaired | none | — |
+| 55 | [Polling recovery reuses pre-fault completions](../findings/55-polling-recovery-reuses-pre-fault-completions.md) | Kenshou polling-fault scenario | Harness defect repaired | none | — |
+| 56 | [Bounded trace probe retains evicted spans](../findings/56-bounded-trace-probe-retains-evicted-spans.md) | Kenshou tracing probe | Harness defect repaired | none | — |
+| 63 | [Child completion crash strands parent](../findings/63-keiro-child-completion-crash-strands-parent.md) | keiro durable workflows | Runtime defect | `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-8` | released (0.17.0.0); source unchanged through 0.19.0.0 |
+| 64 | [Payload relied on ambient rpk](../findings/64-kenshou-payload-relies-on-ambient-rpk.md) | Kenshou payload | Harness defect repaired | none | — |
+| 65 | [keiro-ops DLQ id uses derived Show](../findings/65-keiro-ops-dlq-message-id-uses-derived-show.md) | keiro-ops | Runtime defect | `mori://shinzui/keiro/okf/bug-reports/concepts/BUG-9` | released (0.17.0.0); still present at 0.19.0.0 source |
+| 66 | [Hot ledger account serialises dispatcher](../findings/66-hot-ledger-account-serialises-the-shop-dispatcher.md) | keiro/kiroku per-stream concurrency | Documented limitation | none | released (cell alpha) |
 
-## Baseline completion gates
+Some scenarios also scope known defects that have no numbered finding:
 
-The registry now has eleven completed plans and eight in progress. EP-13 meets
-its written scenario, benchmark, telemetry, process-diagnosis and package/guide
-criteria. This is completion of the messaging verification suite, not of the
-released-cohort baseline. Both post-repair SDK process soaks hold their business
-checks but retain resource failures; finding 3 and residual telemetry-arm heap
-attribution remain open, as does independent replay for selected soaks.
+- **Released `hw-kafka-client` native-memory growth**, scoped to
+  `mori://shinzui/hw-kafka-client/commits/6caed636898a78e9f6e5a9c93eeb5562cbb2580a`.
+  The 500 records/s churn soak on alpha grew native memory at about 330 MB/h
+  while the post-major heap stayed stable. At 100 records/s it was stable.
+- **Fenced Kafka member stays alive**, scoped to
+  `mori://shinzui/keiro/masterplans/23-make-the-kafka-consumer-streaming-stack-surface-fatal-errors-and-close-deterministically`.
+  On the released cohort the fenced member stays alive and idle. The head
+  cohort passes.
+- **Keiro drain and redrive send-before-delete windows.** These are documented
+  in `mori://shinzui/keiro/okf/user-documentation/concepts/DOC-25`.
+- **Trace propagation.** The released runtime carries a trace only across
+  Kafka and PGMQ. It does not carry one across the event store, an outbox row
+  or a workflow resume.
 
-EP-11/EP-12 coverage and interfaces remain the next prerequisites for EP-15's
-two-context business flow. EP-14 durable execution, EP-10's remaining endurance
-and controlled comparisons, EP-8's stated performance controls and the specific
-EP-16/17 infrastructure/remote acceptance also remain open. The MasterPlan's
-registry and child acceptance criteria define this finite remaining scope.
+## Open and unattributed
 
-Before calling the initial baseline complete, each child plan must meet its own acceptance, each confirmed new observation must have an owner report or documented non-bug disposition, and the selected clean released-cohort run set must be recorded and attested in the historical bundle. Incomplete attestations remain visible and do not become confirmed evidence by editorial decision. The final report will name the exact immutable run set, compatible environment and cohort identity, per-scenario outcome, open owner issue, and any inconclusive comparison.
+Each item below carries to the next round. It closes with an owner record or a
+documented non-bug disposition.
 
-When owners provide fixes, use the change-aware plan to select affected scenarios, pin a new cohort, preserve this run set, and run matched scenarios with the same PostgreSQL major, workload, knobs, telemetry arm, seed policy, and controlled cell profile. Compare new measurements with interleaved paired trials and use `kenshou history --confirmed-only` for confirmed historical candidates. Record a new result and attestation for each rerun; never rewrite a baseline run or treat a passing focused upstream test as the whole-runtime comparison.
+- **[Finding 3](../findings/3-keiro-steady-restart-harness-threads.md).**
+  Haskell threads rise with outbox publisher restarts, and the retained
+  component is unidentified. A forced-GC control suggests that collection
+  timing contributes, but nothing assigns the growth to the harness or to Keiro.
+- **[Finding 25](../findings/25-shibuya-startup-cancellation-historical-evidence-gap.md).**
+  The startup-cancellation risk is source-confirmed by the owner. A clean
+  released-cohort reproduction has not been made, so no bug report exists.
+- **[Finding 44](../findings/44-keiro-write-side-default-soak-does-not-quiesce.md).**
+  At the default 200 commands/s, the write side does not drain within two
+  minutes, and stage counts show backlog. The extended-drain control
+  (`specs/keiro-write-side-extended-drain.json`) is checked in but was not run.
+  It would decide between capacity and lost work.
+- **[Finding 46](../findings/46-keiro-command-writers-grow-heap-in-low-rate-soak.md).**
+  Writer heaps grow at 20 commands/s. The writers-only, no-snapshot and
+  generate-only controls are checked in but were not run. Kiroku BUG-3, fixed
+  in kiroku-store 0.9.0.1 and pinned by neither cohort, is the leading suspect.
+- **[Finding 47](../findings/47-alpha-cell-loses-lease-during-outbox-soak.md).**
+  The alpha driver guest terminated and the lease was lost. The cause is not
+  yet attributed to the lease client, GCS or the idle-stop path.
+- **EP-11 post-rebalance slow drain.** After a partition moves by rebalance,
+  drain runs at about three records per second, with and without the proxy.
+  It remains unattributed until a head-cohort run separates the released
+  `hw-kafka-client` from the fork.
+- **EP-11 stability soak at 500 records/s.** It has no verdict: cell run
+  `01a10549-a51e-7126-b5b5-fc52375f2e73` was cancelled by lease loss after the
+  operator's credentials expired. The 100 records/s run was `Stable`.
+- **EP-15 I5 pick redeliveries.** At 20 orders/s on alpha,
+  `paused-lease-holder`, `rolling-restart`, `sigkill-role` and `sigkill-storm`
+  failed only I5. Every other invariant held. The oracle allowance for
+  resume-worker disturbances (`7e3820e`) has unit and negative tests, but no
+  cell run confirms it. The four failed outcomes stand.
+- **EP-13 process-soak residual resource flags.** After the repair in finding
+  56, residual heap and thread slopes in the SDK process soaks remain
+  unattributed.
 
-The [revision-2 inbox persistence matrix](../plans/13-cover-the-keiro-outbox-inbox-and-job-queue.md#inbox-persistence-sql-acceptance) adds fourteen clean local correctness investigations: eight table-backed and four delegated passes, plus two deliberate double-effect failures. All SQL receipt columns, failed-envelope retention, rollback and completed-row GC checks held. The negative arms failed only their effect-count assertion. These records preserve the released-cohort behavior but do not supply performance measurements or independent VC-1 inbox attestation. The full outbox result has since sealed; its resource and artifact limits are recorded below.
+## Cohort and environment
 
-The [revision-3 inbox matrix](../plans/13-cover-the-keiro-outbox-inbox-and-job-queue.md#independent-inbox-matrix-replay) adds ten clean table-backed investigations and ten confirmed VC-1 attestations. Independent reconstruction covers every receipt column, effect identity, intake classification, failed-handler rollback and retained failed receipt. Eight positive arms pass; the two deliberate double-effect controls remain failed and independently confirmed as such. Older delegated intake and inbox soaks retain their separate replay gaps.
+The pinned [released cohort](../../cohort/released.json) includes:
 
-The [four-hour default-collection outbox run](../verification/runs/keiro/2026/10/01a0f938-67a3-7207-a457-fcccd988b600.md) held all eight business checks over 288,202 unique messages and 240 publisher restarts. Three permitted duplicate appends remained within budget, backlog/errors were zero, and steady table/dead-tuple bounds held. The overall result is inconclusive: no eligible post-major heap points and a thread slope interval crossing its growth floor. Native bytes, OS threads, descriptors and connections were stable. This does not close finding 3 or independent outbox VC-1 replay. Finding 50 additionally records that all eight legacy verdict files omit required assertion counters; that artifact qualification also applies to earlier inbox soaks using the writer. Source repairs do not rewrite sealed evidence. The full queue/DLQ result is recorded below with the same legacy payload qualification.
+- Keiro and keiro-ops 0.17.0.0;
+- Kiroku Store 0.8.0.1 and its Shibuya adapter 0.5.1.2;
+- Shibuya Core and Metrics 0.9.0.3;
+- the Shibuya PGMQ adapter 0.16.0.0;
+- the Shibuya Kafka adapter 0.9.0.1 and `hw-kafka-client` 5.3.0;
+- pgmq-hs 0.6.1.0.
 
-The repaired clean Linux payload at `0eda7ac` is published with all 41 released
-package identities consistent. A same-seed full inbox rerun was submitted at 13:04 UTC on 2026-10-02
-after collecting the queue soak; it passed and was collected at 17:15 UTC,
-closing inbox full-soak artifact acceptance. Independent soak replay remains open.
-The revision-4 delegated inbox controls now derive expected receipt IDs without
-runtime helpers and cover Unicode names and source-position fallback. All four
-local delegated arms pass; they do not add clean selected records or delegated
-VC-1 attestations. Revision 5 adds raw delegated observations and independent
-replay of all ten delegated checks. All fourteen local matrix outcomes replay,
-with 216 schema and 230 artifact checks passing. Four subsequent clean
-revision-5 policy controls at `3fe0c80` are digest-linked with confirmed VC-1
-attestations, 56 schema checks and 60 artifact checks passing. Each attestation
-confirms all six evidence checks; no inbox-soak replay claim is added.
+Runs focus on durable PostgreSQL 18. Several substrate checks also have
+PostgreSQL 17 controls. Broker scenarios use a private Redpanda broker.
+Where a finding says a behavior "passes on" a newer version, that was a
+focused probe of the newer package, not a whole-runtime run on a fixed cohort.
 
-The [four-hour default-collection queue/DLQ investigation](../verification/runs/keiro/2026/10/01a0fa29-a590-7007-81bb-7a26c7ba5cd4.md)
-held all nine business checks over 72,051 exactly-once jobs and 3,603 archived
-dead jobs. Main and active DLQ queues drained; no worker or maintenance errors
-remained, and relation/dead-tuple bounds held. Haskell threads stayed at 139;
-the other four measured bounded probes were stable. Overall outcome remains
-inconclusive because there were no eligible post-major heap points. All 28
-nested artifact hashes/sizes and three top-level schemas pass; nine legacy
-verdict schemas fail the known assertion-counter requirement in finding 50.
-This records the full execution without closing queue resource, schema-valid
-full-soak artifact, or independent queue-soak VC-1 acceptance.
+## Evidence quality
 
-The poison/batch revision-2 controls now distinguish an unused handler-call
-sequence from one invocation ([finding 51](../findings/51-inbox-handler-counter-counts-an-unused-sequence.md)).
-Five table-backed initial-zero guards fail the old query; all seven repaired
-arms pass. Failed poison, SQL-error and condemned handlers now perform writes
-before failure so rollback is observed, and recovery commits exactly one
-effect with no new invocation on redelivery. Each seven-arm matrix passes
-55 schema and 62 artifact checks. These local investigations add no clean
-selected records or poison/batch VC-1 attestations.
+- **Clean, digest-linked evidence.** The
+  [historical bundle](../verification/) holds 192 records: 186 runs and six
+  comparisons, all from clean harness trees. 85 come from sealed, verified
+  runs on cell alpha (PostgreSQL 18). The other 107 are clean local
+  investigations. Of 96 attestations, 86 are confirmed and 10 incomplete.
+  Incomplete ones include records whose business verdict cannot yet be
+  replayed independently, such as the Kafka rebalance and stability records
+  and the first Keiro outbox record. Incomplete attestations stay visible
+  ([ADR-18](../adr/0018-keep-verification-records-immutable-and-derive-baselines.md)).
+- **Cell-backed findings.** These findings have clean alpha cell evidence:
+  - 8 (BUG-5 reproduced on alpha);
+  - 36 (stale outbox publisher);
+  - 35 and 37 (queue long-poll runs);
+  - 1 and 2 (their Kiroku BUG-3 heap signature reappeared in the alpha
+    write-side soak; the findings' own runs are local);
+  - 3, 44, 46, 47, 49, 42, 64 and 66.
 
-Poison revision 3 captures raw handler invocation checkpoints, effects,
-returned constructors and retained receipt rows. Four clean durable controls
-at `e09f9fb` are digest-linked with confirmed VC-1 attestations, all six
-attestation checks passing. The clean matrix passes 34 schema and 38 artifact
-checks, and eight mutation examples reject incomplete or altered observations.
-The full verification gate passes with 50 Keiro and 60 CLI examples. Earlier
-poison records and batch replay retain their separate coverage limits.
-
-The [repaired-payload full inbox investigation](../verification/runs/keiro/2026/10/01a0fa97-bbd6-76a5-a7c0-03c6aa076562.md)
-passes all eight business checks over 28,821 fresh deliveries, all expected
-early duplicates and late reprocessings, and exactly 57,642 effects. No delivery
-or GC errors remain. All six bounded resource probes are stable, with 472
-eligible heap points under default GC. All 27 artifact checks and 11 schemas
-pass, closing the inbox full-soak artifact gap while preserving historical
-qualifications. Independent soak VC-1 is still unavailable; these exploratory
-measurements establish no benchmark comparison. The same-seed full queue
-forced-GC diagnostic started at 17:16 UTC and passed; its result is linked below.
-
-Batch revision 3 directly verifies that an in-batch duplicate skips handler
-invocation and seals raw positional intake, invocation, transaction, effect
-and receipt observations. All three clean controls at `39f73ab` are
-recorded with confirmed VC-1 attestations and six passed checks each. The
-clean matrix passes all 30 schema and 33 artifact checks. Six mutation
-examples reject reordered batches, incorrect classifications, extra effects
-and wrong invocation/transaction counts; full verification and the 50 Keiro /
-66 CLI examples pass. Earlier batch records keep their prior coverage limits.
-
-The outbox terminal policy sweep exposed [local finding 52](../findings/52-outbox-best-effort-fixture-propagates-key-failures.md): the synthetic broker propagated same-key failures under best-effort ordering. A minimal witness isolates the fixture mismatch. Terminal-state revision 2 now uses policy-aware failure grouping; four regressions and all sixteen durable policy/backoff/key controls pass, with 240 schema and 256 artifact checks. These local repair controls add no baseline records or upstream owner issue.
-
-Terminal-state revision 3 now seals raw inputs, final rows, callback attempts,
-timestamps, broker headers and summaries for independent replay of twelve
-checks. Thirty-six durable local controls pass and replay, with 576 schema
-and 612 artifact checks. [Finding 53](../findings/53-outbox-terminal-oracle-rejects-single-attempt-exhaustion.md)
-repairs the local expectation for transient failure under a one-attempt budget;
-all four ordering policies agree at budgets one and two. Thirteen new fixture
-regressions/mutation examples pass, alongside full verification and the
-54 Keiro / 79 CLI examples. Clean digest-linked terminal records are linked below;
-these dirty controls add no selected baseline records or upstream owner issue.
-
-Terminal-state revision 3 now has twenty clean durable PostgreSQL controls at
-`06632b7`, each digest-linked with a confirmed independent VC-1 attestation and
-six passed evidence checks. The controls span four ordering policies, two
-backoff schedules and zero/seven keys, plus four single-attempt transient
-exhaustion controls. All twelve business checks hold per run; all 320 schema
-and 340 artifact checks pass. The recomputer reconstructs fault classification,
-attempt consumption, retry timing, broker appends and terminal metadata from
-sealed observations. Findings 52–53 describe the repaired local policy fixture
-and retry-budget oracle; older terminal records retain their limitations.
-
-Queue job-outcome revision 2 passes twenty-two durable PostgreSQL checks,
-including exact batch identifier/payload associations, preserved DLQ/archive
-headers and metadata, and zero handler calls for malformed/future drain
-payloads. Its raw physical observations pass 26 schema and 37 artifact checks.
-Configuration revision 2 exercises ten invalid settings through both drain
-and worker APIs, preserves an unread SQL row after each rejection, and confirms
-one later valid drain. All twenty-two checks pass and replay independently;
-its capture passes 26 schema and 27 artifact checks. The clean repeats and their replay limits are linked below.
-
-[Finding 54](../findings/54-terminal-replay-accepts-duplicate-final-row-substitution.md)
-repairs a local terminal replay identity gap. Four policy-specific mutations
-now reject a duplicated final row substituted for another. The corrected
-checker agrees with all 52 saved policy, boundary and clean terminal controls;
-the twenty clean controls have 3,280 complete, unique final identities.
-Historical attestations keep the recomputer revision that produced them.
-
-The two revision-2 queue contracts are now digest-linked clean investigations
-at `4899ccb`, with all forty-four business checks, 52 schemas and 64 artifacts
-passing. Configuration rejection has a confirmed independent VC-1 attestation
-with all six checks passing. Job-outcome semantics has an explicit incomplete
-attestation: five checks pass, but its full business oracle is not independently
-replayable. The [child plan](../plans/13-cover-the-keiro-outbox-inbox-and-job-queue.md#clean-queue-contract-evidence)
-links both runs and attestations. These records preserve the coverage gap.
-
-Job-outcome revision 3 adds six worker controls and 21 checks, for 43 held
-checks in the durable PostgreSQL investigation. Explicit/default fractional
-retries respect the rounded two-second delay; the archive path preserves one
-row; malformed, future-version and zero-budget jobs never enter the handler.
-The future-version job defers twice before read three exhausts its budget.
-All 48 schemas and 71 artifacts pass, as do 62 Keiro examples and full repository
-verification. The standard verification recipe now executes the Keiro package
-tests, which earlier runs invoked separately. This dirty revision-3 control
-adds no historical record or complete job-outcome replay claim.
-
-Queue job-outcome revision 4 now supports independent replay of all 43 checks. The durable exploratory capture passes 49 schema and 72 artifact checks, and eight mutation examples detect altered API, SQL, DLQ and timing evidence. Full verification passes 62 Keiro and 96 CLI examples. The clean revision-4 run is now published with confirmed independent replay; historical revision-2/3 captures remain incomplete.
-
-The [four-hour queue GC diagnostic](../verification/runs/keiro/2026/10/01a0fd67-a9cb-7001-9322-69251c14d682.md)
-passes nine business checks over 72,051 exactly-once jobs and 3,603 archived
-terminal jobs. All six bounded resource probes are stable, including 481
-post-major heap points; all twelve schemas and 29 artifact checks pass.
-This closes the full queue artifact and diagnostic heap-data gaps while
-preserving default-GC and independent-replay limits. The matched full outbox
-diagnostic was collected successfully at 01:33 UTC October 3.
-
-The [clean revision-4 queue outcome investigation](../verification/runs/keiro/2026/10/01a0fe8b-e5b1-7781-9b6c-5a6eee2b2a98.md)
-has a [confirmed attestation](../verification/attestations/2026/10/01a0fe98-468b-721d-8858-c8a0bf96c613.md)
-with all six checks passing. It holds all 43 business checks, 49 schema checks
-and 72 artifact checks at clean source/attester `69cb25c`, closing complete
-independent replay for this new outcome capture.
-
-Eight durable ordering controls pass across four queue modes with and without a killed worker. All 192 jobs complete, 66 schema checks and 154 artifact checks pass, and independent replay agrees with every result. FIFO-heads preserves order; unordered exhibits both required negative-control inversions. Legacy-mode order remains observational. These exploratory captures add no published baseline record.
-
-Nine clean revision-3 queue ordering investigations are now published with
-confirmed six-check independent attestations. They cover 1,792 completed jobs,
-five killed heads, all four ordering modes and the full 1,600-job FIFO default.
-All 74 schemas and 173 artifact checks pass. The complete links and limits are
-in [the messaging plan](../plans/13-cover-the-keiro-outbox-inbox-and-job-queue.md#clean-queue-ordering-control-evidence).
-These records do not claim scripted-retry or overlap/visibility coverage.
-
-Revision-4 queue ordering adds explicit head retries and an independently
-replayable attempt ledger. Ten durable controls pass, with 102 schema and
-212 artifact checks; the prior revision-3 controls still replay. The full
-verification gate and the default 1,600-job retry control pass. These local
-controls do not yet add published records; overlap/visibility coverage remains
-open. The first worker is paused before admitting other groups to prevent
-prefetch from consuming the intended progress witness.
-
-Eleven clean revision-4 ordering investigations now have confirmed independent
-attestations: 1,840 completed jobs, 59 explicit retries and six abandoned heads,
-including the full 1,600-job default. All 112 schema and 233 artifact checks
-pass. Complete links and limitations are in
-[the messaging plan](../plans/13-cover-the-keiro-outbox-inbox-and-job-queue.md#clean-scripted-retry-ordering-evidence).
-
-Polling-fault revision 3 now requires fresh work after the final interruption,
-repairing [local finding 55](../findings/55-polling-recovery-reuses-pre-fault-completions.md).
-Nineteen local controls independently replay their expected outcomes, with
-152 schema and 247 artifact checks. Short faults reproduce existing worker
-failures; five ten-second outages recover under both explicit-restart controls.
-The full verification gate passes. These exploratory controls add no published
-record and do not close the upstream defect.
-
-Six clean polling investigations are now digest-linked and independently
-confirmed: four observed runtime failures and two five-outage explicit-restart
-passes. The passing controls complete 120 jobs each, including work admitted
-after the last fault. Confirmation checks evidence agreement; it does not turn
-a failed runtime result into a pass. Complete links and limits are in
-[the messaging plan](../plans/13-cover-the-keiro-outbox-inbox-and-job-queue.md#clean-polling-fault-and-restart-evidence).
-
-The [four-hour outbox GC diagnostic](../verification/runs/keiro/2026/10/01a0fdea-68ff-704b-bc96-176ee5235120.md) passes eight business checks over
-288,201 unique messages, three allowed duplicates and 240 publisher restarts.
-All six bounded resource probes, eleven schemas and 28 artifact checks pass.
-This closes the remaining repaired full-soak artifact gap. Forced major GC
-is a diagnostic control; historical default-GC attribution, killed-process
-resource coverage and independent soak replay remain open.
-
-Ordering revision 5 now captures physical message identities and SQL lease
-boundaries at handler entry. Ten local controls and the 1,600-job default pass,
-with 123 schema and 244 artifact checks; all 29 new and historical captures
-independently replay. The full verification gate passes with 65 Keiro and 115
-CLI examples. Live overlap after lease expiry is permitted; premature overlapping
-redelivery is rejected. These exploratory runs add no published record.
-
-Two representative clean SQL investigations are now independently confirmed:
-the revision-5 1,600-job ordering default and revision-2 producer identity.
-All 24 schemas and 36 artifact checks pass. See the
-[messaging evidence links](../plans/13-cover-the-keiro-outbox-inbox-and-job-queue.md#clean-sql-lease-and-producer-identity-evidence).
-
-The representative clean revision-2 investigation at source and attester
-`db58cb18f7f3c57cdf8acffe206058d12ffebedf` is now [recorded](../verification/runs/keiro/2026/10/01a0ffd8-d4ef-776c-9c78-07ad90d64ae7.md)
-and [independently confirmed](../verification/attestations/2026/10/01a0ffdb-f71f-77b6-84be-7c35f4c6ff1b.md). All six evidence
-checks pass, with seven schema and sixteen artifact checks. It preserves both
-scoped BUG-5 failures and exit 0; confirmation verifies the evidence, not a
-runtime fix. The historical revision-1 attestation remains incomplete.
-
-The [process-diagnosis handoff](../plans/13-cover-the-keiro-outbox-inbox-and-job-queue.md#completed-process-diagnosis-acceptance) preserves all failed/inconclusive SDK resource decisions and explains why they do not become resource passes when EP-13 is marked complete.
+  The Kafka churn soak and the EP-15 default-rate runs are also cell evidence.
+- **Local functional evidence only.** Most other runtime-defect findings were
+  reproduced in sealed local runs. Those runs are ignored by Git, and the
+  finding files give their IDs and commands. The 2026-09-29 audit found that
+  findings 1–9, 14–16 and 34–38 cited only dirty-harness local runs at that
+  time. Findings 8, 35 and 36 have since gained clean evidence. Local
+  benchmark, soak and overhead numbers from the busy workstation are not
+  baseline measurements. That includes EP-15's 5 orders/s runs.
+- **Performance.** No performance comparison is promoted. Five-pair A/A
+  controls passed for PGMQ read/ack and invisible backlog. The layer-ladder
+  and queue-worker p99 results were inconclusive. The grouped-read benchmark
+  is excluded (finding 42).
+- **Excluded results.** These attempts are excluded and stay in the record:
+  - the interrupted layer-ladder pair (finding 39);
+  - the brokerless Kafka attempt (finding 40);
+  - the shortened write-side soak (finding 43);
+  - the dropped-knob repeat (finding 48);
+  - the first four-hour inbox attempt (finding 49);
+  - partial outbox samples after lease loss (finding 47).

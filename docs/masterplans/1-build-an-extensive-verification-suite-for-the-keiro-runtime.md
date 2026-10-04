@@ -491,6 +491,7 @@ findings report built from the evidence already recorded. No further cell or
 local evidence runs belong to this round. Unattributed findings are listed as
 open, and the remaining child-plan criteria and baseline gates carry to the
 next round.
+The report is [Keiro runtime verification — initial findings, 2026-10-04](../reports/2026-09-29-runtime-baseline.md).
 
 Acceptance follows each criterion's stated result. In particular, EP-13
 Milestone 4 accepts an A/A comparison that is `pass` or `inconclusive`; its
