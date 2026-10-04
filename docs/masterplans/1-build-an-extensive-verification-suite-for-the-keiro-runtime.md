@@ -476,6 +476,11 @@ it does not automatically require republishing every historical matrix arm.
 Further useful controls and investigations that do not prevent an existing
 criterion belong in follow-up work, not in this initiative's completion gates.
 
+Round scope (owner decision, 2026-10-03): this round captures a baseline only.
+Soak and long-running benchmark criteria are met by reduced-duration runs that
+still give a valid verdict, at the scenario's default rate. Full-duration 4-hour
+and 24-hour soaks are deferred to later rounds; see the Decision Log.
+
 Acceptance follows each criterion's stated result. In particular, EP-13
 Milestone 4 accepts an A/A comparison that is `pass` or `inconclusive`; its
 recorded p99 uncertainty is a baseline limitation, not a new requirement to
@@ -854,6 +859,10 @@ disposition changes.
 
 - Decision: Keep finding 63's number although 57–62 are unused.
   Rationale: Numbers were reserved per parallel stream, and the number is cited in an immutable provenance entry of EP-14. Renumbering would rewrite that entry.
+  Date: 2026-10-03
+
+- Decision: In this baseline round, each soak or long-running benchmark criterion is met by its reduced-duration variant, or by the shortest duration that still gives a valid verdict, run on a cell at the scenario's default rate. A valid leak verdict needs at least 30 envelope points; a comparison needs benchmark-grade slices. Full-duration runs are deferred to later rounds under [MasterPlan 2](2-close-the-verification-and-repair-loop-for-the-keiro-runtime-in-rounds.md)'s round protocol. They cover the 4-hour and 24-hour soaks of EP-11, EP-12 and EP-15 and the soak pairs of EP-10 and EP-14. A reduced run that cannot give a valid verdict is recorded as inconclusive. It is extended in this round only with the owner's approval.
+  Rationale: The owner decided this on 2026-10-03. This round only captures a baseline, and it will be rerun after major changes to every package, so cell time should stay minimal. Every soak already has a reduced variant (the 2026-09-20 double-registration decision). Reduced profiles give valid verdicts: EP-11's 20-minute stability run, rejudged with 30-second windows, gave 41 points. A 30-minute full-profile run would not, because its 60-second windows yield too few points.
   Date: 2026-10-03
 
 
