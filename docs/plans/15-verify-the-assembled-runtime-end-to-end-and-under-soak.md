@@ -186,7 +186,7 @@ You can see it working when `kenshou run runtime/order-flow/correctness/happy-pa
   - a duplicate pick first handled after a `b-resume` or `b-dispatch` window's allowance ran out;
   - a duplicate pick handled twice before a resume window opened.
 
-  A duplicate whose first handling falls inside a resume window, with the repeat arbitrarily later, is explained by design. I5 bounds the first handling, not the repeat (see the Decision Log); whether to also bound the repeat is an open question for the I5 contract.
+  A duplicate whose first handling falls inside a resume window, with the repeat arbitrarily later, is explained by design. I5 bounds the first handling, not the repeat. On 2026-10-03 the user decided to keep this rule (see the Decision Log).
 - The first `ops-drift` sabotage run (`01a102db-57fd-75dc-932a-3486165912d0`) passed, so the control was vacuous. Its UPDATE targeted a sent warehouse outbox row, and none existed: the warehouse publisher is paused about three seconds into the run, before any fulfilment with a five-second cooling-off has shipped. The sabotage now changes a sent shop outbox row and errors unless exactly one row changed. The repaired control failed I8 as required.
 
 
@@ -327,6 +327,10 @@ You can see it working when `kenshou run runtime/order-flow/correctness/happy-pa
 
 - Decision: Fault scenarios whose fault needs capabilities no cell offers are placement `local`.
   Rationale: On alpha they could only report their fault as not applied, which reads as errored or failed evidence. Local placement keeps cell plans honest until EP-16 and EP-17 add the hooks.
+  Date: 2026-10-03
+
+- Decision (user, 2026-10-03): I5 keeps no bound on how late a repeat arrives. Only the first handling of a repeated delivery must precede a disturbing window's end plus the hop's allowance, and the repeat must follow the window's start.
+  Rationale: Backlogged replays from a checkpoint or committed offset legitimately arrive late. After BUG-4 session cascades on cell alpha, consumer replays reached records first handled up to 60 s earlier. Every accepted duplicate stays tied to an original handled during a declared disturbance, so the rule still rejects duplicates with no disturbance, duplicates explained only by an unrelated role, and duplicates first handled after a window's allowance ran out; the unit tests of `1f2120c` cover these. Bounding the repeat as well was considered and rejected.
   Date: 2026-10-03
 
 - Decision: Knob values whose wiring does not exist yet (`runtime.inbox-idempotence=delegated`, `runtime.publish-mode=batch-enqueue`, `runtime.arrival=poisson`) are withheld from the allowed lists until they are implemented.
