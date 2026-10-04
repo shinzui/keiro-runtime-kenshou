@@ -22,7 +22,7 @@ import Kenshou.Suite.Runtime.Oracle.Ops qualified as OpsOracle
 import Kenshou.Suite.Runtime.Oracle.Pure qualified as PureOracle
 import Kenshou.Suite.Runtime.Oracle.Sql qualified as Sql
 import Kenshou.Suite.Runtime.Oracle.Trace qualified as TraceOracle
-import Kenshou.Suite.Runtime.System.Config (SystemConfig (..))
+import Kenshou.Suite.Runtime.System.Config (SystemConfig (..), TtlProfile (..))
 import Kenshou.Suite.Runtime.System.Contracts (CustomerId (..), OrderId (..), ShopMessage (..), Sku (..), TopicPrefix (..), WarehouseMessage (..), shopTopic, warehouseTopic)
 import Kenshou.Suite.Runtime.System.Fulfilment qualified as Fulfilment
 import Kenshou.Suite.Runtime.System.KafkaBridge qualified as KafkaBridge
@@ -57,6 +57,36 @@ main = hspec do
       let config = systemConfigFrom (either (error . show) id (resolveKnobs runtimeKnobs []))
           pause = DisturbanceWindow "fault/pause" "b-resume/1" 1000000 (Just 21000000)
       (Duplicates.judgeDuplicates [pause] (Duplicates.hopAllowances config) (Map.fromList [(("pick", "o-1211"), [500000, 21100000])])).violations `shouldBe` 0
+    describe "with the production pick allowance" do
+      let defaults = systemConfigFrom (either (error . show) id (resolveKnobs runtimeKnobs []))
+          profiles = [("short", defaults), ("production", defaults {ttlProfile = ProductionTtl})]
+          -- max(job visibility, workflow lease) plus five seconds of slack.
+          allowanceMicros config = case [entry.extensionMicros | entry <- Duplicates.hopAllowances config, entry.hop == "pick"] of
+            [micros] -> micros
+            _ -> error "the pick hop must have exactly one allowance"
+          second = 1000000
+          judgePick config windows instants = (Duplicates.judgeDuplicates windows (Duplicates.hopAllowances config) (Map.fromList [(("pick", "o-1"), instants)])).violations
+      it "uses max(job visibility, workflow lease) plus slack as the pick allowance" do
+        fmap (allowanceMicros . snd) profiles `shouldBe` [15 * second, 65 * second]
+      it "fails a duplicate pick with no disturbance window" do
+        mapM_ (\(_, config) -> judgePick config [] [10 * second, 11 * second] `shouldBe` 1) profiles
+      it "fails a duplicate pick whose only disturbance is on a role outside the pick hop" do
+        mapM_
+          ( \(_, config) -> do
+              judgePick config [DisturbanceWindow "fault/sigkill" "a-consumer/0" (5 * second) (Just (6 * second))] [5 * second, 6 * second] `shouldBe` 1
+              judgePick config [DisturbanceWindow "fault/sigkill" "b-timer/1" (5 * second) (Just (6 * second))] [5 * second, 6 * second] `shouldBe` 1
+          )
+          profiles
+      it "fails a duplicate pick first handled after a resume or dispatch window's allowance ran out" do
+        mapM_
+          ( \(_, config) -> do
+              let late = 6 * second + allowanceMicros config + 1
+              judgePick config [DisturbanceWindow "fault/pause" "b-resume/1" (5 * second) (Just (6 * second))] [late, late + second] `shouldBe` 1
+              judgePick config [DisturbanceWindow "fault/sigkill" "b-dispatch/0" (5 * second) (Just (6 * second))] [late, late + second] `shouldBe` 1
+          )
+          profiles
+      it "fails a duplicate pick handled twice before a resume window opened" do
+        mapM_ (\(_, config) -> judgePick config [DisturbanceWindow "fault/pause" "b-resume/1" (50 * second) (Just (51 * second))] [10 * second, 11 * second] `shouldBe` 1) profiles
     it "applies a window only to the hops its target delivers on" do
       judge [window {target = "b-resume/0"}] [(("pick", "o-1"), [900, 1500])] `shouldBe` 1
       judge [window {target = "*"}] [(("pick", "o-1"), [900, 1500])] `shouldBe` 0
