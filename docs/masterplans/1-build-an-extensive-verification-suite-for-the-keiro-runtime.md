@@ -261,6 +261,11 @@ provenance:
       at: 2026-10-04T13:33:34Z
       mode: "implement"
       note: "Updated EP-11 row with the full-rate reduced Kafka soak baseline and the cell lease-loss surprise"
+    - model: "claude-opus-5-5"
+      harness: "claude-code"
+      at: 2026-10-04T14:08:11Z
+      mode: "implement"
+      note: "Linked the 2026-10-04 initial findings report"
 ---
 
 # Build an extensive verification suite for the keiro runtime
