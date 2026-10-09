@@ -112,3 +112,23 @@ The first local pool-size comparison used three interleaved pool-10 and pool-32 
 | `kiroku/subscription/concurrency/decode-hook-stalls-subscribers` | Containing a permanently throwing user decode hook is desired. In a full 60-second PostgreSQL 18 run both live subscribers remained at position 1 while three publisher loop errors were observed. A later run attached a watchdog snapshot and counted four errors. The published capability does not promise progress through a throwing hook; the enhancement is `mori://shinzui/kiroku/plans/83-contain-persistent-publisher-decode-hook-failures`. |
 | `kiroku/subscription/concurrency/reconnect-cursor-regression` | A live category subscriber receives 5,000 events, has its pooled PostgreSQL backends terminated, and then receives 100 more. All 5,100 positions remain covered and its durable checkpoint advances from 5,000 to 5,100, but all 5,000 initial events are delivered again. A one-batch replay bound is desirable but not published; reconnect replay is explicitly allowed. PostgreSQL 17 and 18 reproduced the finding, linked to `mori://shinzui/kiroku/plans/82-repair-live-reconnect-and-validate-subscription-identity-and-batch-size`. Knobs: `workload.live-events` (100 to 10,000, default 5,000), `workload.after-reconnect` (1 to 1,000, default 100), and `kiroku.subscription.batch-size` (1 to 1,000, default 100). |
 | `kiroku/append/concurrency/multi-stream-fresh-deadlock` | Two worker processes race a fresh two-stream append against a single append to the second stream. Avoiding PostgreSQL deadlocks is desired. In 500 rounds with eight throttled CPU spinners, PostgreSQL 18 recorded 30 deadlocks and PostgreSQL 17 recorded 42; no partial multi-stream commit occurred and retrying the same caller IDs left durable rows unchanged. The owner explicitly classifies multi-versus-single deadlock avoidance as an improvement in `mori://shinzui/kiroku/okf/improvement-requests/concepts/IR-7`. Knobs: `deadlock.rounds` (1 to 5,000, default 500) and `deadlock.spinners` (0 to 32, default 8). |
+
+## Subscription-hardening cell comparison
+
+`kiroku/append/benchmark/subscription-hardening` supplies routing metadata for the
+matched payload owned by `mori://shinzui/kiroku`, at project-relative
+`bench/mp12-cell` (artifact-level URI pending). It compares the original
+pre-cohort implementation against the hardening candidate with identical
+workload code, compiler, pool, payloads, and RTS settings. The payload retains
+full raw samples, handler backlog, checkpoint statement time/WAL snapshots,
+and PostgreSQL and process time series. Its knobs select native all/category
+and group paths, the real acknowledgement-coupled adapter, write shape, and
+closed or fixed-offered-load operation.
+
+The historical Kenshou runtime cohort supplies operator metadata only for this
+scenario. Running it in that cohort returns infrastructure failure; use the
+dedicated matched payloads through `kenshou cell pair`. This prevents a
+historical package from being mistaken for either declared comparison arm.
+The workload contract is shared verbatim with those payloads. Acceptance belongs
+to `mori://shinzui/kiroku/okf/adrs/concepts/ADR-11`; Kenshou's general default
+slowdown limits are not the hardening cohort's acceptance limits.

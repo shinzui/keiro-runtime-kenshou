@@ -1,5 +1,7 @@
 module Kenshou.Suite.Kiroku.Bench.Append (scenarios) where
 
+import Kenshou.Suite.Kiroku.Bench.Hardening qualified as Hardening
+
 import Data.Aeson (object, (.=))
 import Data.IORef (atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List.NonEmpty (NonEmpty (..))
@@ -30,7 +32,7 @@ import Kiroku.Store hiding (id, withKirokuStore)
 import System.Info (os)
 
 scenarios :: [Scenario]
-scenarios = [appendOnly, hotStream, expectedVersionConflict]
+scenarios = [appendOnly, hotStream, expectedVersionConflict, Hardening.scenario]
 
 expectedVersionConflict :: Scenario
 expectedVersionConflict =
