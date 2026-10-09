@@ -20,7 +20,7 @@ scenario :: Scenario
 scenario =
   Scenario
     { id = either (error . show) id (parseScenarioId "kiroku/append/benchmark/subscription-hardening"),
-      revision = 1,
+      revision = 2,
       summary = "Compares durable writes with native and acknowledgement-coupled live subscriptions.",
       tier = TierStandard,
       placement = PlaceEither,
@@ -37,7 +37,7 @@ scenario =
                  "Subscription mode"
                  KnobText
                  (VText "group-category")
-                 (OneOf (VText "none" :| map VText ["all", "category", "group-all", "group-category", "adapter"]))
+                 (OneOf (VText "none" :| map VText ["idle", "all", "category", "group-all", "group-category", "adapter"]))
                  []
              ],
       dimensions =
