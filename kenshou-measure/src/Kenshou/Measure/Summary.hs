@@ -187,6 +187,7 @@ summarizeOperation runDir window metaFile = do
       Map.fromList
         [ (prefix <> ".p50", Metric (fromIntegral (Histogram.valueAtQuantile histogram 0.50)) "ns"),
           (prefix <> ".p90", Metric (fromIntegral (Histogram.valueAtQuantile histogram 0.90)) "ns"),
+          (prefix <> ".p95", Metric (fromIntegral (Histogram.valueAtQuantile histogram 0.95)) "ns"),
           (prefix <> ".p99", Metric (fromIntegral (Histogram.valueAtQuantile histogram 0.99)) "ns"),
           (prefix <> ".p999", Metric (fromIntegral (Histogram.valueAtQuantile histogram 0.999)) "ns"),
           (prefix <> ".max", Metric (fromIntegral (Histogram.maxValue histogram)) "ns"),
