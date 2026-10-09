@@ -113,9 +113,13 @@ kenshou cell release --cell alpha --lease-id LEASE_ID
 ```
 
 `cell watch --cell alpha CELL_RUN_ID` follows a submission. To recover an
-interrupted client, run `kenshou cell resume --session cell-runs/check-1`;
+interrupted client, run `kenshou cell resume --start --session cell-runs/check-1`;
 verified slices are retained and unfinished slices are reconciled from cell
-status before further work. A detached, single-slice soak uses `cell run
+status before further work. `--start` inspects the descriptor's VM power states
+and starts stopped instances before recovery; a controller heartbeat alone does
+not mean its driver is running. Held-session recovery releases both newly
+acquired and reattached leases on exit, including failures and interruption.
+A detached, single-slice soak uses `cell run
 --detach` and later `cell resume` to collect it. A lease expiry terminates
 the active cell work and yields infrastructure-failure evidence; resume
 under a new lease. A busy cell returns exit 4; use `--wait SECONDS` on

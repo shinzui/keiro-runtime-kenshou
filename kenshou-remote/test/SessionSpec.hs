@@ -175,6 +175,12 @@ spec = describe "one leased cell submission" do
             fmap (.state) recovered.slices `shouldBe` [SliceVerified, SliceVerified]
             readSessionJournal journalPath `shouldReturn` Right recovered
             resumeHeldSession store cellRef (Bucket "results") handle journalPath (const (pure ())) `shouldReturn` Right recovered
+            priorLeaseId <- newRunId
+            let completedPriorLease = (recovered :: SessionJournal) {leaseId = priorLeaseId}
+            writeSessionJournal journalPath completedPriorLease
+            resumeHeldSession store cellRef (Bucket "results") handle journalPath (const (pure ())) `shouldReturn` Right completedPriorLease
+            readSessionJournal journalPath `shouldReturn` Right completedPriorLease
+            writeSessionJournal journalPath recovered
             case recovered.slices of
               [firstRecovered, secondRecovered] -> do
                 writeSessionJournal journalPath (recovered {slices = [firstRecovered {state = SliceFetched, entryExitCode = Nothing}, secondRecovered]})

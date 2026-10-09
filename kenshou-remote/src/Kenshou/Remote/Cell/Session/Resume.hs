@@ -40,6 +40,7 @@ resumeHeldSession store ref resultsBucket handle journalPath emit = do
   observed <- resumeObservedSlices store ref resultsBucket journalPath emit
   case observed of
     Left failure -> pure (Left (ObservationError failure))
+    Right observed | not (null observed.slices) && all (\slice -> slice.state `elem` [SliceVerified, SliceRejected]) observed.slices -> pure (Right observed)
     Right _ -> do
       rebound <- rebindPlannedSlices store ref handle journalPath
       case rebound of

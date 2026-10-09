@@ -108,7 +108,7 @@ data CellAction
   | Probe !ProbeCli
   | Pair !PairCli
   | Overhead !OverheadCli
-  | Resume !FilePath !(Maybe Text)
+  | Resume !FilePath !(Maybe Text) !Bool
   | PublishPayload !PayloadPublishCli
   | ShowPayload !FilePath
   | Exec !FilePath !FilePath
@@ -311,6 +311,7 @@ resumeParser =
   Resume
     <$> strOption (long "session" <> metavar "DIR" <> help "Directory containing session.json")
     <*> optional (strOption (long "lease-id" <> metavar "UUID" <> help "Use this active lease instead of the journal lease"))
+    <*> switch (long "start" <> help "Start stopped cell instances before resuming")
 
 cellExecParser :: Parser CellAction
 cellExecParser = Exec <$> strArgument (metavar "WORK_FILE") <*> strArgument (metavar "OUT_DIR")
@@ -617,7 +618,7 @@ runCell selected cli = case selected of
   Probe request -> runProbe cli request
   Pair request -> runPair cli request
   Overhead request -> runCellOverhead cli request
-  Resume sessionDir selectedLease -> guardIO do
+  Resume sessionDir selectedLease startInstances -> guardIO do
     let journalPath = sessionDir </> "session.json"
     present <- doesPathExist journalPath
     if not present
@@ -636,11 +637,12 @@ runCell selected cli = case selected of
                   if observed.descriptor.buckets.results /= journal.resultsBucket
                     then usage "cell results bucket differs from the session journal"
                     else do
+                      if startInstances then startCellInstances observed.descriptor else pure ()
                       let expected = fromMaybe journal.leaseId requested
                       existing <- reattachLease store ref expected
                       case existing of
                         Just _ | journal.leaseMode == Detached -> continueDetached store ref journalPath journal
-                        Just handle -> continueSession store ref journalPath journal handle
+                        Just handle -> continueSession store ref journalPath journal handle `finally` (do _ <- releaseLease store ref handle; pure ())
                         Nothing | requested /= Nothing -> unavailable "cell has no matching selected lease"
                         Nothing | journal.leaseMode == Detached -> continueDetached store ref journalPath journal
                         Nothing -> do

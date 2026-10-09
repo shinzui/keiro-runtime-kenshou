@@ -45,7 +45,7 @@ import Kenshou.Remote.Payload (Bundle (..), CellPayload (..))
 import Kenshou.Remote.Store (Bucket (..), ObjectName (..), ObjectStore (..), Precondition (..))
 import Kenshou.Remote.Store.File (newFileStore)
 import Kenshou.Telemetry.Overhead (OverheadState (..), SlotRun (..), loadOverheadState)
-import System.Directory (createDirectoryIfMissing, doesFileExist, doesPathExist, listDirectory, makeAbsolute, withCurrentDirectory)
+import System.Directory (Permissions (..), createDirectoryIfMissing, doesFileExist, doesPathExist, getPermissions, listDirectory, makeAbsolute, setPermissions, withCurrentDirectory)
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
@@ -1141,6 +1141,41 @@ main = hspec do
           fmap (.state) finished.slices `shouldBe` [SliceRejected]
           runWithArgs command `shouldReturnCode` ExitFailure 2
           store.statObject control leaseObject `shouldReturn` Nothing
+
+    it "starts stopped instances and releases a reattached held lease after a terminal resume" $
+      withSystemTempDirectory "kenshou-cell-resume-release" \root -> do
+        store <- newFileStore root
+        descriptorBytes <- LazyByteString.readFile "../kenshou-remote/test/golden/cell/cell.descriptor.v1.json"
+        observed <- either fail pure (Aeson.eitherDecode descriptorBytes :: Either String CellDescriptor)
+        template <- Aeson.eitherDecodeFileStrict' "../kenshou-remote/test/golden/cell-session.json" >>= either fail pure
+        let control = Bucket "control"
+            descriptor = observed {buckets = observed.buckets {control = "control"}}
+            outDir = root </> "session"
+            leaseObject = ObjectName "cells/alpha/lease.json"
+        _ <- store.putObject control (ObjectName "cells/alpha/descriptor.json") "application/json" DoesNotExist (Aeson.encode descriptor)
+        withCellStore root do
+          runWithArgs ["cell", "lease", "--cell", "alpha", "--control-bucket", "control", "--purpose", "resume-test"] `shouldReturnCode` ExitSuccess
+          stored <- store.getObject control leaseObject
+          lease <- case stored of
+            Just (bytes, _) -> either fail pure (Aeson.eitherDecode bytes :: Either String Lease)
+            Nothing -> fail "fixture lease missing"
+          let journal = (template :: SessionJournal) {store = Text.pack ("file:" <> root), controlBucket = "control", resultsBucket = descriptor.buckets.results, leaseId = lease.leaseId, leaseMode = Held, slices = map (\slice -> slice {state = SliceRejected, rejectionReason = Just "fixture-rejected", cellOutcome = Nothing, entryExitCode = Nothing, manifestSha256 = Nothing, fetchedPath = Nothing}) template.slices}
+          createDirectoryIfMissing True outDir
+          writeSessionJournal (outDir </> "session.json") journal
+          let binDir = root </> "bin"
+              fakeGcloud = binDir </> "gcloud"
+              started = root </> "instances-started"
+          createDirectoryIfMissing True binDir
+          writeFile fakeGcloud "#!/bin/sh\nif [ \"$3\" = describe ]; then echo TERMINATED; else printf started > \"$KENSHOU_TEST_STARTED\"; fi\n"
+          permissions <- getPermissions fakeGcloud
+          setPermissions fakeGcloud permissions {executable = True}
+          oldPath <- lookupEnv "PATH"
+          withEnvVariable "PATH" (binDir <> ":" <> maybe "" id oldPath) $
+            withEnvVariable "KENSHOU_TEST_STARTED" started $
+              runWithArgs ["cell", "resume", "--start", "--session", outDir] `shouldReturnCode` ExitFailure 4
+          doesFileExist started `shouldReturn` True
+          store.statObject control leaseObject `shouldReturn` Nothing
+          runWithArgs ["cell", "resume", "--start", "--help"] `shouldReturnCode` ExitSuccess
 
     it "rebinds a submitted marker that a prior held lease never accepted" $
       withSystemTempDirectory "kenshou-cell-resume-unaccepted" \root -> do
