@@ -105,6 +105,11 @@ docs/planning.md    planning and executing verification runs
 Start with the [Kenshou terminology catalog](docs/terminology/index.md) for the
 meanings of scenario, cohort, run, verdict, comparison, and evidence record.
 
+For the release validation procedure, use
+[RB-1: Validate and record a Shibuya release against the baseline](docs/runbooks/validate-and-record-shibuya-release.md).
+The [runbook bundle](docs/runbooks/index.md) uses the shared OKF runbook profile
+and is checked by `just runbooks-validate` as part of `just verify`.
+
 ## Getting started
 
 Enter the locked development environment with `nix develop`, build the workspace

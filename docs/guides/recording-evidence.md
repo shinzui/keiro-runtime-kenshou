@@ -1,5 +1,8 @@
 # Recording verification evidence
 
+For the full Shibuya baseline/candidate procedure, follow
+[RB-1](../runbooks/validate-and-record-shibuya-release.md).
+
 Record a run after Kenshou has sealed its output directory and you intend to keep
 its result as a historical fact. Use `purpose: baseline` for a reference run,
 `release` for a release decision, `nightly` for scheduled evidence, and
