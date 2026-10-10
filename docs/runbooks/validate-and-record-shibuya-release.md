@@ -29,9 +29,12 @@ metrics, PGMQ and Kiroku lane. Kafka and assembled Keiro verification need their
 own compatible cohorts. A core/metrics sweep alone does not establish adapter or
 whole-runtime acceptance.
 
-This is a draft checked against the CLI and scenario sources. Its addition does
-not record an operational exercise. See the [Shibuya coverage notes](../layers/shibuya.md)
-and [evidence guide](../guides/recording-evidence.md) for supporting contracts.
+This is a draft checked against the CLI and scenario sources. The
+[2026-10-10 local timing exercise](../reports/2026-10-10-shibuya-latest-timings.md)
+exercised cohort selection, builds, paired local runs and comparisons. That
+exercise retained raw evidence locally; it did not exercise external recording
+or attestation. See the [Shibuya coverage notes](../layers/shibuya.md) and
+[evidence guide](../guides/recording-evidence.md) for supporting contracts.
 
 ## Prerequisites and target checks
 

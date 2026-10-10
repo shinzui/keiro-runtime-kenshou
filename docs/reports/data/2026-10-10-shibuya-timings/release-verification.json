@@ -1,0 +1,33 @@
+{
+  "checkedAt": "2026-10-10T21:08:05.100665+00:00",
+  "packages": {
+    "shibuya-core": {
+      "latestNormalVersion": "0.10.0.1",
+      "source": "https://hackage.haskell.org/package/shibuya-core/preferred.json"
+    },
+    "shibuya-metrics": {
+      "latestNormalVersion": "0.10.0.1",
+      "source": "https://hackage.haskell.org/package/shibuya-metrics/preferred.json"
+    },
+    "shibuya-pgmq-adapter": {
+      "latestNormalVersion": "0.16.1.0",
+      "source": "https://hackage.haskell.org/package/shibuya-pgmq-adapter/preferred.json"
+    },
+    "shibuya-kiroku-adapter": {
+      "latestNormalVersion": "0.6.0.0",
+      "source": "https://hackage.haskell.org/package/shibuya-kiroku-adapter/preferred.json"
+    },
+    "kiroku-store": {
+      "latestNormalVersion": "0.10.0.0",
+      "source": "https://hackage.haskell.org/package/kiroku-store/preferred.json"
+    },
+    "kiroku-store-migrations": {
+      "latestNormalVersion": "0.7.0.0",
+      "source": "https://hackage.haskell.org/package/kiroku-store-migrations/preferred.json"
+    }
+  },
+  "upstreamTagCommits": {
+    "mori://shinzui/shibuya": "de42f07a874bd7d59aff7e41e7ac07b7333f1397",
+    "mori://shinzui/kiroku": "364ffa82136fcfc83d39ead1234abffaf500844b"
+  }
+}
