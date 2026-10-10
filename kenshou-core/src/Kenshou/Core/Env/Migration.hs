@@ -1,3 +1,5 @@
+{-# LANGUAGE CPP #-}
+
 module Kenshou.Core.Env.Migration
   ( MigrationSetupError (..),
     composePlan,
@@ -9,9 +11,11 @@ import Data.List (nub, sort)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Database.PostgreSQL.Migrate (MigrationPlan, defaultRunOptions, migrationPlan, runMigrationPlan)
+import Database.PostgreSQL.Migrate (MigrationComponent, MigrationPlan, defaultRunOptions, migrationPlan, runMigrationPlan)
 import Hasql.Connection.Settings qualified as Settings
+#ifdef KENSHOU_KEIRO_SCHEMA
 import Keiro.Migrations (keiroMigrations)
+#endif
 import Kenshou.Core.Env (SchemaComponent (..))
 import Kiroku.Store.Migrations (kirokuMigrations)
 import Pgmq.Migration (pgmqMigrations)
@@ -27,10 +31,19 @@ composePlan requested = do
     first : rest -> mapError (migrationPlan (first :| rest))
   where
     component SchemaKiroku = mapError kirokuMigrations
-    component SchemaKeiro = mapError keiroMigrations
+    component SchemaKeiro = keiroSchema
     component SchemaPgmq = mapError pgmqMigrations
     mapError :: (Show problem) => Either problem value -> Either MigrationSetupError value
     mapError = either (Left . MigrationSetupError . Text.pack . show) Right
+
+keiroSchema :: Either MigrationSetupError MigrationComponent
+#ifdef KENSHOU_KEIRO_SCHEMA
+keiroSchema =
+  either (Left . MigrationSetupError . Text.pack . show) Right keiroMigrations
+#else
+keiroSchema =
+  Left (MigrationSetupError "Keiro schema migrations are disabled in this isolated build")
+#endif
 
 migrateDatabase :: Text -> MigrationPlan -> IO (Either MigrationSetupError ())
 migrateDatabase connectionString plan = do

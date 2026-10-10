@@ -59,8 +59,10 @@ recheck. Resolve unrelated local edits before continuing.
 
 The baseline is defined by `cohort/released.project` and `cohort/released.json`.
 On 2026-10-10 it pins core/metrics 0.9.0.3, PGMQ adapter 0.16.0.0 and Kiroku
-adapter 0.5.1.2. The isolated `shibuya-current` lane still pins core/metrics
-0.10.0.0, PGMQ adapter 0.16.1.0 and Kiroku adapter 0.5.1.3. Read the files on
+adapter 0.5.1.2. The isolated `shibuya-current` lane pins core/metrics
+0.10.0.1, PGMQ adapter 0.16.1.0, Kiroku adapter 0.6.0.0, store 0.10.0.0
+and store migrations 0.7.0.0. This lane disables Keiro schemas because the
+assembled runtime migration bounds exclude the new Kiroku schema. Read the files on
 every exercise; their names do not guarantee freshness.
 
 ## 1. Resolve and pin the candidate
@@ -347,3 +349,27 @@ just evidence-validate evidence-check
 ```
 
 Run `just verify` for the complete repository gate when closing a release exercise.
+
+## Capturing plans for paired timing trials
+
+The isolated runner accepts `--plan-json FILE`. Capture its resolved plan before
+building the baseline, since both builds otherwise use the same Cabal cache.
+Run the captured executable against that plan so its identity still describes
+the libraries linked into it. The full CLI supports a captured baseline identity
+through `run --cohort-identity FILE`.
+
+```bash
+mkdir -p .dev/shibuya-timing
+cabal --project-file=cohort/shibuya-current.project build kenshou-shibuya-run
+cp dist-newstyle/cache/plan.json .dev/shibuya-timing/current-plan.json
+current_runner=$(cabal --project-file=cohort/shibuya-current.project list-bin kenshou-shibuya-run)
+cabal build kenshou
+baseline_runner=$(cabal list-bin kenshou)
+"$baseline_runner" cohort show --json > .dev/shibuya-timing/baseline-identity.json
+"$current_runner" run specs/shibuya-concurrency-sweep-async.json runs/shibuya-current-timing --plan-json .dev/shibuya-timing/current-plan.json
+"$baseline_runner" run --spec specs/shibuya-concurrency-sweep-async.json --out runs/shibuya-baseline-timing --cohort-identity .dev/shibuya-timing/baseline-identity.json
+```
+
+Alternate baseline-first and candidate-first pairs on the same quiet host and
+retain all raw runs. Use identical specs for each pair. Local placement is
+exploratory timing evidence; it does not replace a benchmark-grade cell exercise.

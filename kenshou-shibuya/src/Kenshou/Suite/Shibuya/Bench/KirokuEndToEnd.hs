@@ -37,11 +37,12 @@ import Kenshou.Measure.Phase qualified as MeasurePhase
 import Kenshou.Measure.Recorder (OpName (..), OpResult (..), WorkerRecorder, newWorkerRecorder, recordOp, registerOp)
 import Kenshou.Measure.Session (MeasureConfig (..), Measurement, appendLoadReport, measureConfigFromKnobs, measuredOutcome, measurementPhaseClock, measurementRecorder, phasePlanFromCore, withMeasurement)
 import Kenshou.Suite.Shibuya.Fixture.Kiroku (KirokuFixture (..), checkpointOf, subscriptionFor, withKirokuFixture)
+import Kenshou.Suite.Shibuya.KirokuCompat (configuredConsumerGroup, subscriptionBatchSize, subscriptionBufferSize)
 import Kiroku.Store (AppendResult (..), CategoryName (..), EventData (..), EventType (..), ExpectedVersion (..), GlobalPosition (..), RecordedEvent (..), StreamName (..), SubscriptionName, SubscriptionResult (..), SubscriptionTarget (..), appendToStream, defaultSubscriptionConfig, runStoreIO, subscribe)
 import Kiroku.Store.Subscription.Stream (AckItem (..), subscriptionAckStream)
 import Kiroku.Store.Subscription.Types qualified as Sub
 import Shibuya.Adapter (Adapter (..))
-import Shibuya.Adapter.Kiroku (ConsumerGroup (..), KirokuAdapterConfig (..), defaultKirokuAdapterConfig, kirokuAdapter)
+import Shibuya.Adapter.Kiroku (KirokuAdapterConfig (..), defaultKirokuAdapterConfig, kirokuAdapter)
 import Shibuya.App (QueueProcessor (..), defaultAppConfig, defaultShutdownConfig, mkProcessor, runApp, stopAppGracefully, waitApp)
 import Shibuya.Core.Ack (AckDecision (..))
 import Shibuya.Core.AckHandle (AckHandle (..))
@@ -248,24 +249,24 @@ consumeCallback fixture subscription batchSize groupSize messages producer recor
     finish producer
   where
     members = if groupSize == 0 then [0] else [0 .. groupSize - 1]
-    config member = (defaultSubscriptionConfig subscription (Category fixture.category) (handler member)) {Sub.batchSize = batchSize, Sub.consumerGroup = if groupSize == 0 then Nothing else Just (Sub.ConsumerGroup (fromIntegral member) (fromIntegral groupSize))}
+    config member = (defaultSubscriptionConfig subscription (Category fixture.category) (handler member)) {Sub.batchSize = subscriptionBatchSize batchSize, Sub.consumerGroup = if groupSize == 0 then Nothing else Just (configuredConsumerGroup (fromIntegral member) (fromIntegral groupSize))}
     handler member event = recordFinal recorder recorderLock counters member event >> pure Continue
 
 consumeAckStream :: KirokuFixture -> SubscriptionName -> Int32 -> Int -> Async Int64 -> WorkerRecorder -> MVar () -> Counters -> (Async Int64 -> IO Int64) -> IO Int64
 consumeAckStream fixture subscription batchSize groupSize producer recorder recorderLock counters finish =
-  bracket (mapM (\member -> subscriptionAckStream fixture.store (config member) 256) members) (mapM_ snd) $ \streams ->
+  bracket (mapM (\member -> subscriptionAckStream fixture.store (config member) (subscriptionBufferSize 256)) members) (mapM_ snd) $ \streams ->
     bracket (mapM (\(member, (stream, _)) -> async $ Stream.fold Fold.drain $ Stream.mapM (acknowledge member) stream) (zip members streams)) (mapM_ cancel) $ \_ ->
       finish producer
   where
     members = if groupSize == 0 then [0] else [0 .. groupSize - 1]
-    config member = (defaultSubscriptionConfig subscription (Category fixture.category) (const (pure Continue))) {Sub.batchSize = batchSize, Sub.consumerGroup = if groupSize == 0 then Nothing else Just (Sub.ConsumerGroup (fromIntegral member) (fromIntegral groupSize))}
+    config member = (defaultSubscriptionConfig subscription (Category fixture.category) (const (pure Continue))) {Sub.batchSize = subscriptionBatchSize batchSize, Sub.consumerGroup = if groupSize == 0 then Nothing else Just (configuredConsumerGroup (fromIntegral member) (fromIntegral groupSize))}
     acknowledge member item = do
       atomically $ putTMVar item.ackReply Continue
       recordFinal recorder recorderLock counters member item.ackEvent
 
 consumeAdapter :: KirokuFixture -> SubscriptionName -> Int32 -> Int -> Text -> Async Int64 -> WorkerRecorder -> MVar () -> Counters -> (Async Int64 -> IO Int64) -> IO Int64
 consumeAdapter fixture subscription batchSize groupSize concurrencyMode producer recorder recorderLock counters finish = runEff $ runTracingNoop $ do
-  let config member = (defaultKirokuAdapterConfig subscription (Category fixture.category)) {batchSize = batchSize, consumerGroup = if groupSize == 0 then Nothing else Just (ConsumerGroup (fromIntegral member) (fromIntegral groupSize))}
+  let config member = (defaultKirokuAdapterConfig subscription (Category fixture.category)) {batchSize = subscriptionBatchSize batchSize, consumerGroup = if groupSize == 0 then Nothing else Just (configuredConsumerGroup (fromIntegral member) (fromIntegral groupSize))}
       concurrencyConfig = if concurrencyMode == "serial" then Serial else Async 8
       members = if groupSize == 0 then [0] else [0 .. groupSize - 1]
   processors <- forM members $ \member -> do

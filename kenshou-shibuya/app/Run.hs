@@ -23,21 +23,21 @@ main :: IO ()
 main = do
   arguments <- getArgs
   case arguments of
-    ["run", specPath, outRoot] -> runCurrent arguments specPath outRoot
+    ["run", specPath, outRoot] -> runCurrent arguments specPath outRoot "dist-newstyle/cache/plan.json"
+    ["run", specPath, outRoot, "--plan-json", planPath] -> runCurrent arguments specPath outRoot planPath
     ["worker", "--role", roleText] -> do
       registry <- either (fail . show . NonEmpty.toList) pure (mkRegistry [bundle])
       role <- either (fail . Text.unpack) pure (mkRoleName (Text.pack roleText))
       exitWith =<< runWorker registry role
     _ -> do
-      hPutStrLn stderr "usage: kenshou-shibuya-run run RUN-SPEC.json OUT-DIR"
+      hPutStrLn stderr "usage: kenshou-shibuya-run run RUN-SPEC.json OUT-DIR [--plan-json PLAN.json]"
       exitWith (ExitFailure 2)
 
 -- The isolated Cabal project omits the full CLI because Keiro still bounds
 -- Shibuya below 0.10. This executable runs the same kernel against its plan.
-runCurrent :: [String] -> FilePath -> FilePath -> IO ()
-runCurrent arguments specPath outRoot = do
+runCurrent :: [String] -> FilePath -> FilePath -> FilePath -> IO ()
+runCurrent arguments specPath outRoot planPath = do
   let descriptorPath = "cohort/shibuya-current.json"
-      planPath = "dist-newstyle/cache/plan.json"
   descriptorBytes <- ByteString.readFile descriptorPath
   descriptor <- loadCohortDescriptor descriptorPath >>= either (fail . show) pure
   planBytes <- ByteString.readFile planPath

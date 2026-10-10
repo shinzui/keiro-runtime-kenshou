@@ -1,9 +1,11 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE FieldSelectors #-}
 
 module Main (main) where
 
 import Data.Aeson (FromJSON, Value, eitherDecode, eitherDecodeFileStrict', encode, encodeFile, toJSON)
 import Data.ByteString qualified as ByteString
+import Data.Either (isLeft, isRight)
 import Data.Int (Int64)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
@@ -15,6 +17,7 @@ import Kenshou.Core.Cohort
 import Kenshou.Core.Compat (comparisonKey, compatInputs, seriesKey)
 import Kenshou.Core.Dimension
 import Kenshou.Core.Env (PostgresRequirement (..), SchemaComponent (..))
+import Kenshou.Core.Env.Migration (composePlan)
 import Kenshou.Core.Env.Postgres (EnvError (..), PgSettingsSnapshot (..), PostgresEnv (..), ServerControl (..), StopMode (..), withPostgresEnv, withPostgresEnvNamed)
 import Kenshou.Core.Id
 import Kenshou.Core.Knob
@@ -62,6 +65,7 @@ main = hspec do
   manifestSpec
   goldenSpec
   postgresEnvironmentSpec
+  migrationPlanSpec
   Kenshou.PlanSpec.spec
 
 descriptorSpec :: Spec
@@ -299,7 +303,8 @@ postgresEnvironmentSpec :: Spec
 postgresEnvironmentSpec = describe "PostgreSQL environments" do
   it "migrates, clones, restarts, and crash-restarts PostgreSQL 18" $ withSystemTempDirectory "kenshou-pg18" \directory -> do
     runId <- expectRight (parseRunId "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e55")
-    let requirement = PostgresRequirement [SchemaKiroku, SchemaKeiro, SchemaPgmq] [] True
+    let requirement = PostgresRequirement ([SchemaKiroku, SchemaPgmq] <> [SchemaKeiro | hasKeiroSchema]) [] True
+        expectedSchemas = if hasKeiroSchema then "keiro,kiroku,pgmigrate,pgmq" else "kiroku,pgmigrate,pgmq"
         dimensions = Dimensions Nothing Nothing (Just PgFsyncOff) (Just Pg18)
     result <- withPostgresEnv nullLogger directory runId requirement (PostgresEphemeral []) dimensions \environment -> do
       schemas <- psqlTest environment.connectionString "select string_agg(schema_name, ',' order by schema_name) from information_schema.schemata where schema_name in ('kiroku','keiro','pgmq','pgmigrate')"
@@ -314,7 +319,7 @@ postgresEnvironmentSpec = describe "PostgreSQL environments" do
           control.startServer
           psqlTest environment.connectionString "select 1" `shouldReturn` Right "1"
       pure (schemas, clonedSchemas, Map.lookup "fsync" environment.snapshot.settings)
-    result `shouldBe` Right (Right "keiro,kiroku,pgmigrate,pgmq", Right "keiro,kiroku,pgmigrate,pgmq", Just "off")
+    result `shouldBe` Right (Right expectedSchemas, Right expectedSchemas, Just "off")
 
   it "creates and drops fresh databases in external mode" $ withSystemTempDirectory "kenshou-pg-external" \directory -> do
     runId <- expectRight (parseRunId "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e55")
@@ -408,3 +413,19 @@ fixtures = "test/fixtures"
 expectRight :: (Show problem) => Either problem value -> IO value
 expectRight (Right value) = pure value
 expectRight (Left problem) = expectationFailure (show problem) >> fail "unreachable"
+
+migrationPlanSpec :: Spec
+migrationPlanSpec = describe "migration plan composition" do
+  it "composes the Shibuya adapter schemas" do
+    isRight (composePlan [SchemaKiroku, SchemaPgmq]) `shouldBe` True
+  it "rejects an empty schema selection" do
+    isLeft (composePlan []) `shouldBe` True
+  it "honors the build's Keiro schema support" do
+    isRight (composePlan [SchemaKeiro]) `shouldBe` hasKeiroSchema
+
+hasKeiroSchema :: Bool
+#ifdef KENSHOU_KEIRO_SCHEMA
+hasKeiroSchema = True
+#else
+hasKeiroSchema = False
+#endif

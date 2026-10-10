@@ -1,3 +1,5 @@
+{-# LANGUAGE CPP #-}
+
 module Kenshou.Suite.Shibuya.Concurrency.KirokuStaticGroup (scenario) where
 
 import Control.Concurrent (threadDelay)
@@ -29,8 +31,13 @@ import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Role (ControlMessage (..))
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
 import Kenshou.Suite.Shibuya.Fixture.Kiroku (EffectRow (..), KirokuFixture (..), appendEvents, appendMoreEvents, checkpointOf, effectsOf, ensureEffectsTable, eventPositions, insertEffect, subscriptionFor, withKirokuFixture)
+import Kenshou.Suite.Shibuya.KirokuCompat (consumerGroupSize)
 import Kiroku.Store (CategoryName (..), GlobalPosition (..), RecordedEvent (..), StreamName (..))
+#if MIN_VERSION_shibuya_kiroku_adapter(0,6,0)
+import Kiroku.Store.Subscription.Types qualified as Sub
+#else
 import Kiroku.Store.Subscription.Types (InvalidConsumerGroup (..))
+#endif
 import Shibuya.Adapter.Kiroku (KirokuConsumerGroupConfig (..), SubscriptionName (..), SubscriptionTarget (..), defaultConsumerGroupConfig, kirokuConsumerGroupProcessors)
 import Shibuya.App (defaultAppConfig, defaultShutdownConfig, runApp, stopAppGracefully, waitApp)
 import Shibuya.Core.Ack (AckDecision (..))
@@ -200,18 +207,25 @@ runFixture context observeSeconds fixture = do
 
 validateGroupConfig :: KirokuFixture -> IO (Bool, Bool)
 validateGroupConfig fixture = do
-  let config = defaultConsumerGroupConfig (subscriptionFor fixture "invalid-group") (Category fixture.category) 4
+  let config = defaultConsumerGroupConfig (subscriptionFor fixture "invalid-group") (Category fixture.category) (consumerGroupSize 4)
       handler _ = pure AckOk
-  invalidSize <-
-    try @InvalidConsumerGroup $
-      runEff $
-        runTracingNoop $
-          kirokuConsumerGroupProcessors fixture.store (config {groupSize = 0}) handler
+  invalidSizeRejected <- rejectsInvalidGroupSize fixture
   invalidConcurrency <-
     runEff $
       runTracingNoop $
         kirokuConsumerGroupProcessors fixture.store (config {memberConcurrency = Async 2}) handler
-  pure (isLeft invalidSize, isLeft invalidConcurrency)
+  pure (invalidSizeRejected, isLeft invalidConcurrency)
+
+rejectsInvalidGroupSize :: KirokuFixture -> IO Bool
+#if MIN_VERSION_shibuya_kiroku_adapter(0,6,0)
+rejectsInvalidGroupSize _ = pure (isLeft (Sub.mkConsumerGroupSize 0))
+#else
+rejectsInvalidGroupSize fixture = do
+  let config = defaultConsumerGroupConfig (subscriptionFor fixture "invalid-group") (Category fixture.category) (consumerGroupSize 4)
+      handler _ = pure AckOk
+  result <- try @InvalidConsumerGroup $ runEff $ runTracingNoop $ kirokuConsumerGroupProcessors fixture.store (config {groupSize = 0}) handler
+  pure (isLeft result)
+#endif
 
 appendStreams :: KirokuFixture -> Int -> Int -> IO [(StreamName, [Int64])]
 appendStreams fixture count perStream =
@@ -245,7 +259,7 @@ runLocalGroup fixture streams = do
           at <- liftIO getCurrentTime
           liftIO $ insertEffect fixture.pool arm (EffectRow position eventId (-1) (-1) attempt at)
           pure AckOk
-    built <- kirokuConsumerGroupProcessors fixture.store (defaultConsumerGroupConfig subscription (Category fixture.category) 4) handler
+    built <- kirokuConsumerGroupProcessors fixture.store (defaultConsumerGroupConfig subscription (Category fixture.category) (consumerGroupSize 4)) handler
     processors <- either (error . show) pure built
     unless (length processors == 4) (error "consumer-group helper returned other than four processors")
     started <- runApp defaultAppConfig processors

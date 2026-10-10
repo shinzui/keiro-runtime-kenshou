@@ -2,14 +2,14 @@
   "schema": "kenshou.cohort/v1",
   "name": "shibuya-current",
   "description": "Isolated Hackage Shibuya release lane for live adapter verification.",
-  "verifiedAt": "2026-09-26",
+  "verifiedAt": "2026-10-10",
   "compiler": "ghc-9.12.4",
-  "indexState": "2026-09-26T01:12:06Z",
+  "indexState": "2026-10-10T19:40:06Z",
   "projectFile": "cohort/shibuya-current.project",
   "components": [
     { "id": "shibuya", "moriUri": "mori://shinzui/shibuya", "source": { "type": "hackage" }, "packages": [
-      { "name": "shibuya-core", "version": "0.10.0.0" },
-      { "name": "shibuya-metrics", "version": "0.10.0.0" }
+      { "name": "shibuya-core", "version": "0.10.0.1" },
+      { "name": "shibuya-metrics", "version": "0.10.0.1" }
     ] },
     { "id": "shibuya-pgmq-adapter", "moriUri": "mori://shinzui/shibuya-pgmq-adapter", "source": { "type": "hackage" }, "packages": [
       { "name": "shibuya-pgmq-adapter", "version": "0.16.1.0" }
@@ -21,7 +21,9 @@
       { "name": "pgmq-migration", "version": "0.6.1.1" }
     ] },
     { "id": "kiroku", "moriUri": "mori://shinzui/kiroku", "source": { "type": "hackage" }, "packages": [
-      { "name": "shibuya-kiroku-adapter", "version": "0.5.1.3" }
+      { "name": "shibuya-kiroku-adapter", "version": "0.6.0.0" },
+      { "name": "kiroku-store", "version": "0.10.0.0" },
+      { "name": "kiroku-store-migrations", "version": "0.7.0.0" }
     ] }
   ],
   "allowNewer": [],

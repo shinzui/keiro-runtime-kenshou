@@ -29,9 +29,10 @@ import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue 
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (CohortScope (..), KnownDefect (..), PackageCondition (..), Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
 import Kenshou.Suite.Shibuya.Fixture.Kiroku (appendEvents, withKirokuConnectionPool, withKirokuFixture)
+import Kenshou.Suite.Shibuya.KirokuCompat (configuredConsumerGroup, consumerGroupSize)
 import Kiroku.Store (RecordedEvent, defaultConnectionSettings, withStore)
 import Shibuya.Adapter (Adapter (..))
-import Shibuya.Adapter.Kiroku (ConsumerGroup (..), KirokuAdapterConfig (..), KirokuConsumerGroupConfig, SubscriptionName (..), SubscriptionTarget (..), defaultConsumerGroupConfig, defaultKirokuAdapterConfig, kirokuAdapter, kirokuConsumerGroupProcessorsWith)
+import Shibuya.Adapter.Kiroku (KirokuAdapterConfig (..), KirokuConsumerGroupConfig, SubscriptionName (..), SubscriptionTarget (..), defaultConsumerGroupConfig, defaultKirokuAdapterConfig, kirokuAdapter, kirokuConsumerGroupProcessorsWith)
 import Shibuya.Core.Ack (AckDecision (..))
 import Shibuya.Telemetry.Effect (runTracingNoop)
 import Streamly.Data.Stream qualified as Stream
@@ -215,14 +216,14 @@ remember :: IORef [Int32] -> Int32 -> IO ()
 remember reference member = atomicModifyIORef' reference (\members -> (member : members, ()))
 
 groupConfig :: KirokuConsumerGroupConfig
-groupConfig = defaultConsumerGroupConfig (SubscriptionName "kenshou-group-acquisition") AllStreams 8
+groupConfig = defaultConsumerGroupConfig (SubscriptionName "kenshou-group-acquisition") AllStreams (consumerGroupSize 8)
 
 realArm :: RunContext -> Bool -> Int -> IO RealEvidence
 realArm context killBackends observeSeconds = do
   let postgres = requirePostgres context
       connection = postgres.connectionString <> " application_name=kenshou-kiroku-acquisition"
       name = SubscriptionName ("kenshou-acquisition-" <> renderRunId context.runId <> if killBackends then "-backend" else "-failure")
-      config = defaultConsumerGroupConfig name AllStreams 8
+      config = defaultConsumerGroupConfig name AllStreams (consumerGroupSize 8)
       matching = filter ((== "kenshou-kiroku-acquisition") . (.applicationName))
   backendVictimsRef <- newIORef 0
   withStore (defaultConnectionSettings connection) $ \store -> do
@@ -244,7 +245,7 @@ realArm context killBackends observeSeconds = do
                       _ <- (terminateBackends postgres (ByApplicationName "kenshou-kiroku-acquisition")).inject
                       pure ()
                     throwIO (userError "planned-real-factory-failure")
-                  adapter <- kirokuAdapter store (defaultKirokuAdapterConfig name AllStreams) {consumerGroup = Just (ConsumerGroup member 8)}
+                  adapter <- kirokuAdapter store (defaultKirokuAdapterConfig name AllStreams) {consumerGroup = Just (configuredConsumerGroup member 8)}
                   pure adapter {shutdown = adapter.shutdown >> when (member == 3) (liftIO (throwIO (userError "planned-real-shutdown-failure")))}
               )
               config

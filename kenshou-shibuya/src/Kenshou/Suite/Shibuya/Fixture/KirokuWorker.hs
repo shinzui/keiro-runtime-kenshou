@@ -12,8 +12,9 @@ import Data.Time.Clock (getCurrentTime)
 import Effectful (liftIO, runEff)
 import Kenshou.Core.Role (ControlMessage (..), PostgresConnInfo (..), RoleContext (..), RoleName, WorkerInit (..), WorkerMessage (..), WorkerRole (..), mkRoleName)
 import Kenshou.Suite.Shibuya.Fixture.Kiroku (EffectRow (..), insertEffect, withKirokuConnectionPool)
+import Kenshou.Suite.Shibuya.KirokuCompat (configuredConsumerGroup, subscriptionBatchSize)
 import Kiroku.Store (CategoryName (..), GlobalPosition (..), RecordedEvent (..), defaultConnectionSettings, withStore)
-import Shibuya.Adapter.Kiroku (ConsumerGroup (..), KirokuAdapterConfig (..), SubscriptionName (..), SubscriptionTarget (..), defaultKirokuAdapterConfig, kirokuAdapter)
+import Shibuya.Adapter.Kiroku (KirokuAdapterConfig (..), SubscriptionName (..), SubscriptionTarget (..), defaultKirokuAdapterConfig, kirokuAdapter)
 import Shibuya.App (defaultAppConfig, defaultShutdownConfig, mkProcessor, runApp, stopAppGracefully, waitApp)
 import Shibuya.Core.Ack (AckDecision (..), RetryDelay (..))
 import Shibuya.Core.Ingested (Message (..))
@@ -72,8 +73,8 @@ worker context = do
     withStore settings $ \store -> do
       let config =
             (defaultKirokuAdapterConfig (SubscriptionName args.subscription) (if args.target == "all-streams" then AllStreams else Category (CategoryName args.category)))
-              { consumerGroup = if args.groupSize == 0 then Nothing else Just (ConsumerGroup args.member args.groupSize),
-                batchSize = args.batchSize
+              { consumerGroup = if args.groupSize == 0 then Nothing else Just (configuredConsumerGroup args.member args.groupSize),
+                batchSize = subscriptionBatchSize args.batchSize
               }
           handler message = do
             let GlobalPosition position = message.envelope.payload.globalPosition
