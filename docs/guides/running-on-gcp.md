@@ -1,3 +1,12 @@
+---
+type: Guide
+title: Running Kenshou on a GCP verification cell
+description: Publish immutable payloads, lease verification cells, submit and recover runs, and fetch sealed GCP evidence.
+docId: DOC-4
+tags: [gcp, verification-cells, payloads, leases, evidence]
+generated: {by: 'human:nadeem', at: '2026-10-09T21:33:45Z'}
+---
+
 # Running Kenshou on a GCP verification cell
 
 Use a leased cell when a run needs the Linux machine profile, a controlled

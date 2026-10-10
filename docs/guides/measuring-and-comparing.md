@@ -1,3 +1,12 @@
+---
+type: Guide
+title: Measuring and comparing Keiro runtime behaviour
+description: Design paired benchmark trials, control durability and host drift, and retain verifiable comparison evidence.
+docId: DOC-2
+tags: [benchmarking, measurement, paired-comparison, durability, evidence]
+generated: {by: 'human:nadeem', at: '2026-09-21T16:02:15Z'}
+---
+
 # Measuring and comparing Keiro runtime behaviour
 
 Never quote one benchmark trial. Run at least three paired trials and use five by

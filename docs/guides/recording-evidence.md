@@ -1,3 +1,12 @@
+---
+type: Guide
+title: Recording verification evidence
+description: Record sealed runs and comparisons, attest their evidence, and query immutable verification history.
+docId: DOC-3
+tags: [evidence, recording, attestation, history, verification]
+generated: {by: 'human:nadeem', at: '2026-10-10T20:09:56Z'}
+---
+
 # Recording verification evidence
 
 For the full Shibuya baseline/candidate procedure, follow

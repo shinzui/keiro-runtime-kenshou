@@ -116,6 +116,28 @@ in  Schema.Project::{
       ]
     , okfBundles =
       [ Schema.OkfBundle::{
+        , name = "guides"
+        , path = "docs/guides"
+        , profile = Some "mori/user-documentation-profile.dhall"
+        , profileBinding = Some
+            ( Schema.ProfileBinding.Published
+                Schema.PinnedImport::{
+                , publisher = "shinzui/okf-profiles"
+                , publisherRef = Some Schema.MoriRef::{
+                  , namespace = "shinzui"
+                  , name = "okf-profiles"
+                  }
+                , export = Some "documentation.userDocumentation"
+                , version = Some "v0.20.0"
+                , pin = Some
+                    "sha256:079a5b3679dccafd2070535b3d59a0ffdf28e20bf9cacfe095dca96c8012879a"
+                }
+            )
+        , okfVersion = "0.2"
+        , description = Some
+            "Operator guides for measurement, diagnosis, telemetry, cells and evidence"
+        }
+      , Schema.OkfBundle::{
         , name = "runbooks"
         , path = "docs/runbooks"
         , profile = Some "docs/runbooks/profile.dhall"

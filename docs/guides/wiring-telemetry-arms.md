@@ -1,3 +1,12 @@
+---
+type: Guide
+title: Wiring telemetry arms into runtime scenarios
+description: Connect tracing and metrics handles to runtime components while preserving telemetry lifecycles and supported arms.
+docId: DOC-5
+tags: [telemetry, tracing, metrics, scenarios, lifecycle]
+generated: {by: 'human:nadeem', at: '2026-09-22T00:03:18Z'}
+---
+
 # Wiring telemetry arms into runtime scenarios
 
 `Kenshou.Telemetry.withTelemetry` owns provider and helper lifecycles. A layer

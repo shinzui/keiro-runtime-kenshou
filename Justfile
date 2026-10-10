@@ -11,7 +11,7 @@ default:
     just --list
 
 [group('meta')]
-verify: process-compose-check fmt-check haskell-build haskell-test link-proof cohort-assert-released cohort-check graph-check adr-validate terminology-validate runbooks-validate evidence-validate evidence-index-check evidence-profile-test evidence-check schemas-check selftest
+verify: process-compose-check fmt-check haskell-build haskell-test link-proof cohort-assert-released cohort-check graph-check adr-validate terminology-validate runbooks-validate guides-validate evidence-validate evidence-index-check evidence-profile-test evidence-check schemas-check selftest
 
 [group('verification')]
 graph-check:
@@ -38,6 +38,14 @@ runbooks-validate:
       --profile docs/runbooks/profile.dhall \
       --profile-enforce \
       --log-enforce
+
+[group('docs')]
+guides-validate:
+    okf validate docs/guides --strict \
+      --profile mori/user-documentation-profile.dhall \
+      --profile-enforce \
+      --log-enforce
+    okf graph docs/guides --json >/dev/null
 
 [group('docs')]
 terminology-validate:

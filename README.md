@@ -105,6 +105,12 @@ docs/planning.md    planning and executing verification runs
 Start with the [Kenshou terminology catalog](docs/terminology/index.md) for the
 meanings of scenario, cohort, run, verdict, comparison, and evidence record.
 
+The [operator guides](docs/guides/index.md) use the shared OKF
+[user-documentation profile](mori://shinzui/okf-profiles/profiles/user-documentation).
+Run `just guides-validate` to check their metadata, links and update log; this
+check also runs in `just verify` and CI. Keep each guide's `DOC-N` handle stable
+and update its generation provenance and bundle log when revising its content.
+
 For the release validation procedure, use
 [RB-1: Validate and record a Shibuya release against the baseline](docs/runbooks/validate-and-record-shibuya-release.md).
 The [runbook bundle](docs/runbooks/index.md) uses the shared OKF runbook profile

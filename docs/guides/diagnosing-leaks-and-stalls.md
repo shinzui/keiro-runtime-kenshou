@@ -1,3 +1,12 @@
+---
+type: Guide
+title: Diagnosing leaks and concurrency stalls
+description: Inspect sealed run evidence, diagnose resource growth and concurrency stalls, and capture focused reproductions.
+docId: DOC-1
+tags: [diagnosis, leaks, concurrency, profiling, evidence]
+generated: {by: 'human:nadeem', at: '2026-09-21T20:45:26Z'}
+---
+
 # Diagnosing leaks and concurrency stalls
 
 This guide starts from a completed Kenshou run. Offline diagnosis treats that
