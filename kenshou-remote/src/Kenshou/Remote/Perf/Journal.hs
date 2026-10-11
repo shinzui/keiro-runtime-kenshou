@@ -38,6 +38,9 @@ data LeaseIdentity = LeaseIdentity {cell :: Text, leaseId :: RunId}
 
 data SessionAction
   = AdmissionReserved Int
+  | LeaseClaimProposed Text LeaseIdentity
+  | LeaseClaimWithdrawn
+  | LeaseClaimReleased
   | LeaseAcquired LeaseIdentity
   | LeaseLost Text
   | LeaseReleased
@@ -69,6 +72,7 @@ data JournalState = JournalState
     executionDeadline :: Maybe UTCTime,
     cleanupDeadline :: Maybe UTCTime,
     lease :: Maybe LeaseIdentity,
+    pendingClaim :: Maybe (Text, LeaseIdentity, UTCTime),
     activeComparison :: Maybe (Text, Int),
     attempts :: Map Text Int,
     replacements :: Map Text Int,
@@ -100,7 +104,7 @@ validateSessionInputs prepared session = do
 journalState :: PerfSession -> Either Text JournalState
 journalState session = foldM (advance session) initial session.events
   where
-    initial = JournalState 0 Nothing Nothing Nothing Nothing Map.empty Map.empty [] Map.empty Map.empty session.createdAt
+    initial = JournalState 0 Nothing Nothing Nothing Nothing Nothing Map.empty Map.empty [] Map.empty Map.empty session.createdAt
 
 appendEvent :: SessionEvent -> PerfSession -> Either Text PerfSession
 appendEvent event session = do
@@ -115,11 +119,29 @@ advance session state event = do
     AdmissionReserved seconds -> do
       unless (state.executionDeadline == Nothing && state.lease == Nothing && seconds > 0 && state.admissionSpentSeconds + seconds <= session.plan.request.waitSeconds) (Left "initial admission allowance exhausted or already measured")
       pure state {admissionSpentSeconds = state.admissionSpentSeconds + seconds}
+    LeaseClaimProposed name identity -> do
+      _ <- selected name
+      measurementTime
+      unless (state.lease == Nothing && state.pendingClaim == Nothing && identity.cell `elem` session.plan.request.cells && Map.notMember name state.completed) (Left "unexpected or overlapping proposed cell claim")
+      pure state {pendingClaim = Just (name, identity, event.at)}
+    LeaseClaimWithdrawn -> do
+      unless (state.lease == Nothing && state.pendingClaim /= Nothing) (Left "no proposed cell claim to withdraw")
+      pure state {pendingClaim = Nothing}
+    LeaseClaimReleased -> case state.pendingClaim of
+      Just (_, _, proposedAt) | state.lease == Nothing -> do
+        let deadline = maybe (addUTCTime (fromIntegral (session.plan.request.budgetMinutes * 60)) proposedAt) id state.executionDeadline
+        pure state {pendingClaim = Nothing, executionDeadline = Just deadline, cleanupDeadline = Just (addUTCTime 60 deadline)}
+      _ -> Left "no proposed owned cell claim to release"
     LeaseAcquired identity -> do
       unless (state.lease == Nothing && identity.cell `elem` session.plan.request.cells) (Left "unexpected or overlapping cell lease")
       measurementTime
-      let deadline = maybe (addUTCTime (fromIntegral (session.plan.request.budgetMinutes * 60)) event.at) id state.executionDeadline
-      pure state {lease = Just identity, executionDeadline = Just deadline, cleanupDeadline = Just (addUTCTime 60 deadline)}
+      proposedAt <- case state.pendingClaim of
+        Just (_, proposed, at) | proposed == identity -> Right at
+        Just _ -> Left "confirmed lease differs from its proposed identity"
+        Nothing -> Right event.at -- retained pre-claim-journal sessions
+      let deadline = maybe (addUTCTime (fromIntegral (session.plan.request.budgetMinutes * 60)) proposedAt) id state.executionDeadline
+      unless (event.at <= deadline) (Left "confirmation exceeds the original proposed-claim deadline")
+      pure state {lease = Just identity, pendingClaim = Nothing, executionDeadline = Just deadline, cleanupDeadline = Just (addUTCTime 60 deadline)}
     LeaseLost reason -> do
       unless (state.lease /= Nothing && not (Text.null reason)) (Left "cannot lose an absent lease without a diagnosis")
       -- Retained low-level journals belong to the abandoned attempt. The next
@@ -212,6 +234,9 @@ instance FromJSON LeaseIdentity where
 instance ToJSON SessionAction where
   toJSON = \case
     AdmissionReserved seconds -> object ["kind" .= ("admission-reserved" :: Text), "seconds" .= seconds]
+    LeaseClaimProposed name lease -> object ["kind" .= ("lease-claim-proposed" :: Text), "profile" .= name, "lease" .= lease]
+    LeaseClaimWithdrawn -> object ["kind" .= ("lease-claim-withdrawn" :: Text)]
+    LeaseClaimReleased -> object ["kind" .= ("lease-claim-released" :: Text)]
     LeaseAcquired lease -> object ["kind" .= ("lease-acquired" :: Text), "lease" .= lease]
     LeaseLost reason -> object ["kind" .= ("lease-lost" :: Text), "reason" .= reason]
     LeaseReleased -> object ["kind" .= ("lease-released" :: Text)]
@@ -226,6 +251,9 @@ instance FromJSON SessionAction where
     kind <- v .: "kind" :: Parser Text
     case kind of
       "admission-reserved" -> strictObject ["kind", "seconds"] v >> AdmissionReserved <$> v .: "seconds"
+      "lease-claim-proposed" -> strictObject ["kind", "profile", "lease"] v >> LeaseClaimProposed <$> v .: "profile" <*> v .: "lease"
+      "lease-claim-withdrawn" -> strictObject ["kind"] v >> pure LeaseClaimWithdrawn
+      "lease-claim-released" -> strictObject ["kind"] v >> pure LeaseClaimReleased
       "lease-acquired" -> strictObject ["kind", "lease"] v >> LeaseAcquired <$> v .: "lease"
       "lease-lost" -> strictObject ["kind", "reason"] v >> LeaseLost <$> v .: "reason"
       "lease-released" -> strictObject ["kind"] v >> pure LeaseReleased

@@ -267,6 +267,18 @@ acceptance; upgraded Linux images and forced live failures remain unverified.
 Owner general process/file cleanup, repeated-failure quarantine/recovery,
 pre-staging and admission timing probes are still open.
 
+Bounded admission and recovery (2026-10-11): Admission now checkpoints a proposed
+lease ID before its conditional write and bounds transport by the reserved
+allowance. A timed-out response retains that ID for read-only reconciliation;
+it cannot silently claim another lease or restart the execution clock. Recovery
+cancels the exact old lease before probing submission markers, collects sealed
+work written immediately before interruption, and preserves its runtime failures
+before a fresh comparison attempt. Publication refuses unresolved submitted work.
+The remote and CLI suites pass (154 and 141 examples), including a real ten-second
+claim timeout against the file store and a lost-lease runtime-failure control.
+Full healthy multi-profile CLI replay, live interruption acceptance, owner cleanup
+and calibration acceptance remain open; no delivery milestone is closed.
+
 ## Surprises & Discoveries
 
 

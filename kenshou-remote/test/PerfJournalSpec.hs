@@ -22,6 +22,27 @@ spec = describe "performance session budgets" do
     state <- right (journalState session)
     state.executionDeadline `shouldBe` Just (time 1810)
     state.admissionSpentSeconds `shouldBe` 30
+  it "retains proposed claims and anchors confirmation or owned release to their original time" do
+    session <- fixture
+    profile <- firstProfile session
+    identifier <- newRunId
+    other <- newRunId
+    let identity = LeaseIdentity "alpha" identifier
+    proposed <- apply 10 (LeaseClaimProposed profile identity) session
+    restored <- right (eitherDecode (encode proposed) :: Either String PerfSession)
+    state <- right (journalState restored)
+    state.pendingClaim `shouldBe` Just (profile, identity, time 10)
+    appendEvent (SessionEvent (time 11) (LeaseClaimProposed profile identity)) restored `shouldSatisfy` isLeft
+    appendEvent (SessionEvent (time 11) (LeaseAcquired (LeaseIdentity "alpha" other))) restored `shouldSatisfy` isLeft
+    confirmed <- apply 20 (LeaseAcquired identity) restored >>= right . journalState
+    confirmed.executionDeadline `shouldBe` Just (time 1810)
+    confirmed.pendingClaim `shouldBe` Nothing
+    withdrawn <- apply 21 LeaseClaimWithdrawn restored >>= right . journalState
+    withdrawn.executionDeadline `shouldBe` Nothing
+    released <- apply 21 LeaseClaimReleased restored
+    next <- apply 30 (LeaseAcquired (LeaseIdentity "alpha" other)) released >>= right . journalState
+    next.executionDeadline `shouldBe` Just (time 1810)
+    appendEvent (SessionEvent (time 1811) (LeaseAcquired identity)) restored `shouldSatisfy` isLeft
   it "keeps spent admission allowance through serialization and repeated interruption" do
     session <- fixture
     waited <- apply 1 (AdmissionReserved 60) session

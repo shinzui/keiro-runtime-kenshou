@@ -7,6 +7,7 @@ module Kenshou.Remote.Cell.Lease
     LeaseHandle,
     AcquireOutcome (..),
     acquireLease,
+    acquireLeaseWithId,
     renewLease,
     resizeLease,
     releaseLease,
@@ -119,10 +120,22 @@ instance FromJSON Quarantine where
     pure quarantine
 
 acquireLease :: ObjectStore -> CellRef -> LeaseRequest -> IO AcquireOutcome
-acquireLease store ref request = do
+acquireLease store ref request = newRunId >>= acquireLeaseWithId store ref request
+
+-- The caller may durably retain this identity before issuing a remote claim.
+-- Reconciliation never renews or revives an expired/cancelled claim.
+acquireLeaseWithId :: ObjectStore -> CellRef -> LeaseRequest -> LeaseId -> IO AcquireOutcome
+acquireLeaseWithId store ref request identifier = do
   unless (validCellName ref.cellName && not (Text.null request.owner) && not (Text.null request.purpose) && request.ttlSeconds > 0) (ioError (userError "invalid lease request"))
-  identifier <- newRunId
-  acquire identifier (0 :: Int)
+  current <- readCurrent store ref
+  now <- store.serverTime
+  case current of
+    Just (lease, meta)
+      | lease.leaseId == identifier ->
+          if not lease.cancelRequested && addUTCTime (fromIntegral lease.ttlSeconds + 30) meta.updated >= now
+            then accept lease meta
+            else pure (Busy lease)
+    _ -> acquire identifier (0 :: Int)
   where
     acquire identifier attempts = do
       unless (attempts < maxCasAttempts) (ioError (userError "lease claim contention exceeded retry limit"))

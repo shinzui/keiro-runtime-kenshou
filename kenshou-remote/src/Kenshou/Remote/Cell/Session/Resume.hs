@@ -6,12 +6,14 @@ module Kenshou.Remote.Cell.Session.Resume
   )
 where
 
+import Data.Aeson (eitherDecode)
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
-import Kenshou.Core.Id (RunId)
+import Kenshou.Core.Id (RunId, renderRunId)
+import Kenshou.Remote.Cell.Docs (Submission)
 import Kenshou.Remote.Cell.Fetch (FetchError, VerifyProblem, fetchCellRun)
 import Kenshou.Remote.Cell.Index (deriveCellRunIndex, writeCellRunIndex)
 import Kenshou.Remote.Cell.Lease (CellRef (..), LeaseHandle)
@@ -20,7 +22,7 @@ import Kenshou.Remote.Cell.Session.Journal (SessionJournal (..), SliceJournal (.
 import Kenshou.Remote.Cell.Session.Rebind (RebindError, rebindPlannedSlices)
 import Kenshou.Remote.Cell.Session.Runner (SessionRunError, runPendingSlices)
 import Kenshou.Remote.Cell.Watch (WatchEvent, WatchSnapshot (..), WatchTerminal (..), newWatchCursor, pollCellRun)
-import Kenshou.Remote.Store (Bucket (..), ObjectStore)
+import Kenshou.Remote.Store (Bucket (..), ObjectName (..), ObjectStore (..))
 import System.FilePath (takeDirectory)
 
 data ResumeError
@@ -72,17 +74,19 @@ resumeObservedSlices store ref resultsBucket journalPath emit = do
     reconcile current [] = Right <$> readIORef current
     reconcile current (slice : rest) = do
       outcome <- case slice.state of
-        SlicePlanned -> pure (Right ())
+        SlicePlanned -> do
+          let name = ObjectName ("cells/" <> ref.cellName <> "/submissions/" <> renderRunId slice.cellRun <> "/submission.json")
+          marker <- store.getObject ref.controlBucket name
+          case marker of
+            Nothing -> pure (Right ())
+            Just (bytes, _) -> case eitherDecode bytes :: Either String Submission of
+              Right submission | submission == slice.submission -> do
+                checkpoint current slice.cellRun SubmissionPublished
+                observeSubmitted current slice
+              _ -> pure (Left (InvalidJournal "retained planned submission differs from the visible marker"))
         SliceRejected -> pure (Right ())
         SliceVerified -> pure (Right ())
-        SliceSubmitted -> do
-          observed <- observe slice.cellRun
-          case observed of
-            Nothing -> pure (Right ())
-            Just (RunRejected rejected) -> checkpoint current slice.cellRun (SubmissionRejectedByCell rejected) >> pure (Right ())
-            Just (RunSealed status) -> do
-              checkpoint current slice.cellRun (SubmissionSealed status)
-              collect current slice.cellRun (Just status) True
+        SliceSubmitted -> observeSubmitted current slice
         SliceSealed -> do
           status <- sealedStatus slice.cellRun
           collect current slice.cellRun status True
@@ -92,6 +96,14 @@ resumeObservedSlices store ref resultsBucket journalPath emit = do
       case outcome of
         Left failure -> pure (Left failure)
         Right () -> reconcile current rest
+    observeSubmitted current slice = do
+      observed <- observe slice.cellRun
+      case observed of
+        Nothing -> pure (Right ())
+        Just (RunRejected rejected) -> checkpoint current slice.cellRun (SubmissionRejectedByCell rejected) >> pure (Right ())
+        Just (RunSealed status) -> do
+          checkpoint current slice.cellRun (SubmissionSealed status)
+          collect current slice.cellRun (Just status) True
     observe identifier = do
       snapshot <- pollCellRun store ref identifier newWatchCursor
       mapM_ emit snapshot.events

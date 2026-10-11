@@ -11,7 +11,7 @@ import Data.Maybe (isJust)
 import Data.Time (addUTCTime, getCurrentTime)
 import Kenshou.Core.Id (newRunId)
 import Kenshou.Remote.Cell.Control (CellSnapshot (..), readCellSnapshot)
-import Kenshou.Remote.Cell.Lease (AcquireOutcome (..), CellRef (..), Lease (..), LeaseHandle, LeaseRequest (..), Quarantine (..), acquireLease, leaseHeld, leaseSnapshot, reattachLease, releaseLease, renewLease, requestCancel, resizeLease, withHeartbeat)
+import Kenshou.Remote.Cell.Lease (AcquireOutcome (..), CellRef (..), Lease (..), LeaseHandle, LeaseRequest (..), Quarantine (..), acquireLease, acquireLeaseWithId, leaseHeld, leaseSnapshot, reattachLease, releaseLease, renewLease, requestCancel, resizeLease, withHeartbeat)
 import Kenshou.Remote.Store (Bucket (..), ObjectMeta (..), ObjectName (..), ObjectStore (..), Precondition (..), PutOutcome (..))
 import Kenshou.Remote.Store.File (newFileStore)
 import System.IO.Temp (withSystemTempDirectory)
@@ -19,6 +19,21 @@ import Test.Hspec
 
 spec :: Spec
 spec = describe "cell lease protocol" do
+  it "reconciles a caller-retained claim without another write or reviving an expired lease" $ withSystemTempDirectory "kenshou-retained-claim" \root -> do
+    store <- newFileStore root
+    identifier <- newRunId
+    handle <- acquireLeaseWithId store cellRef request identifier >>= expectAcquired
+    original <- store.getObject cellRef.controlBucket (ObjectName "cells/alpha/lease.json")
+    recovered <- acquireLeaseWithId store cellRef request identifier >>= expectAcquired
+    (leaseSnapshot recovered >>= pure . (.leaseId)) `shouldReturn` identifier
+    store.getObject cellRef.controlBucket (ObjectName "cells/alpha/lease.json") `shouldReturn` original
+    now <- store.serverTime
+    let future = store {serverTime = pure (addUTCTime 1000 now)}
+    expired <- acquireLeaseWithId future cellRef request identifier
+    case expired of Busy lease -> lease.leaseId `shouldBe` identifier; _ -> expectationFailure "expired identity was revived"
+    store.getObject cellRef.controlBucket (ObjectName "cells/alpha/lease.json") `shouldReturn` original
+    releaseLease store cellRef handle `shouldReturn` True
+
   it "gives exactly one contender a create-only lease" $ withSystemTempDirectory "kenshou-lease" \root -> do
     store <- newFileStore root
     replies <- replicateM 12 newEmptyMVar

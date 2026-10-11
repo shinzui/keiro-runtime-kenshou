@@ -40,7 +40,8 @@ import Kenshou.Remote.Cell.Lease qualified as Lease
 import Kenshou.Remote.Cell.Prepare
 import Kenshou.Remote.Cell.RouteRules
 import Kenshou.Remote.Cell.Session.Build (BuildOptions (..), buildSession)
-import Kenshou.Remote.Cell.Session.Journal (SessionJournal (..), SliceJournal (..), readSessionJournal)
+import Kenshou.Remote.Cell.Session.Journal (SessionJournal (..), SliceJournal (..), SliceState (..), readSessionJournal)
+import Kenshou.Remote.Cell.Session.Resume (resumeObservedSlices)
 import Kenshou.Remote.Cell.WorkJson (decodeWorkPlan)
 import Kenshou.Remote.Pair
 import Kenshou.Remote.Payload (Bundle (..), CellPayload (..), PayloadDescriptor (..))
@@ -203,7 +204,7 @@ runResume destination environment = guarded do
     checkCalibratedPolicies prepared inputs
     state <- require (journalState session)
     receiptExists <- doesFileExist (output </> "receipt.json")
-    if receiptExists && state.lease == Nothing && state.activeComparison == Nothing && Map.size state.completed == length session.plan.selected
+    if receiptExists && state.lease == Nothing && state.pendingClaim == Nothing && state.activeComparison == Nothing && Map.size state.completed == length session.plan.selected
       then do
         (result, _) <- verifySessionEvidence output False
         receipt <- readJSON (output </> "receipt.json")
@@ -224,7 +225,7 @@ runStatus output _ = guarded do
   session <- readPerfSession (output </> "session.json") >>= require
   state <- require (journalState session)
   now <- getCurrentTime
-  Lazy.putStrLn (encode (object ["session" .= session.sessionId, "requestSha256" .= session.plan.requestSha256, "admissionSpentSeconds" .= state.admissionSpentSeconds, "executionDeadline" .= state.executionDeadline, "cleanupDeadline" .= state.cleanupDeadline, "lease" .= state.lease, "activeComparison" .= state.activeComparison, "attempts" .= state.attempts, "replacements" .= state.replacements, "completed" .= Map.elems state.completed, "runtimeBlockers" .= state.runtimeBlockers, "totalElapsedSeconds" .= (realToFrac (diffUTCTime now session.createdAt) :: Double)]))
+  Lazy.putStrLn (encode (object ["session" .= session.sessionId, "requestSha256" .= session.plan.requestSha256, "admissionSpentSeconds" .= state.admissionSpentSeconds, "executionDeadline" .= state.executionDeadline, "cleanupDeadline" .= state.cleanupDeadline, "lease" .= state.lease, "pendingClaim" .= state.pendingClaim, "activeComparison" .= state.activeComparison, "attempts" .= state.attempts, "replacements" .= state.replacements, "completed" .= Map.elems state.completed, "runtimeBlockers" .= state.runtimeBlockers, "totalElapsedSeconds" .= (realToFrac (diffUTCTime now session.createdAt) :: Double)]))
   pure ExitSuccess
 
 loadPreparation :: FilePath -> IO Prepared.PerfPrepared
@@ -351,25 +352,32 @@ execute environment store inputs payloads prepared output = do
         let a = adapter environment store inputs payloads p
         built <- buildSession a.registry a.descriptor a.capabilities a.rules a.payloads a.options a.storeLabel planned.planId (encode planned)
         pure (either (const False) (const (prepared.plan.request.purpose == "calibration" || entry.profile.machineProfile == cellMachineProfile a.descriptor)) built)
-      admission entry seconds = waitFor entry seconds
-      waitFor entry left = do
-        granted <- findLease entry inputs.cells
+      admission entry seconds pending callbacks = case pending of
+        Just (name, identity, _) -> do
+          unless (name == entry.profile.name) (ioError (userError "proposed claim belongs to another profile"))
+          active <- Lease.reattachActiveLease store (ref identity) identity.leaseId
+          pure (maybe (AdmissionFailed "proposed cell claim is unresolved, expired or cancelled; no new claim issued") (const (Admitted identity)) active)
+        Nothing -> waitFor entry seconds callbacks
+      waitFor entry left callbacks = do
+        granted <- findLease entry inputs.cells callbacks
         case granted of
-          Occupied | left > 1 -> threadDelay 1000000 >> waitFor entry (left - 1)
+          Occupied | left > 1 -> threadDelay 1000000 >> waitFor entry (left - 1) callbacks
           _ -> pure granted
-      findLease _ [] = pure Occupied
-      findLease entry (p@(descriptor, _) : rest) = do
+      findLease _ [] _ = pure Occupied
+      findLease entry (p@(descriptor, _) : rest) callbacks = do
         compatible <- supports entry p
         if not compatible
-          then findLease entry rest
+          then findLease entry rest callbacks
           else do
             checkCell store inputs p
-            granted <- Lease.acquireLease store (Lease.CellRef descriptor.name (Bucket inputs.controlBucket)) (Lease.LeaseRequest "kenshou-perf" "pinned runtime performance validation" 180)
+            identifier <- newRunId
+            let identity = LeaseIdentity descriptor.name identifier
+            callbacks.proposeClaim identity
+            granted <- Lease.acquireLeaseWithId store (Lease.CellRef descriptor.name (Bucket inputs.controlBucket)) (Lease.LeaseRequest "kenshou-perf" "pinned runtime performance validation" 180) identifier
             case granted of
-              Lease.Acquired acquired -> do
-                snapshot <- Lease.leaseSnapshot acquired
-                pure (Admitted (LeaseIdentity descriptor.name snapshot.leaseId))
-              _ -> findLease entry rest
+              Lease.Acquired _ -> pure (Admitted identity)
+              Lease.Busy _ -> callbacks.withdrawClaim >> findLease entry rest callbacks
+              Lease.Quarantined _ -> pure (AdmissionFailed "cell was quarantined during the proposed claim")
       compareOne identity entry index _ callbacks = do
         p <- pinned identity
         acquired <- handle identity
@@ -409,13 +417,23 @@ execute environment store inputs payloads prepared output = do
           ( \identity -> do
               files <- treeFiles (output </> "configurations")
               journals <- traverse (\path -> readSessionJournal (output </> "configurations" </> path) >>= require) [path | path <- files, [_, _, "trials", _, "session.json"] <- [splitDirectories path]]
+              -- Fence first, then inspect markers. A marker arriving after
+              -- this fence cannot start work under the old lease identity.
+              _ <- Lease.requestCancel store (ref identity) (Just identity.leaseId) False
               settled <- ownedWorkSettled store (ref identity) identity journals
               unless settled do
                 _ <- Lease.requestCancel store (ref identity) (Just identity.leaseId) False
                 waitForOwnedWork store (ref identity) identity journals
               owned <- Lease.reattachLease store (ref identity) identity.leaseId
-              maybe (pure False) (Lease.releaseLease store (ref identity)) owned
+              case owned of
+                Just handle -> Lease.releaseLease store (ref identity) handle
+                Nothing -> do
+                  history <- readPerfSession (output </> "session.json") >>= require
+                  -- An absent ambiguous proposal must stay unresolved. A known
+                  -- lost lease with terminal owned work needs no deletion.
+                  pure (any ((== LeaseAcquired identity) . (.action)) history.events)
           )
+          (recoverSealedRuntime store inputs prepared output)
           (describeReport output)
           (publishSnapshot store inputs prepared output)
   createDirectoryIfMissing True (output </> "configurations")
@@ -430,6 +448,39 @@ verifyConfiguration :: ExecutionInputs -> Prepared.PerfPrepared -> FilePath -> C
 verifyConfiguration inputs prepared output result = do
   entry <- maybe (ioError (userError "result names an unselected profile")) pure (find ((== result.profile) . (.name) . (.profile)) prepared.plan.selected)
   auditProfileAttempts False inputs prepared output entry (Just result)
+
+recoverSealedRuntime :: ObjectStore -> ExecutionInputs -> Prepared.PerfPrepared -> FilePath -> LeaseIdentity -> IO [(Text, Text)]
+recoverSealedRuntime store inputs prepared output identity = fmap (List.nub . concat) (traverse profile prepared.plan.selected)
+  where
+    profile entry = do
+      let base = output </> "configurations" </> Text.unpack entry.profile.name
+      exists <- doesDirectoryExist base
+      attempts <- if exists then listDirectory base else pure []
+      fmap concat (traverse (attempt entry base) attempts)
+    attempt entry base name = do
+      let directory = base </> name
+          schedulePath = directory </> "schedule.json"
+      exists <- doesFileExist schedulePath
+      if not exists
+        then pure []
+        else do
+          schedule <- readJSON schedulePath >>= require . decodeWorkPlan
+          fmap concat (traverse (trial entry directory) schedule.runs)
+    trial entry directory run = do
+      let trialDirectory = directory </> "trials" </> Text.unpack (renderRunId run.runId)
+          path = trialDirectory </> "session.json"
+      exists <- doesFileExist path
+      if not exists
+        then pure []
+        else do
+          retained <- readSessionJournal path >>= require
+          if retained.leaseId /= identity.leaseId || retained.cell /= identity.cell
+            then pure []
+            else do
+              observed <- resumeObservedSlices store (Lease.CellRef identity.cell (Bucket inputs.controlBucket)) (Bucket retained.resultsBucket) path (\event -> TextIO.hPutStrLn stderr (Text.pack (show event)))
+              journal <- either (ioError . userError . show) pure observed
+              reasons <- retainedRuntimeProblems entry.profile run trialDirectory journal
+              pure [(entry.profile.name, reason) | reason <- reasons]
 
 auditAllAttempts :: Bool -> ExecutionInputs -> Prepared.PerfPrepared -> FilePath -> IO ()
 auditAllAttempts recover inputs prepared output = do
@@ -505,6 +556,7 @@ auditProfileAttempts recover inputs prepared output entry wanted = do
                                   unless (slice.submission.leaseId == identity.leaseId && slice.submission.runId == slice.cellRun && slice.runIds == [run.runId] && slice.submission.work.sha256 == Text.drop 7 (sha256Hex (Lazy.toStrict work)) && slice.submission.work.bytes == Lazy.length work) (ioError (userError "retained submission work or identity differs"))
                               )
                               journal.slices
+                            when (not recover && any (\slice -> slice.state `notElem` [SlicePlanned, SliceRejected, SliceVerified]) journal.slices) (ioError (userError "retained report contains unresolved submitted cell work"))
                             verified <- verifyCellTrial (Map.findWithDefault Null identity.cell inputs.healthPolicies) (fst pinned) run trial journal
                             runtimeProblems <- retainedRuntimeProblems entry.profile run trial journal
                             mapM_
@@ -583,7 +635,8 @@ treeFiles root = do
     )
 
 publishSnapshot :: ObjectStore -> ExecutionInputs -> Prepared.PerfPrepared -> FilePath -> PerfSession -> PerfResult -> IO Bool
-publishSnapshot store _ _ output session result = do
+publishSnapshot store inputs prepared output session result = do
+  auditAllAttempts False inputs prepared output
   publicationStarted <- getCurrentTime
   manifestReference <- case filter ((== "aggregate-manifest") . (.kind)) result.artifactReferences of
     [reference] -> pure reference.uri

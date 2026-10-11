@@ -4,7 +4,7 @@ title: Validating runtime change performance
 description: Prepare exact runtime revisions, execute bounded paired comparisons, recover sessions, and verify durable performance evidence.
 docId: DOC-6
 tags: [performance, runtime-changes, verification-cells, evidence, ci]
-generated: {by: 'codex/gpt-6.1-sol', at: '2026-10-11T08:14:16Z'}
+generated: {by: 'codex/gpt-6.1-sol', at: '2026-10-11T08:45:55Z'}
 ---
 
 # Validating runtime change performance
@@ -131,11 +131,18 @@ configuration attempt, and evidence from different leases is not pooled.
 Completed verified configurations are reused. Only one client may mutate a
 session. Status reads local state without cloud actions.
 
-The execution budget begins at first lease acquisition and includes measurement,
+The client retains its proposed lease ID before claiming. If the claim response
+times out, resume reconciles that same ID without claiming another lease. The
+execution clock conservatively starts at the proposal that acquired the first
+lease, including an interrupted claim whose acceptance is confirmed later.
+
+The execution budget includes measurement,
 reset, retrieval and report publication. Its cleanup grace permits bounded
 cancellation and release; it cannot extend acceptance or publication. Release
 waits for the exact owned work to reach a terminal sealed/rejected state.
-Ambiguous work remains fenced by its lease rather than being declared finished.
+Recovery cancels the exact old lease before inspecting submission markers and
+collects any sealed runtime failures before starting a fresh attempt. Ambiguous
+work remains fenced by its lease rather than being declared finished.
 Owner cleanup, quarantine and live interruption acceptance remain open.
 
 The report snapshot includes `result.json`, `report.md`, an inventory manifest,

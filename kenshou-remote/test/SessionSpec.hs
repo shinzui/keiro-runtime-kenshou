@@ -47,6 +47,23 @@ spec = describe "one leased cell submission" do
     fmap (.state) submitted.slices `shouldBe` [SliceSubmitted]
     applyTransition now identifier Session.SubmissionPublished submitted `shouldSatisfy` isLeft
 
+  it "reconciles an exact marker after interruption before its publication checkpoint without writing another marker" $ withSystemTempDirectory "kenshou-marker-recovery" \root -> do
+    store <- newFileStore root
+    handle <- acquireLease store cellRef request >>= expectAcquired
+    submission <- fixtureFor handle
+    let path = root </> "out" </> "session.json"
+        marker = ObjectName (submissionPrefix submission <> "submission.json")
+    (_, _) <- journalCheckpoint path submission
+    absent <- resumeObservedSlices store cellRef (Bucket "results") path (const (pure ())) >>= either (fail . show) pure
+    fmap (.state) absent.slices `shouldBe` [SlicePlanned]
+    store.getObject cellRef.controlBucket marker `shouldReturn` Nothing
+    _ <- store.putObject cellRef.controlBucket marker "application/json" DoesNotExist (encode submission)
+    retained <- store.getObject cellRef.controlBucket marker
+    observed <- resumeObservedSlices store cellRef (Bucket "results") path (const (pure ())) >>= either (fail . show) pure
+    fmap (.state) observed.slices `shouldBe` [SliceSubmitted]
+    store.getObject cellRef.controlBucket marker `shouldReturn` retained
+    releaseLease store cellRef handle `shouldReturn` True
+
   it "stops before publication when the lease was cancelled" $ withSystemTempDirectory "kenshou-session" \root -> do
     store <- newFileStore root
     handle <- acquireLease store cellRef request >>= expectAcquired
@@ -191,7 +208,10 @@ spec = describe "one leased cell submission" do
                 let oldMarker = secondRecovered {state = SlicePlanned, cellOutcome = Nothing, entryExitCode = Nothing, manifestSha256 = Nothing, fetchedPath = Nothing}
                 writeSessionJournal journalPath (recovered {slices = [firstRecovered, oldMarker]})
                 rebindPlannedSlices store cellRef handle journalPath `shouldReturn` Left (RemoteMarkerExists secondRecovered.cellRun)
-                resumeHeldSession store cellRef (Bucket "results") handle journalPath (const (pure ())) `shouldReturn` Left (RebindingError (RemoteMarkerExists secondRecovered.cellRun))
+                observedMarker <- resumeHeldSession store cellRef (Bucket "results") handle journalPath (const (pure ()))
+                case observedMarker of
+                  Left failure -> expectationFailure (show failure)
+                  Right collected -> fmap (.state) collected.slices `shouldBe` [SliceVerified, SliceVerified]
               _ -> expectationFailure "expected two recovered slices"
           _ -> expectationFailure "expected two journal slices"
         fresh <- fixtureFor handle

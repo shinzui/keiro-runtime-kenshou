@@ -233,6 +233,51 @@
               "minimum": 5
             }
           }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "profile",
+            "lease"
+          ],
+          "properties": {
+            "kind": {
+              "const": "lease-claim-proposed"
+            },
+            "profile": {
+              "type": "string",
+              "minLength": 1
+            },
+            "lease": {
+              "$ref": "#/$defs/lease"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "lease-claim-withdrawn"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "lease-claim-released"
+            }
+          }
         }
       ]
     },
