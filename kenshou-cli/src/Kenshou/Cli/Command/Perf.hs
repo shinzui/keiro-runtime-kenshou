@@ -166,7 +166,7 @@ resolveArm output harness revision arm = do
   createDirectory flake
   descriptor <- ByteString.readFile (evidence </> Text.unpack arm <> "-cohort.json") >>= decode "generated cohort"
   encodeFile descriptorPath (descriptor :: Cohort.CohortDescriptor)
-  _ <- loggedProcess (work </> "source-lock.log") (harness </> "scripts" </> "payload-lock.sh") ["--descriptor", descriptorPath, "--out", lockPath]
+  _ <- loggedProcess (work </> "source-lock.log") "bash" [harness </> "scripts" </> "payload-lock.sh", "--descriptor", descriptorPath, "--out", lockPath]
   lock <- ByteString.readFile lockPath >>= decode "source lock"
   wrapper <- requireInput (generatedFlake harness revision descriptor)
   Text.IO.writeFile (flake </> "flake.nix") wrapper

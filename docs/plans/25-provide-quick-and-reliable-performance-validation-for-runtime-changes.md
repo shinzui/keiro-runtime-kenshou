@@ -118,6 +118,9 @@ evaluation found 405 unique Haskell packages; legacy inputs contain 71 bound-lif
 packages, while strict preparation evaluation contains zero and retains the one
 reviewed package-scoped exception. Same-source live publication/cache reuse and
 candidate-only build acceptance are still pending; Milestone 1 remains open.
+The first live preparation caught a non-executable checked-in source-lock script;
+the CLI now invokes it through Bash, matching its existing operator usage. The
+failed preparation retained its generated inputs and acquired no lease.
 
 ## Surprises & Discoveries
 
