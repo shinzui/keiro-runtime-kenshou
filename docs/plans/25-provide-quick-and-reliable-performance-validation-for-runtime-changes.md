@@ -200,6 +200,21 @@ preparation/execution stage times and artifact links. Owner-side generic cleanup
 quarantine and live recovery acceptance remain open. Thirty remote performance
 controls and ten CLI controls pass, including expired interrupted cleanup grace.
 
+Retained-attempt audit (2026-10-11): Replay now audits every retained attempt,
+including abandoned and partial attempts, against the journaled lease, the
+request-derived paired schedule and seed, pinned payloads, work digests and
+ordinary comparison bytes. Trial paths are relative to their attempt directory;
+moving a raw A/A control's evidence preserves its comparison bytes and replay.
+Terminal executor failures are checkpointed so resume does not redispatch them.
+Sealed nested runtime failures are recorded before outer pair rejection and can
+be recovered after interruption without duplicating or erasing blockers. Thirty-five
+remote performance controls and ten CLI controls pass, including five raw pairs,
+an exit-zero defect, one corrupt-pair replacement, and a retained latency regression.
+These are synthetic protocol controls. Independent calibration admission,
+owner acceptance, live calibration and CI parity remain unfinished.
+The full remote test suite also passes (142 examples), preserving the existing
+cell slicing, pairing, submission, lease and recovery controls.
+
 ## Surprises & Discoveries
 
 

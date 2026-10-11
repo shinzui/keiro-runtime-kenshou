@@ -31,12 +31,12 @@ import Kenshou.Perf.Request (PerfRequest (..), strictObject)
 import Kenshou.Perf.Result
 import Kenshou.Plan.RunPlan (PlannedRun (..), RunPlan (..))
 import Kenshou.Remote.Cell.Control
-import Kenshou.Remote.Cell.Docs (CachePolicy (Cold), CellBuckets (..), CellDescriptor (..))
+import Kenshou.Remote.Cell.Docs (CachePolicy (Cold), CellBuckets (..), CellDescriptor (..), Submission (..), WorkObject (..))
 import Kenshou.Remote.Cell.Lease qualified as Lease
 import Kenshou.Remote.Cell.Prepare
 import Kenshou.Remote.Cell.RouteRules
 import Kenshou.Remote.Cell.Session.Build (BuildOptions (..), buildSession)
-import Kenshou.Remote.Cell.Session.Journal (readSessionJournal)
+import Kenshou.Remote.Cell.Session.Journal (SessionJournal (..), SliceJournal (..), readSessionJournal)
 import Kenshou.Remote.Cell.WorkJson (decodeWorkPlan)
 import Kenshou.Remote.Pair
 import Kenshou.Remote.Payload (Bundle (..), CellPayload (..), PayloadDescriptor (..))
@@ -342,10 +342,11 @@ execute environment store inputs payloads prepared output = do
               identifier <- newRunId
               planned <- makeSchedule prepared entry identifier
               createDirectoryIfMissing True directory
-              encodeFile schedulePath planned
+              encodeFile (schedulePath <> ".next") planned
+              renameFile (schedulePath <> ".next") schedulePath
               pure planned
         policy <- require (policyFor prepared entry)
-        result <- executeAttempt identity entry schedule policy (axesFor prepared) directory callbacks (executeCellTrial (adapter environment store inputs payloads p) acquired schedule directory)
+        result <- executeAttempt identity entry schedule policy (axesFor prepared) directory callbacks (executeCellTrial (adapter environment store inputs payloads p) acquired schedule directory entry.profile callbacks.recordRuntimeFailure)
         maybe (pure ()) (encodeFile (directory </> "comparison.json")) result.comparison
         encodeFile (directory </> "result.json") result
         pure result
@@ -375,6 +376,7 @@ execute environment store inputs payloads prepared output = do
           (describeReport output)
           (publishSnapshot store inputs prepared output)
   createDirectoryIfMissing True (output </> "configurations")
+  auditAllAttempts True inputs prepared output
   result <- runPerformance hooks prepared (output </> "session.json")
   encodeFile (output </> "result.json") result
   TextIO.writeFile (output </> "report.md") (renderReport result)
@@ -384,40 +386,115 @@ execute environment store inputs payloads prepared output = do
 verifyConfiguration :: ExecutionInputs -> Prepared.PerfPrepared -> FilePath -> ConfigurationResult -> IO Bool
 verifyConfiguration inputs prepared output result = do
   entry <- maybe (ioError (userError "result names an unselected profile")) pure (find ((== result.profile) . (.name) . (.profile)) prepared.plan.selected)
-  let base = output </> "configurations" </> Text.unpack result.profile
-  attempts <- listDirectory base
+  auditProfileAttempts False inputs prepared output entry (Just result)
+
+auditAllAttempts :: Bool -> ExecutionInputs -> Prepared.PerfPrepared -> FilePath -> IO ()
+auditAllAttempts recover inputs prepared output = do
+  names <- listDirectory (output </> "configurations")
+  unless (all (`elem` map (Text.unpack . (.name) . (.profile)) prepared.plan.selected) names) (ioError (userError "retained evidence contains an unselected profile"))
+  mapM_ (\entry -> auditProfileAttempts recover inputs prepared output entry Nothing >>= \valid -> unless valid (ioError (userError "retained attempt audit failed"))) prepared.plan.selected
+
+-- Every retained attempt is checked, including abandoned and partially written
+-- attempts. Only a complete matching attempt supplies the final comparison.
+auditProfileAttempts :: Bool -> ExecutionInputs -> Prepared.PerfPrepared -> FilePath -> PlannedProfile -> Maybe ConfigurationResult -> IO Bool
+auditProfileAttempts recover inputs prepared output entry wanted = do
+  session <- readPerfSession (output </> "session.json") >>= require
+  let (_, identities) = foldl' remember (Nothing, Map.empty) session.events
+      base = output </> "configurations" </> Text.unpack entry.profile.name
+      remember (lease, known) event = case event.action of
+        LeaseAcquired identity -> (Just identity, known)
+        LeaseLost _ -> (Nothing, known)
+        LeaseReleased -> (Nothing, known)
+        ComparisonStarted profile index -> (lease, maybe known (\identity -> Map.insert (profile, "attempt-" <> show index) identity known) lease)
+        _ -> (lease, known)
+  exists <- doesDirectoryExist base
+  names <- if exists then listDirectory base else pure []
+  baseline <- require (decode prepared.baseline.payload)
+  candidate <- require (decode prepared.candidate.payload)
+  let payloads = Map.fromList [("baseline", baseline), ("candidate", candidate)]
   candidates <-
     traverse
       ( \name -> do
+          identity <- maybe (ioError (userError "retained attempt has no journaled lease identity")) pure (Map.lookup (entry.profile.name, name) identities)
           let directory = base </> name
-          present <- doesFileExist (directory </> "result.json")
-          recorded <- if present then Just <$> readJSON (directory </> "result.json") else pure Nothing
-          if maybe True (\record -> record.comparison /= result.comparison || record.validPairs /= result.validPairs) (recorded :: Maybe ConfigurationResult)
-            then pure False
+          files <- treeFiles directory
+          scheduleExists <- doesFileExist (directory </> "schedule.json")
+          if not scheduleExists
+            then do
+              unless (all (== "schedule.json.next") files) (ioError (userError "retained attempt has evidence before its paired schedule"))
+              pure False
             else do
               schedule <- readJSON (directory </> "schedule.json") >>= require . decodeWorkPlan
-              metadata <- readJSON (directory </> "attempt.json")
-              identity <- either (ioError . userError) pure (parseEither (withObject "Attempt" (.: "lease")) metadata :: Either String LeaseIdentity)
-              pinned <- maybe (ioError (userError "attempt cell is outside frozen pool")) pure (find ((== identity.cell) . (.name) . fst) inputs.cells)
-              paths <- readJSON (directory </> "trial-paths.json") :: IO (Map.Map Text FilePath)
-              outer <-
-                traverse
-                  ( \run ->
-                      if Map.member (renderRunId run.runId) paths
-                        then do
-                          let trial = directory </> "trials" </> Text.unpack (renderRunId run.runId)
-                          journal <- readSessionJournal (trial </> "session.json") >>= require
-                          verified <- verifyCellTrial (fst pinned) run trial journal
-                          pure (verified == Right (directory </> (paths Map.! renderRunId run.runId)))
-                        else pure True
-                  )
-                  schedule.runs
-              policy <- require (policyFor prepared entry)
-              replayed <- verifyAttempt entry schedule policy (axesFor prepared) directory result
-              pure (and outer && replayed)
+              expected <- makeSchedule prepared entry schedule.planId
+              unless (toJSON schedule == toJSON expected) (ioError (userError "retained paired schedule differs from its pinned request and seed"))
+              metadataExists <- doesFileExist (directory </> "attempt.json")
+              if not metadataExists
+                then do
+                  unless (all (`elem` ["schedule.json", "attempt.json.next"]) files) (ioError (userError "retained attempt has evidence but no immutable attempt header"))
+                  pure False
+                else do
+                  verifyAttemptInputs identity entry schedule directory
+                  pinned <- maybe (ioError (userError "attempt cell is outside frozen pool")) pure (find ((== identity.cell) . (.name) . fst) inputs.cells)
+                  pathsExists <- doesFileExist (directory </> "trial-paths.json")
+                  paths <- if pathsExists then readJSON (directory </> "trial-paths.json") else pure Map.empty
+                  failureExists <- doesFileExist (directory </> "trial-failures.json")
+                  failures <- if failureExists then readJSON (directory </> "trial-failures.json") else pure (Map.empty :: Map.Map Text Text)
+                  let journalPaths = [path | path <- files, ["trials", _, "session.json"] <- [splitDirectories path]]
+                      expectedPaths = ["trials" </> Text.unpack (renderRunId run.runId) </> "session.json" | run <- schedule.runs]
+                  unless (all (`elem` expectedPaths) journalPaths) (ioError (userError "retained cell journal names an unplanned trial"))
+                  mapM_
+                    ( \run -> do
+                        let identifier = renderRunId run.runId
+                            trial = directory </> "trials" </> Text.unpack identifier
+                            journalPath = trial </> "session.json"
+                            planBytes = encode schedule {runs = [run], estimateMinutes = run.estimateMinutes}
+                        journalExists <- doesFileExist journalPath
+                        if not journalExists
+                          then unless (Map.notMember identifier (paths :: Map.Map Text FilePath)) (ioError (userError "retained accepted trial has no cell journal"))
+                          else do
+                            journal <- readSessionJournal journalPath >>= require
+                            unless (journal.leaseId == identity.leaseId && journal.cell == identity.cell && journal.controlBucket == inputs.controlBucket && journal.resultsBucket == (fst pinned).buckets.results && journal.payloads == payloads && journal.planSha256 == Text.drop 7 (sha256Hex (Lazy.toStrict planBytes))) (ioError (userError "retained cell journal differs from pinned payloads, trial or lease"))
+                            storedPlan <- Lazy.readFile (trial </> "plan.json")
+                            unless (storedPlan == planBytes) (ioError (userError "retained trial plan bytes differ"))
+                            mapM_
+                              ( \slice -> do
+                                  work <- Lazy.readFile (trial </> slice.workPath)
+                                  unless (slice.submission.leaseId == identity.leaseId && slice.submission.runId == slice.cellRun && slice.runIds == [run.runId] && slice.submission.work.sha256 == Text.drop 7 (sha256Hex (Lazy.toStrict work)) && slice.submission.work.bytes == Lazy.length work) (ioError (userError "retained submission work or identity differs"))
+                              )
+                              journal.slices
+                            verified <- verifyCellTrial (fst pinned) run trial journal
+                            runtimeProblems <- retainedRuntimeProblems entry.profile run trial journal
+                            mapM_
+                              ( \reason -> do
+                                  current <- readPerfSession (output </> "session.json") >>= require
+                                  state <- require (journalState current)
+                                  unless (reason `elem` Map.findWithDefault [] entry.profile.name state.runtimeBlockers) do
+                                    unless recover (ioError (userError "sealed runtime blocker is missing from the session"))
+                                    now <- getCurrentTime
+                                    changed <- require (appendEvent (SessionEvent now (RuntimeBlocked entry.profile.name reason)) current)
+                                    writePerfSession (output </> "session.json") changed
+                              )
+                              runtimeProblems
+                            case Map.lookup identifier paths of
+                              Just path -> unless (verified == Right (directory </> path)) (ioError (userError "retained accepted trial outer evidence differs"))
+                              Nothing -> when (Map.member identifier failures && either (const False) (const True) verified) (ioError (userError "retained failed trial has healthy completed outer evidence"))
+                    )
+                    schedule.runs
+                  present <- doesFileExist (directory </> "result.json")
+                  if not present
+                    then pure False
+                    else do
+                      record <- readJSON (directory </> "result.json")
+                      policy <- require (policyFor prepared entry)
+                      replayed <- verifyAttempt entry schedule policy (axesFor prepared) directory record
+                      unless replayed (ioError (userError "retained attempt result replay differs"))
+                      comparisonExists <- doesFileExist (directory </> "comparison.json")
+                      comparison <- if comparisonExists then Just <$> readJSON (directory </> "comparison.json") else pure Nothing
+                      unless (comparison == record.comparison) (ioError (userError "retained ordinary comparison differs from attempt result"))
+                      pure (maybe False (\result -> record.comparison == result.comparison && record.validPairs == result.validPairs && record.attempts == result.attempts && all (`elem` result.runtimeFailures) record.runtimeFailures) wanted)
       )
-      [name | name <- attempts, "attempt-" `Text.isPrefixOf` Text.pack name]
-  pure (or candidates)
+      names
+  pure (maybe True (\result -> or candidates || (result.comparison == Nothing && result.validPairs == 0 && result.infrastructureState == "pending" && result.performanceVerdict == "inconclusive")) wanted)
 
 describeReport :: FilePath -> PerfSession -> PerfResult -> IO PerfResult
 describeReport output session result = do
@@ -533,6 +610,7 @@ verifySessionEvidence output offline = do
     )
     result.artifactReferences
   state <- require (journalState session)
+  auditAllAttempts False inputs prepared directory
   let completed = Map.elems state.completed
   valid <- traverse (verifyConfiguration inputs prepared directory) completed
   unless (and valid) (ioError (userError "retained comparison replay differs"))

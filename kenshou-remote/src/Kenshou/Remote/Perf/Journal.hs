@@ -18,7 +18,7 @@ import Control.Monad (foldM, unless)
 import Data.Aeson
 import Data.Aeson.Types (Parser)
 import Data.ByteString.Lazy qualified as ByteString
-import Data.List (find)
+import Data.List (find, nub)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
@@ -150,8 +150,11 @@ advance session state event = do
       pure state {replacements = Map.insert name (spent + 1) state.replacements, replacementIdentities = state.replacementIdentities <> [(name, attempt, pair)]}
     RuntimeBlocked name reason -> do
       _ <- selected name
-      unless (maybe False ((== name) . fst) state.activeComparison && not (Text.null reason)) (Left "runtime blocker must name its active configuration and diagnosis")
-      pure state {runtimeBlockers = Map.insertWith (flip (<>)) name [reason] state.runtimeBlockers}
+      -- Recovery may discover a sealed observation after the client lost its
+      -- lease or finished a comparison. It still belongs to the started profile.
+      unless (Map.findWithDefault 0 name state.attempts > 0 && not (Text.null reason)) (Left "runtime blocker must name a previously started configuration and diagnosis")
+      let blockers = nub (Map.findWithDefault [] name state.runtimeBlockers <> [reason])
+      pure state {runtimeBlockers = Map.insert name blockers state.runtimeBlockers, completed = Map.adjust (\result -> result {runtimeFailures = nub (result.runtimeFailures <> [reason])}) name state.completed}
     ComparisonCompleted result -> do
       entry <- selected result.profile
       unless (maybe False ((== result.profile) . fst) state.activeComparison && result.workloadSha256 == entry.workloadSha256 && result.requiredPairs == entry.profile.minimumPairs && Map.notMember result.profile state.completed) (Left "completion differs from active pinned configuration")
@@ -161,7 +164,7 @@ advance session state event = do
       case fromJSON (toJSON result) :: Result ConfigurationResult of
         Error problem -> Left (Text.pack problem)
         Success _ -> pure ()
-      let retained = result {runtimeFailures = Map.findWithDefault [] result.profile state.runtimeBlockers <> result.runtimeFailures}
+      let retained = result {runtimeFailures = nub (Map.findWithDefault [] result.profile state.runtimeBlockers <> result.runtimeFailures)}
       pure state {activeComparison = Nothing, completed = Map.insert result.profile retained state.completed, runtimeBlockers = Map.insert result.profile retained.runtimeFailures state.runtimeBlockers}
   pure changed {lastAt = event.at}
   where

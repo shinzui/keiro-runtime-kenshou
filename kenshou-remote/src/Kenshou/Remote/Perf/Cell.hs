@@ -2,6 +2,7 @@ module Kenshou.Remote.Perf.Cell
   ( CellAdapter (..),
     executeCellTrial,
     verifyCellTrial,
+    retainedRuntimeProblems,
   )
 where
 
@@ -15,9 +16,11 @@ import Data.Text qualified as Text
 import Kenshou.Core.Bundle (Registry)
 import Kenshou.Core.Id (renderRunId)
 import Kenshou.Core.RunSpec (EnvironmentSpec (..), RunSpec (..))
+import Kenshou.Measure.Perf (AdmissionProblem (..), runtimeResultProblems, verifyPerformanceRun)
+import Kenshou.Perf.Plan (PerfProfile)
 import Kenshou.Plan.RunPlan (PlannedRun (..), RunPlan (..))
 import Kenshou.Remote.Cell.Docs (CellBuckets (..), CellDescriptor (..), CellNodes (..), CellOutcome (..), ResetBlock (..), Submission (..), WorkObject (..))
-import Kenshou.Remote.Cell.Index (CellManifestLink (..), CellRunIndex (..), EvidenceLink (..), deriveCellRunIndex)
+import Kenshou.Remote.Cell.Index (CellManifestLink (..), CellRunIndex (..), EvidenceLink (..), RunLink (..), deriveCellRunIndex)
 import Kenshou.Remote.Cell.Lease (CellRef (..), Lease (..), LeaseHandle, leaseSnapshot, withHeartbeat)
 import Kenshou.Remote.Cell.Prepare (cellMachineProfile)
 import Kenshou.Remote.Cell.RouteRules (CellCapabilities, RoutingRule)
@@ -48,8 +51,8 @@ data CellAdapter = CellAdapter
 
 -- Each trial has a separate low-level cell journal. Its work digest is checked
 -- against the immutable paired schedule before any new or resumed submission.
-executeCellTrial :: CellAdapter -> LeaseHandle -> RunPlan -> FilePath -> PlannedRun -> IO (Either Text FilePath)
-executeCellTrial adapter handle schedule attempt run = do
+executeCellTrial :: CellAdapter -> LeaseHandle -> RunPlan -> FilePath -> PerfProfile -> (Text -> IO ()) -> PlannedRun -> IO (Either Text FilePath)
+executeCellTrial adapter handle schedule attempt profile observeRuntime run = do
   lease <- leaseSnapshot handle
   let directory = attempt </> "trials" </> Text.unpack (renderRunId run.runId)
       journalPath = directory </> "session.json"
@@ -83,7 +86,10 @@ executeCellTrial adapter handle schedule attempt run = do
             either (Left . Text.pack . show) Right <$> runPlannedSlices adapter.store adapter.ref results handle journalPath session.journal adapter.emit
   case result of
     Left problem -> pure (Left problem)
-    Right journal -> verifyCellTrial adapter.descriptor run directory journal
+    Right journal -> do
+      problems <- retainedRuntimeProblems profile run directory journal
+      mapM_ observeRuntime problems
+      verifyCellTrial adapter.descriptor run directory journal
   where
     continue results journalPath = do
       resumed <- resumeHeldSession adapter.store adapter.ref results handle journalPath adapter.emit
@@ -91,6 +97,22 @@ executeCellTrial adapter handle schedule attempt run = do
         Left (ContinuationError (UnresolvedSlice _ SliceSubmitted)) -> threadDelay 2000000 >> continue results journalPath
         Left failure -> pure (Left (Text.pack (show failure)))
         Right journal -> pure (Right journal)
+
+-- A bad outer health gate cannot erase a sealed nested runtime assertion or
+-- failed/incomplete steady work. Reconstruct these before rejecting the pair.
+retainedRuntimeProblems :: PerfProfile -> PlannedRun -> FilePath -> SessionJournal -> IO [Text]
+retainedRuntimeProblems profile run directory journal = case journal.slices of
+  [slice] | slice.state `elem` [SliceFetched, SliceVerified] -> do
+    let tree = takeDirectory directory </> Text.unpack (renderRunId slice.cellRun) </> "tree"
+    verified <- deriveCellRunIndex (Bucket journal.resultsBucket) Nothing tree
+    case verified of
+      Right index | index.cellRun == slice.cellRun && index.leaseId == journal.leaseId && index.cell == journal.cell && slice.manifestSha256 == Just index.cellManifest.sha256 && slice.cellOutcome == Just index.cellOutcome && any (\link -> link.runId == run.runId && link.path == "output/" <> renderRunId run.runId) index.runs -> do
+        let nested = tree </> "output" </> Text.unpack (renderRunId run.runId)
+        result <- eitherDecodeFileStrict' (nested </> "run-result.json")
+        measured <- verifyPerformanceRun profile nested
+        pure ([reason | RuntimeWorkFailure reason <- either (const []) runtimeResultProblems result <> either id (const []) measured])
+      _ -> pure []
+  _ -> pure []
 
 -- Recheck the outer cell seal and health even when a low-level journal already
 -- says verified. An exit-one runtime result is still returned for independent

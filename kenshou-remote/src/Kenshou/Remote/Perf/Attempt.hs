@@ -2,6 +2,7 @@ module Kenshou.Remote.Perf.Attempt
   ( TrialExecutor,
     executeAttempt,
     verifyAttempt,
+    verifyAttemptInputs,
   )
 where
 
@@ -40,41 +41,47 @@ data Observation = Observation PlannedRun (Maybe FilePath) [AdmissionProblem]
 executeAttempt :: LeaseIdentity -> PlannedProfile -> RunPlan -> Policy -> NonEmpty VaryingAxis -> FilePath -> ComparisonHooks -> TrialExecutor -> IO ConfigurationResult
 executeAttempt lease entry schedule policy axes directory callbacks execute = do
   createDirectoryIfMissing True directory
-  let inputs = object ["schema" .= ("kenshou.perf-attempt/v1" :: Text), "lease" .= lease, "workloadSha256" .= entry.workloadSha256, "plan" .= schedule]
+  let inputs = attemptInputs lease entry schedule
   immutable (directory </> "attempt.json") inputs
   validateSchedule entry schedule
   paths <- loadPaths directory
   validatePaths directory schedule paths
+  failures <- loadFailures directory schedule paths
   atomicPaths directory paths
-  collect paths [] [0 .. entry.profile.minimumPairs - 1] >>= continue entry.profile.minimumPairs
+  collect paths failures [] [0 .. entry.profile.minimumPairs - 1] >>= continue entry.profile.minimumPairs
   where
-    collect paths observations [] = pure (paths, observations)
-    collect paths observations (index : rest) = do
+    collect paths failures observations [] = pure (paths, failures, observations)
+    collect paths failures observations (index : rest) = do
       let runs = filter (maybe False ((== index) . (.index)) . (.trial)) schedule.runs
-      (changed, appended) <- runEntries paths runs
-      collect changed (observations <> appended) rest
-    runEntries paths [] = pure (paths, [])
-    runEntries paths (run : rest) = do
-      located <- case Map.lookup (renderRunId run.runId) paths of
-        Just relative -> pure (Right (directory </> relative))
-        Nothing -> execute run
-      (changed, observation) <- case located of
-        Left reason -> pure (paths, Observation run Nothing [InvalidPerformanceEvidence reason])
+      (changed, rejected, appended) <- runEntries paths failures runs
+      collect changed rejected (observations <> appended) rest
+    runEntries paths failures [] = pure (paths, failures, [])
+    runEntries paths failures (run : rest) = do
+      let identifier = renderRunId run.runId
+      located <- case (Map.lookup identifier paths, Map.lookup identifier failures) of
+        (Just relative, _) -> pure (Right (directory </> relative))
+        (_, Just reason) -> pure (Left reason)
+        _ -> execute run
+      (changed, rejected, observation) <- case located of
+        Left reason -> do
+          let rejected = Map.insert identifier reason failures
+          atomicJSON (directory </> "trial-failures.json") rejected
+          pure (paths, rejected, Observation run Nothing [InvalidPerformanceEvidence reason])
         Right path -> do
           relative <- relativePath directory path
           let changed = Map.insert (renderRunId run.runId) relative paths
           atomicPaths directory changed
           observation <- admitTrial entry.profile run path
           mapM_ callbacks.recordRuntimeFailure (runtimeProblems observation)
-          pure (changed, observation)
-      (final, appended) <- runEntries changed rest
-      pure (final, observation : appended)
-    continue next (paths, observations)
-      | length (validPairs observations) >= entry.profile.minimumPairs = finish entry policy axes observations
-      | next >= entry.profile.minimumPairs + entry.profile.replacementPairs = finish entry policy axes observations
+          pure (changed, failures, observation)
+      (final, finalFailures, appended) <- runEntries changed rejected rest
+      pure (final, finalFailures, observation : appended)
+    continue next (paths, failures, observations)
+      | length (validPairs observations) >= entry.profile.minimumPairs = finish directory entry policy axes observations
+      | next >= entry.profile.minimumPairs + entry.profile.replacementPairs = finish directory entry policy axes observations
       | otherwise = do
           callbacks.reserveReplacement next
-          updated <- collect paths observations [next]
+          updated <- collect paths failures observations [next]
           continue (next + 1) updated
 
 -- Replay uses only retained paths and rechecks every trial, including failures.
@@ -84,14 +91,15 @@ verifyAttempt entry schedule policy axes directory retained = do
   validateSchedule entry schedule
   paths <- loadPaths directory
   validatePaths directory schedule paths
+  failures <- loadFailures directory schedule paths
   observations <-
     traverse
       ( \run -> case Map.lookup (renderRunId run.runId) paths of
-          Nothing -> pure (Observation run Nothing [InvalidPerformanceEvidence "trial has no retained result"])
+          Nothing -> pure (Observation run Nothing [InvalidPerformanceEvidence (Map.findWithDefault "trial has no retained result" (renderRunId run.runId) failures)])
           Just relative -> admitTrial entry.profile run (directory </> relative)
       )
-      [run | run <- schedule.runs, Map.member (renderRunId run.runId) paths]
-  recomputed <- finish entry policy axes observations
+      [run | run <- schedule.runs, Map.member (renderRunId run.runId) paths || Map.member (renderRunId run.runId) failures]
+  recomputed <- finish directory entry policy axes observations
   pure (same recomputed retained)
   where
     same left right =
@@ -101,10 +109,24 @@ verifyAttempt entry schedule policy axes directory retained = do
         && left.infrastructureState == right.infrastructureState
         && all (`elem` right.runtimeFailures) left.runtimeFailures
         && left.validPairs == right.validPairs
+        && left.attempts == right.attempts
         && case (left.comparison, right.comparison) of
           (Just a, Just b) -> semanticComparison a == semanticComparison b
           (Nothing, Nothing) -> True
           _ -> False
+
+verifyAttemptInputs :: LeaseIdentity -> PlannedProfile -> RunPlan -> FilePath -> IO ()
+verifyAttemptInputs lease entry schedule directory = do
+  validateSchedule entry schedule
+  header <- eitherDecodeFileStrict' (directory </> "attempt.json") >>= either (ioError . userError) pure
+  unless (header == attemptInputs lease entry schedule) (ioError (userError "retained attempt header differs from its journaled lease or pinned workload"))
+  paths <- loadPaths directory
+  validatePaths directory schedule paths
+  _ <- loadFailures directory schedule paths
+  pure ()
+
+attemptInputs :: LeaseIdentity -> PlannedProfile -> RunPlan -> Value
+attemptInputs lease entry schedule = object ["schema" .= ("kenshou.perf-attempt/v1" :: Text), "lease" .= lease, "workloadSha256" .= entry.workloadSha256, "plan" .= schedule]
 
 admitTrial :: PerfProfile -> PlannedRun -> FilePath -> IO Observation
 admitTrial profile run directory = do
@@ -146,14 +168,14 @@ validPairs observations = filter valid (sort (nub [trial.index | Observation run
     runtimeOnly (RuntimeWorkFailure _) = True
     runtimeOnly _ = False
 
-finish :: PlannedProfile -> Policy -> NonEmpty VaryingAxis -> [Observation] -> IO ConfigurationResult
-finish entry policy axes observations = do
+finish :: FilePath -> PlannedProfile -> Policy -> NonEmpty VaryingAxis -> [Observation] -> IO ConfigurationResult
+finish root entry policy axes observations = do
   let chosen = take entry.profile.minimumPairs (validPairs observations)
       path index arm = case find (\(Observation run _ _) -> maybe False (\trial -> trial.index == index && trial.arm == arm) run.trial) observations of
         Just (Observation _ (Just directory) _) -> directory
         _ -> error "valid pair lacks a retained arm"
       failures = nub (concatMap runtimeProblems observations)
-      attempts = [object ["runId" .= run.runId, "path" .= directory, "problems" .= map (Text.pack . show) problems] | Observation run directory problems <- observations]
+      attempts = [object ["runId" .= run.runId, "path" .= fmap (makeRelative root) directory, "problems" .= map (Text.replace (Text.pack root) "." . Text.pack . show) problems] | Observation run directory problems <- observations]
       make verdict infrastructure comparison = ConfigurationResult entry.profile.name entry.workloadSha256 verdict infrastructure failures (length chosen) entry.profile.minimumPairs attempts comparison
   if length chosen < entry.profile.minimumPairs
     then pure (make "inconclusive" "failed" Nothing)
@@ -225,6 +247,14 @@ loadPaths directory = do
   where
     safe path = not (null path) && not (isAbsolute path) && all (`notElem` ["..", ".", ""]) (splitDirectories path)
 
+loadFailures :: FilePath -> RunPlan -> Map Text FilePath -> IO (Map Text Text)
+loadFailures directory schedule paths = do
+  let path = directory </> "trial-failures.json"
+  exists <- doesFileExist path
+  failures <- if exists then eitherDecodeFileStrict' path >>= either (ioError . userError) pure else pure Map.empty
+  unless (all (`elem` map (renderRunId . (.runId)) schedule.runs) (Map.keys failures) && all (`Map.notMember` paths) (Map.keys failures) && all (not . Text.null) (Map.elems failures)) (ioError (userError "retained trial failure has an unknown, conflicting or empty identity"))
+  pure failures
+
 relativePath :: FilePath -> FilePath -> IO FilePath
 relativePath root path = do
   absoluteRoot <- canonicalizePath root
@@ -235,8 +265,13 @@ relativePath root path = do
 
 atomicPaths :: FilePath -> Map Text FilePath -> IO ()
 atomicPaths directory paths = do
-  encodeFile (directory </> "trial-paths.next.json") paths
-  renameFile (directory </> "trial-paths.next.json") (directory </> "trial-paths.json")
+  atomicJSON (directory </> "trial-paths.json") paths
+
+atomicJSON :: (ToJSON document) => FilePath -> document -> IO ()
+atomicJSON destination document = do
+  let temporary = destination <> ".next"
+  encodeFile temporary document
+  renameFile temporary destination
 
 immutable :: FilePath -> Value -> IO ()
 immutable path document = do
@@ -245,4 +280,4 @@ immutable path document = do
     then do
       retained <- eitherDecodeFileStrict' path >>= either (ioError . userError) pure
       unless (retained == document) (ioError (userError "attempt lease, workload or schedule changed"))
-    else encodeFile path document
+    else atomicJSON path document

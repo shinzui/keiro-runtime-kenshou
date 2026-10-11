@@ -76,6 +76,24 @@ spec = describe "performance session budgets" do
     appendEvent (SessionEvent (time 9) LeaseReleased) acquired `shouldSatisfy` isLeft
     appendEvent (SessionEvent (time 11) (ComparisonStarted "unselected" 0)) acquired `shouldSatisfy` isLeft
     appendEvent (SessionEvent (time 11) (AdmissionReserved 1)) acquired `shouldSatisfy` isLeft
+  it "recovers a sealed blocker after lease loss or comparison completion without duplicating it" do
+    session <- fixture
+    name <- firstProfile session
+    appendEvent (SessionEvent (time 1) (RuntimeBlocked name "sealed defect")) session `shouldSatisfy` isLeft
+    identifier <- newRunId
+    acquired <- apply 1 (LeaseAcquired (LeaseIdentity "alpha" identifier)) session
+    started <- apply 2 (ComparisonStarted name 0) acquired
+    lost <- apply 3 (LeaseLost "interrupted before runtime checkpoint") started
+    recovered <- apply 4 (RuntimeBlocked name "sealed defect") lost
+    state <- right (journalState recovered)
+    Map.lookup name state.runtimeBlockers `shouldBe` Just ["sealed defect"]
+    entry <- selectedProfile started
+    let comparison = object ["schema" .= ("kenshou.comparison/v1" :: Text), "verdict" .= ("pass" :: Text), "pairCount" .= (5 :: Int)]
+        result = ConfigurationResult name entry.workloadSha256 "pass" "healthy" [] 5 5 [] (Just comparison)
+    finished <- apply 3 (ComparisonCompleted result) started
+    late <- apply 4 (RuntimeBlocked name "sealed defect") finished >>= apply 5 (RuntimeBlocked name "sealed defect")
+    final <- right (journalState late)
+    fmap (.runtimeFailures) (Map.lookup name final.completed) `shouldBe` Just ["sealed defect"]
   it "persists the transition journal atomically and refuses changed request purpose" $ withSystemTempDirectory "perf-journal" \directory -> do
     session <- fixture
     writePerfSession (directory </> "session.json") session
