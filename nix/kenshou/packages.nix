@@ -4,6 +4,7 @@
 , variant
 , descriptorFile ? ../../cohort + "/${cohort}.json"
 , lockFile ? ../cohort-locks + "/${cohort}.lock.json"
+, strictBounds ? false
 }:
 let
   lib = pkgs.lib;
@@ -73,6 +74,15 @@ let
         else base;
     in
     pkgs.haskell.lib.compose.dontCheck withVersion);
+  enforceBounds = _: hsuper: lib.optionalAttrs strictBounds
+    (lib.mapAttrs
+      (_: value:
+        if lib.isDerivation value && value ? getCabalDeps then
+          pkgs.haskell.lib.compose.appendConfigureFlags
+            (map (exception: "--allow-newer=${exception}") descriptor.allowNewer)
+            (pkgs.haskell.lib.compose.dontJailbreak value)
+        else value)
+      hsuper);
   hp = pkgs.haskell.packages.ghc9124.override {
     overrides = lib.composeManyExtensions [
       infoTables
@@ -81,6 +91,7 @@ let
       requiredPackages
       (import ./cohort-overlay.nix { inherit pkgs lock; })
       local
+      enforceBounds
     ];
   };
   identity = import ./identity.nix {
@@ -121,6 +132,9 @@ let
         cohortIdentityFile = identity.file;
         payloadIdentity = identity.payloadValue;
         inherit hp lock;
+        buildInventory = import ./inventory.nix {
+          inherit inputs pkgs hp cli descriptor cohort variant strictBounds;
+        };
       };
     } ''
     mkdir -p "$out/bin" "$out/share/kenshou"

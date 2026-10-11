@@ -14,27 +14,36 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as Text.Encoding
 import Data.Text.IO qualified as Text.IO
+import Data.Time.Clock (diffUTCTime, getCurrentTime)
 import Kenshou.Core.Bundle (allScenarios)
 import Kenshou.Core.Canonical (canonicalEncode, sha256Hex)
 import Kenshou.Core.Cli
 import Kenshou.Core.Cohort qualified as Cohort
-import Kenshou.Core.Id (newRunId)
-import Kenshou.Core.Manifest (writeManifest)
 import Kenshou.Measure.Compare.Policy qualified as Policy
 import Kenshou.Measure.Perf (validateProfilePolicy)
+import Kenshou.Perf.Artifacts (sealPerfDirectory, verifyPerfManifest)
 import Kenshou.Perf.Plan
+import Kenshou.Perf.Prepared qualified as Prepared
 import Kenshou.Perf.Request
 import Kenshou.Perf.Source
 import Kenshou.Plan.Catalog (fromScenario)
 import Kenshou.Plan.Change.Git qualified as Git
 import Kenshou.Plan.Components qualified as Graph
 import Kenshou.Plan.Suite (Suite (..), readSuite)
+import Kenshou.Remote.Payload qualified as Payload
+import Kenshou.Remote.Payload.Publish (digestFile)
+import Kenshou.Remote.Payload.Publisher qualified as Publisher
+import Kenshou.Remote.Store (Bucket (..), ObjectName (..), ObjectStore (..))
+import Kenshou.Remote.Store.File (newFileStore)
+import Kenshou.Remote.Store.Gcs (newGcsStore, newTokenProvider)
 import Options.Applicative hiding (value)
-import System.Directory (createDirectory, createDirectoryIfMissing, doesPathExist)
+import Options.Applicative qualified as Options
+import System.Directory (createDirectory, createDirectoryIfMissing, doesFileExist, doesPathExist, getCurrentDirectory, listDirectory, makeAbsolute, renameFile)
+import System.Environment (lookupEnv)
 import System.Exit (ExitCode (..))
 import System.FilePath (takeDirectory, (</>))
 import System.IO (stderr)
-import System.IO.Temp (withSystemTempDirectory)
+import System.IO.Temp (withSystemTempDirectory, withTempDirectory)
 import System.Process (readProcessWithExitCode)
 
 data PerfFailure = PerfFailure Int Text deriving stock (Show)
@@ -45,10 +54,14 @@ perfCommand :: CliCommand
 perfCommand =
   CliCommand
     { name = "perf",
-      description = "Plan scoped runtime performance comparisons",
+      description = "Plan and prepare scoped runtime performance comparisons",
       group = Execution,
       hidden = False,
-      parser = hsubparser (command "plan" (info (planParser <**> helper) (progDesc "Resolve exact source commits and explain performance scope without building or leasing")))
+      parser =
+        hsubparser
+          ( command "plan" (info (planParser <**> helper) (progDesc "Resolve exact source commits and explain performance scope without building or leasing"))
+              <> command "prepare" (info (prepareParser <**> helper) (progDesc "Check independent build inputs and publish both exact-revision payloads without leasing"))
+          )
     }
 
 planParser :: Parser (CliEnv -> IO ExitCode)
@@ -57,8 +70,208 @@ planParser =
     <$> strOption (long "request" <> metavar "FILE" <> help "kenshou.perf-request/v1 document")
     <*> strOption (long "out" <> metavar "DIRECTORY" <> help "New directory for pinned planning inputs and manifest")
 
+prepareParser :: Parser (CliEnv -> IO ExitCode)
+prepareParser =
+  runPrepare
+    <$> strOption (long "request" <> metavar "FILE")
+    <*> strOption (long "out" <> metavar "DIRECTORY")
+    <*> strOption (long "cache" <> metavar "DIRECTORY" <> Options.value ".dev/perf-payload-cache" <> showDefault)
+    <*> strOption (long "control-bucket" <> metavar "BUCKET" <> Options.value "tan-nb-exp-cells-control" <> showDefault)
+
+data ArmInputs = ArmInputs
+  { armDescriptor :: Cohort.CohortDescriptor,
+    armLock :: Value,
+    armInventory :: Prepared.BuildInventory,
+    armBounds :: Prepared.BuildInventory,
+    armIdentity :: Cohort.CohortIdentity,
+    armFlake :: FilePath,
+    armDescriptorFile :: FilePath,
+    armBuildKey :: Text
+  }
+
+runPrepare :: FilePath -> FilePath -> FilePath -> Text -> CliEnv -> IO ExitCode
+runPrepare requestPath destination cachePath bucketName environment = guarded do
+  started <- getCurrentTime
+  unless (not (Text.null bucketName) && Text.all (\c -> c `elem` ['a' .. 'z'] || c `elem` ['0' .. '9'] || c `elem` ['-', '.']) bucketName) (throwIO (PerfFailure 2 "invalid control bucket"))
+  occupied <- doesPathExist destination
+  when occupied (throwIO (PerfFailure 2 "preparation output already exists"))
+  _ <- ByteString.readFile requestPath >>= (decode "request" :: ByteString.ByteString -> IO PerfRequest)
+  dirty <- process "git" ["status", "--porcelain"]
+  unless (Text.null dirty) (throwIO (PerfFailure 4 "preparation requires a clean committed harness"))
+  revision <- Text.strip <$> process "git" ["rev-parse", "HEAD"]
+  root <- getCurrentDirectory
+  output <- makeAbsolute destination
+  cache <- makeAbsolute cachePath
+  let evidence = output </> "evidence"
+      work = output </> "work"
+      harness = work </> "harness"
+      bucket = Bucket bucketName
+  createDirectoryIfMissing True (takeDirectory output)
+  createDirectory output
+  createDirectory evidence
+  createDirectory work
+  plan <- createPlan requestPath (evidence </> "planning") environment (Just (revision, False))
+  planned <- getCurrentTime
+  inputs <- ByteString.readFile (evidence </> "planning" </> "inputs.json") >>= decode "pinned planning inputs"
+  -- Clone the committed harness, not the mutable working directory. Generated
+  -- projects, locks and Cabal caches are siblings outside that checkout.
+  _ <- loggedProcess (work </> "clone.log") "git" ["clone", "--quiet", "--no-hardlinks", root, harness]
+  _ <- loggedProcess (work </> "checkout.log") "git" ["-C", harness, "checkout", "--quiet", "--detach", Text.unpack revision]
+  baseline <- resolveArm output harness revision "baseline"
+  candidate <- if plan.request.baselineRevision == plan.request.candidateRevision then pure baseline else resolveArm output harness revision "candidate"
+  targets <- requireInput (targetPackages plan.request baseline.armDescriptor)
+  requireInput (Prepared.compareInventories targets baseline.armInventory candidate.armInventory)
+  requireInput (Prepared.compareInventories targets baseline.armBounds candidate.armBounds)
+  resolutionFinished <- getCurrentTime
+  progress "both inventories and declared bounds checked; publishing payloads"
+  store <- openPerfStore bucket
+  createDirectoryIfMissing True cache
+  (baselinePayload, baselineHit) <- publishArm store bucket cache harness revision baseline
+  (candidatePayload, candidateHit) <- if baseline.armBuildKey == candidate.armBuildKey then pure (baselinePayload, True) else publishArm store bucket cache harness revision candidate
+  published <- getCurrentTime
+  let arm resolved payload = Prepared.PreparedArm resolved.armDescriptor resolved.armLock resolved.armBounds resolved.armInventory (toJSON payload) resolved.armBuildKey
+      prepared = Prepared.PerfPrepared plan inputs revision (arm baseline baselinePayload) (arm candidate candidatePayload)
+  requireInput (Prepared.validatePrepared prepared)
+  encodeFile (evidence </> "prepared.json") prepared
+  encodeFile
+    (evidence </> "preparation-summary.json")
+    ( object
+        [ "baselineCacheHit" .= baselineHit,
+          "candidateCacheHit" .= candidateHit,
+          "preparedSha256" .= Prepared.preparedDigest prepared,
+          "startedAt" .= started,
+          "payloadsReadyAt" .= published,
+          "stageSeconds"
+            .= object
+              [ "planning" .= (realToFrac (diffUTCTime planned started) :: Double),
+                "resolutionAndBounds" .= (realToFrac (diffUTCTime resolutionFinished planned) :: Double),
+                "publication" .= (realToFrac (diffUTCTime published resolutionFinished) :: Double),
+                "payloadPreparation" .= (realToFrac (diffUTCTime published started) :: Double)
+              ]
+        ]
+    )
+  sealPerfDirectory evidence >>= requireInput
+  verifyPerfManifest evidence >>= requireInput
+  LazyByteString.putStrLn (encode (object ["prepared" .= (evidence </> "prepared.json"), "preparedSha256" .= Prepared.preparedDigest prepared, "baselineCacheHit" .= baselineHit, "candidateCacheHit" .= candidateHit]))
+  pure ExitSuccess
+
+resolveArm :: FilePath -> FilePath -> Text -> Text -> IO ArmInputs
+resolveArm output harness revision arm = do
+  let evidence = output </> "evidence" </> "planning"
+      work = output </> "work" </> Text.unpack arm
+      flake = work </> "build"
+      descriptorPath = flake </> "cohort.json"
+      lockPath = flake </> "source-lock.json"
+  createDirectory work
+  createDirectory flake
+  descriptor <- ByteString.readFile (evidence </> Text.unpack arm <> "-cohort.json") >>= decode "generated cohort"
+  encodeFile descriptorPath (descriptor :: Cohort.CohortDescriptor)
+  _ <- loggedProcess (work </> "source-lock.log") (harness </> "scripts" </> "payload-lock.sh") ["--descriptor", descriptorPath, "--out", lockPath]
+  lock <- ByteString.readFile lockPath >>= decode "source lock"
+  wrapper <- requireInput (generatedFlake harness revision descriptor)
+  Text.IO.writeFile (flake </> "flake.nix") wrapper
+  _ <- loggedProcess (work </> "flake-lock.log") "nix" ["flake", "lock", "path:" <> flake]
+  let attribute = "path:" <> flake <> "#packages.x86_64-linux.kenshou-" <> Text.unpack (Cohort.unCohortName descriptor.descriptorName)
+  inventory <- loggedProcess (work </> "build-inventory.log") "nix" ["eval", "--json", attribute <> ".buildInventory"] >>= decodeText "Nix inventory"
+  identity <- loggedProcess (work </> "cohort-identity.log") "nix" ["eval", "--json", attribute <> ".cohortIdentity"] >>= decodeText "Nix identity"
+  descriptorBytes <- ByteString.readFile descriptorPath
+  _ <- requireInput (Publisher.validateCohortIdentity descriptor (Text.drop 7 (sha256Hex descriptorBytes)) identity)
+  names <- listDirectory harness
+  packages <- filterMIO (\name -> doesFileExist (harness </> name </> name <> ".cabal")) (filter (Text.isPrefixOf "kenshou-" . Text.pack) names)
+  boundsProject <- requireInput (Prepared.renderBoundsProject [harness </> name </> name <> ".cabal" | name <- packages] descriptor)
+  let actualConstraints = Text.intercalate ", " [entry.name <> " ==" <> entry.version | entry <- (inventory :: Prepared.BuildInventory).packages, not ("kenshou-" `Text.isPrefixOf` entry.name)]
+  Text.IO.writeFile (work </> "bounds.project") (boundsProject <> "\nconstraints: " <> actualConstraints <> "\n")
+  _ <- loggedProcess (work </> "bounds.log") "cabal" ["build", "all", "--dry-run", "--project-file=" <> work </> "bounds.project", "--builddir=" <> work </> "bounds-dist"]
+  cabalPlan <- ByteString.readFile (work </> "bounds-dist" </> "cache" </> "plan.json") >>= decode "bounds plan"
+  bounds <- requireInput (Prepared.cabalInventory harness revision cabalPlan)
+  boundsIdentity <- either (throwIO . PerfFailure 4 . Text.pack . show) pure (Cohort.identityFromPlan descriptor (Text.drop 7 (sha256Hex descriptorBytes)) cabalPlan)
+  unless (null (Cohort.checkCohort descriptor boundsIdentity)) (throwIO (PerfFailure 4 "independent bounds plan differs from the generated cohort"))
+  encodeFile (work </> "build-inventory.json") inventory
+  encodeFile (work </> "bounds-inventory.json") bounds
+  let key = Prepared.buildKeyFor revision descriptor lock inventory bounds
+  pure (ArmInputs descriptor lock inventory bounds identity flake descriptorPath key)
+
+generatedFlake :: FilePath -> Text -> Cohort.CohortDescriptor -> Either Text Text
+generatedFlake harness revision descriptor = do
+  unless (not (any (`elem` ['\n', '\r', ' ', '"', '\\']) harness) && not ("${" `Text.isInfixOf` Text.pack harness) && immutableRevision revision) (Left "unsafe pinned harness path")
+  let quote = Text.Encoding.decodeUtf8 . canonicalEncode . String
+      location = "git+file://" <> Text.pack harness <> "?rev=" <> revision
+  pure
+    ( Text.unlines
+        [ "{",
+          "  inputs.harness.url = " <> quote location <> ";",
+          "  outputs = { self, harness }: let",
+          "    inputs = harness.inputs // { self = harness; };",
+          "    pkgs = import inputs.nixpkgs { system = \"x86_64-linux\"; };",
+          "  in { packages.x86_64-linux." <> quote ("kenshou-" <> Cohort.unCohortName descriptor.descriptorName) <> " = import (harness + \"/nix/kenshou/packages.nix\") {",
+          "    inherit inputs pkgs; cohort = " <> quote (Cohort.unCohortName descriptor.descriptorName) <> "; variant = \"default\";",
+          "    descriptorFile = ./cohort.json; lockFile = ./source-lock.json; strictBounds = true;",
+          "  }; };",
+          "}"
+        ]
+    )
+
+publishArm :: ObjectStore -> Bucket -> FilePath -> FilePath -> Text -> ArmInputs -> IO (Payload.PayloadDescriptor, Bool)
+publishArm store bucket cache harness revision arm = do
+  let cached = cache </> Text.unpack (Text.drop 7 arm.armBuildKey) <> ".json"
+  exists <- doesFileExist cached
+  if exists
+    then do
+      payload <- ByteString.readFile cached >>= decode "cached payload"
+      unless ((payload :: Payload.PayloadDescriptor).cohortIdentity == arm.armIdentity && payload.harness == Payload.Harness revision False && payload.variant == "default") (throwIO (PerfFailure 4 "cached payload identity mismatch"))
+      withSystemTempDirectory "kenshou-perf-cache-check-" \temporary -> do
+        let bundleObject = ObjectName ("payloads/sha256/" <> payload.cell.bundle.sha256 <> ".nar.zst")
+            file = temporary </> "bundle.nar.zst"
+        unless (payload.cell.bundle.uri == "gs://" <> bucket.unBucket <> "/payloads/sha256/" <> payload.cell.bundle.sha256 <> ".nar.zst") (throwIO (PerfFailure 4 "cached payload belongs to another bucket"))
+        found <- store.downloadTo bucket bundleObject file
+        when (found == Nothing) (throwIO (PerfFailure 4 "cached payload bundle is missing"))
+        (digest, bytes) <- digestFile file
+        unless ((digest, bytes) == (payload.cell.bundle.sha256, payload.cell.bundle.bytes)) (throwIO (PerfFailure 4 "cached bundle digest/size mismatch"))
+      progress "reused verified published payload"
+      pure (payload, True)
+    else do
+      result <- Publisher.publishPreparedPayload store (Publisher.PreparedPublishOptions harness revision ("path:" <> arm.armFlake) arm.armDescriptorFile (Cohort.unCohortName arm.armDescriptor.descriptorName) "default" bucket (arm.armFlake </> "payload.json"))
+      payload <- case result of
+        Left problem -> do
+          encodeFile (takeDirectory arm.armFlake </> "publication-failure.json") (object ["error" .= show problem])
+          throwIO (PerfFailure 4 (Text.pack (show problem)))
+        Right value -> pure value
+      withTempDirectory cache ".pending-" \temporary -> do
+        let staged = temporary </> "payload.json"
+        encodeFile staged payload
+        renameFile staged cached
+      pure (payload, False)
+
+loggedProcess :: FilePath -> String -> [String] -> IO Text
+loggedProcess logPath executable arguments = do
+  (status, output, errors) <- readProcessWithExitCode executable arguments ""
+  Text.IO.writeFile logPath (Text.pack output <> Text.pack errors)
+  case status of
+    ExitSuccess -> pure (Text.pack output)
+    _ -> throwIO (PerfFailure 4 (Text.pack executable <> " failed; retained log: " <> Text.pack logPath <> "\n" <> Text.take 2000 (Text.pack errors)))
+
+decodeText :: (FromJSON a) => Text -> Text -> IO a
+decodeText label = decode label . Text.Encoding.encodeUtf8
+
+filterMIO :: (a -> IO Bool) -> [a] -> IO [a]
+filterMIO predicate values = fmap (map fst . filter snd) (traverse (\item -> (item,) <$> predicate item) values)
+
+openPerfStore :: Bucket -> IO ObjectStore
+openPerfStore bucket =
+  lookupEnv "KENSHOU_CELL_STORE" >>= \case
+    Nothing -> newTokenProvider bucket >>= newGcsStore
+    Just setting -> case Text.stripPrefix "file:" (Text.pack setting) of
+      Just root | not (Text.null root) -> newFileStore (Text.unpack root)
+      _ -> throwIO (PerfFailure 2 "KENSHOU_CELL_STORE must be file:<directory> or unset")
+
 runPlan :: FilePath -> FilePath -> CliEnv -> IO ExitCode
 runPlan requestPath output environment = guarded do
+  plan <- createPlan requestPath output environment Nothing
+  LazyByteString.putStrLn (encode plan)
+  pure ExitSuccess
+
+createPlan :: FilePath -> FilePath -> CliEnv -> Maybe (Text, Bool) -> IO PerfPlan
+createPlan requestPath output environment pinnedHarness = do
   occupied <- doesPathExist output
   when occupied (throwIO (PerfFailure 2 "output already exists; choose a new planning directory"))
   requestBytes <- ByteString.readFile requestPath
@@ -95,8 +308,12 @@ runPlan requestPath output environment = guarded do
     (mapped, _) <- Git.changesFromUpstream graph (Git.UpstreamDiff sourceProject.repository checkout request.baselineRevision request.candidateRevision) >>= requireInput
     let (changes, unknown, documentation) = conservativeChanges graph sourceProject.repository paths mapped
     plan <- requireInput (planPerformance request graph catalog profiles changes unknown documentation policyMap Map.empty)
-    harnessRevision <- Text.strip <$> process "git" ["rev-parse", "HEAD"]
-    harnessStatus <- process "git" ["status", "--porcelain"]
+    (harnessRevision, harnessDirty) <- case pinnedHarness of
+      Just snapshot -> pure snapshot
+      Nothing -> do
+        revision <- Text.strip <$> process "git" ["rev-parse", "HEAD"]
+        status <- process "git" ["status", "--porcelain"]
+        pure (revision, not (Text.null status))
     let inputs =
           object
             [ "request" .= request,
@@ -104,7 +321,7 @@ runPlan requestPath output environment = guarded do
               "templateSha256" .= sha256Hex descriptorBytes,
               "baselineSource" .= baseline,
               "candidateSource" .= candidate,
-              "harness" .= object ["revision" .= harnessRevision, "dirty" .= not (Text.null harnessStatus)],
+              "harness" .= object ["revision" .= harnessRevision, "dirty" .= harnessDirty],
               "graph" .= graph,
               "scenarioCatalog" .= catalog,
               "profileCatalog" .= profiles,
@@ -115,17 +332,15 @@ runPlan requestPath output environment = guarded do
     createDirectoryIfMissing True (takeDirectory output)
     -- Exclusive creation also rejects a concurrent writer racing the preflight.
     createDirectory output
+    ByteString.writeFile (output </> "template.json") descriptorBytes
     encodeFile (output </> "request.json") request
     encodeFile (output </> "inputs.json") inputs
     encodeFile (output </> "plan.json") plan
     encodeFile (output </> "baseline-cohort.json") baselineDescriptor
     encodeFile (output </> "candidate-cohort.json") candidateDescriptor
-    runId <- newRunId
-    manifest <- writeManifest output runId Map.empty
-    encodeFile (output </> "manifest.json") manifest
+    sealPerfDirectory output >>= requireInput
     progress ("planned " <> Text.pack (show (length plan.selected)) <> " configurations; scope " <> plan.coverage)
-    LazyByteString.putStrLn (encode plan)
-    pure ExitSuccess
+    pure plan
   where
     loadPolicy path = do
       bytes <- ByteString.readFile path

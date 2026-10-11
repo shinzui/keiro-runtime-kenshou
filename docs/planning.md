@@ -113,3 +113,21 @@ roots can establish `not-applicable`. Budget exclusions omit whole configuration
 and remain visible. Exit zero from `perf plan` means that a planning document was
 written successfully; inspect coverage and eligibility before treating it as
 performance acceptance.
+
+
+`kenshou perf prepare --request request.json --out .dev/perf-preparation` requires a
+clean committed harness. It creates a detached harness clone, immutable generated
+flake inputs, independent Cabal bounds plans, and Linux Nix build inventories.
+It rejects unrelated dependency or flag drift before publishing either payload.
+Successful output names `.dev/perf-preparation/evidence/prepared.json`; the sibling
+`work` directory retains preparation logs, including failures. `--cache` selects
+a payload descriptor cache; every cache hit checks the recorded cohort/harness
+identity and downloads the content-addressed bundle to verify its digest and size.
+The active cohort and its Cabal build directory are not modified.
+
+Preparation is still awaiting the same-source cache and candidate-only live
+acceptance in Plan 25. Current Shibuya commits cannot be combined with a historical
+full-runtime template merely by lifting downstream bounds. A preparation failure
+is reported as exit 4, with the failing stage log retained. Successful preparation
+establishes build inputs and payloads; calibrated performance acceptance still
+requires the remaining execution and live calibration milestones.

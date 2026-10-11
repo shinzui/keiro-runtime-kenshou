@@ -1,6 +1,7 @@
 # Bundle Update Log
 
 ## 2026-10-11
+* **Update**: ADR-2: Pin generated performance cohorts to clean harnesses, final inventories, independent bounds checks, and verified cache bytes.
 * **Update**: ADR-6: Require explicit performance metrics, raw reconstruction, actual phase contracts, and verified calibration admission.
 
 ## 2026-10-03

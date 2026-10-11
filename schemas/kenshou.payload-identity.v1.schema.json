@@ -7,7 +7,7 @@
   "required": ["schema", "cohort", "variant", "system", "compiler", "nixpkgsRevision", "haskellNixRevision", "packages"],
   "properties": {
     "schema": { "const": "kenshou.payload-identity/v1" },
-    "cohort": { "enum": ["released", "head"] },
+    "cohort": { "type": "string", "pattern": "^(released|head|perf-[0-9a-f]{16}-(baseline|candidate|aa))$" },
     "variant": { "enum": ["default", "info-table", "profiled"] },
     "system": { "type": "string", "pattern": "^(aarch64-darwin|x86_64-linux)$" },
     "compiler": { "type": "string", "pattern": "^ghc-[0-9]+\\.[0-9]+\\.[0-9]+$" },

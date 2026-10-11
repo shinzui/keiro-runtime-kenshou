@@ -7,7 +7,7 @@
   "required": ["schema", "cohort", "descriptorSha256", "packages"],
   "properties": {
     "schema": { "const": "kenshou.cohort-nix-lock/v1" },
-    "cohort": { "enum": ["released", "head"] },
+    "cohort": { "type": "string", "pattern": "^(released|head|perf-[a-z0-9][a-z0-9-]*)$" },
     "descriptorSha256": { "$ref": "#/$defs/hexSha256" },
     "packages": {
       "type": "object",

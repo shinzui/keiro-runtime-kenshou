@@ -1,18 +1,19 @@
 module PayloadSpec (spec) where
 
-import Data.Aeson (eitherDecode, eitherDecodeStrict', object, (.=))
+import Data.Aeson (eitherDecode, eitherDecodeStrict', encodeFile, object, (.=))
 import Data.Aeson.Key qualified as Key
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.Text qualified as Text
+import Kenshou.Core.Canonical (sha256Hex)
 import Kenshou.Core.Cohort (CohortDescriptor (..), CohortIdentity (..), CohortName (..), ComponentSpec (..), PackagePin (..), PackageSource (..), PlanHash (..), ResolvedComponent (..), ResolvedPackage (..))
 import Kenshou.Remote.Cell.Docs (WorkObject (..))
 import Kenshou.Remote.Cell.Submit (workObjectFor)
 import Kenshou.Remote.Payload (Bundle (..), CellPayload (..), CohortCheck (..), Harness (..), PayloadDescriptor (..))
 import Kenshou.Remote.Payload.Nix (BundleInfo (..), ClosureInfo (..), NixError (..), NixTools (..), exportBundleWith, parseClosureInfo)
 import Kenshou.Remote.Payload.Publish (BundlePublishError (..), publishBundle)
-import Kenshou.Remote.Payload.Publisher (PublishError (..), PublishOptions (..), PublisherDeps (..), publishPayloadWith)
+import Kenshou.Remote.Payload.Publisher (PreparedPublishOptions (..), PublishError (..), PublishOptions (..), PublisherDeps (..), publishPayloadWith, publishPreparedPayloadWith)
 import Kenshou.Remote.Store (Bucket (..), ObjectName (..), ObjectStore (..), Precondition (..))
 import Kenshou.Remote.Store.File (newFileStore)
 import System.Directory (Permissions (..), doesFileExist, getPermissions, listDirectory, setPermissions)
@@ -55,6 +56,37 @@ spec = describe "content-addressed payload publication" do
     fmap fst stored `shouldBe` Just bundleBytes
     saved <- eitherDecode <$> LazyByteString.readFile output
     saved `shouldBe` Right descriptor
+
+  it "publishes generated performance inputs while verifying a separate clean harness" $ withSystemTempDirectory "kenshou-prepared-publisher" \root -> do
+    bytes <- ByteString.readFile "../cohort/released.json"
+    original <- either (ioError . userError) pure (eitherDecodeStrict' bytes :: Either String CohortDescriptor)
+    let generated = original {descriptorName = CohortName "perf-fixture-aa"}
+        descriptorPath = root </> "cohort.json"
+        harness = root </> "clean-harness"
+        flake = "path:" <> root <> "/generated"
+        commit = Text.replicate 40 "a"
+        storePath = "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-kenshou"
+        work = workObjectFor "application/octet-stream" bundleBytes
+    encodeFile descriptorPath generated
+    descriptorBytes <- ByteString.readFile descriptorPath
+    identity <- releasedIdentity
+    let resolved = identity {identityCohort = generated.descriptorName, identityDescriptorSha256 = Text.drop 7 (sha256Hex descriptorBytes)}
+    store <- newFileStore (root </> "store")
+    builds <- newIORef (0 :: Int)
+    let options = PreparedPublishOptions harness commit flake descriptorPath "perf-fixture-aa" "default" (Bucket "control") (root </> "payload.json")
+        deps dirty =
+          PublisherDeps
+            (\path -> (path `shouldBe` harness) >> pure (Right (Harness commit dirty)))
+            (\reference -> (reference `shouldBe` flake <> "#packages.x86_64-linux.kenshou-perf-fixture-aa.cohortIdentity") >> pure (Right resolved))
+            (\_ -> modifyIORef' builds (+ 1) >> pure (Right storePath))
+            (\_ destination -> LazyByteString.writeFile destination bundleBytes >> pure (Right (BundleInfo destination work.sha256 work.bytes (ClosureInfo storePath "sha256-root" [storePath]))))
+    publishPreparedPayloadWith (deps True) store options `shouldReturn` Left PublishDirtyWorktree
+    wrong <- publishPreparedPayloadWith (deps False) store options {harnessCommit = Text.replicate 40 "b"}
+    wrong `shouldSatisfy` \case Left (PublishDescriptorError _) -> True; _ -> False
+    readIORef builds `shouldReturn` 0
+    accepted <- publishPreparedPayloadWith (deps False) store options
+    accepted `shouldSatisfy` \case Right payload -> payload.cohort == "perf-fixture-aa" && payload.harness == Harness commit False; _ -> False
+    readIORef builds `shouldReturn` 1
 
   it "reads the root NAR hash and complete closure from Nix metadata" do
     let root = "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-kenshou"

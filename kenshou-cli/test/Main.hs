@@ -70,6 +70,14 @@ main = hspec do
     it "exposes the planning command and requires request/output arguments" do
       runWithArgs ["perf", "plan", "--help"] `shouldReturnCode` ExitSuccess
       runWithArgs ["perf", "plan"] `shouldReturnCode` ExitFailure 2
+    it "exposes exact-revision preparation and rejects malformed requests without building" do
+      runWithArgs ["perf", "prepare", "--help"] `shouldReturnCode` ExitSuccess
+      withSystemTempDirectory "kenshou-perf-prepare-malformed" \directory -> do
+        let input = directory </> "request.json"
+            output = directory </> "preparation"
+        Aeson.encodeFile input Aeson.Null
+        runWithArgs ["perf", "prepare", "--request", input, "--out", output] `shouldReturnCode` ExitFailure 2
+        doesPathExist output `shouldReturn` False
     it "rejects malformed requests before creating an output directory" do
       withSystemTempDirectory "kenshou-perf-malformed" \directory -> do
         let input = directory </> "request.json"

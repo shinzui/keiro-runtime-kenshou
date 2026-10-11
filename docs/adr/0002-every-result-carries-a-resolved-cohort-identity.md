@@ -2,7 +2,7 @@
 type: Architecture Decision Record
 title: Every result carries a resolved cohort identity
 description: Verification results identify the complete runtime cohort actually selected by Cabal, including immutable sources and a deterministic plan hash, rather than recording only intended pins.
-timestamp: 2026-09-26T13:08:25Z
+timestamp: 2026-10-11T05:04:00Z
 generated:
   by: human:nadeem
   at: "2026-09-20T00:05:00Z"
@@ -64,6 +64,22 @@ names the bound, explains why the incompatible surface does not reach this
 consumer, identifies a test that exercises the used surface (including live
 migrations when applicable), and states the removal condition. Blanket
 `allow-newer` entries are forbidden.
+
+Performance preparations generate descriptors and source locks outside the active
+checkout and use separate build directories for both arms. Read target manifests
+at each immutable upstream commit instead of copying template versions or paths.
+Identify the clean harness commit separately from generated inputs. A same-source
+A/A request uses identical cohort inputs and one reusable payload.
+
+Before publication or cell leasing, compare complete resolved inventories. Only
+the declared targets may change source or version; compiler, platform, flags,
+build settings and unrelated transitive inputs must remain fixed. Relinked output
+hashes do not imply source drift. A cache key binds the harness, generated inputs,
+resolved inventories and toolchain, and reuse verifies both identity and bundle
+bytes. A successful Nix link does not certify Cabal bounds. Performance builds
+check standalone solver inputs and enforce declared bounds after package overrides,
+retaining only reviewed package-scoped exceptions. Inventory inspection reads the
+final builder settings, including Cabal description revisions and patches.
 
 An isolated layer release lane may have its own named project and descriptor
 when a full-runtime package bound excludes the newer layer. The project fixes

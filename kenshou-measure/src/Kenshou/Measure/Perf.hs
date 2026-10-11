@@ -20,13 +20,13 @@ import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Word (Word64)
-import Kenshou.Core.Manifest (verifyManifest)
 import Kenshou.Measure.Compare.Policy qualified as Policy
 import Kenshou.Measure.Histogram qualified as Histogram
 import Kenshou.Measure.Histogram.Codec (decodeHistogram)
 import Kenshou.Measure.Metrics (Metric (..))
 import Kenshou.Measure.Samples
 import Kenshou.Measure.Summary
+import Kenshou.Perf.Artifacts (verifyPerfManifest)
 import Kenshou.Perf.Plan (PerfProfile (..), RequiredMetric (..))
 import System.FilePath ((</>))
 
@@ -72,7 +72,7 @@ verifyPerformanceRun profile directory = do
     Right result -> result
   where
     verify = do
-      manifest <- verifyManifest directory
+      manifest <- verifyPerfManifest directory
       case manifest of
         Left problems -> pure (Left [InvalidPerformanceEvidence (Text.pack (show problems))])
         Right () -> do

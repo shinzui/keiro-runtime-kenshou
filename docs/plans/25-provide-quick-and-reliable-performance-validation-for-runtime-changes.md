@@ -109,6 +109,16 @@ tests and schema checks passed. These are partial Milestones 1 and 2: preparatio
 calibration admission verification, sessions, owner acceptance, live calibration,
 and CI remain open. No live comparison or payload-cache acceptance is claimed.
 
+Preparation implementation (2026-10-10): Added prepared/inventory codecs, strong
+file-inventory verification, detached clean harness builds, per-arm source locks
+and standalone solver plans, generated payload publication and verified cache
+reuse. Pure inventory and artifact-integrity tests passed, and a file-backed
+publisher test verifies the separate harness identity before build. Nix inventory
+evaluation found 405 unique Haskell packages; legacy inputs contain 71 bound-lifted
+packages, while strict preparation evaluation contains zero and retains the one
+reviewed package-scoped exception. Same-source live publication/cache reuse and
+candidate-only build acceptance are still pending; Milestone 1 remains open.
+
 ## Surprises & Discoveries
 
 
@@ -130,6 +140,13 @@ new scenario revision before calibration.
 workload digest. Hashing catalog overrides alone would leave a change to a
 scenario default invisible. Calibration references are excluded from that digest
 to avoid a self-referential promotion cycle.
+
+2026-10-10 implementation: Nix package settings can be overridden after initial
+construction. Inspecting initial arguments or missing derivation attributes
+misreported effective bound lifting and description revisions. Final builder
+argument inspection now records those settings, and strict preparation applies
+bound enforcement after package overrides. The legacy Nix outputs retain their
+existing behavior.
 
 ## Decision Log
 

@@ -1,9 +1,12 @@
 module Kenshou.Remote.Payload.Publisher
   ( PublishOptions (..),
+    PreparedPublishOptions (..),
     PublishError (..),
     PublisherDeps (..),
     publishPayload,
     publishPayloadWith,
+    publishPreparedPayload,
+    publishPreparedPayloadWith,
     validateCohortIdentity,
   )
 where
@@ -19,6 +22,7 @@ import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
 import Data.Time (getCurrentTime)
 import Kenshou.Core.Cohort (CohortDescriptor (..), CohortIdentity (..), CohortName (..), ComponentSpec (..), checkCohort)
+import Kenshou.Perf.Request (immutableRevision)
 import Kenshou.Remote.Payload (Bundle (..), CellPayload (..), CohortCheck (..), Harness (..), PayloadDescriptor (..))
 import Kenshou.Remote.Payload.Nix (BundleInfo (..), ClosureInfo (..), NixError (..), exportBundle, nixBuild, nixEvalJson)
 import Kenshou.Remote.Payload.Publish (BundlePublishError, publishBundle)
@@ -36,6 +40,18 @@ data PublishOptions = PublishOptions
     bucket :: !Bucket,
     out :: !FilePath,
     allowDirty :: !Bool
+  }
+  deriving stock (Eq, Show)
+
+data PreparedPublishOptions = PreparedPublishOptions
+  { harnessRoot :: !FilePath,
+    harnessCommit :: !Text,
+    generatedFlake :: !FilePath,
+    generatedDescriptor :: !FilePath,
+    selectedCohort :: !Text,
+    selectedVariant :: !Text,
+    controlBucket :: !Bucket,
+    output :: !FilePath
   }
   deriving stock (Eq, Show)
 
@@ -65,60 +81,99 @@ publishPayload = publishPayloadWith defaultDeps
 publishPayloadWith :: PublisherDeps -> ObjectStore -> PublishOptions -> IO (Either PublishError PayloadDescriptor)
 publishPayloadWith deps store options = case flakeAttribute options.cohort options.variant of
   Left problem -> pure (Left (PublishInvalidSelection problem))
-  Right attribute -> do
-    harnessResult <- deps.readHarness options.root
-    case harnessResult of
-      Left problem -> pure (Left problem)
-      Right harness
-        | harness.dirty && not options.allowDirty -> pure (Left PublishDirtyWorktree)
-        | otherwise -> do
-            descriptorResult <- readDescriptor (options.root </> "cohort" </> Text.unpack options.cohort <> ".json")
-            case descriptorResult of
-              Left problem -> pure (Left problem)
-              Right (descriptor, _) | descriptor.descriptorName /= CohortName options.cohort -> pure (Left (PublishDescriptorError "selected descriptor names another cohort"))
-              Right (descriptor, descriptorSha) -> do
-                let flake = options.root <> "#" <> Text.unpack attribute
-                identityResult <- deps.evalIdentity (flake <> ".cohortIdentity")
-                case identityResult of
-                  Left problem -> pure (Left (PublishNixError problem))
-                  Right identity -> case validateCohortIdentity descriptor descriptorSha identity of
-                    Left problem -> pure (Left (PublishCohortMismatch problem))
-                    Right checked -> do
-                      built <- deps.build flake
-                      case built of
-                        Left problem -> pure (Left (PublishNixError problem))
-                        Right storePath -> withBundleFile options.out \bundlePath -> do
-                          exported <- deps.export storePath bundlePath
-                          case exported of
-                            Left problem -> pure (Left (PublishNixError problem))
-                            Right bundle | bundle.closure.storePath /= storePath -> pure (Left (PublishNixError (NixInvalidOutput "exported closure root differs from the built store path")))
-                            Right bundle -> do
-                              now <- getCurrentTime
-                              let digest = bundle.sha256
-                                  object = "payloads/sha256/" <> digest <> ".nar.zst"
-                                  payload =
-                                    PayloadDescriptor
-                                      options.cohort
-                                      options.variant
-                                      attribute
-                                      harness
-                                      identity
-                                      (CohortCheck checked)
-                                      ( CellPayload
-                                          (Bundle ("gs://" <> options.bucket.unBucket <> "/" <> object) digest bundle.bytes)
-                                          (Text.pack storePath)
-                                          bundle.closure.narHash
-                                          (map Text.pack bundle.closure.closurePaths)
-                                          "x86_64-linux"
-                                          ["bin/kenshou", "cell", "exec"]
-                                      )
-                                      now
-                              uploaded <- publishBundle store options.bucket payload bundle.file
-                              case uploaded of
-                                Left problem -> pure (Left (PublishBundleError problem))
-                                Right published -> do
-                                  written <- writeDescriptor options.out published
-                                  pure (published <$ written)
+  Right attribute ->
+    publishAt
+      deps
+      store
+      options
+      attribute
+      (options.root <> "#" <> Text.unpack attribute)
+      (options.root </> "cohort" </> Text.unpack options.cohort <> ".json")
+
+publishPreparedPayload :: ObjectStore -> PreparedPublishOptions -> IO (Either PublishError PayloadDescriptor)
+publishPreparedPayload = publishPreparedPayloadWith defaultDeps
+
+publishPreparedPayloadWith :: PublisherDeps -> ObjectStore -> PreparedPublishOptions -> IO (Either PublishError PayloadDescriptor)
+publishPreparedPayloadWith deps store prepared
+  | prepared.selectedVariant `notElem` ["default", "info-table", "profiled"] = pure (Left (PublishInvalidSelection "invalid prepared variant"))
+  | not ("perf-" `Text.isPrefixOf` prepared.selectedCohort && Text.all (\c -> c `elem` ['a' .. 'z'] || c `elem` ['0' .. '9'] || c == '-') prepared.selectedCohort) = pure (Left (PublishInvalidSelection "prepared cohort must use its generated perf name"))
+  | not (immutableRevision prepared.harnessCommit) = pure (Left (PublishInvalidSelection "prepared harness commit must be immutable"))
+  | otherwise = do
+      harness <- deps.readHarness prepared.harnessRoot
+      case harness of
+        Left problem -> pure (Left problem)
+        Right actual
+          | actual.dirty -> pure (Left PublishDirtyWorktree)
+          | actual.revision /= prepared.harnessCommit -> pure (Left (PublishDescriptorError "prepared harness commit differs from the clean build root"))
+          | otherwise ->
+              publishAt
+                deps
+                store
+                (PublishOptions prepared.harnessRoot prepared.selectedCohort prepared.selectedVariant prepared.controlBucket prepared.output False)
+                (preparedAttribute prepared)
+                (prepared.generatedFlake <> "#" <> Text.unpack (preparedAttribute prepared))
+                prepared.generatedDescriptor
+
+preparedAttribute :: PreparedPublishOptions -> Text
+preparedAttribute prepared =
+  "packages.x86_64-linux.kenshou-" <> prepared.selectedCohort <> case prepared.selectedVariant of
+    "default" -> ""
+    other -> "-" <> other
+
+publishAt :: PublisherDeps -> ObjectStore -> PublishOptions -> Text -> String -> FilePath -> IO (Either PublishError PayloadDescriptor)
+publishAt deps store options attribute flake descriptorPath = do
+  harnessResult <- deps.readHarness options.root
+  case harnessResult of
+    Left problem -> pure (Left problem)
+    Right harness
+      | harness.dirty && not options.allowDirty -> pure (Left PublishDirtyWorktree)
+      | otherwise -> do
+          descriptorResult <- readDescriptor descriptorPath
+          case descriptorResult of
+            Left problem -> pure (Left problem)
+            Right (descriptor, _) | descriptor.descriptorName /= CohortName options.cohort -> pure (Left (PublishDescriptorError "selected descriptor names another cohort"))
+            Right (descriptor, descriptorSha) -> do
+              identityResult <- deps.evalIdentity (flake <> ".cohortIdentity")
+              case identityResult of
+                Left problem -> pure (Left (PublishNixError problem))
+                Right identity -> case validateCohortIdentity descriptor descriptorSha identity of
+                  Left problem -> pure (Left (PublishCohortMismatch problem))
+                  Right checked -> do
+                    built <- deps.build flake
+                    case built of
+                      Left problem -> pure (Left (PublishNixError problem))
+                      Right storePath -> withBundleFile options.out \bundlePath -> do
+                        exported <- deps.export storePath bundlePath
+                        case exported of
+                          Left problem -> pure (Left (PublishNixError problem))
+                          Right bundle | bundle.closure.storePath /= storePath -> pure (Left (PublishNixError (NixInvalidOutput "exported closure root differs from the built store path")))
+                          Right bundle -> do
+                            now <- getCurrentTime
+                            let digest = bundle.sha256
+                                object = "payloads/sha256/" <> digest <> ".nar.zst"
+                                payload =
+                                  PayloadDescriptor
+                                    options.cohort
+                                    options.variant
+                                    attribute
+                                    harness
+                                    identity
+                                    (CohortCheck checked)
+                                    ( CellPayload
+                                        (Bundle ("gs://" <> options.bucket.unBucket <> "/" <> object) digest bundle.bytes)
+                                        (Text.pack storePath)
+                                        bundle.closure.narHash
+                                        (map Text.pack bundle.closure.closurePaths)
+                                        "x86_64-linux"
+                                        ["bin/kenshou", "cell", "exec"]
+                                    )
+                                    now
+                            uploaded <- publishBundle store options.bucket payload bundle.file
+                            case uploaded of
+                              Left problem -> pure (Left (PublishBundleError problem))
+                              Right published -> do
+                                written <- writeDescriptor options.out published
+                                pure (published <$ written)
 
 validateCohortIdentity :: CohortDescriptor -> Text -> CohortIdentity -> Either Text Int
 validateCohortIdentity descriptor descriptorSha identity

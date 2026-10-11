@@ -20,10 +20,8 @@
       "const": "kenshou.payload/v1"
     },
     "cohort": {
-      "enum": [
-        "released",
-        "head"
-      ]
+      "type": "string",
+      "pattern": "^(released|head|perf-[a-z0-9][a-z0-9-]*)$"
     },
     "variant": {
       "enum": [
@@ -34,7 +32,7 @@
     },
     "flakeAttr": {
       "type": "string",
-      "pattern": "^packages\\.x86_64-linux\\.kenshou-(released|head)(-info-table|-profiled)?$"
+      "pattern": "^packages\\.x86_64-linux\\.kenshou-(released|head|perf-[a-z0-9][a-z0-9-]*)(-info-table|-profiled)?$"
     },
     "harness": {
       "type": "object",

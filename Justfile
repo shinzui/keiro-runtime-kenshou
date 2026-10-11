@@ -84,6 +84,7 @@ evidence-check:
 
 [group('verification')]
 schemas-check:
+    check-jsonschema --schemafile schemas/kenshou.perf-prepared.v1.schema.json kenshou-core/test/golden/perf-prepared.fixture.json
     check-jsonschema --schemafile schemas/kenshou.perf-plan.v1.schema.json kenshou-core/test/golden/perf-plan.json
     check-jsonschema --schemafile schemas/kenshou.perf-request.v1.schema.json kenshou-core/test/golden/perf-request.json
     check-jsonschema --schemafile schemas/kenshou.perf-catalog.v1.schema.json policies/performance/catalog.v1.json
