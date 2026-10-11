@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "runId",
+    "resetStarted",
+    "runStarted",
+    "runFinished"
+  ],
+  "properties": {
+    "schema": {
+      "const": "cell.execution-window/v1"
+    },
+    "runId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "resetStarted": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "runStarted": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "runFinished": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

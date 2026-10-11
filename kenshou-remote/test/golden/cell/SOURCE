@@ -3,3 +3,9 @@ Commit: ef1596775d4df5a31b8de3a4b833adeeaf0f8021
 Project-relative source directories (artifact-level URIs pending):
   schemas/cell/ (all cell.*.schema.json files)
   schemas/cell/examples/ (all cell.*.json files)
+
+Execution-window schema and example extension:
+  Commit: 915fb2f9ee8ca8eccafecd8341887638ac8b4218
+  Project-relative paths (artifact-level URIs pending):
+    schemas/cell/cell.execution-window.v1.schema.json
+    schemas/cell/examples/cell.execution-window.v1.json

@@ -251,7 +251,21 @@ durable preparation, calibration, scope, recovery and publication decisions.
 The full `nix develop -c just verify` passed before the final machine/image and
 heartbeat changes; follow-up core/remote/CLI suites validate those changes.
 No real calibration batch or Linux payload build is claimed. Owner-side cleanup,
-health reconstruction, bounded admission transport, live preparation/cache controls, cell acceptance and CI parity remain unfinished.
+live health acceptance, bounded admission transport, live preparation/cache controls, cell acceptance and CI parity remain unfinished.
+
+Raw health replay implementation (2026-10-11): The owner now seals exact reset,
+payload-start and payload-finish timestamps in `cell/execution-window.json`;
+commit `915fb2f` in `mori://shinzui/load-testing-infra` passed 60 Rust library
+examples and three CLI examples (one unrelated opt-in test remains ignored).
+Kenshou freezes the owner's health policy before admission, reconstructs CPU and
+disk observations from continuous role samples, and rejects missing samples,
+counter reversals, maintenance, sampling errors and stale machine/image/agent
+identity. It compares reconstructed values with both the reported gates and
+frozen thresholds. Calibration additionally binds the full health-policy digest.
+Core, remote and CLI suites pass (113, 148 and 141 examples). This is local
+acceptance; upgraded Linux images and forced live failures remain unverified.
+Owner general process/file cleanup, repeated-failure quarantine/recovery,
+pre-staging and admission timing probes are still open.
 
 ## Surprises & Discoveries
 

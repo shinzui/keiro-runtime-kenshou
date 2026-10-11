@@ -1,6 +1,7 @@
 # Bundle Update Log
 
 ## 2026-10-11
+* **Update**: Document independently replayed health windows, calibrated machine/image and health-policy identity, and the read-only calibration fingerprint command.
 * **Update**: Document frozen calibration declaration, complete receipt inventories and independent admission verification for DOC-6.
 * **Update**: Linked scoped performance orchestration and documented its pending live calibration and cell acceptance.
 * **Create**: Added the exact-revision performance workflow guide, including current acceptance gaps, recovery, durable evidence and explicit CI prerequisites.

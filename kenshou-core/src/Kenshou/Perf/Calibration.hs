@@ -33,6 +33,7 @@ data CalibrationDefinition = CalibrationDefinition
     project :: Text,
     profile :: Text,
     machineProfile :: Text,
+    healthPolicySha256 :: Text,
     workloadSha256 :: Text,
     toolchainSha256 :: Text,
     harnessSemanticsSha256 :: Text,
@@ -68,6 +69,7 @@ data VerifiedCalibrationTrial = VerifiedCalibrationTrial
     candidateRevision :: Text,
     profile :: Text,
     trialMachineProfile :: Text,
+    trialHealthPolicySha256 :: Text,
     workloadSha256 :: Text,
     trialToolchainSha256 :: Text,
     trialHarnessSemanticsSha256 :: Text,
@@ -116,7 +118,7 @@ validateCalibration now declaredAt definition acceptance aaTrials slowdownTrials
       pure (last trials)
     checkTrial seed control trial = do
       require (trial.createdAt >= declaredAt && trial.createdAt <= definition.expiresAt) "trial is outside the frozen batch lifetime"
-      require ((trial.seed, trial.control, trial.project, trial.profile, trial.trialMachineProfile, trial.workloadSha256, trial.trialToolchainSha256, trial.trialHarnessSemanticsSha256) == (seed, control, definition.project, definition.profile, definition.machineProfile, definition.workloadSha256, definition.toolchainSha256, definition.harnessSemanticsSha256)) "calibration workload, seed, toolchain or harness drift"
+      require ((trial.seed, trial.control, trial.project, trial.profile, trial.trialMachineProfile, trial.trialHealthPolicySha256, trial.workloadSha256, trial.trialToolchainSha256, trial.trialHarnessSemanticsSha256) == (seed, control, definition.project, definition.profile, definition.machineProfile, definition.healthPolicySha256, definition.workloadSha256, definition.toolchainSha256, definition.harnessSemanticsSha256)) "calibration workload, seed, toolchain or harness drift"
       require (trial.baselineRevision == definition.baselineRevision && trial.candidateRevision == if control == "aa" then definition.baselineRevision else definition.slowdownRevision) "calibration source revision differs"
       require (null trial.runtimeBlockers) "runtime blocker invalidates calibration"
       require (trial.infrastructureState `elem` ["healthy", "failed"] && trial.verdict `elem` ["pass", "regression", "inconclusive", "not-run"]) "unsupported calibration outcome"
@@ -133,7 +135,7 @@ validateCalibrationDefinition now declaredAt definition = do
   require (definition.infrastructureRetryCap >= 0 && definition.infrastructureRetryCap <= 20) "invalid calibration infrastructure retry cap"
   require (declaredAt <= now && declaredAt < definition.expiresAt && now <= definition.expiresAt) "calibration expired or predates its declaration"
   require (not (Text.null definition.injectionMechanism) && not (Text.null definition.targetMetric) && finitePositive definition.targetRelativeEffect && finitePositive definition.targetAbsoluteEffect) "missing or invalid injected effect"
-  require (not (Text.null definition.profile) && not (Text.null definition.machineProfile) && not ("pending" `Text.isInfixOf` definition.machineProfile) && all digest [definition.workloadSha256, definition.toolchainSha256, definition.harnessSemanticsSha256]) "calibration needs immutable workload, toolchain and harness digests"
+  require (not (Text.null definition.profile) && not (Text.null definition.machineProfile) && not ("pending" `Text.isInfixOf` definition.machineProfile) && all digest [definition.healthPolicySha256, definition.workloadSha256, definition.toolchainSha256, definition.harnessSemanticsSha256]) "calibration needs immutable workload, toolchain and harness digests"
   where
     require condition message = unless condition (Left message)
     digest value = Text.length value == 71 && "sha256:" `Text.isPrefixOf` value && Text.all (`elem` (['0' .. '9'] <> ['a' .. 'f'])) (Text.drop 7 value)
@@ -147,14 +149,14 @@ instance FromJSON CalibrationReference where
     CalibrationReference <$> v .: "definitionUri" <*> v .: "definitionSha256" <*> v .: "acceptanceUri" <*> v .: "acceptanceSha256"
 
 instance ToJSON CalibrationDefinition where
-  toJSON value = object ["schema" .= ("kenshou.perf-calibration-definition/v1" :: Text), "batchId" .= value.batchId, "project" .= value.project, "profile" .= value.profile, "machineProfile" .= value.machineProfile, "workloadSha256" .= value.workloadSha256, "toolchainSha256" .= value.toolchainSha256, "harnessSemanticsSha256" .= value.harnessSemanticsSha256, "baselineRevision" .= value.baselineRevision, "slowdownRevision" .= value.slowdownRevision, "injectionMechanism" .= value.injectionMechanism, "targetMetric" .= value.targetMetric, "targetRelativeEffect" .= value.targetRelativeEffect, "targetAbsoluteEffect" .= value.targetAbsoluteEffect, "seeds" .= value.seeds, "infrastructureRetryCap" .= value.infrastructureRetryCap, "expiresAt" .= value.expiresAt]
+  toJSON value = object ["schema" .= ("kenshou.perf-calibration-definition/v1" :: Text), "batchId" .= value.batchId, "project" .= value.project, "profile" .= value.profile, "machineProfile" .= value.machineProfile, "healthPolicySha256" .= value.healthPolicySha256, "workloadSha256" .= value.workloadSha256, "toolchainSha256" .= value.toolchainSha256, "harnessSemanticsSha256" .= value.harnessSemanticsSha256, "baselineRevision" .= value.baselineRevision, "slowdownRevision" .= value.slowdownRevision, "injectionMechanism" .= value.injectionMechanism, "targetMetric" .= value.targetMetric, "targetRelativeEffect" .= value.targetRelativeEffect, "targetAbsoluteEffect" .= value.targetAbsoluteEffect, "seeds" .= value.seeds, "infrastructureRetryCap" .= value.infrastructureRetryCap, "expiresAt" .= value.expiresAt]
 
 instance FromJSON CalibrationDefinition where
   parseJSON = withObject "CalibrationDefinition" \v -> do
-    strictObject ["schema", "batchId", "project", "profile", "machineProfile", "workloadSha256", "toolchainSha256", "harnessSemanticsSha256", "baselineRevision", "slowdownRevision", "injectionMechanism", "targetMetric", "targetRelativeEffect", "targetAbsoluteEffect", "seeds", "infrastructureRetryCap", "expiresAt"] v
+    strictObject ["schema", "batchId", "project", "profile", "machineProfile", "healthPolicySha256", "workloadSha256", "toolchainSha256", "harnessSemanticsSha256", "baselineRevision", "slowdownRevision", "injectionMechanism", "targetMetric", "targetRelativeEffect", "targetAbsoluteEffect", "seeds", "infrastructureRetryCap", "expiresAt"] v
     schema <- v .: "schema"
     unless (schema == ("kenshou.perf-calibration-definition/v1" :: Text)) (fail "unsupported calibration definition")
-    CalibrationDefinition <$> v .: "batchId" <*> v .: "project" <*> v .: "profile" <*> v .: "machineProfile" <*> v .: "workloadSha256" <*> v .: "toolchainSha256" <*> v .: "harnessSemanticsSha256" <*> v .: "baselineRevision" <*> v .: "slowdownRevision" <*> v .: "injectionMechanism" <*> v .: "targetMetric" <*> v .: "targetRelativeEffect" <*> v .: "targetAbsoluteEffect" <*> v .: "seeds" <*> v .: "infrastructureRetryCap" <*> v .: "expiresAt"
+    CalibrationDefinition <$> v .: "batchId" <*> v .: "project" <*> v .: "profile" <*> v .: "machineProfile" <*> v .: "healthPolicySha256" <*> v .: "workloadSha256" <*> v .: "toolchainSha256" <*> v .: "harnessSemanticsSha256" <*> v .: "baselineRevision" <*> v .: "slowdownRevision" <*> v .: "injectionMechanism" <*> v .: "targetMetric" <*> v .: "targetRelativeEffect" <*> v .: "targetAbsoluteEffect" <*> v .: "seeds" <*> v .: "infrastructureRetryCap" <*> v .: "expiresAt"
 
 instance ToJSON CalibrationReceipt where
   toJSON value = object ["uri" .= value.uri, "sha256" .= value.sha256]

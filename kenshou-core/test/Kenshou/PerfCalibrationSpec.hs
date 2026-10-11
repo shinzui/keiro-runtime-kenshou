@@ -38,6 +38,7 @@ spec = describe "performance calibration admission" do
     validateCalibration now now definition acceptance (first aa : first aa : drop 2 aa) slowdown `shouldSatisfy` isLeft
     let corrupt :: (VerifiedCalibrationTrial -> VerifiedCalibrationTrial) -> [[VerifiedCalibrationTrial]]
         corrupt change = map change (first aa) : drop 1 aa
+    validateCalibration now now definition acceptance (corrupt (\trial -> trial {trialHealthPolicySha256 = "relaxed-health-limits"})) slowdown `shouldSatisfy` isLeft
     validateCalibration now now definition acceptance (corrupt (\trial -> trial {trialMachineProfile = "different-cell-image"})) slowdown `shouldSatisfy` isLeft
     validateCalibration now now definition acceptance (corrupt (\trial -> trial {trialToolchainSha256 = "changed"})) slowdown `shouldSatisfy` isLeft
     validateCalibration now now definition acceptance (corrupt (\trial -> trial {trialHarnessSemanticsSha256 = "changed"})) slowdown `shouldSatisfy` isLeft
@@ -59,12 +60,12 @@ fixture :: IO (CalibrationDefinition, CalibrationAcceptance, [[VerifiedCalibrati
 fixture = do
   identifier <- newRunId
   let seeds = [1 .. 20]
-      definition = CalibrationDefinition identifier "mori://fixture/runtime" "core" "synthetic-machine" (digest "a") (digest "b") (digest "c") (Text.replicate 40 "a") (Text.replicate 40 "b") "delay at operation boundary" "op.latency.p99" 0.5 1000000 seeds 1 (addUTCTime 3600 now)
+      definition = CalibrationDefinition identifier "mori://fixture/runtime" "core" "synthetic-machine" (digest "d") (digest "a") (digest "b") (digest "c") (Text.replicate 40 "a") (Text.replicate 40 "b") "delay at operation boundary" "op.latency.p99" 0.5 1000000 seeds 1 (addUTCTime 3600 now)
       slot control seed = CalibrationSlot seed [CalibrationReceipt ("gs://fixture/" <> control <> "/" <> Text.pack (show seed) <> "/receipt.json") "sha256:receipt"]
       acceptance = CalibrationAcceptance identifier (map (slot "aa") seeds) (map (slot "slowdown") seeds)
       trial control verdict seed = do
         session <- newRunId
-        pure [VerifiedCalibrationTrial session seed control definition.project definition.baselineRevision (if control == "aa" then definition.baselineRevision else definition.slowdownRevision) definition.profile definition.machineProfile definition.workloadSha256 definition.toolchainSha256 definition.harnessSemanticsSha256 verdict "healthy" [] now 90]
+        pure [VerifiedCalibrationTrial session seed control definition.project definition.baselineRevision (if control == "aa" then definition.baselineRevision else definition.slowdownRevision) definition.profile definition.machineProfile definition.healthPolicySha256 definition.workloadSha256 definition.toolchainSha256 definition.harnessSemanticsSha256 verdict "healthy" [] now 90]
   aa <- traverse (trial "aa" "pass") seeds
   slowdown <- traverse (trial "none" "regression") seeds
   pure (definition, acceptance, aa, slowdown)

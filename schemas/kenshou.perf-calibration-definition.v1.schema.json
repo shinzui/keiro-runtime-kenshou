@@ -77,6 +77,10 @@
     "machineProfile": {
       "type": "string",
       "minLength": 1
+    },
+    "healthPolicySha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
     }
   },
   "required": [
@@ -96,6 +100,7 @@
     "seeds",
     "infrastructureRetryCap",
     "expiresAt",
-    "machineProfile"
+    "machineProfile",
+    "healthPolicySha256"
   ]
 }

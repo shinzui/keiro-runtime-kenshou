@@ -8,6 +8,7 @@ import Data.Aeson.Types (parseEither)
 import Data.ByteString qualified as Bytes
 import Data.ByteString.Lazy.Char8 qualified as Lazy
 import Data.List (find, isSuffixOf)
+import Data.List qualified as List
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
@@ -47,6 +48,7 @@ import Kenshou.Remote.Payload.Publish (digestFile)
 import Kenshou.Remote.Perf.Attempt
 import Kenshou.Remote.Perf.Cell
 import Kenshou.Remote.Perf.Cleanup
+import Kenshou.Remote.Perf.Conditions (validateHealthPolicy)
 import Kenshou.Remote.Perf.Journal
 import Kenshou.Remote.Perf.Lock
 import Kenshou.Remote.Perf.Publication
@@ -96,15 +98,16 @@ data ExecutionInputs = ExecutionInputs
     storeLabel :: Text,
     allowedProjects :: [Text],
     start :: Bool,
+    healthPolicies :: Map.Map Text Value,
     cells :: [(CellDescriptor, Maybe CellCapabilities)]
   }
 
 instance ToJSON ExecutionInputs where
-  toJSON inputs = object ["controlBucket" .= inputs.controlBucket, "storeLabel" .= inputs.storeLabel, "allowedProjects" .= inputs.allowedProjects, "start" .= inputs.start, "cells" .= [object ["descriptor" .= descriptor, "capabilities" .= capabilities] | (descriptor, capabilities) <- inputs.cells]]
+  toJSON inputs = object ["controlBucket" .= inputs.controlBucket, "storeLabel" .= inputs.storeLabel, "allowedProjects" .= inputs.allowedProjects, "start" .= inputs.start, "healthPolicies" .= inputs.healthPolicies, "cells" .= [object ["descriptor" .= descriptor, "capabilities" .= capabilities] | (descriptor, capabilities) <- inputs.cells]]
 
 instance FromJSON ExecutionInputs where
   parseJSON = withObject "PerformanceExecutionInputs" \v -> do
-    strictObject ["controlBucket", "storeLabel", "allowedProjects", "start", "cells"] v
+    strictObject ["controlBucket", "storeLabel", "allowedProjects", "start", "healthPolicies", "cells"] v
     entries <-
       v .: "cells"
         >>= traverse
@@ -112,7 +115,7 @@ instance FromJSON ExecutionInputs where
               strictObject ["descriptor", "capabilities"] c
               (,) <$> c .: "descriptor" <*> c .:? "capabilities"
           )
-    ExecutionInputs <$> v .: "controlBucket" <*> v .: "storeLabel" <*> v .: "allowedProjects" <*> v .: "start" <*> pure entries
+    ExecutionInputs <$> v .: "controlBucket" <*> v .: "storeLabel" <*> v .: "allowedProjects" <*> v .: "start" <*> (v .:? "healthPolicies" .!= Map.empty) <*> pure entries
 
 sessionCommands :: Mod CommandFields (CliEnv -> IO ExitCode)
 sessionCommands =
@@ -130,9 +133,18 @@ sessionCommands =
     calibrationParser =
       hsubparser
         ( command "declare" (info (runCalibrationPublish True <$> strOption (long "definition" <> metavar "FILE") <*> strOption (long "uri" <> metavar "GS_URI")) (progDesc "Create and retrieve a frozen definition before any acceptance trials"))
+            <> command "fingerprint" (info (runCalibrationFingerprint <$> strOption (long "descriptor" <> metavar "FILE") <*> strOption (long "cell-policy" <> metavar "FILE")) (progDesc "Read the exact machine/image profile and health-policy digest before a batch"))
             <> command "publish" (info (runCalibrationPublish False <$> strOption (long "acceptance" <> metavar "FILE") <*> strOption (long "uri" <> metavar "GS_URI")) (progDesc "Create and retrieve the complete acceptance receipt inventory"))
             <> command "verify" (info (runCalibrationVerify <$> strOption (long "reference" <> metavar "FILE") <*> strOption (long "prepared" <> metavar "FILE")) (progDesc "Replay every calibration receipt against one prepared profile"))
         )
+
+runCalibrationFingerprint :: FilePath -> FilePath -> CliEnv -> IO ExitCode
+runCalibrationFingerprint descriptorPath policyPath _ = guarded do
+  descriptor <- readJSON descriptorPath
+  policy <- readJSON policyPath
+  input (validateHealthPolicy policy)
+  Lazy.putStrLn (encode (object ["machineProfile" .= cellMachineProfile descriptor, "healthPolicySha256" .= sha256Hex (canonicalEncode policy)]))
+  pure ExitSuccess
 
 runNew :: FilePath -> Text -> FilePath -> Text -> Bool -> CliEnv -> IO ExitCode
 runNew preparedPath uri destination bucket start environment = guarded do
@@ -149,7 +161,9 @@ runNew preparedPath uri destination bucket start environment = guarded do
   projects <- maybe ["tan-nb-exp"] (map Text.strip . Text.splitOn "," . Text.pack) <$> lookupEnv "KENSHOU_GCP_ALLOWED_PROJECTS"
   capabilityDirectory <- fromMaybe ".dev/cells" <$> lookupEnv "KENSHOU_CELL_CAPABILITIES_DIR"
   pinned <- traverse (loadCell store projects capabilityDirectory bucket) prepared.plan.request.cells
-  let inputs = ExecutionInputs bucket label projects start pinned
+  healthPolicies <- if null prepared.plan.selected then pure Map.empty else Map.fromList <$> traverse (\(descriptor, _) -> (descriptor.name,) <$> loadHealthPolicy store bucket descriptor.name) pinned
+  let inputs = ExecutionInputs bucket label projects start healthPolicies pinned
+  checkCalibratedPolicies prepared inputs
   payloads <- loadPayloads store prepared
   payloadsReady <- getCurrentTime
   identifier <- newRunId
@@ -186,6 +200,7 @@ runResume destination environment = guarded do
     checkRootInputs output prepared
     verifyGatingCalibration prepared
     inputs <- require (parseInputs session)
+    checkCalibratedPolicies prepared inputs
     state <- require (journalState session)
     receiptExists <- doesFileExist (output </> "receipt.json")
     if receiptExists && state.lease == Nothing && state.activeComparison == Nothing && Map.size state.completed == length session.plan.selected
@@ -225,15 +240,30 @@ loadCell store projects directory bucket name = do
   capabilities <- loadCellCapabilities directory snapshot.descriptor >>= require
   pure (snapshot.descriptor, capabilities)
 
+loadHealthPolicy :: ObjectStore -> Text -> Text -> IO Value
+loadHealthPolicy store bucket cell = do
+  retained <- store.getObject (Bucket bucket) (ObjectName ("cells/" <> cell <> "/policy.json"))
+  bytes <- maybe (ioError (userError "cell health policy is missing")) (pure . fst) retained
+  policy <- either (ioError . userError) pure (eitherDecode bytes)
+  require (validateHealthPolicy policy)
+  pure policy
+
 checkCell :: ObjectStore -> ExecutionInputs -> (CellDescriptor, Maybe CellCapabilities) -> IO ()
 checkCell store inputs (descriptor, _) = do
   snapshot <- readCellSnapshot store (Lease.CellRef descriptor.name (Bucket inputs.controlBucket)) inputs.allowedProjects >>= require
+  case Map.lookup descriptor.name inputs.healthPolicies of
+    Nothing -> pure ()
+    Just frozen -> do
+      policy <- loadHealthPolicy store inputs.controlBucket descriptor.name
+      unless (policy == frozen) (ioError (userError "cell health policy changed since performance admission"))
   unless (snapshot.descriptor == descriptor) (ioError (userError "cell descriptor changed since performance preparation"))
 
 parseInputs :: PerfSession -> Either Text ExecutionInputs
 parseInputs session = do
   inputs <- maybe (Left "performance session has no frozen execution inputs") decode session.executionInputs
   unless (map ((.name) . fst) inputs.cells == session.plan.request.cells && not (Text.null inputs.controlBucket) && not (null inputs.allowedProjects)) (Left "frozen cell pool differs from the request")
+  unless (null session.plan.selected || Map.keys inputs.healthPolicies == List.sort (map ((.name) . fst) inputs.cells)) (Left "frozen cell health policies are missing or differ from the pool")
+  mapM_ validateHealthPolicy (Map.elems inputs.healthPolicies)
   mapM_
     ( \(descriptor, capabilities) -> do
         unless (descriptor.buckets.control == inputs.controlBucket && descriptor.project `elem` inputs.allowedProjects) (Left "frozen cell bucket or project is invalid")
@@ -275,7 +305,7 @@ options :: BuildOptions
 options = BuildOptions (PrepareOptions False False [] Cold) GranularityRun False NullSink Nothing (24 * 1024 * 1024 * 1024) (20 * 1024 * 1024 * 1024) "0.1.0"
 
 adapter :: CliEnv -> ObjectStore -> ExecutionInputs -> Map.Map Text PayloadDescriptor -> (CellDescriptor, Maybe CellCapabilities) -> CellAdapter
-adapter environment store inputs payloads (descriptor, capabilities) = CellAdapter environment.registry store (Lease.CellRef descriptor.name (Bucket inputs.controlBucket)) descriptor capabilities defaultRoutingRules payloads options inputs.storeLabel (\event -> TextIO.hPutStrLn stderr (Text.pack (show event)))
+adapter environment store inputs payloads (descriptor, capabilities) = CellAdapter environment.registry store (Lease.CellRef descriptor.name (Bucket inputs.controlBucket)) descriptor (Map.findWithDefault Null descriptor.name inputs.healthPolicies) capabilities defaultRoutingRules payloads options inputs.storeLabel (\event -> TextIO.hPutStrLn stderr (Text.pack (show event)))
 
 preflight :: CliEnv -> ObjectStore -> ExecutionInputs -> Map.Map Text PayloadDescriptor -> Prepared.PerfPrepared -> RunId -> IO ()
 preflight environment store inputs payloads prepared identifier = mapM_ check prepared.plan.selected
@@ -475,7 +505,7 @@ auditProfileAttempts recover inputs prepared output entry wanted = do
                                   unless (slice.submission.leaseId == identity.leaseId && slice.submission.runId == slice.cellRun && slice.runIds == [run.runId] && slice.submission.work.sha256 == Text.drop 7 (sha256Hex (Lazy.toStrict work)) && slice.submission.work.bytes == Lazy.length work) (ioError (userError "retained submission work or identity differs"))
                               )
                               journal.slices
-                            verified <- verifyCellTrial (fst pinned) run trial journal
+                            verified <- verifyCellTrial (Map.findWithDefault Null identity.cell inputs.healthPolicies) (fst pinned) run trial journal
                             runtimeProblems <- retainedRuntimeProblems entry.profile run trial journal
                             mapM_
                               ( \reason -> do
@@ -647,6 +677,28 @@ verifyCalibrationAdmission entry expectedToolchain semantics policyValue = do
       unless (sha256Hex (Lazy.toStrict bytes) == digest) (ioError (userError "calibration record digest differs"))
       pure (bytes, metadata.updated)
 
+-- A change in the owner's health thresholds invalidates the batch even when
+-- hardware and image names stayed the same. Check only compatible pool cells.
+checkCalibratedPolicies :: Prepared.PerfPrepared -> ExecutionInputs -> IO ()
+checkCalibratedPolicies prepared inputs = when prepared.plan.gatingEligible do
+  mapM_
+    ( \entry -> do
+        definition <- calibrationDefinition entry
+        let compatible = [descriptor | (descriptor, _) <- inputs.cells, cellMachineProfile descriptor == entry.profile.machineProfile]
+        unless (not (null compatible) && all (\descriptor -> ((sha256Hex . canonicalEncode) <$> Map.lookup descriptor.name inputs.healthPolicies) == Just definition.healthPolicySha256) compatible) (ioError (userError "cell health policy differs from the calibrated policy"))
+    )
+    prepared.plan.selected
+
+calibrationDefinition :: PlannedProfile -> IO Calibration.CalibrationDefinition
+calibrationDefinition entry = do
+  reference <- require (either (Left . Text.pack) Right (parseEither (parseJSON @Calibration.CalibrationReference) (fromMaybe Null entry.profile.calibration)))
+  (bucket, name) <- require (parseDestination reference.definitionUri)
+  (store, _) <- openStore bucket
+  retained <- store.getObject bucket (ObjectName name)
+  bytes <- maybe (ioError (userError "calibration declaration is missing")) (pure . fst) retained
+  unless (sha256Hex (Lazy.toStrict bytes) == reference.definitionSha256) (ioError (userError "calibration declaration digest differs"))
+  either (ioError . userError) pure (eitherDecode bytes)
+
 verifyGatingCalibration :: Prepared.PerfPrepared -> IO ()
 verifyGatingCalibration prepared = when prepared.plan.gatingEligible do
   (semantics, policies, admissions) <- require (either (Left . Text.pack) Right (parseEither (withObject "PinnedInputs" \v -> (,,) <$> v .: "harnessSemanticsSha256" <*> v .: "policies" <*> v .: "calibrationAdmissions") prepared.inputs))
@@ -687,7 +739,9 @@ replayCalibrationReceipt reference = do
         (\cell -> maybe (ioError (userError "calibration lease is outside the frozen pool")) (pure . cellMachineProfile . fst) (find ((== cell) . (.name) . fst) inputs.cells))
         leasedCells
     unless (all (== entry.profile.machineProfile) actualProfiles && (result.infrastructureState /= "healthy" || not (null actualProfiles))) (ioError (userError "calibration ran on a different machine or image profile"))
-    pure (Calibration.VerifiedCalibrationTrial session.sessionId prepared.plan.request.seed prepared.plan.request.control prepared.plan.request.project prepared.plan.request.baselineRevision prepared.plan.request.candidateRevision configuration.profile entry.profile.machineProfile configuration.workloadSha256 (Calibration.toolchainDigest prepared.baseline.buildInventory) semantics configuration.performanceVerdict result.infrastructureState result.blockingRuntimeFailures session.createdAt receipt.totalElapsedSeconds)
+    policies <- traverse (\cell -> maybe (ioError (userError "calibration health policy is absent")) pure (Map.lookup cell inputs.healthPolicies)) leasedCells
+    policy <- case policies of first : rest | all (== first) rest -> pure first; [] | result.infrastructureState /= "healthy" -> maybe (ioError (userError "calibration health policy is absent")) pure (Map.lookup (case prepared.plan.request.cells of cell : _ -> cell; [] -> "") inputs.healthPolicies); _ -> ioError (userError "calibration health policy changed across leases")
+    pure (Calibration.VerifiedCalibrationTrial session.sessionId prepared.plan.request.seed prepared.plan.request.control prepared.plan.request.project prepared.plan.request.baselineRevision prepared.plan.request.candidateRevision configuration.profile entry.profile.machineProfile (sha256Hex (canonicalEncode policy)) configuration.workloadSha256 (Calibration.toolchainDigest prepared.baseline.buildInventory) semantics configuration.performanceVerdict result.infrastructureState result.blockingRuntimeFailures session.createdAt receipt.totalElapsedSeconds)
 
 runVerify :: FilePath -> Bool -> CliEnv -> IO ExitCode
 runVerify output offline _ = guarded do
@@ -715,6 +769,7 @@ verifySessionEvidence output offline = do
   unless (receipt.payloadsReadyAt == session.createdAt) (ioError (userError "receipt timing origin differs from its pinned session"))
   unless (uri == session.evidenceBaseUri <> "/sessions/" <> renderRunId session.sessionId <> "/" <> relative <> "/manifest.json") (ioError (userError "receipt destination differs from its pinned session"))
   inputs <- require (parseInputs session)
+  unless offline (checkCalibratedPolicies prepared inputs)
   result <- readJSON (directory </> "result.json")
   unless (sha256Hex (canonicalEncode (toJSON (result :: PerfResult))) == resultDigest) (ioError (userError "retained aggregate differs from durable receipt"))
   unless (maybe False (<= receipt.totalElapsedSeconds) (Map.lookup "totalAtReportAssembly" result.stageSeconds)) (ioError (userError "report timing exceeds its verified publication time"))

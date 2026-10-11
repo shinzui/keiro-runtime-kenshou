@@ -4,7 +4,7 @@ title: Validating runtime change performance
 description: Prepare exact runtime revisions, execute bounded paired comparisons, recover sessions, and verify durable performance evidence.
 docId: DOC-6
 tags: [performance, runtime-changes, verification-cells, evidence, ci]
-generated: {by: 'codex/gpt-6.1-sol', at: '2026-10-11T07:43:09Z'}
+generated: {by: 'codex/gpt-6.1-sol', at: '2026-10-11T08:14:16Z'}
 ---
 
 # Validating runtime change performance
@@ -176,14 +176,30 @@ retain its scope and budget instead of silently broadening a quick request.
 ## Freeze and verify a calibration batch
 
 First pin the profile to the designated cell's actual machine profile, its
-effective knobs, required metrics and policy. Retain a clean test-only slowdown
+effective knobs, required metrics and policy. Download the owning cell's
+`descriptor.json` and `policy.json` and calculate its identities before declaring
+or running the batch:
+
+```bash
+kenshou perf calibration fingerprint --descriptor descriptor.json \
+  --cell-policy policy.json
+```
+
+Copy `machineProfile` into the catalog profile and definition, and
+`healthPolicySha256` into the definition. A change to image identity or health
+thresholds invalidates the batch. Raw health replay requires the owner's sealed
+`cell/execution-window.json` and every role's `cell/observations/*.json`, with
+continuous counters, fresh agent/image identity and matching observation windows.
+
+ Retain a clean test-only slowdown
 commit and review its deterministic delay at the real operation boundary. Its
 declared latency effect must exceed both the policy's relative and absolute
 thresholds. Keep that candidate outside runtime releases.
 
 Create a `kenshou.perf-calibration-definition/v1` document using
 `schemas/kenshou.perf-calibration-definition.v1.schema.json`. Bind one profile's
-workload digest, the prepared compiler/platform/toolchain digest, the planning
+machine/image profile and health-policy digest, workload digest, the prepared
+compiler/platform/toolchain digest, the planning
 inputs' `harnessSemanticsSha256`, both source commits, the injected mechanism and
 target effect. Declare twenty unique seeds, a finite infrastructure retry cap
 (at most twenty), and an explicit expiry. Publish before any acceptance trial:
