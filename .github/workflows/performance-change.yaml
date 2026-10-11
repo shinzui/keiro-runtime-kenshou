@@ -1,0 +1,166 @@
+name: Runtime performance change
+
+on:
+  workflow_call:
+    inputs:
+      request-json:
+        description: kenshou.perf-request/v1, with purpose gating
+        required: true
+        type: string
+      execution-json:
+        description: Explicit cloud identity, buckets and Linux builder configuration
+        required: true
+        type: string
+      harness-revision:
+        description: Full Kenshou commit from its trusted master history
+        required: true
+        type: string
+      runner-labels:
+        description: JSON array containing self-hosted, Linux, X64 and protected runner labels
+        required: true
+        type: string
+      environment:
+        description: Existing protected environment in the caller repository
+        required: true
+        type: string
+    outputs:
+      exit-code:
+        description: Kenshou exit code; 4 also covers failed evidence replay
+        value: ${{ jobs.measure.outputs.exit-code }}
+      manifest-uri:
+        description: Retrieved durable aggregate manifest, when publication succeeds
+        value: ${{ jobs.measure.outputs.manifest-uri }}
+  workflow_dispatch:
+    inputs:
+      request-json:
+        description: kenshou.perf-request/v1, with purpose gating
+        required: true
+        type: string
+      execution-json:
+        description: Explicit cloud identity, buckets and Linux builder configuration
+        required: true
+        type: string
+      harness-revision:
+        description: Full Kenshou commit from its trusted master history
+        required: true
+        type: string
+      runner-labels:
+        description: JSON array of protected Linux self-hosted runner labels
+        required: true
+        type: string
+      environment:
+        description: Existing protected environment in this repository
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+# Do not cancel a lease-owning run when another request arrives.
+concurrency:
+  group: performance-${{ github.repository }}-${{ github.run_id }}
+  cancel-in-progress: false
+
+env:
+  PERF_REQUEST_JSON: ${{ inputs.request-json }}
+  PERF_EXECUTION_JSON: ${{ inputs.execution-json }}
+  PERF_HARNESS_REVISION: ${{ inputs.harness-revision }}
+  PERF_RUNNER_LABELS: ${{ inputs.runner-labels }}
+  PERF_ENVIRONMENT: ${{ inputs.environment }}
+  PERF_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+  PERF_ROOT: .dev/perf-ci/${{ github.run_id }}-${{ github.run_attempt }}
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: shinzui/keiro-runtime-kenshou
+          ref: master
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Validate trusted invocation and existing protection
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/performance-ci.py preflight
+
+  prepare:
+    needs: preflight
+    runs-on: ${{ fromJSON(inputs.runner-labels) }}
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: shinzui/keiro-runtime-kenshou
+          ref: ${{ inputs.harness-revision }}
+          persist-credentials: false
+      - name: Federated GCP identity
+        if: ${{ fromJSON(inputs.execution-json).authMode == 'workload-identity' }}
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          project_id: ${{ fromJSON(inputs.execution-json).gcpProject }}
+          workload_identity_provider: ${{ fromJSON(inputs.execution-json).workloadIdentityProvider }}
+          service_account: ${{ fromJSON(inputs.execution-json).gcpIdentity }}
+          create_credentials_file: true
+          export_environment_variables: true
+      - name: Prepare independently checked payloads
+        run: python3 scripts/performance-ci.py prepare
+      - name: Retain preparation evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: performance-preparation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.PERF_ROOT }}/preparation/evidence/
+          include-hidden-files: true
+          if-no-files-found: warn
+
+  measure:
+    needs: prepare
+    runs-on: ${{ fromJSON(inputs.runner-labels) }}
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    outputs:
+      exit-code: ${{ steps.measure.outputs.exit-code }}
+      manifest-uri: ${{ steps.measure.outputs.manifest-uri }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: shinzui/keiro-runtime-kenshou
+          ref: ${{ inputs.harness-revision }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: performance-preparation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.PERF_ROOT }}/preparation/evidence/
+          digest-mismatch: error
+      - name: Federated GCP identity
+        if: ${{ fromJSON(inputs.execution-json).authMode == 'workload-identity' }}
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          project_id: ${{ fromJSON(inputs.execution-json).gcpProject }}
+          workload_identity_provider: ${{ fromJSON(inputs.execution-json).workloadIdentityProvider }}
+          service_account: ${{ fromJSON(inputs.execution-json).gcpIdentity }}
+          create_credentials_file: true
+          export_environment_variables: true
+      - name: Execute and independently replay the durable report
+        id: measure
+        run: python3 scripts/performance-ci.py measure
+      - name: Retain session checkpoints and sealed reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: performance-session-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.PERF_ROOT }}/session/
+          include-hidden-files: true
+          if-no-files-found: warn

@@ -4,6 +4,13 @@
 `kenshou.run-plan/v1` document. `kenshou execute` runs that document one entry
 at a time and maintains a resumable `kenshou.plan-summary/v1`.
 
+For a bounded comparison between exact upstream runtime commits, use
+[`kenshou perf`](guides/validating-runtime-change-performance.md). Its request
+pins baseline/candidate revisions, generated cohort inputs, named performance
+profiles and budgets. It reports requested-scope coverage separately from
+whole-change coverage. The initial profiles remain uncalibrated, so ordinary
+performance gating requests currently report incomplete coverage.
+
 ## Describe the change
 
 Use one or more of these inputs:

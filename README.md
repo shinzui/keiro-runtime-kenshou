@@ -68,8 +68,11 @@ The foundations are complete. The harness kernel, the change-aware planner, and
 the measurement, correctness, diagnostics, and telemetry toolkits all work (EP-1
 to EP-7). Coverage of the individual layers (EP-8 to EP-14) is in progress and
 has already found runtime defects, which are recorded under `docs/findings/`.
-Assembled-runtime verification, leased GCP cells, and the OKF evidence bundle
-(EP-15 to EP-19) have not started. The master plan's Exec-Plan Registry
+Leased GCP cell execution and the OKF evidence bundle are available. Exact-revision
+paired performance commands are implemented; their live calibration, designated
+cell and CI acceptance remain open. See the
+[performance guide](docs/guides/validating-runtime-change-performance.md).
+The master plan's Exec-Plan Registry
 ([`docs/masterplans/1-…`](docs/masterplans/1-build-an-extensive-verification-suite-for-the-keiro-runtime.md))
 is the source of truth for plan status.
 

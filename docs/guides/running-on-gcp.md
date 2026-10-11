@@ -4,7 +4,7 @@ title: Running Kenshou on a GCP verification cell
 description: Publish immutable payloads, lease verification cells, submit and recover runs, and fetch sealed GCP evidence.
 docId: DOC-4
 tags: [gcp, verification-cells, payloads, leases, evidence]
-generated: {by: 'human:nadeem', at: '2026-10-09T21:33:45Z'}
+generated: {by: 'codex/gpt-6.1-sol', at: '2026-10-11T07:25:00Z'}
 ---
 
 # Running Kenshou on a GCP verification cell
@@ -14,6 +14,12 @@ PostgreSQL reset, or durable cell evidence. A cell submission has one
 `CELL_RUN_ID` and may contain several Kenshou `RUN_ID`s. The address of one
 nested run is `<cell-run-id>/<run-id>`; its fetched directory is
 `<cell-run-dir>/tree/output/<run-id>`.
+
+For exact-revision paired performance comparisons, follow
+[validating runtime change performance](validating-runtime-change-performance.md).
+`kenshou perf` manages generated payloads, scoped planning, persistent budgets,
+session recovery and durable report replay. Its initial profiles still need live
+calibration and cell acceptance before they can serve as performance gates.
 
 ## Prepare the operator and payload
 

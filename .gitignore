@@ -21,3 +21,4 @@ result-*
 .pre-commit-config.yaml
 /cell-runs/
 __pycache__/
+gha-creds-*.json

@@ -224,6 +224,16 @@ The repository currently reports no GitHub environments or self-hosted runners;
 the user has been asked for the protected runner and authorized identity settings.
 Live cloud work still awaits renewed GCP authentication.
 
+Partial Milestone 6 (2026-10-11): Added the reusable/manual performance workflow
+with distinct preparation and measurement jobs, immutable action pins, explicit
+identity/builder/capability settings, existing-environment protection checks,
+trusted default-branch admission, online replay and retained artifacts. Four
+offline CI controls and actionlint pass. The new DOC-6 operator guide covers
+request scope, all exits, recovery, publication and current acceptance gaps;
+strict guide validation passes for six concepts. The workflow has not run live,
+and no protected runner or environment has been configured. Calibration, owner
+acceptance and real CI/local parity still block milestone completion.
+
 ## Surprises & Discoveries
 
 
