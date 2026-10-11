@@ -61,7 +61,12 @@ library
     Kenshou.Remote.Payload.Nix
     Kenshou.Remote.Payload.Publish
     Kenshou.Remote.Payload.Publisher
+    Kenshou.Remote.Perf.Attempt
+    Kenshou.Remote.Perf.Cell
+    Kenshou.Remote.Perf.Conditions
     Kenshou.Remote.Perf.Journal
+    Kenshou.Remote.Perf.Lock
+    Kenshou.Remote.Perf.Publication
     Kenshou.Remote.Perf.Runner
     Kenshou.Remote.Selftest
     Kenshou.Remote.Store
@@ -104,7 +109,11 @@ test-suite kenshou-remote-test
     PairSpec
     ParitySpec
     PayloadSpec
+    PerfAttemptSpec
+    PerfConditionsSpec
     PerfJournalSpec
+    PerfLockSpec
+    PerfPublicationSpec
     PerfRunnerSpec
     PrepareSpec
     SessionSpec

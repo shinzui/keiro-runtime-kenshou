@@ -152,6 +152,18 @@ uses the selected description and flags, supplies absent disabled-test arguments
 only with a production-dependency null assertion, and remains unverified until
 authentication restores the builder. No lease was acquired.
 
+Further Milestone 3 work (2026-10-10): Added the paired-attempt engine,
+same-lease cell journal reconciliation, sealed outer health/reset checks,
+create-only aggregate artifact publication with full retrieval verification,
+and process/thread client locking. Twenty-one remote performance controls pass,
+including invalid schedule/path rejection, bounded replacement dispatch, changed
+lease rejection, missing/lying/tripped condition controls, stored-object tampering,
+competing clients, and expired publication grace on resume. Ten measurement controls pass, including a sealed known
+defect with exit zero. The cell adapter has compiled but has not run live. The
+CLI integration, complete report graph replay, timing records and independently
+verified calibration admission remain unfinished. No milestone is closed by these
+synthetic controls.
+
 ## Surprises & Discoveries
 
 

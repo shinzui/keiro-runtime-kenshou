@@ -58,7 +58,8 @@ data PerfSession = PerfSession
     plan :: PerfPlan,
     evidenceBaseUri :: Text,
     createdAt :: UTCTime,
-    events :: [SessionEvent]
+    events :: [SessionEvent],
+    executionInputs :: Maybe Value
   }
   deriving stock (Eq, Show)
 
@@ -83,7 +84,7 @@ initialSession identifier digest plan uri now = do
   case fromJSON (toJSON plan) :: Result PerfPlan of
     Error problem -> Left (Text.pack problem)
     Success _ -> pure ()
-  pure (PerfSession identifier digest plan uri now [])
+  pure (PerfSession identifier digest plan uri now [] Nothing)
 
 validateSessionInputs :: Prepared.PerfPrepared -> PerfSession -> Either Text ()
 validateSessionInputs prepared session = do
@@ -231,14 +232,14 @@ instance FromJSON SessionEvent where
     SessionEvent <$> v .: "at" <*> v .: "action"
 
 instance ToJSON PerfSession where
-  toJSON session = object ["schema" .= ("kenshou.perf-session/v1" :: Text), "sessionId" .= session.sessionId, "preparedSha256" .= session.preparedSha256, "plan" .= session.plan, "evidenceBaseUri" .= session.evidenceBaseUri, "createdAt" .= session.createdAt, "events" .= session.events]
+  toJSON session = object ["schema" .= ("kenshou.perf-session/v1" :: Text), "sessionId" .= session.sessionId, "preparedSha256" .= session.preparedSha256, "plan" .= session.plan, "evidenceBaseUri" .= session.evidenceBaseUri, "createdAt" .= session.createdAt, "events" .= session.events, "executionInputs" .= session.executionInputs]
 
 instance FromJSON PerfSession where
   parseJSON = withObject "PerfSession" \v -> do
-    strictObject ["schema", "sessionId", "preparedSha256", "plan", "evidenceBaseUri", "createdAt", "events"] v
+    strictObject ["schema", "sessionId", "preparedSha256", "plan", "evidenceBaseUri", "createdAt", "events", "executionInputs"] v
     schema <- v .: "schema"
     unless (schema == ("kenshou.perf-session/v1" :: Text)) (fail "unsupported performance session schema")
-    session <- PerfSession <$> v .: "sessionId" <*> v .: "preparedSha256" <*> v .: "plan" <*> v .: "evidenceBaseUri" <*> v .: "createdAt" <*> v .: "events"
+    session <- PerfSession <$> v .: "sessionId" <*> v .: "preparedSha256" <*> v .: "plan" <*> v .: "evidenceBaseUri" <*> v .: "createdAt" <*> v .: "events" <*> v .:? "executionInputs"
     _ <- either (fail . Text.unpack) pure (initialSession session.sessionId session.preparedSha256 session.plan session.evidenceBaseUri session.createdAt)
     _ <- either (fail . Text.unpack) pure (journalState session)
     pure session

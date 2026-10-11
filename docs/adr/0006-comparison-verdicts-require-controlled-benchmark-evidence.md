@@ -2,7 +2,7 @@
 type: Architecture Decision Record
 title: Comparison verdicts require controlled benchmark evidence
 description: Performance verdicts come only from paired, interleaved, compatibility-checked, benchmark-grade runs, while historical measurements remain telemetry.
-timestamp: 2026-10-11T04:42:00Z
+timestamp: 2026-10-11T06:10:23Z
 generated:
   by: process:codex
   at: "2026-09-21T16:14:01Z"
@@ -59,6 +59,22 @@ uncalibrated profiles, including A/A controls with an empty source diff, and the
 results remain non-gating. Deliberate profile scope and whole-change coverage are
 separate claims. Count-bound scenario revisions must declare their actual phases
 and timeout; unsupported phase declarations are rejected.
+
+A completed cell trial must also retain sealed cold-reset evidence and all five
+health gates for every required machine. Reported observations must satisfy their
+thresholds; a claimed passing flag or nested passing run alone is insufficient.
+Missing or failed cell conditions invalidate performance evidence. A reproduced
+known runtime defect remains a blocking observation even when its ordinary run
+exit is zero and its statistical metrics pass.
+
+The aggregate orchestration journal retains the original execution deadline,
+spent admission allowance, attempt and replacement counts across interruption.
+A new lease starts a separate unfinished comparison attempt; pairs from different
+leases are not pooled. Durable publication uses create-only objects and verifies
+every retrieved artifact, including pre-existing objects. Failed publication or
+retrieval cannot yield an authoritative success. Replay preserves the original
+sealed comparison bytes and compares evidence identities and statistical outputs
+while permitting a new analysis ID, clock and analysis-host fingerprint.
 
 Historical series remain useful for investigation and workload selection, but
 they never determine a comparison verdict.

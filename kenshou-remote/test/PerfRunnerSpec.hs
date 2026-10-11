@@ -4,7 +4,7 @@ import Data.Aeson
 import Data.IORef
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
-import Data.Time (UTCTime (..), fromGregorian, secondsToDiffTime)
+import Data.Time (UTCTime (..), addUTCTime, fromGregorian, secondsToDiffTime)
 import Kenshou.Core.Id (newRunId)
 import Kenshou.Perf.Plan
 import Kenshou.Perf.Prepared qualified as Prepared
@@ -67,6 +67,16 @@ spec = describe "performance runner orchestration" do
     hooks <- fixtureHooks calls
     runPerformance hooks prepared {Prepared.harnessRevision = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"} path `shouldThrow` anyIOException
     readIORef calls `shouldReturn` []
+  it "does not extend cleanup or publication time when a finished session is resumed" $ withSystemTempDirectory "perf-runner-deadline" \directory -> do
+    (prepared, path) <- fixture directory
+    calls <- newIORef ([] :: [(Text, Int, Bool)])
+    hooks <- fixtureHooks calls
+    original <- runPerformance hooks prepared path
+    original.exitCode `shouldBe` 0
+    published <- newIORef False
+    result <- runPerformance hooks {clock = pure (addUTCTime 1870 now), publishAndVerify = \_ _ -> writeIORef published True >> pure True} prepared path
+    result.exitCode `shouldBe` 4
+    readIORef published `shouldReturn` False
 
 fixture :: FilePath -> IO (Prepared.PerfPrepared, FilePath)
 fixture directory = do

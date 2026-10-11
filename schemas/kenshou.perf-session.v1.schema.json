@@ -3,36 +3,228 @@
   "title": "Kenshou persistent performance session history",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "sessionId", "preparedSha256", "plan", "evidenceBaseUri", "createdAt", "events"],
+  "required": [
+    "schema",
+    "sessionId",
+    "preparedSha256",
+    "plan",
+    "evidenceBaseUri",
+    "createdAt",
+    "events"
+  ],
   "properties": {
-    "schema": {"const": "kenshou.perf-session/v1"},
-    "sessionId": {"$ref": "#/$defs/runId"},
-    "preparedSha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
-    "plan": {"$ref": "kenshou.perf-plan.v1.schema.json"},
-    "evidenceBaseUri": {"type": "string", "pattern": "^gs://[^ /?#]+/[^ ?#]+$"},
-    "createdAt": {"type": "string", "format": "date-time"},
+    "schema": {
+      "const": "kenshou.perf-session/v1"
+    },
+    "sessionId": {
+      "$ref": "#/$defs/runId"
+    },
+    "preparedSha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "plan": {
+      "$ref": "kenshou.perf-plan.v1.schema.json"
+    },
+    "evidenceBaseUri": {
+      "type": "string",
+      "pattern": "^gs://[^ /?#]+/[^ ?#]+$"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
     "events": {
       "type": "array",
       "items": {
-        "type": "object", "additionalProperties": false, "required": ["at", "action"],
-        "properties": {"at": {"type": "string", "format": "date-time"}, "action": {"$ref": "#/$defs/action"}}
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "at",
+          "action"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "action": {
+            "$ref": "#/$defs/action"
+          }
+        }
       }
+    },
+    "executionInputs": {
+      "type": [
+        "object",
+        "null"
+      ]
     }
   },
   "$defs": {
-    "runId": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+    "runId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
     "action": {
       "oneOf": [
-        {"type": "object", "additionalProperties": false, "required": ["kind", "seconds"], "properties": {"kind": {"const": "admission-reserved"}, "seconds": {"type": "integer", "minimum": 1}}},
-        {"type": "object", "additionalProperties": false, "required": ["kind", "lease"], "properties": {"kind": {"const": "lease-acquired"}, "lease": {"$ref": "#/$defs/lease"}}},
-        {"type": "object", "additionalProperties": false, "required": ["kind", "reason"], "properties": {"kind": {"const": "lease-lost"}, "reason": {"type": "string", "minLength": 1}}},
-        {"type": "object", "additionalProperties": false, "required": ["kind"], "properties": {"kind": {"const": "lease-released"}}},
-        {"type": "object", "additionalProperties": false, "required": ["kind", "profile", "index"], "properties": {"kind": {"const": "comparison-started"}, "profile": {"type": "string", "minLength": 1}, "index": {"type": "integer", "minimum": 0}}},
-        {"type": "object", "additionalProperties": false, "required": ["kind", "profile"], "properties": {"kind": {"const": "replacement-reserved"}, "profile": {"type": "string", "minLength": 1}}},
-        {"type": "object", "additionalProperties": false, "required": ["kind", "profile", "reason"], "properties": {"kind": {"const": "runtime-blocked"}, "profile": {"type": "string", "minLength": 1}, "reason": {"type": "string", "minLength": 1}}},
-        {"type": "object", "additionalProperties": false, "required": ["kind", "result"], "properties": {"kind": {"const": "comparison-completed"}, "result": {"$ref": "kenshou.perf-result.v1.schema.json#/$defs/configuration"}}}
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "seconds"
+          ],
+          "properties": {
+            "kind": {
+              "const": "admission-reserved"
+            },
+            "seconds": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "lease"
+          ],
+          "properties": {
+            "kind": {
+              "const": "lease-acquired"
+            },
+            "lease": {
+              "$ref": "#/$defs/lease"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "properties": {
+            "kind": {
+              "const": "lease-lost"
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "lease-released"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "profile",
+            "index"
+          ],
+          "properties": {
+            "kind": {
+              "const": "comparison-started"
+            },
+            "profile": {
+              "type": "string",
+              "minLength": 1
+            },
+            "index": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "profile"
+          ],
+          "properties": {
+            "kind": {
+              "const": "replacement-reserved"
+            },
+            "profile": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "profile",
+            "reason"
+          ],
+          "properties": {
+            "kind": {
+              "const": "runtime-blocked"
+            },
+            "profile": {
+              "type": "string",
+              "minLength": 1
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "result"
+          ],
+          "properties": {
+            "kind": {
+              "const": "comparison-completed"
+            },
+            "result": {
+              "$ref": "kenshou.perf-result.v1.schema.json#/$defs/configuration"
+            }
+          }
+        }
       ]
     },
-    "lease": {"type": "object", "additionalProperties": false, "required": ["cell", "leaseId"], "properties": {"cell": {"type": "string", "minLength": 1}, "leaseId": {"$ref": "#/$defs/runId"}}}
+    "lease": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cell",
+        "leaseId"
+      ],
+      "properties": {
+        "cell": {
+          "type": "string",
+          "minLength": 1
+        },
+        "leaseId": {
+          "$ref": "#/$defs/runId"
+        }
+      }
+    }
   }
 }

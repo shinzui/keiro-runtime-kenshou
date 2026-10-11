@@ -139,8 +139,14 @@ runPerformance hooks prepared path = do
           Nothing
       completed = [Map.findWithDefault (unfinished entry) entry.profile.name saved.completed | entry <- session.plan.selected]
   preliminary <- require (aggregateResult session.plan session.preparedSha256 (either (const False) (const True) execution) completed)
-  publication <- try @IOException (hooks.publishAndVerify session preliminary)
-  let published = either (const False) id publication
+  publicationStarted <- hooks.clock
+  let publicationMicros =
+        maybe
+          (session.plan.request.budgetMinutes * 60000000)
+          (min (session.plan.request.budgetMinutes * 60000000) . max 0 . floor . (* 1000000) . (`diffUTCTime` publicationStarted))
+          saved.cleanupDeadline
+  publication <- try @IOException (timeout publicationMicros (hooks.publishAndVerify session preliminary))
+  let published = either (const False) (== Just True) publication
   require (aggregateResult session.plan session.preparedSha256 (published && either (const False) (const True) execution) completed)
   where
     verify result = hooks.verifyCompleted result >>= \valid -> unless valid (ioError (userError "retained completed configuration failed evidence verification"))

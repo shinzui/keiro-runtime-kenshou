@@ -1,6 +1,7 @@
 module Kenshou.Measure.PerfSpec (spec) where
 
 import Data.Aeson
+import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString qualified as ByteString
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
@@ -42,6 +43,20 @@ spec = describe "performance metric admission" do
       writeRun directory
       admitted <- verifyPerformanceRun profile directory
       admitted `shouldSatisfy` isRight
+  it "retains a known runtime failure even when it is nonblocking and exits zero" do
+    withSystemTempDirectory "kenshou-perf-known-defect" \directory -> do
+      profile <- loadProfile
+      writeRun directory
+      document <- eitherDecodeFileStrict' (directory </> "run-result.json") >>= either fail pure
+      case document of
+        Object fields -> encodeFile (directory </> "run-result.json") (Object (KeyMap.insert "exitCode" (Number 0) (KeyMap.insert "blocking" (Bool False) (KeyMap.insert "outcome" (String "failed") fields))))
+        _ -> fail "fixture is not an object"
+      seal directory
+      admitted <- verifyPerformanceRun profile directory
+      admitted `shouldBe` Left [RuntimeWorkFailure "runtime assertions failed (including nonblocking known defects)"]
+  it "does not admit absent, unknown or infrastructure runtime outcomes" do
+    runtimeResultProblems (object []) `shouldBe` [InvalidPerformanceEvidence "runtime outcome is missing or unsupported"]
+    runtimeResultProblems (object ["outcome" .= ("infrastructure-failure" :: Text)]) `shouldBe` [InvalidPerformanceEvidence "runtime infrastructure failed"]
   it "detects storage tampering before using a retained summary" do
     withSystemTempDirectory "kenshou-perf-tamper" \directory -> do
       profile <- loadProfile
@@ -126,7 +141,7 @@ writeResult :: FilePath -> MeasurementSummary -> IO ()
 writeResult directory measurements =
   encodeFile
     (directory </> "run-result.json")
-    (object ["summaries" .= object ["measurements" .= object ["measurements" .= measurements]]])
+    (object ["outcome" .= ("passed" :: Text), "summaries" .= object ["measurements" .= object ["measurements" .= measurements]]])
 
 seal :: FilePath -> IO ()
 seal directory = do

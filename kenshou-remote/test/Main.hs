@@ -16,13 +16,18 @@ import GcsSpec qualified
 import HealthSpec qualified
 import Kenshou.Core.Cohort (CohortIdentity (..), CohortName (..), PlanHash (..))
 import Kenshou.Remote.Payload (Bundle (..), CellPayload (..), CohortCheck (..), Harness (..), PayloadDescriptor (..))
+import Kenshou.Remote.Perf.Lock (withPerformanceLock)
 import Kenshou.Remote.Store (Bucket (..), ObjectMeta (..), ObjectName (..), ObjectStore (..), Precondition (..), PutOutcome (..))
 import Kenshou.Remote.Store.File (newFileStore)
 import LeaseSpec qualified
 import PairSpec qualified
 import ParitySpec qualified
 import PayloadSpec qualified
+import PerfAttemptSpec qualified
+import PerfConditionsSpec qualified
 import PerfJournalSpec qualified
+import PerfLockSpec qualified
+import PerfPublicationSpec qualified
 import PerfRunnerSpec qualified
 import PrepareSpec qualified
 import SessionSpec qualified
@@ -39,6 +44,7 @@ import WatchSpec qualified
 main :: IO ()
 main =
   getArgs >>= \case
+    ["--perf-lock", root] -> withPerformanceLock root (putStrLn "locked")
     ["--claim", root] -> do
       store <- newFileStore root
       result <- store.putObject (Bucket "control") (ObjectName "cells/alpha/lease.json") "application/json" DoesNotExist "claim"
@@ -61,6 +67,10 @@ tests = do
   PayloadSpec.spec
   PerfJournalSpec.spec
   PerfRunnerSpec.spec
+  PerfPublicationSpec.spec
+  PerfConditionsSpec.spec
+  PerfAttemptSpec.spec
+  PerfLockSpec.spec
   PrepareSpec.spec
   SessionSpec.spec
   SubmitSpec.spec

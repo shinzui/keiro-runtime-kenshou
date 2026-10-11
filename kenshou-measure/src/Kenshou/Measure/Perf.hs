@@ -1,6 +1,7 @@
 module Kenshou.Measure.Perf
   ( AdmissionProblem (..),
     requiredMetricProblems,
+    runtimeResultProblems,
     validateProfilePolicy,
     verifyPerformanceRun,
   )
@@ -36,6 +37,17 @@ data AdmissionProblem
   | InvalidPerformanceEvidence Text
   | RuntimeWorkFailure Text
   deriving stock (Eq, Show)
+
+-- A known defect may deliberately have a nonblocking exit code. Performance
+-- acceptance still retains the failed runtime observation independently.
+runtimeResultProblems :: Value -> [AdmissionProblem]
+runtimeResultProblems document = case parseMaybe (withObject "runtime result" (.: "outcome")) document :: Maybe Text of
+  Just "passed" -> []
+  Just "failed" -> [RuntimeWorkFailure "runtime assertions failed (including nonblocking known defects)"]
+  Just "errored" -> [RuntimeWorkFailure "runtime execution errored", InvalidPerformanceEvidence "runtime execution lacks authoritative measurements"]
+  Just "inconclusive" -> [InvalidPerformanceEvidence "runtime result is inconclusive"]
+  Just "infrastructure-failure" -> [InvalidPerformanceEvidence "runtime infrastructure failed"]
+  _ -> [InvalidPerformanceEvidence "runtime outcome is missing or unsupported"]
 
 requiredMetricProblems :: [RequiredMetric] -> MeasurementSummary -> [AdmissionProblem]
 requiredMetricProblems required summary = concatMap check required
@@ -87,7 +99,8 @@ verifyPerformanceRun profile directory = do
                     Left problem -> [InvalidPerformanceEvidence (Text.pack problem)]
                     Right value | value /= toJSON summary -> [InvalidPerformanceEvidence "retained measurement summary differs from raw evidence"]
                     _ -> []
-                  problems = requiredMetricProblems profile.requiredMetrics summary <> rawProblems <> summaryProblems
+                  outcomeProblems = either (\problem -> [InvalidPerformanceEvidence (Text.pack problem)]) runtimeResultProblems result
+                  problems = requiredMetricProblems profile.requiredMetrics summary <> rawProblems <> summaryProblems <> outcomeProblems
               pure if null problems then Right summary else Left problems
     operations = nub [operation | metric <- profile.requiredMetrics, Just operation <- [operationFor metric.name]]
 
