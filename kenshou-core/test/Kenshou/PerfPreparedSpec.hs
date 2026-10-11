@@ -4,16 +4,20 @@ module Kenshou.PerfPreparedSpec (spec) where
 
 import Data.Aeson
 import Data.Aeson.KeyMap qualified as KeyMap
+import Data.Aeson.Types (parseEither)
 import Data.ByteString qualified as ByteString
+import Data.ByteString.Lazy qualified as LazyByteString
 import Data.Either (isLeft)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified
+import Kenshou.Core.Canonical (sha256Hex)
 import Kenshou.Core.Cohort qualified as Cohort
 import Kenshou.Core.Manifest qualified as Manifest
 import Kenshou.Perf.Artifacts
 import Kenshou.Perf.Calibration qualified as Calibration
 import Kenshou.Perf.Prepared hiding (plan)
+import Kenshou.Perf.Source qualified as Source
 import System.Directory (createFileLink)
 import System.FilePath ((</>))
 import System.IO.Temp (withSystemTempDirectory)
@@ -28,6 +32,32 @@ spec = describe "performance preparation integrity" do
     validatePrepared prepared {baseline = baselineArm {buildKey = "sha256:changed"}} `shouldSatisfy` isLeft
     decoded <- right (eitherDecode (encode prepared) :: Either String PerfPrepared)
     toJSON decoded `shouldBe` toJSON prepared
+  it "admits resolved-cohort identities, replays legacy identities and rejects a rehashed alias" do
+    prepared <- eitherDecodeFileStrict' "test/golden/perf-prepared.fixture.json" >>= right
+    (request, template, baselineSource, candidateSource) <- right (parseEither (withObject "Inputs" \fields -> (,,,) <$> fields .: "request" <*> fields .: "template" <*> fields .: "baselineSource" <*> fields .: "candidateSource") (prepared :: PerfPrepared).inputs)
+    baselineDescriptor <- right (Source.descriptorForSnapshot request template "baseline" baselineSource)
+    candidateDescriptor <- right (Source.descriptorForSnapshot request template "candidate" candidateSource)
+    let bind descriptor arm = do
+          let digest = Data.Text.drop 7 (sha256Hex (LazyByteString.toStrict (encode descriptor)))
+          lock <- case arm.sourceLock of
+            Object fields -> pure (Object (KeyMap.insert "cohort" (toJSON descriptor.descriptorName) (KeyMap.insert "descriptorSha256" (String digest) fields)))
+            _ -> fail "fixture source lock is not an object"
+          payload <- case arm.payload of
+            Object fields -> do
+              original <- maybe (fail "fixture payload has no identity") pure (KeyMap.lookup "cohortIdentity" fields)
+              identity <- case fromJSON original of Error problem -> fail problem; Success value -> pure value
+              let changed = (identity :: Cohort.CohortIdentity) {Cohort.identityCohort = descriptor.descriptorName, Cohort.identityDescriptorSha256 = digest}
+              pure (Object (KeyMap.insert "cohortIdentity" (toJSON changed) (KeyMap.insert "flakeAttr" (String ("packages.x86_64-linux.kenshou-" <> Cohort.unCohortName descriptor.descriptorName)) fields)))
+            _ -> fail "fixture payload is not an object"
+          pure arm {descriptor = descriptor, sourceLock = lock, payload = payload, buildKey = buildKeyFor prepared.harnessRevision descriptor lock arm.buildInventory arm.boundsInventory}
+    baseline <- bind baselineDescriptor prepared.baseline
+    candidate <- bind candidateDescriptor prepared.candidate
+    let modern = prepared {baseline = baseline, candidate = candidate}
+    validatePrepared modern `shouldBe` Right ()
+    validatePrepared prepared `shouldBe` Right ()
+    validatePrepared modern {candidate = prepared.candidate} `shouldSatisfy` isLeft
+    alias <- bind baselineDescriptor {Cohort.descriptorName = Cohort.CohortName "perf-unrelated-alias", Cohort.descriptorProjectFile = "perf-unrelated-alias.project"} baseline
+    validatePrepared modern {baseline = alias, candidate = alias} `shouldSatisfy` isLeft
   it "binds actual inventories to the planning toolchain while allowing catalog-only promotion" do
     prepared <- eitherDecodeFileStrict' "test/golden/perf-prepared.fixture.json" >>= right
     let inventory = (prepared :: PerfPrepared).baseline.buildInventory

@@ -7,6 +7,7 @@ module Kenshou.Perf.Source
     targetPackages,
     sourceSnapshot,
     descriptorForSnapshot,
+    legacyDescriptorForSnapshot,
   )
 where
 
@@ -18,7 +19,7 @@ import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as Text
-import Kenshou.Core.Canonical (sha256Hex)
+import Kenshou.Core.Canonical (canonicalEncode, sha256Hex)
 import Kenshou.Core.Cohort
 import Kenshou.Perf.Request
 import System.FilePath (takeDirectory)
@@ -92,22 +93,40 @@ sourceSnapshot request descriptor location revision manifests = do
     sortOnName values = map snd (Map.toAscList (Map.fromList [(value.name, value) | value <- values]))
 
 descriptorForSnapshot :: PerfRequest -> CohortDescriptor -> Text -> SourceSnapshot -> Either Text CohortDescriptor
-descriptorForSnapshot request descriptor arm snapshot = do
+descriptorForSnapshot = descriptorWithIdentity False
+
+-- Read compatibility for previously sealed v1 preparations. New preparation
+-- always uses the resolved-cohort identity; legacy names remain bound to the
+-- exact retained request and independent manifests, never accepted arbitrarily.
+legacyDescriptorForSnapshot :: PerfRequest -> CohortDescriptor -> Text -> SourceSnapshot -> Either Text CohortDescriptor
+legacyDescriptorForSnapshot = descriptorWithIdentity True
+
+descriptorWithIdentity :: Bool -> PerfRequest -> CohortDescriptor -> Text -> SourceSnapshot -> Either Text CohortDescriptor
+descriptorWithIdentity legacy request descriptor arm snapshot = do
   expected <- targetPackages request descriptor
   unless (snapshot.project == request.project && sort (map (.name) snapshot.packages) == expected) (Left "snapshot project/package inventory differs from the request")
   unless (validLocation snapshot.location && immutableRevision snapshot.revision) (Left "snapshot source must be immutable HTTPS Git")
   unless (arm `elem` ["baseline", "candidate"]) (Left "unknown comparison arm")
   unless (snapshot.revision == if arm == "baseline" then request.baselineRevision else request.candidateRevision) (Left "snapshot revision differs from its arm")
   mapM_ validateManifest snapshot.packages
-  let effectiveArm = if request.baselineRevision == request.candidateRevision then "aa" else arm
-      generatedName = "perf-" <> Text.take 16 (Text.drop 7 (requestDigest request)) <> "-" <> effectiveArm
   components <- traverse replace descriptor.descriptorComponents
+  let effectiveArm = if request.baselineRevision == request.candidateRevision then "aa" else arm
+      resolved =
+        descriptor
+          { descriptorName = CohortName "perf",
+            descriptorDescription = "Exact-revision performance cohort for " <> request.project <> "; template scope: " <> descriptor.descriptorDescription,
+            descriptorProjectFile = "perf.project",
+            descriptorComponents = components
+          }
+      generatedName =
+        if legacy
+          then "perf-" <> Text.take 16 (Text.drop 7 (requestDigest request)) <> "-" <> effectiveArm
+          else "perf-" <> Text.drop 7 (sha256Hex (canonicalEncode (toJSON resolved)))
   pure
-    descriptor
+    resolved
       { descriptorName = CohortName generatedName,
-        descriptorDescription = "Exact-revision " <> effectiveArm <> " for " <> request.project <> "; template scope: " <> descriptor.descriptorDescription,
-        descriptorProjectFile = Text.unpack generatedName <> ".project",
-        descriptorComponents = components
+        descriptorDescription = if legacy then "Exact-revision " <> effectiveArm <> " for " <> request.project <> "; template scope: " <> descriptor.descriptorDescription else resolved.descriptorDescription,
+        descriptorProjectFile = Text.unpack generatedName <> ".project"
       }
   where
     replace component

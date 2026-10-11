@@ -4,7 +4,7 @@ title: Validating runtime change performance
 description: Prepare exact runtime revisions, execute bounded paired comparisons, recover sessions, and verify durable performance evidence.
 docId: DOC-6
 tags: [performance, runtime-changes, verification-cells, evidence, ci]
-generated: {by: 'codex/gpt-6.1-sol', at: '2026-10-11T09:13:18Z'}
+generated: {by: 'codex/gpt-6.1-sol', at: '2026-10-11T09:35:07Z'}
 ---
 
 # Validating runtime change performance
@@ -94,7 +94,12 @@ is insufficient evidence that the requested cohort was built.
 The output's `evidence/prepared.json` binds both payload descriptors and full
 inventories. `evidence/preparation-summary.json` records cache hits and stage
 times. A cache hit requires retrieving and hashing the existing payload bundle
-and checking its inventory identity. Repeating preparation needs a new output
+and checking its inventory identity. Generated cohort names depend on resolved
+build inputs rather than seeds, cells, execution budgets or baseline/candidate
+labels. Changing the candidate alone preserves an unchanged baseline identity;
+the complete cache key still binds the harness, source lock and inventories.
+Existing prepared reports retain their original identities during replay.
+Repeating preparation needs a new output
 directory. Cold/repeated compilation and cache acceptance still require live
 validation; no source-build duration is promised.
 

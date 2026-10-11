@@ -5,8 +5,8 @@ description: Scoped runtime performance gates bind independently checked payload
 docId: ADR-23
 status: Accepted
 date: 2026-10-11
-timestamp: 2026-10-11T07:43:09Z
-generated: {by: 'codex/gpt-6.1-sol', at: '2026-10-11T07:43:09Z'}
+timestamp: 2026-10-11T09:35:07Z
+generated: {by: 'codex/gpt-6.1-sol', at: '2026-10-11T09:35:07Z'}
 originatingPlan: docs/plans/25-provide-quick-and-reliable-performance-validation-for-runtime-changes.md
 ---
 
@@ -35,6 +35,14 @@ into the strict Nix selection, and compare the actual complete inventories befor
 leasing. Only the requested target's source/version may differ between arms;
 unrelated packages, flags and toolchain inputs must remain fixed. Cache reuse
 requires bundle retrieval and byte/inventory checks.
+
+Derive generated cohort names from the resolved descriptor, independently of the
+measurement request and arm label. Seeds, cell selection, budgets and an unrelated
+candidate revision must not invalidate an unchanged baseline build. The complete
+build key still binds the harness revision, descriptor, source lock and both
+inventories; the request digest independently binds execution scope. Existing
+prepared reports retain their original names and are accepted only when both arms
+match the original request-derived naming rule and pinned source manifests.
 
 Admit each performance profile through a frozen acceptance batch, not a catalog
 flag. Bind its workload, required metrics, policy, compiler/platform/toolchain,

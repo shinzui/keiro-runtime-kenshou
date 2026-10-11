@@ -1,6 +1,7 @@
 # Bundle Update Log
 
 ## 2026-10-11
+* **Update**: Separate resolved payload cohort identities from measurement request settings while preserving exact legacy report replay.
 * **Create**: Record independent generated-cohort checks, verified calibration admission, scoped results, persistent budgets and durable publication for ADR-23.
 * **Update**: ADR-6 binds controlled performance reports to a retrieved publication receipt with artifact references and measured turnaround.
 * **Update**: ADR-6 requires sealed cell conditions, persistent orchestration budgets and retrieval-verified durable performance evidence.

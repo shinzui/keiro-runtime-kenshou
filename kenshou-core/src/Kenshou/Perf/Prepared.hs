@@ -30,7 +30,7 @@ import Kenshou.Core.Canonical (canonicalEncode, sha256Hex)
 import Kenshou.Core.Cohort
 import Kenshou.Perf.Plan (PerfPlan (..), PerfProfile (..), PlannedProfile (..), validateProfile, workloadDigest)
 import Kenshou.Perf.Request
-import Kenshou.Perf.Source (SourceSnapshot, descriptorForSnapshot, targetPackages)
+import Kenshou.Perf.Source (SourceSnapshot, descriptorForSnapshot, legacyDescriptorForSnapshot, targetPackages)
 import Kenshou.Plan.Catalog (ScenarioInfo)
 import System.FilePath (makeRelative, normalise, splitDirectories)
 
@@ -110,7 +110,9 @@ validatePrepared prepared = do
   targets <- targetPackages request template
   baselineDescriptor <- descriptorForSnapshot request template "baseline" (before :: SourceSnapshot)
   candidateDescriptor <- descriptorForSnapshot request template "candidate" after
-  unless (baselineDescriptor == prepared.baseline.descriptor && candidateDescriptor == prepared.candidate.descriptor) (Left "prepared arm descriptor differs from pinned source manifests")
+  legacyBaseline <- legacyDescriptorForSnapshot request template "baseline" before
+  legacyCandidate <- legacyDescriptorForSnapshot request template "candidate" after
+  unless ((baselineDescriptor == prepared.baseline.descriptor && candidateDescriptor == prepared.candidate.descriptor) || (legacyBaseline == prepared.baseline.descriptor && legacyCandidate == prepared.candidate.descriptor)) (Left "prepared arm descriptor differs from pinned source manifests")
   compareInventories targets prepared.baseline.boundsInventory prepared.candidate.boundsInventory
   compareInventories targets prepared.baseline.buildInventory prepared.candidate.buildInventory
   mapM_ (validateSelected catalog policies) prepared.plan.selected

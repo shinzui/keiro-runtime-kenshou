@@ -2,12 +2,14 @@
 
 module Kenshou.PerfSpec (spec) where
 
+import Control.Monad (forM_)
 import Data.Aeson
 import Data.ByteString qualified as ByteString
 import Data.Either (isLeft)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
+import Data.Text qualified as Text
 import Kenshou.Core.Cohort qualified as Cohort
 import Kenshou.Core.Dimension
 import Kenshou.Core.Id (parseScenarioId)
@@ -47,6 +49,26 @@ spec = do
       let malformed = object ["schema" .= ("kenshou.perf-request/v1" :: Text), "purpos" .= ("calibration" :: Text)]
       (eitherDecode (encode malformed) :: Either String Request.PerfRequest) `shouldSatisfy` isLeft
   describe "performance source identities for generated cohorts" do
+    it "reuses an unchanged cohort across candidate revisions, calibration seeds and measurement scope" do
+      descriptor <- template
+      manifest <- right (Source.parsePackageManifest "shibuya-core/shibuya-core.cabal" "name: shibuya-core\nversion: 0.9.0.3\n")
+      metrics <- right (Source.parsePackageManifest "shibuya-metrics/shibuya-metrics.cabal" "name: shibuya-metrics\nversion: 0.9.0.3\n")
+      snapshot <- right (Source.sourceSnapshot request descriptor upstream shaA [manifest, metrics])
+      baseline <- right (Source.descriptorForSnapshot request descriptor "baseline" snapshot)
+      let otherCandidate = request {Request.control = "none", Request.candidateRevision = shaB}
+          revised = [request {Request.seed = request.seed + 1}, request {Request.cells = ["beta"]}, request {Request.budgetMinutes = 31}, request {Request.waitSeconds = 0}, request {Request.profiles = take 1 request.profiles}, request {Request.purpose = "gating"}, otherCandidate, otherCandidate {Request.candidateRevision = Text.replicate 40 "c"}]
+      forM_ revised \selection -> Source.descriptorForSnapshot selection descriptor "baseline" snapshot `shouldBe` Right baseline
+      Source.descriptorForSnapshot otherCandidate {Request.baselineRevision = shaB, Request.candidateRevision = shaA} descriptor "candidate" snapshot `shouldBe` Right baseline
+      different <- right (Source.sourceSnapshot otherCandidate descriptor upstream shaB [manifest, metrics])
+      Source.descriptorForSnapshot otherCandidate descriptor "candidate" different `shouldNotBe` Right baseline
+    it "invalidates cohort identity when compiler, index state or fixed dependency inputs change" do
+      descriptor <- template
+      manifest <- right (Source.parsePackageManifest "shibuya-core/shibuya-core.cabal" "name: shibuya-core\nversion: 0.9.0.3\n")
+      metrics <- right (Source.parsePackageManifest "shibuya-metrics/shibuya-metrics.cabal" "name: shibuya-metrics\nversion: 0.9.0.3\n")
+      snapshot <- right (Source.sourceSnapshot request descriptor upstream shaA [manifest, metrics])
+      original <- right (Source.descriptorForSnapshot request descriptor "baseline" snapshot)
+      let altered = descriptor {Cohort.descriptorComponents = map (\component -> if component.componentId == Cohort.ComponentId "shibuya" then component else component {Cohort.componentPackages = map (\pin -> pin {Cohort.pinVersion = "99.0.0"}) component.componentPackages}) descriptor.descriptorComponents}
+      forM_ [descriptor {Cohort.descriptorCompiler = "ghc-9.14.1"}, descriptor {Cohort.descriptorIndexState = "2026-10-11T00:00:00Z"}, altered] \changed -> Source.descriptorForSnapshot request changed "baseline" snapshot `shouldNotBe` Right original
     it "reads manifest version and package directory independently in each revision" do
       descriptor <- template
       manifest <- right (Source.parsePackageManifest "moved/shibuya-core.cabal" "name: shibuya-core\nversion: 0.9.0.4\n")

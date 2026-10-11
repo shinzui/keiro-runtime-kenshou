@@ -299,8 +299,30 @@ process isolation, repeated-failure quarantine with verified recovery, both-arm
 pre-staging, the owner admission probe, Linux preparation/cache acceptance, live
 cell acceptance, both calibration batches and CI/local parity remain unfinished.
 
+Cache identity correction (2026-10-11): Generated cohort names now hash the
+resolved descriptor rather than the whole measurement request or arm label.
+Source controls verify unchanged baseline identity across measurement settings,
+unrelated candidate revisions and A/A-to-baseline use; source, compiler, index and
+fixed-dependency changes invalidate it. Prepared controls replay old identities,
+accept new identities and reject mixed rules or a rehashed arbitrary alias.
+Fifty-five core performance controls and fourteen focused CLI controls pass.
+The full `nix develop -c just verify` also passes with this correction: 116 core,
+154 remote and 143 CLI examples, the remaining package tests, link proof,
+23 ADRs, six guides, schemas and self-tests. Its local diagnostic log is
+`.dev/perf-ep25-cache-final-verify.log`. These are local identity/replay controls;
+they do not close live no-compilation cache
+acceptance or any delivery milestone.
+
 ## Surprises & Discoveries
 
+
+2026-10-11 implementation: Naming a cohort from the request digest invalidated
+an unchanged baseline payload whenever a seed, profile, cell or candidate changed.
+Arm-specific descriptions also prevented reuse when an A/A source became an
+ordinary baseline. The resolved descriptor now supplies build identity, while
+the request digest continues to seal scope and execution settings. Existing
+v1 preparations replay only under the exact original naming rule, preserving
+historic evidence without accepting arbitrary cohort aliases.
 
 2026-10-11 implementation: Writing an attempt comparison before its root completion
 checkpoint can leave a valid comparison alongside a missing or partial result.
@@ -348,6 +370,12 @@ in the authenticated index.
 ## Decision Log
 
 
+2026-10-11: Derive new cohort identities from resolved build inputs, preserving
+baseline reuse across request changes. Read legacy prepared identities only when
+both arms match the exact original request-derived rule; do not mix naming rules
+within a preparation. [ADR-23](../adr/0023-pin-performance-gates-to-independent-preparation-and-calibration-evidence.md)
+records the separate request/build identity constraints.
+
 2026-10-10: Reuse the existing protocol and comparison engine; place generic cell
 repairs in `mori://shinzui/load-testing-infra`. Kenshou owns change selection,
 workloads, statistics, and the user-facing verdict. This preserves the existing
@@ -380,7 +408,27 @@ could otherwise appear to satisfy its original acceptance contract.
 ## Outcomes & Retrospective
 
 
-(To be filled during implementation.)
+Partial implementation (2026-10-11): The `perf plan/prepare/run/status/resume/verify`
+command family, calibration admission/declaration commands, protected CI entry
+point and operator guide are implemented. Local protocol controls cover two-profile
+execution, retained exit-zero runtime defects, interrupted completion writes,
+lease-loss recovery, artifact tampering and independent raw health replay. Owner
+commits `915fb2f` and `022bcba` in `mori://shinzui/load-testing-infra` add sealed
+execution windows and bounded supervised-unit/shared-file isolation.
+
+All six milestones remain open. No live Linux payload/cache acceptance, designated
+cell admission/isolation/recovery acceptance, eighty-comparison calibration batch
+or actual CI/local parity has completed. Remaining implementation includes broader
+payload process isolation, repeated-failure quarantine with verified recovery,
+both-arm pre-staging, an owner admission probe and additional CLI interruption
+controls. Do not promote either initial profile based on synthetic controls.
+
+Live work requires renewed GCP authentication; the user has been asked to run
+`gcloud auth login` and confirm completion. CI also requires the user's protected
+Linux runner labels, existing environment, authorized identity and, when using
+federation, provider/service-account identifiers. The repository API currently
+reports no environments or self-hosted runners. Those prerequisites are pending;
+no alternate credentials or infrastructure settings have been inferred.
 
 
 ## Context and Orientation

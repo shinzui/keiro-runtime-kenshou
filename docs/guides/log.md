@@ -1,6 +1,7 @@
 # Bundle Update Log
 
 ## 2026-10-11
+* **Update**: Explain baseline cache identity reuse across seeds, scope and unrelated candidate changes, and legacy identity replay.
 * **Update**: Document atomic comparison/result/receipt writes, original comparison reuse at interrupted checkpoints, and the owner's remaining isolation acceptance.
 * **Update**: Document persisted lease proposals, bounded claim transport and cancellation before interrupted submission recovery.
 * **Update**: Document independently replayed health windows, calibrated machine/image and health-policy identity, and the read-only calibration fingerprint command.
