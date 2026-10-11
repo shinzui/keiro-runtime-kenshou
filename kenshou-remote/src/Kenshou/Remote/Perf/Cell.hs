@@ -14,10 +14,12 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Kenshou.Core.Bundle (Registry)
 import Kenshou.Core.Id (renderRunId)
+import Kenshou.Core.RunSpec (EnvironmentSpec (..), RunSpec (..))
 import Kenshou.Plan.RunPlan (PlannedRun (..), RunPlan (..))
 import Kenshou.Remote.Cell.Docs (CellBuckets (..), CellDescriptor (..), CellNodes (..), CellOutcome (..), ResetBlock (..), Submission (..), WorkObject (..))
 import Kenshou.Remote.Cell.Index (CellManifestLink (..), CellRunIndex (..), EvidenceLink (..), deriveCellRunIndex)
 import Kenshou.Remote.Cell.Lease (CellRef (..), Lease (..), LeaseHandle, leaseSnapshot, withHeartbeat)
+import Kenshou.Remote.Cell.Prepare (cellMachineProfile)
 import Kenshou.Remote.Cell.RouteRules (CellCapabilities, RoutingRule)
 import Kenshou.Remote.Cell.Session.Build
 import Kenshou.Remote.Cell.Session.Journal
@@ -113,9 +115,12 @@ verifyCellTrial descriptor run directory journal = case journal.slices of
             resetDocument <- either (Left . Text.pack) Right reset
             validateCellConditions slice.cellRun descriptor.name machines healthDocument resetDocument
         else pure (Left "outer cell is missing sealed health or reset evidence")
+    effective <- eitherDecodeFileStrict' (tree </> "output" </> Text.unpack (renderRunId run.runId) </> "run-spec.json") :: IO (Either String RunSpec)
     pure do
       index <- either (Left . Text.pack . show) Right verified
       conditions
+      spec <- either (Left . Text.pack) Right effective
+      unless (spec.environment.machineProfile == Just (cellMachineProfile descriptor)) (Left "effective machine profile differs from the frozen cell descriptor")
       unless
         ( index.cellOutcome == Completed
             && index.leaseId == journal.leaseId

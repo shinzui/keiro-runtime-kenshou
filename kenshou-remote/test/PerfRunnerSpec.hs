@@ -35,7 +35,7 @@ spec = describe "performance runner orchestration" do
     let interrupted =
           hooks
             { compareConfiguration = \_ _ _ _ callbacks -> do
-                callbacks.reserveReplacement
+                callbacks.reserveReplacement 5
                 callbacks.recordRuntimeFailure "known defect with exit zero"
                 ioError (userError "simulated lost connection")
             }
@@ -77,6 +77,44 @@ spec = describe "performance runner orchestration" do
     result <- runPerformance hooks {clock = pure (addUTCTime 1870 now), publishAndVerify = \_ _ -> writeIORef published True >> pure True} prepared path
     result.exitCode `shouldBe` 4
     readIORef published `shouldReturn` False
+  it "reserves an identified replacement once when the same callback is reconciled" $ withSystemTempDirectory "perf-runner-reservation" \directory -> do
+    (prepared, path) <- fixture directory
+    calls <- newIORef ([] :: [(Text, Int, Bool)])
+    hooks <- fixtureHooks calls
+    let reconciled =
+          hooks
+            { compareConfiguration = \lease entry index resuming callbacks -> do
+                callbacks.reserveReplacement entry.profile.minimumPairs
+                callbacks.reserveReplacement entry.profile.minimumPairs
+                hooks.compareConfiguration lease entry index resuming callbacks
+            }
+    result <- runPerformance reconciled prepared path
+    result.exitCode `shouldBe` 0
+    state <- readPerfSession path >>= right >>= right . journalState
+    Map.elems state.replacements `shouldBe` [1, 1]
+    length state.replacementIdentities `shouldBe` 2
+  it "releases an incompatible lease before admitting the next configuration" $ withSystemTempDirectory "perf-runner-cells" \directory -> do
+    (prepared, path) <- fixture directory
+    calls <- newIORef ([] :: [(Text, Int, Bool)])
+    hooks <- fixtureHooks calls
+    admissions <- newIORef (0 :: Int)
+    releases <- newIORef (0 :: Int)
+    first <- newRunId
+    second <- newRunId
+    let changed =
+          hooks
+            { admit = \_ _ -> do
+                count <- atomicModifyIORef' admissions (\n -> (n + 1, n))
+                pure (Admitted (LeaseIdentity "alpha" (if count == 0 then first else second))),
+              canRunConfiguration = \lease entry -> pure (lease.leaseId /= first || entry.profile.name == "shibuya-core-quick"),
+              releaseOwnedLease = \_ -> modifyIORef' releases (+ 1) >> pure True
+            }
+    result <- runPerformance changed prepared path
+    result.exitCode `shouldBe` 0
+    readIORef admissions `shouldReturn` 2
+    readIORef releases `shouldReturn` 2
+    state <- readPerfSession path >>= right >>= right . journalState
+    state.executionDeadline `shouldBe` Just (addUTCTime 1800 now)
 
 fixture :: FilePath -> IO (Prepared.PerfPrepared, FilePath)
 fixture directory = do
@@ -93,8 +131,9 @@ fixtureHooks calls = do
   pure
     RunnerHooks
       { clock = pure now,
-        admit = \_ -> pure (Admitted (LeaseIdentity "alpha" lease)),
+        admit = \_ _ -> pure (Admitted (LeaseIdentity "alpha" lease)),
         ownsLease = \_ -> pure True,
+        canRunConfiguration = \_ _ -> pure True,
         compareConfiguration = \_ entry index resuming _ -> do
           modifyIORef' calls (<> [(entry.profile.name, index, resuming)])
           let comparison = object ["schema" .= ("kenshou.comparison/v1" :: Text), "verdict" .= ("pass" :: Text), "pairCount" .= entry.profile.minimumPairs]

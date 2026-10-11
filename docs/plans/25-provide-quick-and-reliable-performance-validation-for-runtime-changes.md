@@ -164,6 +164,20 @@ CLI integration, complete report graph replay, timing records and independently
 verified calibration admission remain unfinished. No milestone is closed by these
 synthetic controls.
 
+CLI integration handoff (2026-10-10): `perf run`, `status`, `resume` and `verify`
+now compile and are connected to the cell adapter and persistent runner. Inputs
+freeze the store, allowed projects, cell descriptors and capabilities; run checks
+both payloads and actual evidence-destination create/retrieve access before a
+lease. Publication copies evidence into a separate sealed snapshot and keeps the
+client lock outside it. Replay checks retained raw metrics, outer cell seals and
+conditions, workload binding, comparison semantics and aggregate precedence.
+Twenty-three remote performance controls and ten CLI controls pass, including
+identified replacement reconciliation, compatible-cell lease switching, and a
+file-backed incomplete-scope publication/replay/tampering check with no lease.
+Schema checks pass. These are synthetic protocol controls, not live performance
+acceptance. Complete report metadata/timings, all-attempt graph verification,
+completed-report resume reuse and independent calibration admission remain open.
+
 ## Surprises & Discoveries
 
 

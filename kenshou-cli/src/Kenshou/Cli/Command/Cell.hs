@@ -1,4 +1,4 @@
-module Kenshou.Cli.Command.Cell (cellCommand) where
+module Kenshou.Cli.Command.Cell (cellCommand, startCellInstances) where
 
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeAsyncException, SomeException, displayException, finally, fromException, throwIO, try)

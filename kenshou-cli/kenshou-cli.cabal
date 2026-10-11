@@ -58,6 +58,7 @@ library
     Kenshou.Cli.Command.List
     Kenshou.Cli.Command.Overhead
     Kenshou.Cli.Command.Perf
+    Kenshou.Cli.Command.Perf.Session
     Kenshou.Cli.Command.Plan
     Kenshou.Cli.Command.Run
     Kenshou.Cli.Command.Worker

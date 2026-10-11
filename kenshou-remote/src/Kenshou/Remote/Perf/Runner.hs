@@ -28,14 +28,15 @@ data Admission = Admitted LeaseIdentity | Occupied | AdmissionFailed Text
 -- be dispatched. The cell adapter also persists its low-level work/submission
 -- journal before effects and reconciles that journal when resuming an attempt.
 data ComparisonHooks = ComparisonHooks
-  { reserveReplacement :: IO (),
+  { reserveReplacement :: Int -> IO (),
     recordRuntimeFailure :: Text -> IO ()
   }
 
 data RunnerHooks = RunnerHooks
   { clock :: IO UTCTime,
-    admit :: Int -> IO Admission,
+    admit :: PlannedProfile -> Int -> IO Admission,
     ownsLease :: LeaseIdentity -> IO Bool,
+    canRunConfiguration :: LeaseIdentity -> PlannedProfile -> IO Bool,
     compareConfiguration :: LeaseIdentity -> PlannedProfile -> Int -> Bool -> ComparisonHooks -> IO ConfigurationResult,
     verifyCompleted :: ConfigurationResult -> IO Bool,
     cancelOwnedWork :: LeaseIdentity -> IO (),
@@ -85,21 +86,24 @@ runPerformance hooks prepared path = do
                   [] -> release identity
                   entry : _ -> do
                     let index = Map.findWithDefault 0 entry.profile.name saved.attempts
-                    case appendEvent (SessionEvent now (ComparisonStarted entry.profile.name index)) session of
-                      Left _ -> release identity
-                      Right _ -> checkpoint (ComparisonStarted entry.profile.name index) >> runOne identity entry index False
+                    compatible <- hooks.canRunConfiguration identity entry
+                    if not compatible
+                      then release identity >> execute
+                      else case appendEvent (SessionEvent now (ComparisonStarted entry.profile.name index)) session of
+                        Left _ -> release identity
+                        Right _ -> checkpoint (ComparisonStarted entry.profile.name index) >> runOne identity entry index False
           Nothing -> case filter (\entry -> Map.notMember entry.profile.name saved.completed) session.plan.selected of
             [] -> pure ()
-            remaining -> do
+            entry : _ -> do
               let admissionLeft = session.plan.request.waitSeconds - saved.admissionSpentSeconds
                   measured = saved.executionDeadline /= Nothing
-                  enough = maybe True (\deadline -> minimum (map cost remaining) <= floor (diffUTCTime deadline now)) saved.executionDeadline
+                  enough = maybe True (\deadline -> cost entry <= floor (diffUTCTime deadline now)) saved.executionDeadline
                   seconds = if measured then 1 else min 10 admissionLeft
               if not enough || seconds <= 0
                 then pure ()
                 else do
                   unless measured (checkpoint (AdmissionReserved seconds))
-                  granted <- hooks.admit seconds
+                  granted <- hooks.admit entry seconds
                   case granted of
                     Admitted identity -> checkpoint (LeaseAcquired identity) >> execute
                     Occupied | measured -> pure ()
@@ -109,7 +113,14 @@ runPerformance hooks prepared path = do
         saved <- state
         now <- hooks.clock
         let micros = maybe 0 (max 0 . floor . (* 1000000) . (`diffUTCTime` now)) saved.executionDeadline
-            callbacks = ComparisonHooks (checkpoint (ReplacementReserved entry.profile.name)) (checkpoint . RuntimeBlocked entry.profile.name)
+            reserve pair = do
+              session <- readIORef current
+              let action = ReplacementScheduled entry.profile.name index pair
+              unless (action `elem` map (.action) session.events) (checkpoint action)
+            blocked reason = do
+              observed <- state
+              unless (reason `elem` Map.findWithDefault [] entry.profile.name observed.runtimeBlockers) (checkpoint (RuntimeBlocked entry.profile.name reason))
+            callbacks = ComparisonHooks reserve blocked
         result <- timeout micros (hooks.compareConfiguration identity entry index resuming callbacks)
         case result of
           Nothing -> do

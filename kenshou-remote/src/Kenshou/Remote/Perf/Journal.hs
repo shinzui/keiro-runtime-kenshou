@@ -43,6 +43,7 @@ data SessionAction
   | LeaseReleased
   | ComparisonStarted Text Int
   | ReplacementReserved Text
+  | ReplacementScheduled Text Int Int
   | RuntimeBlocked Text Text
   | ComparisonCompleted ConfigurationResult
   deriving stock (Eq, Show)
@@ -71,6 +72,7 @@ data JournalState = JournalState
     activeComparison :: Maybe (Text, Int),
     attempts :: Map Text Int,
     replacements :: Map Text Int,
+    replacementIdentities :: [(Text, Int, Int)],
     completed :: Map Text ConfigurationResult,
     runtimeBlockers :: Map Text [Text],
     lastAt :: UTCTime
@@ -98,7 +100,7 @@ validateSessionInputs prepared session = do
 journalState :: PerfSession -> Either Text JournalState
 journalState session = foldM (advance session) initial session.events
   where
-    initial = JournalState 0 Nothing Nothing Nothing Nothing Map.empty Map.empty Map.empty Map.empty session.createdAt
+    initial = JournalState 0 Nothing Nothing Nothing Nothing Map.empty Map.empty [] Map.empty Map.empty session.createdAt
 
 appendEvent :: SessionEvent -> PerfSession -> Either Text PerfSession
 appendEvent event session = do
@@ -140,6 +142,12 @@ advance session state event = do
       let spent = Map.findWithDefault 0 name state.replacements
       unless (maybe False ((== name) . fst) state.activeComparison && spent < entry.profile.replacementPairs) (Left "infrastructure replacement allowance exhausted or wrong active configuration")
       pure state {replacements = Map.insert name (spent + 1) state.replacements}
+    ReplacementScheduled name attempt pair -> do
+      entry <- selected name
+      measurementTime
+      let spent = Map.findWithDefault 0 name state.replacements
+      unless (state.activeComparison == Just (name, attempt) && pair >= entry.profile.minimumPairs && pair < entry.profile.minimumPairs + entry.profile.replacementPairs && spent < entry.profile.replacementPairs && (name, attempt, pair) `notElem` state.replacementIdentities) (Left "replacement identity is invalid, duplicated or exceeds its persistent allowance")
+      pure state {replacements = Map.insert name (spent + 1) state.replacements, replacementIdentities = state.replacementIdentities <> [(name, attempt, pair)]}
     RuntimeBlocked name reason -> do
       _ <- selected name
       unless (maybe False ((== name) . fst) state.activeComparison && not (Text.null reason)) (Left "runtime blocker must name its active configuration and diagnosis")
@@ -206,6 +214,7 @@ instance ToJSON SessionAction where
     LeaseReleased -> object ["kind" .= ("lease-released" :: Text)]
     ComparisonStarted name index -> object ["kind" .= ("comparison-started" :: Text), "profile" .= name, "index" .= index]
     ReplacementReserved name -> object ["kind" .= ("replacement-reserved" :: Text), "profile" .= name]
+    ReplacementScheduled name attempt pair -> object ["kind" .= ("replacement-scheduled" :: Text), "profile" .= name, "attempt" .= attempt, "pair" .= pair]
     RuntimeBlocked name reason -> object ["kind" .= ("runtime-blocked" :: Text), "profile" .= name, "reason" .= reason]
     ComparisonCompleted result -> object ["kind" .= ("comparison-completed" :: Text), "result" .= result]
 
@@ -219,6 +228,7 @@ instance FromJSON SessionAction where
       "lease-released" -> strictObject ["kind"] v >> pure LeaseReleased
       "comparison-started" -> strictObject ["kind", "profile", "index"] v >> ComparisonStarted <$> v .: "profile" <*> v .: "index"
       "replacement-reserved" -> strictObject ["kind", "profile"] v >> ReplacementReserved <$> v .: "profile"
+      "replacement-scheduled" -> strictObject ["kind", "profile", "attempt", "pair"] v >> ReplacementScheduled <$> v .: "profile" <*> v .: "attempt" <*> v .: "pair"
       "runtime-blocked" -> strictObject ["kind", "profile", "reason"] v >> RuntimeBlocked <$> v .: "profile" <*> v .: "reason"
       "comparison-completed" -> strictObject ["kind", "result"] v >> ComparisonCompleted <$> v .: "result"
       _ -> fail "unknown performance journal action"

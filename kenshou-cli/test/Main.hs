@@ -32,20 +32,25 @@ import Kenshou.Cli.Attest.KeiroTerminal (replayTerminalCells)
 import Kenshou.Cli.Attest.KeiroZombie (replayZombieCells)
 import Kenshou.Cli.Cohort (resolveDefaultCohortIdentity)
 import Kenshou.Cli.Version (appVersionWithGit)
+import Kenshou.Core.Canonical (sha256Hex)
 import Kenshou.Core.Cohort (CohortIdentity (..), CohortName (..))
 import Kenshou.Core.Id (newRunId, renderRunId)
 import Kenshou.Core.Manifest (Manifest (..), ManifestFile (..))
 import Kenshou.Core.Outcome qualified as Outcome
+import Kenshou.Perf.Artifacts (sealPerfDirectory)
+import Kenshou.Perf.Plan qualified as Perf
+import Kenshou.Perf.Prepared qualified as Prepared
 import Kenshou.Remote.Cell.Docs (Artifact (..), CellBuckets (..), CellDescriptor (..), CellManifest (..), CellOutcome (..), CellPhase (..), CellRunResult (..), CellStatus (..), Limits (..), LogChunks (..), ManifestPayload (..), Rejected (..), Submission (..), WorkObject (..))
 import Kenshou.Remote.Cell.Lease (Lease (..))
 import Kenshou.Remote.Cell.RouteRules (descriptorDigest)
 import Kenshou.Remote.Cell.Session.Journal (LeaseMode (..), SessionJournal (..), SliceJournal (..), SliceState (..), readSessionJournal, writeSessionJournal)
 import Kenshou.Remote.Cell.Submit (workObjectFor)
-import Kenshou.Remote.Payload (Bundle (..), CellPayload (..))
+import Kenshou.Remote.Payload (Bundle (..), CellPayload (..), PayloadDescriptor (..))
+import Kenshou.Remote.Payload qualified as Payload
 import Kenshou.Remote.Store (Bucket (..), ObjectName (..), ObjectStore (..), Precondition (..))
 import Kenshou.Remote.Store.File (newFileStore)
 import Kenshou.Telemetry.Overhead (OverheadState (..), SlotRun (..), loadOverheadState)
-import System.Directory (Permissions (..), createDirectoryIfMissing, doesFileExist, doesPathExist, getPermissions, listDirectory, makeAbsolute, setPermissions, withCurrentDirectory)
+import System.Directory (Permissions (..), copyFile, createDirectoryIfMissing, doesFileExist, doesPathExist, getPermissions, listDirectory, makeAbsolute, setPermissions, withCurrentDirectory)
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
@@ -67,6 +72,52 @@ readInboxFixture path = do
 main :: IO ()
 main = hspec do
   describe "performance planning CLI" do
+    it "exposes persistent execution, status, resume and evidence replay" do
+      forM_ ["run", "status", "resume", "verify"] \name -> do
+        runWithArgs ["perf", name, "--help"] `shouldReturnCode` ExitSuccess
+        runWithArgs ["perf", name] `shouldReturnCode` ExitFailure 2
+    it "rejects malformed prepared input before creating a session or contacting a cell" $ withSystemTempDirectory "kenshou-perf-run-malformed" \directory -> do
+      let input = directory </> "prepared.json"
+          output = directory </> "session"
+      Aeson.encodeFile input Aeson.Null
+      runWithArgs ["perf", "run", "--prepared", input, "--out", output, "--evidence-base-uri", "gs://fixture-evidence/performance"] `shouldReturnCode` ExitFailure 2
+      doesPathExist output `shouldReturn` False
+    it "reads retained status without cloud authentication or execution" $ withSystemTempDirectory "kenshou-perf-status" \directory -> do
+      withPerfRoot (copyFile "kenshou-remote/test/golden/perf-session.fixture.json" (directory </> "session.json"))
+      runWithArgs ["perf", "status", "--session", directory] `shouldReturnCode` ExitSuccess
+    it "publishes and replays incomplete scope without leasing, and detects storage tampering" $ withSystemTempDirectory "kenshou-perf-incomplete" \directory -> do
+      let storeRoot = directory </> "store"
+          preparation = directory </> "preparation"
+          output = directory </> "session"
+          bytes = "synthetic payload; this control executes no runtime work"
+          digest = Text.drop 7 (sha256Hex (LazyByteString.toStrict bytes))
+          bundle = Bundle ("gs://control/payloads/sha256/" <> digest <> ".nar.zst") digest (LazyByteString.length bytes)
+          changePayload arm = case Aeson.fromJSON arm.payload of
+            Aeson.Error problem -> fail problem
+            Aeson.Success payload -> pure arm {Prepared.payload = Aeson.toJSON (payload {Payload.cell = payload.cell {Payload.bundle = bundle}} :: PayloadDescriptor)}
+      original <- withPerfRoot (Aeson.eitherDecodeFileStrict' "kenshou-core/test/golden/perf-prepared.fixture.json" >>= either fail pure)
+      baseline <- changePayload (original :: Prepared.PerfPrepared).baseline
+      candidate <- changePayload original.candidate
+      let prepared = original {Prepared.plan = original.plan {Perf.selected = [], Perf.coverage = "incomplete", Perf.estimateSeconds = 0}, Prepared.baseline = baseline, Prepared.candidate = candidate}
+      createDirectoryIfMissing True preparation
+      Aeson.encodeFile (preparation </> "prepared.json") prepared
+      sealPerfDirectory preparation >>= either (fail . Text.unpack) pure
+      descriptor <- withPerfRoot (LazyByteString.readFile "kenshou-remote/test/golden/cell/cell.descriptor.v1.json")
+      store <- newFileStore storeRoot
+      _ <- store.putObject (Bucket "control") (ObjectName ("payloads/sha256/" <> digest <> ".nar.zst")) "application/octet-stream" DoesNotExist bytes
+      _ <- store.putObject (Bucket "tan-nb-exp-cells-control") (ObjectName "cells/alpha/descriptor.json") "application/json" DoesNotExist descriptor
+      withCellStore storeRoot $ withCapabilityDir (directory </> "capabilities") do
+        runWithArgs ["perf", "run", "--prepared", preparation </> "prepared.json", "--out", output, "--evidence-base-uri", "gs://fixture-evidence/performance"] `shouldReturnCode` ExitFailure 3
+        store.getObject (Bucket "tan-nb-exp-cells-control") (ObjectName "cells/alpha/lease.json") `shouldReturn` Nothing
+        runWithArgs ["perf", "verify", "--session", output] `shouldReturnCode` ExitFailure 3
+        runWithArgs ["perf", "verify", "--session", output, "--offline"] `shouldReturnCode` ExitFailure 3
+        published <- store.listObjects (Bucket "fixture-evidence") "performance/sessions/"
+        let reports = [name | (name, _) <- published, "/report.md" `Text.isSuffixOf` name.unObjectName]
+        length reports `shouldBe` 1
+        forM_ reports \name -> do
+          _ <- store.putObject (Bucket "fixture-evidence") name "text/markdown" NoPrecondition "tampered"
+          pure ()
+        runWithArgs ["perf", "verify", "--session", output] `shouldReturnCode` ExitFailure 4
     it "exposes the planning command and requires request/output arguments" do
       runWithArgs ["perf", "plan", "--help"] `shouldReturnCode` ExitSuccess
       runWithArgs ["perf", "plan"] `shouldReturnCode` ExitFailure 2

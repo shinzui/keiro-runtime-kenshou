@@ -7,6 +7,7 @@ import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
 import Data.Text qualified as Text
 import Kenshou.Core.Id (mkSeed, newRunId, renderRunId)
+import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Measure.Compare.Compatibility (VaryingAxis (..))
 import Kenshou.Measure.Compare.Ordering (PairedOrdering (..))
 import Kenshou.Measure.Compare.Policy qualified as Policy
@@ -31,7 +32,7 @@ spec = describe "performance paired attempts" do
     calls <- newIORef (0 :: Int)
     replacements <- newIORef (0 :: Int)
     let lease = LeaseIdentity "alpha" identifier
-        callbacks = ComparisonHooks (modifyIORef' replacements (+ 1)) (\_ -> pure ())
+        callbacks = ComparisonHooks (\_ -> modifyIORef' replacements (+ 1)) (\_ -> pure ())
         execute run = do
           modifyIORef' calls (+ 1)
           let path = directory </> "retained" </> Text.unpack (renderRunId run.runId)
@@ -51,7 +52,7 @@ spec = describe "performance paired attempts" do
   it "rejects an incomplete schedule and a forged retained path before dispatch" $ withSystemTempDirectory "perf-attempt-rejection" \directory -> do
     (entry, schedule, policy) <- fixture
     identifier <- newRunId
-    let callbacks = ComparisonHooks (pure ()) (\_ -> pure ())
+    let callbacks = ComparisonHooks (\_ -> pure ()) (\_ -> pure ())
         execute _ = expectationFailure "must not dispatch an invalid attempt" >> pure (Left "invalid")
     executeAttempt (LeaseIdentity "alpha" identifier) entry schedule {runs = drop 1 schedule.runs} policy (VaryControl :| []) (directory </> "incomplete") callbacks execute `shouldThrow` anyIOException
     createDirectoryIfMissing True (directory </> "forged")
@@ -85,7 +86,9 @@ fixture = do
                                  "scenarioRevision" .= entry.profile.scenarioRevision,
                                  "knobs" .= entry.profile.knobs,
                                  "dimensions" .= entry.profile.dimensions,
-                                 "seed" .= seed
+                                 "seed" .= seed,
+                                 "phases" .= zeroPhases,
+                                 "timeoutSeconds" .= entry.profile.timeoutSeconds
                                ]
                          ]
                      ]

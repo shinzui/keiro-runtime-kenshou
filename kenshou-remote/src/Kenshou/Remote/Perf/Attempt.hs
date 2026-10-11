@@ -16,7 +16,8 @@ import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Kenshou.Core.Id (renderRunId, renderScenarioId)
-import Kenshou.Core.RunSpec (RunSpec (..))
+import Kenshou.Core.Phase (zeroPhases)
+import Kenshou.Core.RunSpec (ComparisonMembership (..), RunSpec (..))
 import Kenshou.Measure.Compare
 import Kenshou.Measure.Compare.Compatibility (VaryingAxis)
 import Kenshou.Measure.Compare.Policy (Policy)
@@ -26,7 +27,7 @@ import Kenshou.Perf.Result
 import Kenshou.Plan.RunPlan (PlannedRun (..), RunPlan (..), TrialInfo (..))
 import Kenshou.Remote.Perf.Journal (LeaseIdentity)
 import Kenshou.Remote.Perf.Runner (ComparisonHooks (..))
-import System.Directory (createDirectoryIfMissing, doesFileExist, makeAbsolute, renameFile)
+import System.Directory (canonicalizePath, createDirectoryIfMissing, doesFileExist, renameFile)
 import System.FilePath (isAbsolute, makeRelative, splitDirectories, (</>))
 
 -- The adapter persists cell work before submission. Calling it again for the
@@ -43,7 +44,8 @@ executeAttempt lease entry schedule policy axes directory callbacks execute = do
   immutable (directory </> "attempt.json") inputs
   validateSchedule entry schedule
   paths <- loadPaths directory
-  validatePaths schedule paths
+  validatePaths directory schedule paths
+  atomicPaths directory paths
   collect paths [] [0 .. entry.profile.minimumPairs - 1] >>= continue entry.profile.minimumPairs
   where
     collect paths observations [] = pure (paths, observations)
@@ -71,7 +73,7 @@ executeAttempt lease entry schedule policy axes directory callbacks execute = do
       | length (validPairs observations) >= entry.profile.minimumPairs = finish entry policy axes observations
       | next >= entry.profile.minimumPairs + entry.profile.replacementPairs = finish entry policy axes observations
       | otherwise = do
-          callbacks.reserveReplacement
+          callbacks.reserveReplacement next
           updated <- collect paths observations [next]
           continue (next + 1) updated
 
@@ -81,7 +83,7 @@ verifyAttempt :: PlannedProfile -> RunPlan -> Policy -> NonEmpty VaryingAxis -> 
 verifyAttempt entry schedule policy axes directory retained = do
   validateSchedule entry schedule
   paths <- loadPaths directory
-  validatePaths schedule paths
+  validatePaths directory schedule paths
   observations <-
     traverse
       ( \run -> case Map.lookup (renderRunId run.runId) paths of
@@ -119,6 +121,8 @@ admitTrial profile run directory = do
               && effective.scenario == run.spec.scenario
               && effective.seed == run.spec.seed
               && effective.scenarioRevision == Just profile.scenarioRevision
+              && effective.phases == Just zeroPhases
+              && effective.timeoutSeconds == Just profile.timeoutSeconds
               && knobs (toJSON effective) == knobs (toJSON run.spec)
               && Map.fromList effective.dimensions == Map.fromList run.spec.dimensions
           )
@@ -171,28 +175,45 @@ validateSchedule entry schedule = do
       identifiers = map (.runId) runs
       expected = entry.profile.minimumPairs + entry.profile.replacementPairs
       trials = [(trial.index, trial.arm) | run <- runs, Just trial <- [run.trial]]
+      ordering = [(index, arm) | index <- [0 .. expected - 1], arm <- if even index then ["baseline", "candidate"] else ["candidate", "baseline"]]
+      seeds = [nub [run.spec.seed | run <- runs, maybe False ((== index) . (.index)) run.trial] | index <- [0 .. expected - 1]]
   unless
     ( length runs == 2 * expected
         && nub identifiers == identifiers
-        && sort trials == [(index, arm) | index <- [0 .. expected - 1], arm <- ["baseline", "candidate"]]
+        && trials == ordering
+        && map (.ordinal) runs == [1 .. 2 * expected]
+        && all ((== 1) . length) seeds
+        && all (\run -> run.spec.runId == Just run.runId && maybe False ((== expected) . (.of_)) run.trial) runs
+        && all memberMatches runs
     )
     (ioError (userError "attempt must contain the full fixed paired schedule"))
   unless (all matches runs) (ioError (userError "attempt workload differs from its pinned profile"))
   where
+    memberMatches run = case (run.trial, run.spec.comparison) of
+      (Just trial, Just membership) -> membership.group == trial.group && membership.arm == trial.arm && membership.trial == trial.index && membership.position == run.ordinal - 1
+      _ -> False
     matches run =
       renderScenarioId run.spec.scenario == entry.profile.scenario
         && run.spec.scenarioRevision == Just entry.profile.scenarioRevision
         && run.spec.seed /= Nothing
+        && run.spec.phases == Just zeroPhases
+        && run.spec.timeoutSeconds == Just entry.profile.timeoutSeconds
         && Map.fromList run.spec.dimensions == entry.profile.dimensions
         && case toJSON run.spec of
           Object fields -> KeyMap.lookup "knobs" fields == Just (toJSON entry.profile.knobs)
           _ -> False
 
-validatePaths :: RunPlan -> Map Text FilePath -> IO ()
-validatePaths schedule paths =
+validatePaths :: FilePath -> RunPlan -> Map Text FilePath -> IO ()
+validatePaths directory schedule paths = do
   unless
     (all (`elem` map (renderRunId . (.runId)) schedule.runs) (Map.keys paths))
     (ioError (userError "retained trial path names an unplanned run"))
+  mapM_
+    ( \relative -> do
+        actual <- relativePath directory (directory </> relative)
+        unless (actual == relative) (ioError (userError "retained trial path contains a directory alias"))
+    )
+    (Map.elems paths)
 
 loadPaths :: FilePath -> IO (Map Text FilePath)
 loadPaths directory = do
@@ -206,8 +227,8 @@ loadPaths directory = do
 
 relativePath :: FilePath -> FilePath -> IO FilePath
 relativePath root path = do
-  absoluteRoot <- makeAbsolute root
-  absolutePath <- makeAbsolute path
+  absoluteRoot <- canonicalizePath root
+  absolutePath <- canonicalizePath path
   let relative = makeRelative absoluteRoot absolutePath
   unless (relative /= absolutePath && ".." `notElem` splitDirectories relative) (ioError (userError "trial evidence escaped its attempt directory"))
   pure relative

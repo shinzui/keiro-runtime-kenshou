@@ -15,6 +15,7 @@ import Data.Text qualified as Text
 import Data.Text.Encoding qualified as Text.Encoding
 import Data.Text.IO qualified as Text.IO
 import Data.Time.Clock (diffUTCTime, getCurrentTime)
+import Kenshou.Cli.Command.Perf.Session (sessionCommands)
 import Kenshou.Core.Bundle (allScenarios)
 import Kenshou.Core.Canonical (canonicalEncode, sha256Hex)
 import Kenshou.Core.Cli
@@ -61,6 +62,7 @@ perfCommand =
         hsubparser
           ( command "plan" (info (planParser <**> helper) (progDesc "Resolve exact source commits and explain performance scope without building or leasing"))
               <> command "prepare" (info (prepareParser <**> helper) (progDesc "Check independent build inputs and publish both exact-revision payloads without leasing"))
+              <> sessionCommands
           )
     }
 

@@ -14,6 +14,7 @@ module Kenshou.Remote.Cell.Prepare
     prepareForCell,
     routePlan,
     routePlanWithoutPayload,
+    cellMachineProfile,
   )
 where
 
@@ -41,6 +42,10 @@ import Kenshou.Remote.Cell.Lease (CellRef (..))
 import Kenshou.Remote.Cell.RouteRules (CellCapabilities (..), RoutingRule (..), capabilityKnown, descriptorDigest, matchingRules)
 import Kenshou.Remote.Payload (Bundle (..), CellPayload (..), PayloadDescriptor (..))
 import Kenshou.Remote.Store (Bucket (..))
+
+cellMachineProfile :: CellDescriptor -> Text
+cellMachineProfile descriptor =
+  "gcp/" <> descriptor.zone <> "/shape-" <> Text.take 16 (Text.drop 7 (sha256Hex (LazyByteString.toStrict (encode descriptor.shape)))) <> "/pg" <> Text.pack (show descriptor.postgresMajor)
 
 data Granularity = GranularityAuto | GranularityPlan | GranularityRun
   deriving stock (Eq, Show)
@@ -137,13 +142,7 @@ prepareWithPayload registry descriptor cachedCapabilities routingRules payloads 
     activeCapabilities = case cachedCapabilities of
       Just cache | cache.cell == descriptor.name && cache.descriptorSha256 == descriptorDigest descriptor -> Just cache
       _ -> Nothing
-    profile =
-      "gcp/"
-        <> descriptor.zone
-        <> "/shape-"
-        <> Text.take 16 (Text.drop 7 (sha256Hex (LazyByteString.toStrict (encode descriptor.shape))))
-        <> "/pg"
-        <> Text.pack (show descriptor.postgresMajor)
+    profile = cellMachineProfile descriptor
 
     prepare entry = do
       if maybe True (== entry.runId) entry.spec.runId then pure () else Left RunIdMismatch

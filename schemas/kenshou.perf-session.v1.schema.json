@@ -206,6 +206,33 @@
               "$ref": "kenshou.perf-result.v1.schema.json#/$defs/configuration"
             }
           }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "profile",
+            "attempt",
+            "pair"
+          ],
+          "properties": {
+            "kind": {
+              "const": "replacement-scheduled"
+            },
+            "profile": {
+              "type": "string",
+              "minLength": 1
+            },
+            "attempt": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "pair": {
+              "type": "integer",
+              "minimum": 5
+            }
+          }
         }
       ]
     },
