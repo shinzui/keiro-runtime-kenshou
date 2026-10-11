@@ -560,6 +560,8 @@ publishSnapshot store _ _ output session result = do
     Right uri -> do
       manifest <- Bytes.readFile (directory </> "manifest.json")
       verified <- getCurrentTime
+      state <- require (journalState session)
+      unless (maybe True (verified <=) state.executionDeadline) (ioError (userError "publication verification exceeded the original execution deadline"))
       let receipt = PublicationReceipt relative uri (sha256Hex manifest) (sha256Hex (canonicalEncode (toJSON result))) session.createdAt publicationStarted verified (realToFrac (diffUTCTime verified session.createdAt))
           bytes = encode receipt
           name = ObjectName (prefix <> "/sessions/" <> renderRunId session.sessionId <> "/" <> relative <> "/receipt.json")
@@ -611,6 +613,7 @@ verifySessionEvidence output offline = do
     result.artifactReferences
   state <- require (journalState session)
   auditAllAttempts False inputs prepared directory
+  unless (maybe True (receipt.verifiedReportAt <=) state.executionDeadline) (ioError (userError "publication receipt exceeds the original execution deadline"))
   let completed = Map.elems state.completed
   valid <- traverse (verifyConfiguration inputs prepared directory) completed
   unless (and valid) (ioError (userError "retained comparison replay differs"))

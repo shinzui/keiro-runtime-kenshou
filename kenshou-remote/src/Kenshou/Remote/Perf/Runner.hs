@@ -160,7 +160,7 @@ runPerformance hooks prepared path = do
         maybe
           (session.plan.request.budgetMinutes * 60000000)
           (min (session.plan.request.budgetMinutes * 60000000) . max 0 . floor . (* 1000000) . (`diffUTCTime` publicationStarted))
-          saved.cleanupDeadline
+          saved.executionDeadline
   publication <-
     try @IOException
       ( timeout publicationMicros do
@@ -171,7 +171,9 @@ runPerformance hooks prepared path = do
           pure (reported, published)
       )
   let (reported, published) = either (const (preliminary, False)) (maybe (preliminary, False) id) publication
-  final <- require (aggregateResult session.plan session.preparedSha256 (published && either (const False) (const True) execution) completed)
+  verifiedAt <- hooks.clock
+  let withinBudget = maybe True (verifiedAt <=) saved.executionDeadline
+  final <- require (aggregateResult session.plan session.preparedSha256 (published && withinBudget && either (const False) (const True) execution) completed)
   pure final {stageSeconds = reported.stageSeconds, artifactReferences = reported.artifactReferences}
   where
     verify result = hooks.verifyCompleted result >>= \valid -> unless valid (ioError (userError "retained completed configuration failed evidence verification"))

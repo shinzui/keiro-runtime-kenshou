@@ -215,6 +215,15 @@ owner acceptance, live calibration and CI parity remain unfinished.
 The full remote test suite also passes (142 examples), preserving the existing
 cell slicing, pairing, submission, lease and recovery controls.
 
+Publication deadline control (2026-10-11): Report publication and receipt replay
+now enforce the first execution deadline, independently of the later cleanup
+deadline. Thirty-seven remote performance controls pass, including publication
+attempted during cleanup grace and a publication callback completing too late.
+A late report cannot produce a verified pass or an accepted publication receipt.
+The repository currently reports no GitHub environments or self-hosted runners;
+the user has been asked for the protected runner and authorized identity settings.
+Live cloud work still awaits renewed GCP authentication.
+
 ## Surprises & Discoveries
 
 

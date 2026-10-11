@@ -86,6 +86,23 @@ spec = describe "performance runner orchestration" do
     result <- runPerformance hooks {clock = pure (addUTCTime 1870 now), publishAndVerify = \_ _ -> writeIORef published True >> pure True} prepared path
     result.exitCode `shouldBe` 4
     readIORef published `shouldReturn` False
+  it "does not publish during cleanup grace after the execution deadline" $ withSystemTempDirectory "perf-publication-grace" \directory -> do
+    (prepared, path) <- fixture directory
+    calls <- newIORef ([] :: [(Text, Int, Bool)])
+    hooks <- fixtureHooks calls
+    runPerformance hooks prepared path >>= \result -> result.exitCode `shouldBe` 0
+    published <- newIORef False
+    result <- runPerformance hooks {clock = pure (addUTCTime 1830 now), publishAndVerify = \_ _ -> writeIORef published True >> pure True} prepared path
+    result.exitCode `shouldBe` 4
+    readIORef published `shouldReturn` False
+  it "rejects publication that completes beyond the original execution deadline" $ withSystemTempDirectory "perf-publication-late" \directory -> do
+    (prepared, path) <- fixture directory
+    calls <- newIORef ([] :: [(Text, Int, Bool)])
+    hooks <- fixtureHooks calls
+    current <- newIORef now
+    result <- runPerformance hooks {clock = readIORef current, publishAndVerify = \_ _ -> writeIORef current (addUTCTime 1801 now) >> pure True} prepared path
+    result.exitCode `shouldBe` 4
+    result.evidenceVerified `shouldBe` False
   it "reserves an identified replacement once when the same callback is reconciled" $ withSystemTempDirectory "perf-runner-reservation" \directory -> do
     (prepared, path) <- fixture directory
     calls <- newIORef ([] :: [(Text, Int, Bool)])
