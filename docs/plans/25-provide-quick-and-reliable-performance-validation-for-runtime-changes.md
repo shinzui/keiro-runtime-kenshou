@@ -1,0 +1,700 @@
+---
+id: 25
+slug: provide-quick-and-reliable-performance-validation-for-runtime-changes
+title: "Provide quick and reliable performance validation for runtime changes"
+kind: exec-plan
+created_at: 2026-10-11T00:00:00Z
+provenance:
+  created_by:
+    model: "gpt-6-astra"
+    harness: "codex-cli"
+    at: 2026-10-11T00:00:00Z
+  revisions:
+    - model: "gpt-6-astra"
+      harness: "codex-cli"
+      at: 2026-10-11T00:05:28Z
+      mode: "other"
+      note: "Completed the initial six-milestone plan and clarified scoped coverage and calibration acceptance."
+---
+
+# Provide quick and reliable performance validation for runtime changes
+
+This ExecPlan is a living document. Keep Progress, Surprises & Discoveries,
+Decision Log, and Outcomes & Retrospective current during implementation. Follow
+`.agents/skills/exec-plan/PLANS.md`. Promote durable decisions into `docs/adr/`
+when implementing them. This document authorizes a design; its unchecked progress
+items do not assert that the described commands or guarantees already exist.
+
+
+## Purpose / Big Picture
+
+
+A runtime maintainer should submit a project's baseline and candidate commits and
+receive a bounded, reproducible performance comparison without manually editing
+Kenshou's active cohort, building VM images, assembling paired trials, or finding
+results across directories. The output must explain what changed, what was
+measured, what remains untested, whether the evidence is trustworthy, and where
+the immutable evidence lives. A cohort is the complete set of runtime package
+versions and sources linked into the benchmark executable. A cell is an
+exclusively leased set of measurement machines with a verified reset between
+trials. One pair is a baseline trial and a candidate trial under the same lease.
+
+Build this workflow on the existing planner, Linux payload publisher, cell
+sessions, comparison engine, and evidence machinery. Deliver a small calibrated
+performance suite, a resumable `kenshou perf` command family, and a reusable CI
+workflow. An ordinary performance request must not run full release matrices or
+multi-hour soaks. It must also never turn missing required coverage, insufficient samples,
+a runtime correctness failure, or a cell failure into a green performance gate.
+
+The initial end-to-end acceptance uses the Shibuya core benchmark and its PGMQ
+adapter path. The request and selection protocols work for every registered
+runtime component, but uncalibrated paths explicitly remain non-gating. Extending
+calibrated coverage to every runtime component is subsequent work, not an implied
+claim of this first release. A caller may explicitly request a limited set of
+profiles and receive a pass for that named scope. The report must separately show
+affected paths outside that scope; such a pass cannot be labeled whole-change
+acceptance.
+
+
+## Progress
+
+
+- [ ] Milestone 1: Exact-revision requests produce independently verified baseline and candidate payloads, with unrelated dependency drift rejected before leasing.
+- [ ] Milestone 2: Change-aware performance planning selects calibrated configurations, explains coverage and omissions, and accounts for paired execution cost.
+- [ ] Milestone 3: One resumable command executes several configuration comparisons, retains every attempt, and emits a verified aggregate result with truthful exit status.
+- [ ] Milestone 4: A designated quick-run cell passes contention, isolation, recovery, health-failure, and admission-latency acceptance.
+- [ ] Milestone 5: The initial core and PGMQ profiles pass A/A and injected-slowdown calibration within the measured turnaround targets.
+- [ ] Milestone 6: A reusable CI entry point and operator guide reproduce the accepted workflow from an upstream change and preserve its durable evidence.
+
+Creation handoff: this plan was grounded in the working tree on 2026-10-10 local
+time. No implementation or live infrastructure changes were performed. It is a
+standalone follow-on to the existing cell work, not a new child silently added to
+an existing MasterPlan.
+
+
+## Surprises & Discoveries
+
+
+(None yet.)
+
+
+## Decision Log
+
+
+2026-10-10: Reuse the existing protocol and comparison engine; place generic cell
+repairs in `mori://shinzui/load-testing-infra`. Kenshou owns change selection,
+workloads, statistics, and the user-facing verdict. This preserves the existing
+ownership boundary and avoids a second benchmark runner.
+
+2026-10-10: Use immutable HTTPS Git commits for candidate runtime sources and a
+clean, separately identified harness commit. Local uncommitted runtime source is
+outside the first gating workflow. Generate request-specific cohorts outside the
+user's active checkout state, so two preparations cannot overwrite each other's
+Cabal plans or alter the historical released cohort.
+
+2026-10-10: Fix trial counts in advance, defaulting to five valid pairs. Replace
+only objectively invalid infrastructure trials within a bounded allowance. Do
+not keep sampling an unfavorable or inconclusive comparison until it passes;
+that would change the statistical interpretation. Runtime assertion failures
+remain blockers even when a later attempt succeeds.
+
+2026-10-10: Treat turnaround targets and detection sensitivity as acceptance
+criteria to measure, not current service guarantees. Keep a separate budget for
+build preparation, admission, and measurement. Do not weaken statistical limits
+or silently remove affected configurations to meet a time target.
+
+
+## Outcomes & Retrospective
+
+
+(To be filled during implementation.)
+
+
+## Context and Orientation
+
+
+Work from the `keiro-runtime-kenshou` repository root. `kenshou-core` defines
+cohorts, scenarios, immutable run specifications, and change-aware planning.
+`kenshou-measure` computes measurements and statistical comparisons.
+`kenshou-remote` provides payloads, leases, submissions, and verified retrieval.
+`kenshou-cli` assembles these libraries with the scenario packages. A payload is
+a content-addressed archive containing an executable and its runtime dependencies;
+its digest identifies the actual bytes delivered to a cell.
+
+The planner's relevant files are `kenshou-core/src/Kenshou/Plan/Change.hs`,
+`kenshou-core/src/Kenshou/Plan/Change/Git.hs`,
+`kenshou-core/src/Kenshou/Plan/Components.hs`,
+`kenshou-core/src/Kenshou/Plan/Suite.hs`,
+`kenshou-core/src/Kenshou/Plan/RunPlan.hs`, and
+`kenshou-core/data/components.json`. The `suites/change.json` suite currently
+selects local correctness and concurrency cases only. `docs/planning.md` describes
+existing `--upstream-diff`, `--changed`, selection explanations, and conservative
+selection of all affected work when a change cannot be mapped safely.
+
+`kenshou-remote/src/Kenshou/Remote/Payload/Publisher.hs` currently restricts
+publication to `released` and `head`. `scripts/payload-lock.sh` has the same
+restriction. `nix/kenshou/packages.nix` loads a named descriptor and source lock;
+`nix/kenshou/cohort-overlay.nix` replaces the runtime packages, and
+`nix/kenshou/identity.nix` emits identity documents. The overlay currently applies
+`doJailbreak`, which removes Cabal bounds during the Nix build. A successful build
+therefore does not establish declared dependency compatibility. Generated cohort
+support must retain an independent bounds/exception check and resolved identity
+check, rather than interpreting successful Nix linking as sufficient evidence.
+
+`kenshou-remote/src/Kenshou/Remote/Pair.hs` supplies `pairPlan` and `judgePairs`.
+`kenshou-cli/src/Kenshou/Cli/Command/Cell.hs` supplies `runPair`,
+`pairUnderLease`, `collectPairObservations`, and `finishPair`. The visible command
+currently accepts one benchmark configuration, uses cold reset for each trial,
+and writes `comparison.json`. It has per-round cell journals, but a new invocation
+refuses an existing output directory; there is no complete top-level paired
+resume workflow. Its validity test combines cell success and entry exit code,
+so the new orchestration must distinguish runtime failures from replaceable
+infrastructure failures. Session machinery lives under
+`kenshou-remote/src/Kenshou/Remote/Cell/Session/`.
+
+`policies/default.json` requires five pairs and 95% confidence, including both
+relative and absolute effect thresholds. `kenshou-measure/src/Kenshou/Measure/Compare.hs`
+already gives unhealthy or incomparable evidence precedence over statistics.
+Retain that calculation. `docs/reports/2026-10-10-shibuya-latest-timings.md`
+records 30 successful local runs but two inconclusive performance comparisons;
+the paced throughput was not a capacity measurement. Its
+`docs/reports/data/2026-10-10-shibuya-timings/run-pairs.py` demonstrates the
+manual work to replace, not a second production engine to preserve.
+
+The initial workload implementation points are
+`kenshou-shibuya/src/Kenshou/Suite/Shibuya/Bench/ConcurrencySweep.hs` and
+`kenshou-shibuya/src/Kenshou/Suite/Shibuya/Bench/PgmqEndToEnd.hs`.
+`kenshou-cli/src/Kenshou/Cli/Registry.hs` registers commands.
+`.github/workflows/ci.yaml` currently builds, tests, and checks the harness; it
+does not provide runtime-project performance comparisons. Existing test suites
+include `kenshou-core-test`, `kenshou-remote-test`, and `kenshou-cli-test`; confirm
+their Cabal declarations before extending their module lists.
+
+Relevant architecture decisions were read during creation. [ADR-2](../adr/0002-every-result-carries-a-resolved-cohort-identity.md)
+requires resolved package/source identities, immutable Git sources, and explicit
+scope for isolated layer cohorts. [ADR-3](../adr/0003-kenshou-owns-the-runtime-verification-protocol.md)
+keeps versioned protocols in Kenshou and defines exit codes.
+[ADR-5](../adr/0005-select-runs-from-a-checked-in-component-graph.md) requires
+explainable dependent selection and telemetry-enabled configurations for
+observability changes. [ADR-6](../adr/0006-comparison-verdicts-require-controlled-benchmark-evidence.md)
+requires paired, interleaved, durable, controlled evidence. It also requires
+Kiroku comparisons to account for each arm's measured stable pool optimum;
+do not extend a fixed-pool profile to Kiroku capacity claims without that work.
+[ADR-18](../adr/0018-keep-verification-records-immutable-and-derive-baselines.md)
+keeps records immutable and baselines derived from compatible confirmed evidence.
+[ADR-20](../adr/0020-pin-cell-payloads-to-verified-cohort-identities.md) requires
+verified Nix cohort identities. [ADR-21](../adr/0021-address-cell-runs-by-submission-and-nested-run.md)
+requires both submission and nested run identities and makes cell failure
+override a nested success without changing either sealed document.
+
+The generic infrastructure owner is `mori://shinzui/load-testing-infra`, located
+with `mori path`. Within that project, consult project-relative
+`docs/cells/protocol.md`, `docs/cells/determinism.md`,
+`nixos/pkgs/cell-agent/src/`, and `scripts/cell/` (artifact-level URIs pending).
+Its request is
+`mori://shinzui/load-testing-infra/okf/improvement-requests/concepts/IR-1`.
+Local plans [EP-16](16-provide-leased-verification-cells-in-load-testing-infra.md)
+and [EP-17](17-run-kenshou-on-leased-cells-with-payloads-submission-and-retrieval.md)
+record the existing cell implementation and live evidence. Those records include
+successful A/A pairing and ordinary health observations, but some acceptance
+remains open, including general contamination cleanup and forced health failures.
+Do not infer that an unchecked acceptance item is implemented or tested. The
+owner's admission targets are p95 at most 90 seconds warm and 180 seconds stopped;
+sample transcripts in plans are not measurement evidence.
+
+
+## Plan of Work
+
+
+### Milestone 1: Prepare exact-revision requests and reusable payloads
+
+
+Add `Kenshou.Perf.Request` and `Kenshou.Perf.Prepared` in `kenshou-core`, with
+hand-written codecs and schemas `schemas/kenshou.perf-request.v1.schema.json`
+and `schemas/kenshou.perf-prepared.v1.schema.json`. Introduce the
+`kenshou perf plan` and `kenshou perf prepare` CLI surface in
+`kenshou-cli/src/Kenshou/Cli/Command/Perf.hs` and register it in
+`kenshou-cli/src/Kenshou/Cli/Registry.hs`. The plan operation resolves the request
+and explains intended scope without leasing or building. Preparation resolves
+both arms and builds/publishes their payloads without holding a cell lease.
+
+A request names a canonical project URI, full baseline and candidate commits, a
+cohort-template path, an explicit target-component set, a suite, a calibrated
+profile set, coverage mode, a seed, a cell pool, a wait budget, and an execution
+budget. Resolve
+sources through Mori and verify the requested commits exist in the identified
+HTTPS upstream repository. Changing a mutable branch after preparation must not
+change either executable. Reject unknown components, a revision belonging to the
+wrong repository, local-path sources, dirty harness inputs for gating, or a
+package-set mismatch before publication. Read source manifests at each commit
+rather than assuming package versions and subdirectories are unchanged.
+
+Create generated cohort inputs beneath the preparation directory, with separate
+Cabal build directories for both arms. Parameterize the Nix package function over
+explicit descriptor and lock inputs while preserving existing released/head
+outputs. Pass generated inputs as immutable build inputs, not edits to the
+harness checkout. Extend the publisher to accept this prepared build target.
+Record the clean harness commit separately from the generated cohort documents
+and their digests; never mark generated inputs as proof of a clean harness. Add
+complete resolved build inventories, including relevant transitive sources,
+compiler, flags, and toolchain pins, to the prepared evidence. A changed build
+artifact hash caused by relinking is expected; an unrelated dependency's source,
+version, flag, or toolchain change is not.
+
+Compare inventories before leasing. Only the declared target components may
+change source or version. Report incompatible bounds as a preparation failure;
+never introduce blanket bound lifting. If a compatible isolated layer template
+is needed, name that scope in both arms and mark downstream full-runtime coverage
+unavailable. A broader cohort comparison requires a separate request explicitly
+declaring its additional changing components. Before choosing any new dependency
+pin or workaround, use Mori for source/API discovery and check the authoritative
+package registry and upstream release tags; this plan selects no new versions.
+
+Reuse artifacts by a build key over the harness commit, full resolved input
+inventory, descriptor/source-lock digests, platform, variant, and build flags.
+Revalidate a cache hit's recorded identity and bundle digest. Keep build cache
+writes separate from measurement and retain failed build logs. Acceptance is a
+same-source request that reuses the payload on its second preparation, plus a
+candidate-only edit that produces a distinct payload while all unrelated source
+inputs remain equal. Concurrent preparations must leave `cohort/active.project`,
+`cohort/released.json`, and each other's build plans unchanged.
+
+
+### Milestone 2: Select a bounded, explicit performance scope
+
+
+Add `suites/change-performance.json` and a versioned profile catalog under
+`policies/performance/`, with a catalog schema under `schemas/`. A profile names a
+scenario revision, effective knobs and dimensions, workload purpose, warm-up and
+measurement windows, cache and durability policy, comparison policy digest,
+required cell capabilities, calibrated machine profile, and supporting calibration
+artifact. A profile distinguishes fixed-load latency from capacity; a paced
+throughput near the offered rate cannot certify peak capacity. Initially register
+candidate profiles for Shibuya core and PGMQ end-to-end, marked uncalibrated until
+Milestone 5. Reuse existing metric names and policies when appropriate.
+
+Use the existing component graph and upstream diff mapper to compute affected
+scenarios before applying the fast-suite profile catalog. Account for dependent
+paths and telemetry corners. Emit selected configurations, selection reasons,
+unmapped inputs, unsupported/uncalibrated affected paths, and budget exclusions.
+A documented exclusion from this deliberately limited suite is visible scope,
+not proof for the omitted path. An affected path requiring evidence but lacking a
+calibrated profile prevents full change acceptance. Documentation-only changes
+may be `not-applicable` only with the repository-scoped source-root proof required
+by ADR-5; an empty accidental selection is inconclusive.
+
+Use `coverageMode: "affected"` by default: every affected path requiring evidence
+must have an admitted calibrated profile or the aggregate is incomplete. Permit
+`coverageMode: "selected-profiles"` only with an explicit nonempty profile list.
+That mode judges completion of the requested profiles and separately reports
+`changeCoverage` for all affected paths. It never silently narrows an affected-mode
+request. The initial acceptance and example caller use selected-profiles mode;
+the CI check name must say which profiles it accepted. Test that changing modes
+changes the request digest and cannot be used while resuming an existing session.
+
+Estimate cost using both arms, required pairs, per-trial reset/settle and sealing,
+and a bounded infrastructure-replacement allowance. The default request allows
+30 minutes of execution after payloads are ready and no more than two replacement
+pairs per configuration. Admission waiting is separately bounded. Admit complete
+configurations; never cut a pair or drop dimensions silently. If required work
+cannot fit, the planning result identifies deferred coverage and the eventual
+result cannot be a complete pass. Acceptance tests cover a direct change, a
+transitive dependent, telemetry, unmapped source changes, a proven documentation
+change, and a request exceeding the budget.
+
+
+### Milestone 3: Execute and recover a complete comparison session
+
+
+Extract reusable paired execution from `kenshou-cli/src/Kenshou/Cli/Command/Cell.hs`
+into `kenshou-remote/src/Kenshou/Remote/Perf/Runner.hs` and put durable orchestration
+state in `kenshou-remote/src/Kenshou/Remote/Perf/Journal.hs`. Keep `cell pair`
+backward compatible. Add `kenshou perf run`, `status`, `resume`, and `verify`.
+The runner consumes the prepared request and catalog-pinned plan. It groups
+compatible configurations onto one cell lease, executes them serially, and
+resets between every arm. Different PostgreSQL majors require compatible cells;
+never move the arms of one pair to different cells or leases. Use only one cell
+at a time in the initial orchestrator, with a deterministic pool ordering and
+bounded waits; building a global scheduling service is outside this plan.
+
+Keep the existing cold-reset default for authoritative pair execution. If a
+profile measures warmed application behavior, run identical declared warm-up
+phases after reset and exclude warm-up samples. Do not conflate a VM being warm
+with the operating-system or database cache policy. Persist a precomputed ABBA
+or BAAB schedule, matched seeds, requested pair count, policy digest, and all
+submission identities before side effects. A new comparison uses five valid
+pairs unless its profile's validated policy requires more.
+
+Classify attempts using both the cell effective outcome and nested assertions.
+An infrastructure-invalid pair may be replaced up to the predeclared limit; both
+old arms remain in the evidence. A candidate assertion failure, incomplete work,
+wrong result, or new blocking runtime defect blocks acceptance and is not erased
+by replacement. Never use shell exit zero alone: a reproduced known defect may
+also have exit zero. A noisy but otherwise valid pair is not an infrastructure
+retry. Collect the fixed valid-pair count and calculate once; a longer follow-up
+is a separately identified request, not silent optional stopping.
+
+A resume verifies the request, payload, policy, journal, and sealed digests before
+reconciling submissions with the cell. After lease loss, retain sealed pairs from
+the old lease as a separate comparison attempt and start a fresh complete paired
+comparison for the interrupted configuration; do not aggregate across changed
+lease/host environments to obtain five pairs. Already completed configuration
+comparisons remain reusable. An ambiguous submission is observed by its existing
+ID before any new work is submitted. There must be no duplicate active execution.
+
+Add schemas `schemas/kenshou.perf-plan.v1.schema.json`,
+`schemas/kenshou.perf-session.v1.schema.json`, and
+`schemas/kenshou.perf-result.v1.schema.json`, with compatible golden fixtures.
+Write a versioned aggregate result and a compact Markdown report. Each
+configuration retains the ordinary `comparison.json`; the aggregate records all
+attempts, valid/invalid pair counts and reasons, workload scope, effect intervals,
+thresholds, exclusions, stage timings, and immutable evidence references. Preserve
+separate performance verdict, runtime blockers, coverage state, and infrastructure
+state. Exits are 0 only for complete accepted scope (or explicit proven
+not-applicable), 1 for a valid regression or runtime blocker, 2 for malformed
+input, 3 for inconclusive/incomplete scope, and 4 for infrastructure/preparation
+failure. If infrastructure failure and a runtime blocker coexist, return 4 and
+retain the blocker explicitly; no condition is hidden by aggregation.
+
+Acceptance uses file-backed protocol tests to interrupt before submission, during
+an arm, after sealing, and before report publication. Each recovery must retain
+original attempts and digests, avoid duplicate active runs, and produce the same
+comparison for the same sealed inputs. Test mixed results across configurations,
+known-defect exit zero, and a runtime failure followed by a passing attempt.
+
+
+### Milestone 4: Prove that quick-run cells are isolated and available
+
+
+Implement generic owner changes in `mori://shinzui/load-testing-infra`, following
+that project's instructions, at project-relative `scripts/cell/`,
+`nixos/pkgs/cell-agent/src/`, and `infra/cells/` (artifact-level URIs pending).
+Keep a canonical cross-reference to this plan in owner commits:
+`mori://shinzui/keiro-runtime-kenshou/plans/25-provide-quick-and-reliable-performance-validation-for-runtime-changes`.
+Inspect current owner code and recorded acceptance first; close missing items
+without duplicating already demonstrated behavior. This milestone is an explicit
+cross-repository dependency; Kenshou's software can be tested before it passes,
+but the feature cannot be advertised as an accepted performance gate.
+
+Designate a cell for short comparisons during development hours; route soaks to
+other capacity or outside that window. Reuse the owner's idle-stop policy and
+existing lifecycle commands. Reuse baseline payloads and pre-stage both arms
+before measurement starts, outside timed windows. Avoid image rebuilds, compilers,
+cache garbage collection, and bulk artifact transfers during measurement. Keep
+monitoring collection bounded to the run window; profiles and dashboard exports
+remain optional diagnostics while raw benchmark samples remain mandatory.
+
+Prove exclusive leasing under two simultaneous requests, including an upgrade
+contender. Contaminate the runner with surviving child processes and owned files,
+and contaminate database state/settings; the next reset must remove the declared
+contamination and verify requested settings without harming unrelated processes.
+Inject maintenance/background-load and storage-pressure gate failures, missing
+health observations, stale agent identity, lease loss, and consecutive reset
+failures. Each must prevent authoritative success; repeated reset failures must
+quarantine the cell. A recovery must not clear quarantine without the owner's
+verified recovery procedure. Seal failure evidence when feasible and expose
+publication failure honestly when not feasible.
+
+Add or complete the owner's latency probe and run at least 20 warm and 20 stopped
+admission observations. Measure from lease/start request to accepted submission,
+report p50/p95 and every failed attempt, and separately record readiness/reset
+latency to the first measured operation. Acceptance is p95 at most 90 seconds warm
+and 180 seconds stopped, with no overlapping benchmark processes. Store the
+underlying timing samples and sealed fixture references in a dated Kenshou report.
+A missed target remains open work with a breakdown; example output cannot close
+this milestone. Verify retrieval and digests after the cell is stopped.
+
+
+### Milestone 5: Calibrate the initial benchmarks and time-to-verdict
+
+
+Calibrate Shibuya core and PGMQ end-to-end separately on the designated cell,
+using the exact profiles selected in Milestone 2. Ensure each does enough work,
+retains full samples, observes steady behavior, and does not saturate the load
+generator. Capture planned operations, actual completions, schedule lag, errors,
+and any backlog. A profile may choose a longer window to control checkpoint or
+polling noise; a short run that misses important behavior remains exploratory.
+Pin the comparison policy and minimum meaningful relative and absolute effects
+before running the acceptance experiment. Do not use the default policy's metric
+limits as evidence that a workload can detect those limits.
+
+Run 20 complete A/A comparisons per profile, where both arms use the same
+payload. Require at least 19 passes, zero regressions, and at most one
+inconclusive result. Separately use a clean test-only candidate revision that
+adds a deterministic delay at the real operation boundary; preserve the workload,
+knobs, harness, and unrelated dependencies. The calibration profile records the
+injected mechanism and the target effect beyond both policy thresholds. Run 20
+comparisons and require at least 19 detected regressions, zero passes, and at
+most one inconclusive result. Infrastructure-failed comparisons are reported and
+repeated under a fixed, recorded retry cap; never drop statistical outcomes.
+Report these as observed calibration counts, not a proven population false-positive
+rate or a universal 95% detection guarantee. Retain the injected source and its
+full commit identity without merging the slowdown into a runtime release.
+
+For each accepted profile, require p95 at most 15 minutes from verified payloads
+ready to a verified durable comparison report on an uncontended warm cell,
+including lease admission, resets, five pairs, sealing, retrieval, and report
+publication. Use the 20 A/A exercises for these timing samples and show failures
+and cache state. Separately report a cold preparation and a repeated preparation;
+the repeated preparation must reuse unchanged payloads and perform no compilation.
+Do not promise a universal source-build duration. The aggregate suite remains
+bounded at 30 minutes; if two accepted profiles exceed that together, the report
+must expose the additional budget needed rather than omit one.
+
+Investigate missed calibration or latency targets and revise workload design
+with a new profile revision, followed by a fresh predeclared acceptance batch.
+A profile becomes gating only after both sensitivity and timing acceptance pass
+and links to the immutable calibration evidence. Invalidate that designation when
+scenario revision, relevant knobs, metric semantics, policy, toolchain, or machine
+profile changes. Calibration does not establish capacity, leak freedom, recovery,
+or unmeasured downstream behavior.
+
+Provide an explicit `perf run --calibration` mode so these experiments can execute
+profiles before they are calibrated. It runs the same comparison calculation but
+marks the aggregate `purpose: "calibration"` and `gatingEligible: false`. Its
+exit code retains the ordinary outcome mapping, but even exit 0 is not a
+production acceptance result. Ordinary CI
+requests reject this mode, and a report cannot become gating merely by editing
+its purpose; promotion requires the catalog revision and verified acceptance
+evidence. Record a finite infrastructure retry cap before each calibration batch.
+
+
+### Milestone 6: Publish evidence and integrate runtime-project CI
+
+
+Add `.github/workflows/performance-change.yaml` with a reusable workflow entry
+and a manual dispatch path. Accept canonical project identity, immutable baseline
+and candidate revisions, cohort template, profiles, and time budgets. Invoke the
+same CLI used by developers, keep build and measurement stages separate, and
+expose the result JSON and Markdown summary as workflow artifacts plus durable
+object-store links. Use the existing authorized GCP identity mechanism; do not
+invent an account or place credentials in logs. Candidate code is executable
+input: keep cloud-enabled execution limited to trusted invocations, with no
+privileged `pull_request_target` checkout of untrusted candidate code.
+
+Publish the aggregate report and its manifest with create-only object semantics
+in an explicitly chosen evidence bucket, retaining references to both outer cell
+and nested run manifests. A result promising durable evidence cannot return 0
+when publication or verification fails. Reuse the existing recorder and attester
+for explicit promotion to `docs/verification`; ordinary quick runs must not
+commit records into the harness checkout or automatically promote a baseline.
+Baseline source is explicit in this first workflow. Historical attested baseline
+selection remains a separate policy, and old timing numbers are never reused as
+one arm of a new paired comparison.
+
+Write `docs/guides/validating-runtime-change-performance.md`, update
+`docs/planning.md` and `docs/guides/running-on-gcp.md`, and register the guide in
+the existing guide bundle with a stable DOC handle and log entry. Explain result
+scope, preparation failures, all exits, budget exhaustion, calibration expiry,
+resume, publication, and escalation to a separate longer comparison. Update the
+stale README status only where it describes this delivered behavior.
+
+Demonstrate a request using commits from `mori://shinzui/shibuya`, with the core
+and adapter profile coverage reported separately, through the reusable workflow
+and the local command. A small example caller can be checked into this repository;
+rollout to additional upstream repositories is not required to complete this
+plan. The two entry points must share request semantics, digests, result schema,
+and exit behavior. Distill the new generated-cohort identity, calibration, and
+aggregate-gating decisions into the relevant existing ADRs or newly allocated
+records using the repository's profiled ADR workflow before completion.
+
+
+## Concrete Steps
+
+
+All commands below run from the Kenshou repository root unless stated otherwise.
+These first commands inspect existing support; they do not start cloud resources.
+
+```bash
+mori registry show shinzui/load-testing-infra --full
+mori registry docs shinzui/load-testing-infra
+mori path mori://shinzui/load-testing-infra
+nix develop -c cabal run -v0 kenshou -- plan --graph-check
+nix develop -c cabal run -v0 kenshou -- help cells
+```
+
+The following is the proposed interface to implement, not an existing command.
+Create a request using full commits from a fetched, Mori-resolved upstream
+checkout. Replace `BASE_SHA` and `CANDIDATE_SHA` with the actual 40-character
+commits; `prepare` must reject these placeholder strings. The target-component
+IDs must exist in the selected cohort template. The initial profile names are
+created by this plan.
+
+```json
+{
+  "schema": "kenshou.perf-request/v1",
+  "project": "mori://shinzui/shibuya",
+  "baselineRevision": "BASE_SHA",
+  "candidateRevision": "CANDIDATE_SHA",
+  "cohortTemplate": "cohort/released.json",
+  "targetComponents": ["shibuya"],
+  "suite": "change-performance",
+  "coverageMode": "selected-profiles",
+  "profiles": ["shibuya-core-quick", "shibuya-pgmq-quick"],
+  "seed": 20261010,
+  "cells": ["alpha"],
+  "waitSeconds": 90,
+  "budgetMinutes": 30
+}
+```
+
+For the live rehearsal, select two source-compatible commits; do not assume any
+new Shibuya release is compatible with `cohort/released.json`. Use an explicitly
+scoped compatible template when needed. Profiles requesting PostgreSQL 18 can
+use alpha only after verifying its current descriptor and capabilities; cell
+names do not permanently establish capabilities.
+
+```bash
+nix develop -c cabal run -v0 kenshou -- perf plan \
+  --request perf-request.json --out .dev/perf-example-plan
+nix develop -c cabal run -v0 kenshou -- perf prepare \
+  --request perf-request.json --out .dev/perf-example-prepared
+nix develop -c cabal run -v0 kenshou -- perf run \
+  --prepared .dev/perf-example-prepared/prepared.json \
+  --evidence-base-uri gs://kenshou-evidence-tan-nb-exp/performance \
+  --start --out cell-pairs/perf-example
+nix develop -c cabal run -v0 kenshou -- perf status \
+  --session cell-pairs/perf-example
+nix develop -c cabal run -v0 kenshou -- perf resume \
+  --session cell-pairs/perf-example
+nix develop -c cabal run -v0 kenshou -- perf verify \
+  --session cell-pairs/perf-example
+```
+
+Configure the control/results buckets explicitly using the existing
+allowed-project checks. `--evidence-base-uri` names the aggregate report's durable
+destination; the example uses the existing evidence project, and preparation must
+check the caller's actual access before leasing. Persist the resolved destination
+in the session. The normal output directory
+contains `request.json`, `prepared.json`, `plan.json`, `session.json`,
+`result.json`, `report.md`, and per-configuration comparison and attempt trees.
+Machine-readable stdout is JSON; progress goes to stderr. A passing example
+reports `performanceVerdict: "pass"`, `coverage: "complete"` for the requested
+scope, a separate `changeCoverage` with omitted affected paths,
+`blockingRuntimeFailures: []`, verified evidence references, and exit 0. A
+not-applicable response names its source-root proof and never uses the word pass
+for an unexecuted benchmark.
+
+Use targeted tests during implementation, then the repository gate once the
+integrated change is ready. Register new schemas and fixtures in
+`justfile`'s `schemas-check` recipe.
+
+```bash
+nix develop -c cabal test kenshou-core-test kenshou-remote-test kenshou-cli-test
+nix develop -c just schemas-check
+nix develop -c just guides-validate
+nix develop -c just adr-validate
+nix develop -c just verify
+```
+
+Run live acceptance only after local contracts pass. Record actual commands,
+request digests, owner image revisions, run IDs, report URIs, timings, and outcomes
+in a dated file under `docs/reports/` and summarize acceptance in Progress. The
+owner's new admission probe is to be implemented at project-relative
+`scripts/cell/measure-accept-latency.sh` in `mori://shinzui/load-testing-infra`
+(artifact-level URI pending); invoke it there with `alpha warm 20` and
+`alpha stopped 20` after reviewing its semantics. Never copy a plan's illustrative
+latency transcript as observed evidence.
+
+
+## Validation and Acceptance
+
+
+Each milestone must pass its own observable acceptance before its Progress item
+is checked. Deterministic tests must prove that a request with the wrong source
+revision, stale lock, unrelated dependency drift, dirty harness, or unsupported
+scope fails before a lease is acquired. Golden protocol fixtures must distinguish
+not-applicable, incomplete coverage, runtime failure, performance regression,
+statistical inconclusive, and infrastructure failure. Unknown graph mappings and
+expired calibration must never yield a pass through empty selection.
+
+A same-payload A/A request is an explicit control mode in `perf prepare`, which
+retains the selected profiles even though the source diff is empty. Add `--control
+aa` for that purpose; reject combining it with different baseline/candidate
+revisions. Normal no-change requests remain not-applicable only when proved.
+This control flag is retained in every request digest and report. The slowdown
+calibration uses an ordinary different-revision request and records its test-only
+purpose. Calibration artifacts are validated independently of the production
+runtime's release history.
+
+The live proof must include the owner admission/isolation/failure experiments,
+20 A/A and 20 slowdown comparisons per initial profile, and a interrupted client
+that resumes without duplicating work. A storage-tampering test must make
+`perf verify` identify the changed artifact and refuse success. Verify both raw
+samples and derived comparisons; a matching JSON schema alone is insufficient.
+Recompute a finished report after the cell has stopped, retaining the same
+verdict and evidence identities. The reusable workflow must demonstrate its
+non-success handling as well as a pass, and must publish available failure
+evidence when a normal step exits nonzero.
+
+Full completion requires both initial profiles calibrated, required owner
+acceptance closed, the time targets met on the declared machine/profile, and
+operator/CI parity demonstrated. An unimplemented owner dependency or unexplained
+latency miss is unfinished work. Broader family coverage remains explicitly
+limited in the final report; performance acceptance is always scoped to the
+selected calibrated workloads and their declared measurable effects.
+
+
+## Idempotence and Recovery
+
+
+Preparation directories are request-specific and their inputs are immutable once
+prepared. An identical retry may reuse verified artifacts; differing input to the
+same destination is refused. Do not alter `cohort/active.project`, overwrite the
+released baseline, or reuse mutable Cabal plan files across arms. The live session
+creates a new output directory; subsequent work uses `resume`. Atomic journal
+writes precede submissions, and create-only publication prevents overwriting
+sealed objects. Preserve unsuccessful attempts and their diagnoses.
+
+On timeout or cancellation, stop admitting new configurations, request cancellation
+of owned active work, allow bounded sealing, and release only the currently owned
+lease generation. Budget exhaustion without adequate evidence yields incomplete
+or inconclusive status, not success. Lease loss, missing health evidence, or an
+unrecoverable publication failure yields infrastructure failure. Resume under a
+new lease starts a separate comparison attempt for an unfinished configuration.
+Do not mutate sealed input trees to attach later cell outcomes or new reports.
+
+Keep build/preparation failure and cell failure recovery separate. Retry only
+classified transient operations with explicit limits. No automatic reset of the
+user's checkout, automatic baseline promotion, or automatic release-record commit
+belongs in this workflow. Cell image repair and quarantine recovery follow the
+owner project's lifecycle commands and preserve previously sealed results.
+
+
+## Interfaces and Dependencies
+
+
+`Kenshou.Perf.Request` owns `PerfRequest` and its schema. `Kenshou.Perf.Prepared`
+owns `PreparedComparison`, holding request/harness identity, arm inventories,
+source and payload digests, and declared varying components. Add
+`Kenshou.Perf.Plan` for profile resolution and coverage, and
+`Kenshou.Perf.Result` for `PerfResult` with per-configuration decisions and the
+aggregate exit mapping. These protocol types live in `kenshou-core` and do not
+import the CLI or remote execution modules.
+
+`Kenshou.Remote.Perf.Runner` consumes a `PreparedComparison` and performance plan;
+`Kenshou.Remote.Perf.Journal` records orchestration state using the existing cell
+session types. The CLI supplies file paths, object-store handles, cell selection,
+and output rendering. `kenshou-measure` remains the only owner of statistical
+comparison. `kenshou-evidence` remains the owner of explicit historic record and
+attestation operations. Update the appropriate `.cabal` exposed/test modules and
+schema fixtures when adding these modules. Existing payload, run, and comparison
+schema versions remain unchanged unless their wire contract actually changes;
+introduce an additive new version rather than silently redefining old identity
+fields to accommodate generated inputs.
+
+The first version has no new mandatory external library. It uses the locked Nix
+and Cabal environment, Git, Mori, existing storage adapters, and the owner cell
+protocol. Locate dependency source with Mori before relying on an API. Never
+search or traverse `/nix/store` or the filesystem root. Infrastructure control
+remains in `mori://shinzui/load-testing-infra`; benchmark workload source remains
+in the owning Kenshou layer. Runtime source projects are discovered from the
+cohort's canonical Mori URIs, including `mori://shinzui/shibuya` and
+`mori://shinzui/shibuya-pgmq-adapter` for the first acceptance scope.
+
+Implementation commits follow Conventional Commits on the current branch unless
+the user requests another branch, and include an `ExecPlan:` trailer pointing to
+this repository's plan path. Cross-repository commits use the canonical plan URI
+instead. Keep this document's provenance append-only through the skill scripts;
+update living sections with acceptance evidence rather than recording routine
+commands as progress.
