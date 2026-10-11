@@ -1,0 +1,21 @@
+{
+  "schema": "kenshou.suite/v1",
+  "name": "change-performance",
+  "description": "Bounded performance evidence for explicitly scoped runtime changes. Profiles require verified calibration before gating.",
+  "selection": {
+    "mode": "changed",
+    "always": [],
+    "exclude": []
+  },
+  "policy": {
+    "maxTier": "standard",
+    "kinds": [
+      "benchmark"
+    ],
+    "placement": "cell",
+    "dimensionPolicy": "default-only",
+    "knobPolicy": "defaults",
+    "trials": 5,
+    "budgetMinutes": 30
+  }
+}

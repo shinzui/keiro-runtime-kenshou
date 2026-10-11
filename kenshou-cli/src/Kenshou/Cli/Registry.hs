@@ -7,6 +7,7 @@ import Kenshou.Cli.Command.Cohort (cohortCommand)
 import Kenshou.Cli.Command.Execute (executeCommand)
 import Kenshou.Cli.Command.List (listCommand)
 import Kenshou.Cli.Command.Overhead (overheadCommand)
+import Kenshou.Cli.Command.Perf (perfCommand)
 import Kenshou.Cli.Command.Plan (planCommand)
 import Kenshou.Cli.Command.Run (runCommand)
 import Kenshou.Cli.Command.Worker (workerCommand)
@@ -36,7 +37,7 @@ bundles :: [LayerBundle]
 bundles = [Selftest.bundle, MeasureSelftest.bundle, CheckSelftest.bundle, DiagnoseSelftest.bundle, TelemetrySelftest.selfTestBundle, RemoteSelftest.bundle, Pgmq.bundle, Kiroku.bundle, Keiro.bundle, Shibuya.bundle, Kafka.bundle, Runtime.bundle]
 
 commands :: [CliCommand]
-commands = [listCommand, planCommand, Help.helpCommand, runCommand, executeCommand, cellCommand, overheadCommand, Measure.summarizeCommand, Measure.compareCommand, Diagnose.diagnoseCommand, historyCommand, recordCommand, attestCommandWith [runOutcomeRecomputer, measurementRecomputer, pairedComparisonRecomputer], evidenceCommand, workerCommand, cohortCommand, completionsCommand]
+commands = [listCommand, planCommand, Help.helpCommand, runCommand, executeCommand, cellCommand, perfCommand, overheadCommand, Measure.summarizeCommand, Measure.compareCommand, Diagnose.diagnoseCommand, historyCommand, recordCommand, attestCommandWith [runOutcomeRecomputer, measurementRecomputer, pairedComparisonRecomputer], evidenceCommand, workerCommand, cohortCommand, completionsCommand]
 
 topics :: [HelpTopic]
 topics = Help.topics

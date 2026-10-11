@@ -1,0 +1,182 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "kenshou.perf-catalog/v1"
+    },
+    "profiles": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/profile"
+      },
+      "minItems": 1
+    }
+  },
+  "required": [
+    "schema",
+    "profiles"
+  ],
+  "$defs": {
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "scenario": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scenarioRevision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "knobs": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          }
+        },
+        "dimensions": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "workloadPurpose": {
+          "const": "fixed-load-latency"
+        },
+        "warmupSeconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "steadyCount": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "cooldownSeconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "cachePolicy": {
+          "const": "cold-reset"
+        },
+        "policy": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requiredMetrics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/requiredMetric"
+          },
+          "minItems": 1
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true,
+          "minItems": 1
+        },
+        "machineProfile": {
+          "type": "string",
+          "minLength": 1
+        },
+        "trialSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "resetSeconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sealSeconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "minimumPairs": {
+          "type": "integer",
+          "minimum": 5
+        },
+        "replacementPairs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "calibration": {
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "revision",
+        "scenario",
+        "scenarioRevision",
+        "knobs",
+        "dimensions",
+        "workloadPurpose",
+        "warmupSeconds",
+        "steadyCount",
+        "cooldownSeconds",
+        "timeoutSeconds",
+        "cachePolicy",
+        "policy",
+        "requiredMetrics",
+        "capabilities",
+        "machineProfile",
+        "trialSeconds",
+        "resetSeconds",
+        "sealSeconds",
+        "minimumPairs",
+        "replacementPairs",
+        "calibration"
+      ]
+    },
+    "requiredMetric": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "unit": {
+          "type": "string",
+          "minLength": 1
+        },
+        "minimumSteadySamples": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "name",
+        "unit",
+        "minimumSteadySamples"
+      ]
+    }
+  }
+}

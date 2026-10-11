@@ -4,6 +4,7 @@ slug: provide-quick-and-reliable-performance-validation-for-runtime-changes
 title: "Provide quick and reliable performance validation for runtime changes"
 kind: exec-plan
 created_at: 2026-10-11T00:00:00Z
+intention: intention_01m4mk12vtekw9ccq8f63h7nwq
 provenance:
   created_by:
     model: "gpt-6-astra"
@@ -20,6 +21,11 @@ provenance:
       at: 2026-10-11T04:12:25Z
       mode: "update"
       note: "Close review gaps in metric completeness, calibration admission, workload phases, resume budgets, replay, and CI prerequisites."
+    - model: "gpt-6.1-sol"
+      harness: "codex-cli"
+      at: 2026-10-11T04:20:16Z
+      mode: "implement"
+      note: "Implement exact-revision requests and bounded performance planning."
   reviews:
     - model: "gpt-6-astra"
       harness: "codex-cli"
@@ -92,6 +98,17 @@ milestones remain unimplemented; this review did not exercise live cells or
 establish the proposed calibration and latency targets.
 
 
+Implementation handoff (2026-10-10): Request/source codecs, generated descriptors,
+bounded `perf plan`, candidate profiles, and raw-evidence admission checks are
+implemented. The real same-commit Shibuya check at
+`7468580c013ca431d666502379a9ce4b6045da18` retained both explicit profiles, read
+versions/directories from that commit, and produced non-gating scope-complete
+planning evidence. Core and measurement tests passed (85 and 40 examples),
+including resealed raw/histogram/summary corruption controls; five CLI planning
+tests and schema checks passed. These are partial Milestones 1 and 2: preparation,
+calibration admission verification, sessions, owner acceptance, live calibration,
+and CI remain open. No live comparison or payload-cache acceptance is claimed.
+
 ## Surprises & Discoveries
 
 
@@ -108,6 +125,11 @@ timeout. Catalog phase declarations alone cannot change their measured behavior.
 Milestone 2 must either describe that behavior exactly or implement and test a
 new scenario revision before calibration.
 
+
+2026-10-10 implementation: Resolved knob and dimension defaults are part of the
+workload digest. Hashing catalog overrides alone would leave a change to a
+scenario default invisible. Calibration references are excluded from that digest
+to avoid a self-referential promotion cycle.
 
 ## Decision Log
 

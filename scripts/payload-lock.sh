@@ -1,16 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 1 || ( $1 != released && $1 != head ) ]]; then
-  echo "usage: scripts/payload-lock.sh released|head" >&2
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+if [[ $# -eq 1 && ( $1 == released || $1 == head ) ]]; then
+  cohort_name=$1
+  descriptor_file="$repo_root/cohort/$cohort_name.json"
+  lock_file="$repo_root/nix/cohort-locks/$cohort_name.lock.json"
+elif [[ $# -eq 4 && $1 == --descriptor && $3 == --out ]]; then
+  descriptor_file=$2
+  lock_file=$4
+  cohort_name=$(jq -er '.name | select(type == "string")' "$descriptor_file")
+else
+  echo "usage: scripts/payload-lock.sh released|head | --descriptor FILE --out FILE" >&2
   exit 2
 fi
 
-cohort_name=$1
-repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-descriptor_file="$repo_root/cohort/$cohort_name.json"
-lock_dir="$repo_root/nix/cohort-locks"
-lock_file="$lock_dir/$cohort_name.lock.json"
+if [[ ! $cohort_name =~ ^[a-z0-9][a-z0-9-]*$ || $descriptor_file == "$lock_file" ]]; then
+  echo "cohort name or lock destination is invalid" >&2
+  exit 2
+fi
+lock_dir=$(dirname "$lock_file")
 mkdir -p "$lock_dir"
 
 jq -e --arg name "$cohort_name" '
@@ -47,6 +56,10 @@ while IFS= read -r package_json; do
       location=$(jq -r .source.location <<<"$package_json")
       revision=$(jq -r .source.rev <<<"$package_json")
       subdir=$(jq -r '.subdir // ""' <<<"$package_json")
+      if [[ ! $revision =~ ^[0-9a-f]{40}$ || $subdir == /* || /$subdir/ == */../* || /$subdir/ == */./* ]]; then
+        echo "git sources must use immutable full commits and safe subdirectories" >&2
+        exit 2
+      fi
       if [[ ! $location =~ ^https://github\.com/([^/]+)/([^/]+)\.git$ ]]; then
         echo "unsupported git location for $package_name: $location" >&2
         exit 2

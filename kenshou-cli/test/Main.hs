@@ -66,6 +66,36 @@ readInboxFixture path = do
 
 main :: IO ()
 main = hspec do
+  describe "performance planning CLI" do
+    it "exposes the planning command and requires request/output arguments" do
+      runWithArgs ["perf", "plan", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["perf", "plan"] `shouldReturnCode` ExitFailure 2
+    it "rejects malformed requests before creating an output directory" do
+      withSystemTempDirectory "kenshou-perf-malformed" \directory -> do
+        let input = directory </> "request.json"
+            output = directory </> "plan"
+        Aeson.encodeFile input Aeson.Null
+        runWithArgs ["perf", "plan", "--request", input, "--out", output] `shouldReturnCode` ExitFailure 2
+        doesPathExist output `shouldReturn` False
+    it "rejects target components from a second repository before fetching" do
+      withPerfRoot $ withSystemTempDirectory "kenshou-perf-targets" \directory -> do
+        raw <- Aeson.eitherDecodeFileStrict' "kenshou-core/test/golden/perf-request.json" >>= either fail pure
+        let input = directory </> "request.json"
+            output = directory </> "plan"
+        Aeson.encodeFile input (replacePerfField "targetComponents" (Aeson.toJSON (["shibuya", "pgmq-hs"] :: [Text])) raw)
+        runWithArgs ["perf", "plan", "--request", input, "--out", output] `shouldReturnCode` ExitFailure 2
+        doesPathExist output `shouldReturn` False
+    it "rejects unknown profiles before fetching immutable sources" do
+      withPerfRoot $ withSystemTempDirectory "kenshou-perf-profiles" \directory -> do
+        raw <- Aeson.eitherDecodeFileStrict' "kenshou-core/test/golden/perf-request.json" >>= either fail pure
+        let input = directory </> "request.json"
+            output = directory </> "plan"
+        Aeson.encodeFile input (replacePerfField "profiles" (Aeson.toJSON (["missing"] :: [Text])) raw)
+        runWithArgs ["perf", "plan", "--request", input, "--out", output] `shouldReturnCode` ExitFailure 2
+        doesPathExist output `shouldReturn` False
+    it "refuses to overwrite an existing planning directory" do
+      withSystemTempDirectory "kenshou-perf-existing" \directory -> do
+        runWithArgs ["perf", "plan", "--request", "missing", "--out", directory] `shouldReturnCode` ExitFailure 2
   describe "independent stale-publisher replay" do
     let row status attempts second = object ["outboxId" .= ("row-1" :: Text), "messageId" .= ("message-1" :: Text), "source" .= ("kenshou-fixture-zombie" :: Text), "status" .= (status :: Text), "attemptCount" .= (attempts :: Int), "observedAt" .= (("2026-10-03T00:00:0" <> second <> "Z") :: Text)]
         capture mode stale final copies =
@@ -1320,3 +1350,12 @@ withEnvVariable name selected operation = bracket (lookupEnv name) restore \_ ->
   where
     restore Nothing = unsetEnv name
     restore (Just prior) = setEnv name prior
+
+withPerfRoot :: IO a -> IO a
+withPerfRoot operation = do
+  exists <- doesFileExist "cohort/released.json"
+  withCurrentDirectory (if exists then "." else "..") operation
+
+replacePerfField :: Key.Key -> Value -> Value -> Value
+replacePerfField key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)
+replacePerfField _ _ value = value

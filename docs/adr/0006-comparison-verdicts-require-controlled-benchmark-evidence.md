@@ -2,7 +2,7 @@
 type: Architecture Decision Record
 title: Comparison verdicts require controlled benchmark evidence
 description: Performance verdicts come only from paired, interleaved, compatibility-checked, benchmark-grade runs, while historical measurements remain telemetry.
-timestamp: 2026-09-21T16:14:01Z
+timestamp: 2026-10-11T04:42:00Z
 generated:
   by: process:codex
   at: "2026-09-21T16:14:01Z"
@@ -44,6 +44,21 @@ soft health observations, non-interleaving, or exploratory evidence produces
 an inconclusive verdict. Hard health observations, infrastructure outcomes, or
 machine-profile changes produce an infrastructure-failure verdict. These
 evidence checks take precedence over statistical regressions.
+
+A bounded performance profile declares required metric names, units, and minimum
+steady sample counts. Admission must reconstruct retained histograms from full
+raw operation samples and compare the retained summary with recomputed values.
+Missing metrics or insufficient samples cannot pass merely because another
+metric passed. Corrupt evidence is invalid; incomplete or failed runtime work
+remains a blocker rather than a replaceable infrastructure observation.
+
+A profile is uncalibrated until verified sensitivity and turnaround evidence is
+bound to its effective workload, policy, toolchain, and machine profile. A catalog
+claim alone cannot admit a gating result. Calibration requests may select explicit
+uncalibrated profiles, including A/A controls with an empty source diff, and their
+results remain non-gating. Deliberate profile scope and whole-change coverage are
+separate claims. Count-bound scenario revisions must declare their actual phases
+and timeout; unsupported phase declarations are rejected.
 
 Historical series remain useful for investigation and workload selection, but
 they never determine a comparison verdict.

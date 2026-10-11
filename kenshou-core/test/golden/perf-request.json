@@ -1,0 +1,24 @@
+{
+  "schema": "kenshou.perf-request/v1",
+  "project": "mori://shinzui/shibuya",
+  "baselineRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "candidateRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "cohortTemplate": "cohort/released.json",
+  "targetComponents": [
+    "shibuya"
+  ],
+  "suite": "change-performance",
+  "coverageMode": "selected-profiles",
+  "purpose": "calibration",
+  "control": "aa",
+  "profiles": [
+    "shibuya-core-quick",
+    "shibuya-pgmq-quick"
+  ],
+  "seed": 20261010,
+  "cells": [
+    "alpha"
+  ],
+  "waitSeconds": 90,
+  "budgetMinutes": 30
+}

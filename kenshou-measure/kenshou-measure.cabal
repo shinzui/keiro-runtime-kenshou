@@ -61,6 +61,7 @@ library
     Kenshou.Measure.Load.Types
     Kenshou.Measure.Methodology
     Kenshou.Measure.Metrics
+    Kenshou.Measure.Perf
     Kenshou.Measure.Phase
     Kenshou.Measure.Recorder
     Kenshou.Measure.Sampler
@@ -110,6 +111,7 @@ test-suite kenshou-measure-test
     Kenshou.Measure.CompareSpec
     Kenshou.Measure.HistogramSpec
     Kenshou.Measure.LoadSpec
+    Kenshou.Measure.PerfSpec
     Kenshou.Measure.RecorderSpec
     Kenshou.Measure.SamplerSpec
     Kenshou.Measure.SamplesSpec

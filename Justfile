@@ -84,6 +84,9 @@ evidence-check:
 
 [group('verification')]
 schemas-check:
+    check-jsonschema --schemafile schemas/kenshou.perf-plan.v1.schema.json kenshou-core/test/golden/perf-plan.json
+    check-jsonschema --schemafile schemas/kenshou.perf-request.v1.schema.json kenshou-core/test/golden/perf-request.json
+    check-jsonschema --schemafile schemas/kenshou.perf-catalog.v1.schema.json policies/performance/catalog.v1.json
     for fixture in kenshou-remote/test/golden/cell/cell.*.v1.json; do schema="${fixture%.json}.schema.json"; check-jsonschema --base-uri "file://$PWD/$schema" --schemafile "$schema" "$fixture" || exit; done
     check-jsonschema --schemafile schemas/kenshou.cohort-identity.v1.schema.json kenshou-core/test/fixtures/cohort-identity.golden.json
     check-jsonschema --schemafile schemas/kenshou.queue-lease-observations.v1.schema.json kenshou-cli/test/fixtures/queue-lease-observations.json

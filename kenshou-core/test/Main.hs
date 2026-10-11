@@ -30,6 +30,7 @@ import Kenshou.Core.RunSpec.Resolve (resolveRunSpec)
 import Kenshou.Core.Scenario (CohortScope (..), KnownDefect (..), PackageCondition (..), Scenario (..), failedWith)
 import Kenshou.Core.Selector (matchesSelector, parseSelector)
 import Kenshou.Core.Selftest qualified as Selftest
+import Kenshou.PerfSpec qualified
 import Kenshou.PlanSpec qualified
 import System.Environment (lookupEnv)
 import System.Exit (ExitCode (..))
@@ -67,6 +68,7 @@ main = hspec do
   postgresEnvironmentSpec
   migrationPlanSpec
   Kenshou.PlanSpec.spec
+  Kenshou.PerfSpec.spec
 
 descriptorSpec :: Spec
 descriptorSpec = describe "cohort identity" do

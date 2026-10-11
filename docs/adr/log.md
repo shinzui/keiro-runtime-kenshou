@@ -1,5 +1,8 @@
 # Bundle Update Log
 
+## 2026-10-11
+* **Update**: ADR-6: Require explicit performance metrics, raw reconstruction, actual phase contracts, and verified calibration admission.
+
 ## 2026-10-03
 * **Decision**: ADR-22 builds the assembled runtime on deterministic dispatch from at-least-once contexts, crash-only Kafka consumption and per-record acknowledged publishing.
 * **Update**: ADR-8: require live sabotage controls for oracles over live state and earlier-boundary controls for crash windows.

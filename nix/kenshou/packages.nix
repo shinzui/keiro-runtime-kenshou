@@ -1,9 +1,15 @@
-{ inputs, pkgs, cohort, variant }:
+{ inputs
+, pkgs
+, cohort
+, variant
+, descriptorFile ? ../../cohort + "/${cohort}.json"
+, lockFile ? ../cohort-locks + "/${cohort}.lock.json"
+}:
 let
   lib = pkgs.lib;
-  descriptor = builtins.fromJSON (builtins.readFile (../../cohort + "/${cohort}.json"));
-  lock = builtins.fromJSON (builtins.readFile (../cohort-locks + "/${cohort}.lock.json"));
-  descriptorHash = builtins.hashFile "sha256" (../../cohort + "/${cohort}.json");
+  descriptor = builtins.fromJSON (builtins.readFile descriptorFile);
+  lock = builtins.fromJSON (builtins.readFile lockFile);
+  descriptorHash = builtins.hashFile "sha256" descriptorFile;
   channel = inputs.haskell-nix.lib.mkChannelExtension {
     channel = "hackage";
     disableProfiling = variant != "profiled";
@@ -139,6 +145,8 @@ let
       --prefix PATH : "${rpk}/bin"
   '';
 in
+assert lib.assertMsg (descriptor.name == cohort && lock.cohort == cohort)
+  "descriptor and source lock must identify the selected cohort";
 assert lib.assertMsg (descriptorHash == lock.descriptorSha256)
   "cohort lock is stale; run just payload-lock ${cohort}";
 package

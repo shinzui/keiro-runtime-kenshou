@@ -70,6 +70,9 @@ library
     Kenshou.Core.Selector
     Kenshou.Core.Selftest
     Kenshou.Core.Version
+    Kenshou.Perf.Plan
+    Kenshou.Perf.Request
+    Kenshou.Perf.Source
     Kenshou.Plan.Catalog
     Kenshou.Plan.Change
     Kenshou.Plan.Change.Cohort
@@ -125,6 +128,7 @@ test-suite kenshou-core-test
   hs-source-dirs: test
   main-is: Main.hs
   other-modules:
+    Kenshou.PerfSpec
     Kenshou.PlanSpec
 
   build-depends:

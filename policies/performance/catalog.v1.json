@@ -1,0 +1,109 @@
+{
+  "schema": "kenshou.perf-catalog/v1",
+  "profiles": [
+    {
+      "name": "shibuya-core-quick",
+      "revision": 1,
+      "scenario": "shibuya/core-ordering/benchmark/concurrency-sweep",
+      "scenarioRevision": 2,
+      "knobs": {
+        "bench.arm": "configured",
+        "bench.rate": 200,
+        "shibuya.messages": 1000,
+        "measure.raw-samples": "full"
+      },
+      "dimensions": {
+        "telemetry.tracing": "off",
+        "telemetry.metrics": "off"
+      },
+      "workloadPurpose": "fixed-load-latency",
+      "warmupSeconds": 0,
+      "steadyCount": 1000,
+      "cooldownSeconds": 0,
+      "timeoutSeconds": 180,
+      "cachePolicy": "cold-reset",
+      "policy": "policies/default.json",
+      "requiredMetrics": [
+        {
+          "name": "op.publish-to-finalize.throughput",
+          "unit": "ops/s",
+          "minimumSteadySamples": 1000
+        },
+        {
+          "name": "op.publish-to-finalize.latency.p50",
+          "unit": "ns",
+          "minimumSteadySamples": 1000
+        },
+        {
+          "name": "op.publish-to-finalize.latency.p99",
+          "unit": "ns",
+          "minimumSteadySamples": 1000
+        }
+      ],
+      "capabilities": [
+        "cold-reset",
+        "full-samples"
+      ],
+      "machineProfile": "quick-cell-pending-calibration",
+      "trialSeconds": 15,
+      "resetSeconds": 30,
+      "sealSeconds": 10,
+      "minimumPairs": 5,
+      "replacementPairs": 2,
+      "calibration": null
+    },
+    {
+      "name": "shibuya-pgmq-quick",
+      "revision": 1,
+      "scenario": "shibuya/pgmq-adapter/benchmark/end-to-end-throughput-latency",
+      "scenarioRevision": 1,
+      "knobs": {
+        "bench.arm": "adapter",
+        "bench.rate": 200,
+        "shibuya.messages": 1000,
+        "measure.raw-samples": "full"
+      },
+      "dimensions": {
+        "pg.durability": "durable",
+        "pg.version": "18"
+      },
+      "workloadPurpose": "fixed-load-latency",
+      "warmupSeconds": 0,
+      "steadyCount": 1000,
+      "cooldownSeconds": 0,
+      "timeoutSeconds": 180,
+      "cachePolicy": "cold-reset",
+      "policy": "policies/default.json",
+      "requiredMetrics": [
+        {
+          "name": "op.publish-to-finalize.throughput",
+          "unit": "ops/s",
+          "minimumSteadySamples": 1000
+        },
+        {
+          "name": "op.publish-to-finalize.latency.p50",
+          "unit": "ns",
+          "minimumSteadySamples": 1000
+        },
+        {
+          "name": "op.publish-to-finalize.latency.p99",
+          "unit": "ns",
+          "minimumSteadySamples": 1000
+        }
+      ],
+      "capabilities": [
+        "cold-reset",
+        "full-samples",
+        "postgresql-18",
+        "pgmq"
+      ],
+      "machineProfile": "quick-cell-pending-calibration",
+      "trialSeconds": 15,
+      "resetSeconds": 30,
+      "sealSeconds": 10,
+      "minimumPairs": 5,
+      "replacementPairs": 2,
+      "calibration": null
+    }
+  ]
+}

@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "kenshou.perf-request/v1"
+    },
+    "project": {
+      "type": "string",
+      "pattern": "^mori://[a-z0-9_-]+/[a-z0-9_-]+$"
+    },
+    "baselineRevision": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "candidateRevision": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "cohortTemplate": {
+      "type": "string",
+      "minLength": 1
+    },
+    "targetComponents": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true,
+      "minItems": 1
+    },
+    "suite": {
+      "const": "change-performance"
+    },
+    "coverageMode": {
+      "enum": [
+        "affected",
+        "selected-profiles"
+      ]
+    },
+    "purpose": {
+      "enum": [
+        "gating",
+        "calibration"
+      ]
+    },
+    "control": {
+      "enum": [
+        "none",
+        "aa"
+      ]
+    },
+    "profiles": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "seed": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "cells": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true,
+      "minItems": 1
+    },
+    "waitSeconds": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "budgetMinutes": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "required": [
+    "schema",
+    "project",
+    "baselineRevision",
+    "candidateRevision",
+    "cohortTemplate",
+    "targetComponents",
+    "seed",
+    "cells"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "coverageMode": {
+            "const": "selected-profiles"
+          }
+        },
+        "required": [
+          "coverageMode"
+        ]
+      },
+      "then": {
+        "required": [
+          "profiles"
+        ],
+        "properties": {
+          "profiles": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true,
+            "minItems": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "control": {
+            "const": "aa"
+          }
+        },
+        "required": [
+          "control"
+        ]
+      },
+      "then": {
+        "required": [
+          "profiles"
+        ],
+        "properties": {
+          "profiles": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true,
+            "minItems": 1
+          }
+        }
+      }
+    }
+  ]
+}

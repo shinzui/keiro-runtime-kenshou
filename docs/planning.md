@@ -78,3 +78,38 @@ A digest mismatch is refused. Completed entries are skipped; an interrupted
 entry receives a fresh run ID so an earlier run directory is never overwritten.
 The summary's exit code is 0 for passed, 1 for failed, 3 for inconclusive, and 4
 for errored or infrastructure failure. Reproduced known defects do not block.
+
+
+## Bounded runtime performance planning
+
+`kenshou perf plan` resolves immutable baseline and candidate commits through the
+registered Mori HTTPS upstream and writes a new directory of pinned inputs:
+
+```sh
+cabal run kenshou -- perf plan --request request.json --out perf-planning
+```
+
+The request uses `kenshou.perf-request/v1` (see
+`schemas/kenshou.perf-request.v1.schema.json`). Its target components are IDs from
+the cohort descriptor. Both source manifests are inspected independently; the
+generated descriptors retain every non-target pin. The output includes the
+request, source snapshots, graph, effective profiles, comparison policies,
+`plan.json`, both generated cohort descriptors, and an artifact manifest.
+Planning does not build payloads or acquire a cell.
+
+The candidate core and PGMQ profiles in
+`policies/performance/catalog.v1.json` describe fixed-load latency with full raw
+samples, count-bound steady work, zero warm-up/cooldown, and cold reset. Their
+cost estimates include both arms, five pairs, and two replacement pairs. They
+are currently uncalibrated. A normal gating request therefore reports incomplete
+coverage; `purpose: "calibration"` can retain explicitly selected profiles, with
+`gatingEligible: false`. An explicit `control: "aa"` requires identical commits
+and a nonempty profile list, which is retained even when the diff is empty.
+
+`coverageMode: "selected-profiles"` requires an explicit profile list and reports
+its completion separately from `changeCoverage`. An unknown source input selects
+conservatively; only explicit documentation paths outside this project's source
+roots can establish `not-applicable`. Budget exclusions omit whole configurations
+and remain visible. Exit zero from `perf plan` means that a planning document was
+written successfully; inspect coverage and eligibility before treating it as
+performance acceptance.

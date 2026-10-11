@@ -1,0 +1,202 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "kenshou.perf-plan/v1"
+    },
+    "request": {
+      "$ref": "kenshou.perf-request.v1.schema.json"
+    },
+    "requestSha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "graphSha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "catalogSha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "profileCatalogSha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "selected": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "profile": {
+            "$ref": "kenshou.perf-catalog.v1.schema.json#/$defs/profile"
+          },
+          "workloadSha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "effectiveKnobs": {
+            "type": "object",
+            "additionalProperties": {
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ]
+            }
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "component": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "source": {
+                  "enum": [
+                    "named",
+                    "cohort-diff",
+                    "since",
+                    "upstream-diff",
+                    "all"
+                  ]
+                },
+                "via": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "selector": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "distance": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "component",
+                "source",
+                "via",
+                "selector",
+                "distance"
+              ]
+            }
+          },
+          "estimateSeconds": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "profile",
+          "workloadSha256",
+          "effectiveKnobs",
+          "reasons",
+          "estimateSeconds"
+        ]
+      }
+    },
+    "excluded": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "profile": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reason": {
+            "enum": [
+              "uncalibrated",
+              "over-budget"
+            ]
+          }
+        },
+        "required": [
+          "profile",
+          "reason"
+        ]
+      }
+    },
+    "affectedScenarios": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "uncoveredScenarios": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "unmappedPaths": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "documentationProof": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "coverage": {
+      "enum": [
+        "not-applicable",
+        "complete",
+        "incomplete"
+      ]
+    },
+    "changeCoverage": {
+      "enum": [
+        "not-applicable",
+        "complete",
+        "incomplete"
+      ]
+    },
+    "estimateSeconds": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "gatingEligible": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "schema",
+    "request",
+    "requestSha256",
+    "graphSha256",
+    "catalogSha256",
+    "profileCatalogSha256",
+    "selected",
+    "excluded",
+    "affectedScenarios",
+    "uncoveredScenarios",
+    "unmappedPaths",
+    "documentationProof",
+    "coverage",
+    "changeCoverage",
+    "estimateSeconds",
+    "gatingEligible"
+  ]
+}
