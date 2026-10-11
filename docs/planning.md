@@ -118,6 +118,11 @@ performance acceptance.
 `kenshou perf prepare --request request.json --out .dev/perf-preparation` requires a
 clean committed harness. It creates a detached harness clone, immutable generated
 flake inputs, independent Cabal bounds plans, and Linux Nix build inventories.
+The authenticated Cabal selection supplies transitive source hashes, description
+revisions and flags to the generated Nix build. Final Nix settings and a second
+standalone bounds plan must agree before publication; incompatible default Nix
+versions are not accepted by lifting bounds. The Nix development shell includes
+Python 3 for the authenticated-index lock helper.
 It rejects unrelated dependency or flag drift before publishing either payload.
 Successful output names `.dev/perf-preparation/evidence/prepared.json`; the sibling
 `work` directory retains preparation logs, including failures. `--cache` selects

@@ -122,6 +122,36 @@ The first live preparation caught a non-executable checked-in source-lock script
 the CLI now invokes it through Bash, matching its existing operator usage. The
 failed preparation retained its generated inputs and acquired no lease.
 
+Further implementation (2026-10-10): Both live full-cohort preparations rejected
+the pinned Nix selection of `http-client-tls 0.4.0`, which violates the released
+Kiroku CLI's `<0.4` bound. Independent Cabal resolution for the compatible Shibuya
+commit `7512b5c692af1c005392e4445cfa26a9be41f9ea` succeeds. Preparation now carries
+that authenticated registry selection, package-description revisions and flags
+into the generated Nix build, then independently checks its final versions and
+flags again. The strict build and second-preparation cache acceptance remain
+pending. Concurrent diagnostic preparations retained separate source/build trees
+and did not change the active or released cohort files.
+
+Partial Milestone 3 (2026-10-10): Added aggregate/result and append-only session
+protocols. Synthetic controls distinguish every outcome, preserve runtime blockers
+separately from statistics, and exercise 4/1/3/0 precedence, publication failure,
+semantic replay, interruption, lease loss, fixed deadlines and persistent retry
+counts. Core performance controls passed (45 examples), and remote performance
+controls passed (11 examples, including the publisher and orchestration controls).
+The reusable orchestration runner checkpoints before work, preserves runtime
+blockers through a failed attempt, reuses verified completed configurations,
+and makes failed durable publication exit 4. These controls use synthetic
+backends; the paired cell adapter and `perf run/status/resume/verify` CLI remain
+unimplemented. No calibration or live session acceptance is claimed.
+
+Cloud prerequisite (2026-10-10): The Linux builder initially generated package
+metadata successfully, then its SSH proxy closed. A direct GCP check reports
+`Reauthentication failed. cannot prompt during non-interactive execution.`
+The user has been asked to run `gcloud auth login`. Revised metadata generation
+uses the selected description and flags, supplies absent disabled-test arguments
+only with a production-dependency null assertion, and remains unverified until
+authentication restores the builder. No lease was acquired.
+
 ## Surprises & Discoveries
 
 
@@ -150,6 +180,15 @@ misreported effective bound lifting and description revisions. Final builder
 argument inspection now records those settings, and strict preparation applies
 bound enforcement after package overrides. The legacy Nix outputs retain their
 existing behavior.
+
+2026-10-10 implementation: The locked Nix package set and a compatible Cabal
+selection can differ transitively. Constraining Cabal to the default Nix versions
+rejected an otherwise compatible full cohort. Generated performance builds now
+use authenticated Cabal source and description hashes, including the selected
+historical description revision; subsequent inventory/bounds checks and strict
+compilation remain mandatory. An absent `pkg-revision` in the installed Cabal's
+plan does not mean revision zero: the selected description digest identifies it
+in the authenticated index.
 
 ## Decision Log
 
@@ -711,7 +750,7 @@ nix develop -c cabal run -v0 kenshou -- perf plan \
 nix develop -c cabal run -v0 kenshou -- perf prepare \
   --request perf-request.json --out .dev/perf-example-prepared
 nix develop -c cabal run -v0 kenshou -- perf run \
-  --prepared .dev/perf-example-prepared/prepared.json \
+  --prepared .dev/perf-example-prepared/evidence/prepared.json \
   --evidence-base-uri gs://kenshou-evidence-tan-nb-exp/performance \
   --start --out cell-pairs/perf-example
 nix develop -c cabal run -v0 kenshou -- perf status \

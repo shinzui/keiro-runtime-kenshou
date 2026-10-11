@@ -1,0 +1,336 @@
+{
+  "schema": "kenshou.perf-session/v1",
+  "sessionId": "0199a3c3-7b1e-7c44-9d0a-3f5e2a61b7c9",
+  "preparedSha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "plan": {
+    "affectedScenarios": [],
+    "catalogSha256": "sha256:4501a3946ada1d780cc5388b673960c0e968151ad571ee527b82cfec9e654293",
+    "changeCoverage": "incomplete",
+    "coverage": "complete",
+    "documentationProof": [],
+    "estimateSeconds": 1540,
+    "excluded": [],
+    "gatingEligible": false,
+    "graphSha256": "sha256:d03c353e4a93b1a0179db13576bc93805c60cb793d424432d5b845cad0843ce1",
+    "profileCatalogSha256": "sha256:f1ca1f3e1091296e3b88bbef225df7d328619055e09ca3f3424cc94609144fb4",
+    "request": {
+      "baselineRevision": "7468580c013ca431d666502379a9ce4b6045da18",
+      "budgetMinutes": 30,
+      "candidateRevision": "7468580c013ca431d666502379a9ce4b6045da18",
+      "cells": [
+        "alpha"
+      ],
+      "cohortTemplate": "cohort/released.json",
+      "control": "aa",
+      "coverageMode": "selected-profiles",
+      "profiles": [
+        "shibuya-core-quick",
+        "shibuya-pgmq-quick"
+      ],
+      "project": "mori://shinzui/shibuya",
+      "purpose": "calibration",
+      "schema": "kenshou.perf-request/v1",
+      "seed": 20261010,
+      "suite": "change-performance",
+      "targetComponents": [
+        "shibuya"
+      ],
+      "waitSeconds": 90
+    },
+    "requestSha256": "sha256:7a0072d3819fddd8d6ef0278182b4a696a7006922e4f93610d3ff3d8338f59ac",
+    "schema": "kenshou.perf-plan/v1",
+    "selected": [
+      {
+        "effectiveKnobs": {
+          "bench.arm": "configured",
+          "bench.rate": 200,
+          "measure.histogram-digits": 3,
+          "measure.interval-histogram-seconds": 10,
+          "measure.pg-statements": "snapshots",
+          "measure.raw-sample-one-in": 100,
+          "measure.raw-samples": "full",
+          "measure.sample-interval-ms": 1000,
+          "metrics.otel-export-interval-ms": 60000,
+          "metrics.otel-reader": "prometheus",
+          "metrics.scrape-interval-ms": 15000,
+          "metrics.ws-subscribers": 0,
+          "otel.bsp.export-timeout-ms": 30000,
+          "otel.bsp.max-export-batch": 512,
+          "otel.bsp.max-queue": 2048,
+          "otel.bsp.schedule-delay-ms": 5000,
+          "otel.compression": "none",
+          "otel.endpoint": "",
+          "otel.exporter": "http-protobuf",
+          "otel.inmemory.retain": 4096,
+          "otel.processor": "batch",
+          "otel.sampler": "parentbased-always-on",
+          "otel.sampler-arg": 1,
+          "otel.shutdown-timeout-ms": 5000,
+          "otel.sink-fault": "none",
+          "shibuya.concurrency": "async:4",
+          "shibuya.handler-delay-micros": 1000,
+          "shibuya.messages": 1000,
+          "shibuya.ordering": "unordered",
+          "shibuya.partitions": "none"
+        },
+        "estimateSeconds": 770,
+        "profile": {
+          "cachePolicy": "cold-reset",
+          "calibration": null,
+          "capabilities": [
+            "cold-reset",
+            "full-samples"
+          ],
+          "cooldownSeconds": 0,
+          "dimensions": {
+            "telemetry.metrics": "off",
+            "telemetry.tracing": "off"
+          },
+          "knobs": {
+            "bench.arm": "configured",
+            "bench.rate": 200,
+            "measure.histogram-digits": 3,
+            "measure.interval-histogram-seconds": 10,
+            "measure.pg-statements": "snapshots",
+            "measure.raw-sample-one-in": 100,
+            "measure.raw-samples": "full",
+            "measure.sample-interval-ms": 1000,
+            "metrics.otel-export-interval-ms": 60000,
+            "metrics.otel-reader": "prometheus",
+            "metrics.scrape-interval-ms": 15000,
+            "metrics.ws-subscribers": 0,
+            "otel.bsp.export-timeout-ms": 30000,
+            "otel.bsp.max-export-batch": 512,
+            "otel.bsp.max-queue": 2048,
+            "otel.bsp.schedule-delay-ms": 5000,
+            "otel.compression": "none",
+            "otel.endpoint": "",
+            "otel.exporter": "http-protobuf",
+            "otel.inmemory.retain": 4096,
+            "otel.processor": "batch",
+            "otel.sampler": "parentbased-always-on",
+            "otel.sampler-arg": 1,
+            "otel.shutdown-timeout-ms": 5000,
+            "otel.sink-fault": "none",
+            "shibuya.concurrency": "async:4",
+            "shibuya.handler-delay-micros": 1000,
+            "shibuya.messages": 1000,
+            "shibuya.ordering": "unordered",
+            "shibuya.partitions": "none"
+          },
+          "machineProfile": "quick-cell-pending-calibration",
+          "minimumPairs": 5,
+          "name": "shibuya-core-quick",
+          "policy": "policies/default.json",
+          "replacementPairs": 2,
+          "requiredMetrics": [
+            {
+              "minimumSteadySamples": 1000,
+              "name": "op.publish-to-finalize.throughput",
+              "unit": "ops/s"
+            },
+            {
+              "minimumSteadySamples": 1000,
+              "name": "op.publish-to-finalize.latency.p50",
+              "unit": "ns"
+            },
+            {
+              "minimumSteadySamples": 1000,
+              "name": "op.publish-to-finalize.latency.p99",
+              "unit": "ns"
+            }
+          ],
+          "resetSeconds": 30,
+          "revision": 1,
+          "scenario": "shibuya/core-ordering/benchmark/concurrency-sweep",
+          "scenarioRevision": 2,
+          "sealSeconds": 10,
+          "steadyCount": 1000,
+          "timeoutSeconds": 180,
+          "trialSeconds": 15,
+          "warmupSeconds": 0,
+          "workloadPurpose": "fixed-load-latency"
+        },
+        "reasons": [
+          {
+            "component": "request/profile/shibuya-core-quick",
+            "distance": 0,
+            "selector": "shibuya/core-ordering/benchmark/concurrency-sweep",
+            "source": "named",
+            "via": [
+              "aa-control"
+            ]
+          }
+        ],
+        "workloadSha256": "sha256:4d43f1a05003e903e60796254ff9f1dbbbdb83aa8f634af4bf47ea1a58277458"
+      },
+      {
+        "effectiveKnobs": {
+          "bench.arm": "adapter",
+          "bench.payload-bytes": 256,
+          "bench.rate": 200,
+          "measure.histogram-digits": 3,
+          "measure.interval-histogram-seconds": 10,
+          "measure.pg-statements": "snapshots",
+          "measure.raw-sample-one-in": 100,
+          "measure.raw-samples": "full",
+          "measure.sample-interval-ms": 1000,
+          "pgmq-adapter.batch-size": 10,
+          "pgmq-adapter.polling": "standard:1",
+          "pgmq-adapter.pool-size": 10,
+          "pgmq-adapter.prefetch-buffer-size": 0,
+          "shibuya.concurrency": "async:4",
+          "shibuya.messages": 1000
+        },
+        "estimateSeconds": 770,
+        "profile": {
+          "cachePolicy": "cold-reset",
+          "calibration": null,
+          "capabilities": [
+            "cold-reset",
+            "full-samples",
+            "postgresql-18",
+            "pgmq"
+          ],
+          "cooldownSeconds": 0,
+          "dimensions": {
+            "pg.durability": "durable",
+            "pg.version": "18"
+          },
+          "knobs": {
+            "bench.arm": "adapter",
+            "bench.payload-bytes": 256,
+            "bench.rate": 200,
+            "measure.histogram-digits": 3,
+            "measure.interval-histogram-seconds": 10,
+            "measure.pg-statements": "snapshots",
+            "measure.raw-sample-one-in": 100,
+            "measure.raw-samples": "full",
+            "measure.sample-interval-ms": 1000,
+            "pgmq-adapter.batch-size": 10,
+            "pgmq-adapter.polling": "standard:1",
+            "pgmq-adapter.pool-size": 10,
+            "pgmq-adapter.prefetch-buffer-size": 0,
+            "shibuya.concurrency": "async:4",
+            "shibuya.messages": 1000
+          },
+          "machineProfile": "quick-cell-pending-calibration",
+          "minimumPairs": 5,
+          "name": "shibuya-pgmq-quick",
+          "policy": "policies/default.json",
+          "replacementPairs": 2,
+          "requiredMetrics": [
+            {
+              "minimumSteadySamples": 1000,
+              "name": "op.publish-to-finalize.throughput",
+              "unit": "ops/s"
+            },
+            {
+              "minimumSteadySamples": 1000,
+              "name": "op.publish-to-finalize.latency.p50",
+              "unit": "ns"
+            },
+            {
+              "minimumSteadySamples": 1000,
+              "name": "op.publish-to-finalize.latency.p99",
+              "unit": "ns"
+            }
+          ],
+          "resetSeconds": 30,
+          "revision": 1,
+          "scenario": "shibuya/pgmq-adapter/benchmark/end-to-end-throughput-latency",
+          "scenarioRevision": 1,
+          "sealSeconds": 10,
+          "steadyCount": 1000,
+          "timeoutSeconds": 180,
+          "trialSeconds": 15,
+          "warmupSeconds": 0,
+          "workloadPurpose": "fixed-load-latency"
+        },
+        "reasons": [
+          {
+            "component": "request/profile/shibuya-pgmq-quick",
+            "distance": 0,
+            "selector": "shibuya/pgmq-adapter/benchmark/end-to-end-throughput-latency",
+            "source": "named",
+            "via": [
+              "aa-control"
+            ]
+          }
+        ],
+        "workloadSha256": "sha256:a254a1f5f7e17243328bbf78f402b576bb65af6fd3ed5183bb056560e3bf4907"
+      }
+    ],
+    "uncoveredScenarios": [],
+    "unmappedPaths": []
+  },
+  "evidenceBaseUri": "gs://fixture-evidence/performance",
+  "createdAt": "2026-10-11T00:00:00Z",
+  "events": [
+    {
+      "at": "2026-10-11T00:00:01Z",
+      "action": {
+        "kind": "admission-reserved",
+        "seconds": 30
+      }
+    },
+    {
+      "at": "2026-10-11T00:00:10Z",
+      "action": {
+        "kind": "lease-acquired",
+        "lease": {
+          "cell": "alpha",
+          "leaseId": "0199a3c1-0d52-7f10-8a77-6e0c4b2d9f01"
+        }
+      }
+    },
+    {
+      "at": "2026-10-11T00:00:11Z",
+      "action": {
+        "kind": "comparison-started",
+        "profile": "shibuya-core-quick",
+        "index": 0
+      }
+    },
+    {
+      "at": "2026-10-11T00:00:12Z",
+      "action": {
+        "kind": "replacement-reserved",
+        "profile": "shibuya-core-quick"
+      }
+    },
+    {
+      "at": "2026-10-11T00:00:13Z",
+      "action": {
+        "kind": "runtime-blocked",
+        "profile": "shibuya-core-quick",
+        "reason": "synthetic known defect"
+      }
+    },
+    {
+      "at": "2026-10-11T00:00:15Z",
+      "action": {
+        "kind": "lease-lost",
+        "reason": "synthetic interrupted lease"
+      }
+    },
+    {
+      "at": "2026-10-11T00:00:20Z",
+      "action": {
+        "kind": "lease-acquired",
+        "lease": {
+          "cell": "alpha",
+          "leaseId": "0199a3c2-7b1e-7c44-9d0a-3f5e2a61b7c9"
+        }
+      }
+    },
+    {
+      "at": "2026-10-11T00:00:21Z",
+      "action": {
+        "kind": "comparison-started",
+        "profile": "shibuya-core-quick",
+        "index": 1
+      }
+    }
+  ]
+}

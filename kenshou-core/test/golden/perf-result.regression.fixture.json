@@ -1,0 +1,48 @@
+{
+  "schema": "kenshou.perf-result/v1",
+  "requestSha256": "sha256:7a0072d3819fddd8d6ef0278182b4a696a7006922e4f93610d3ff3d8338f59ac",
+  "preparedSha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "purpose": "calibration",
+  "coverage": "complete",
+  "changeCoverage": "incomplete",
+  "performanceVerdict": "regression",
+  "infrastructureState": "healthy",
+  "blockingRuntimeFailures": [],
+  "gatingEligible": false,
+  "configurations": [
+    {
+      "profile": "shibuya-core-quick",
+      "workloadSha256": "sha256:4d43f1a05003e903e60796254ff9f1dbbbdb83aa8f634af4bf47ea1a58277458",
+      "performanceVerdict": "regression",
+      "infrastructureState": "healthy",
+      "runtimeFailures": [],
+      "validPairs": 5,
+      "requiredPairs": 5,
+      "attempts": [],
+      "comparison": {
+        "schema": "kenshou.comparison/v1",
+        "verdict": "regression",
+        "pairCount": 5
+      }
+    },
+    {
+      "profile": "shibuya-pgmq-quick",
+      "workloadSha256": "sha256:a254a1f5f7e17243328bbf78f402b576bb65af6fd3ed5183bb056560e3bf4907",
+      "performanceVerdict": "regression",
+      "infrastructureState": "healthy",
+      "runtimeFailures": [],
+      "validPairs": 5,
+      "requiredPairs": 5,
+      "attempts": [],
+      "comparison": {
+        "schema": "kenshou.comparison/v1",
+        "verdict": "regression",
+        "pairCount": 5
+      }
+    }
+  ],
+  "exclusions": [],
+  "uncoveredScenarios": [],
+  "evidenceVerified": true,
+  "exitCode": 1
+}

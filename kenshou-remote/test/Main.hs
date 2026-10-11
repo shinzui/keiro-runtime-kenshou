@@ -22,6 +22,8 @@ import LeaseSpec qualified
 import PairSpec qualified
 import ParitySpec qualified
 import PayloadSpec qualified
+import PerfJournalSpec qualified
+import PerfRunnerSpec qualified
 import PrepareSpec qualified
 import SessionSpec qualified
 import SubmitSpec qualified
@@ -57,6 +59,8 @@ tests = do
   PairSpec.pairSpec
   ParitySpec.spec
   PayloadSpec.spec
+  PerfJournalSpec.spec
+  PerfRunnerSpec.spec
   PrepareSpec.spec
   SessionSpec.spec
   SubmitSpec.spec

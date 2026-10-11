@@ -2,7 +2,7 @@
 type: Architecture Decision Record
 title: Every result carries a resolved cohort identity
 description: Verification results identify the complete runtime cohort actually selected by Cabal, including immutable sources and a deterministic plan hash, rather than recording only intended pins.
-timestamp: 2026-10-11T05:04:00Z
+timestamp: 2026-10-11T05:39:03Z
 generated:
   by: human:nadeem
   at: "2026-09-20T00:05:00Z"
@@ -78,7 +78,13 @@ hashes do not imply source drift. A cache key binds the harness, generated input
 resolved inventories and toolchain, and reuse verifies both identity and bundle
 bytes. A successful Nix link does not certify Cabal bounds. Performance builds
 check standalone solver inputs and enforce declared bounds after package overrides,
-retaining only reviewed package-scoped exceptions. Inventory inspection reads the
+including effective flags. Carry the authenticated solver's Hackage tarball and
+package-description digests into generated Nix inputs; the default Nix package
+set can contain incompatible transitive versions. Preserve selected description
+revisions rather than using a mutable latest revision or treating an absent
+revision field as zero. Recheck actual Nix versions and flags against the bounds
+plan before publication. Historical named Nix outputs keep their existing inputs.
+Retain only reviewed package-scoped exceptions. Inventory inspection reads the
 final builder settings, including Cabal description revisions and patches.
 
 An isolated layer release lane may have its own named project and descriptor

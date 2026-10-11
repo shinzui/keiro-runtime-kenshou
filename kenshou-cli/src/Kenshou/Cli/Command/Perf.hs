@@ -168,6 +168,22 @@ resolveArm output harness revision arm = do
   encodeFile descriptorPath (descriptor :: Cohort.CohortDescriptor)
   _ <- loggedProcess (work </> "source-lock.log") "bash" [harness </> "scripts" </> "payload-lock.sh", "--descriptor", descriptorPath, "--out", lockPath]
   lock <- ByteString.readFile lockPath >>= decode "source lock"
+  names <- listDirectory harness
+  packages <- filterMIO (\name -> doesFileExist (harness </> name </> name <> ".cabal")) (filter (Text.isPrefixOf "kenshou-" . Text.pack) names)
+  boundsProject <- requireInput (Prepared.renderBoundsProject [harness </> name </> name <> ".cabal" | name <- packages] descriptor)
+  let projectPath = work </> "bounds.project"
+      planPath = work </> "bounds-dist" </> "cache" </> "plan.json"
+  Text.IO.writeFile projectPath boundsProject
+  _ <- loggedProcess (work </> "resolution.log") "cabal" ["build", "all", "--dry-run", "--project-file=" <> projectPath, "--builddir=" <> work </> "bounds-dist"]
+  initialPlan <- ByteString.readFile planPath >>= decode "initial bounds plan"
+  _ <- requireInput (Prepared.cabalInventory harness revision initialPlan)
+  cacheDocument <- loggedProcess (work </> "cabal-path.log") "cabal" ["path", "--ignore-project", "--remote-repo-cache", "--output-format=json"] >>= decodeText "Cabal cache location"
+  repoCache <- either (throwIO . PerfFailure 4 . Text.pack) pure (parseEither (withObject "CabalPaths" (.: "remote-repo-cache")) cacheDocument :: Either String FilePath)
+  _ <-
+    loggedProcess
+      (work </> "resolved-lock.log")
+      "python3"
+      [harness </> "scripts" </> "perf-resolved-lock.py", "--plan", planPath, "--index", repoCache </> "hackage.haskell.org" </> "01-index.tar", "--cohort-lock", lockPath, "--out", flake </> "resolved-lock.json"]
   wrapper <- requireInput (generatedFlake harness revision descriptor)
   Text.IO.writeFile (flake </> "flake.nix") wrapper
   _ <- loggedProcess (work </> "flake-lock.log") "nix" ["flake", "lock", "path:" <> flake]
@@ -176,16 +192,14 @@ resolveArm output harness revision arm = do
   identity <- loggedProcess (work </> "cohort-identity.log") "nix" ["eval", "--json", attribute <> ".cohortIdentity"] >>= decodeText "Nix identity"
   descriptorBytes <- ByteString.readFile descriptorPath
   _ <- requireInput (Publisher.validateCohortIdentity descriptor (Text.drop 7 (sha256Hex descriptorBytes)) identity)
-  names <- listDirectory harness
-  packages <- filterMIO (\name -> doesFileExist (harness </> name </> name <> ".cabal")) (filter (Text.isPrefixOf "kenshou-" . Text.pack) names)
-  boundsProject <- requireInput (Prepared.renderBoundsProject [harness </> name </> name <> ".cabal" | name <- packages] descriptor)
   let actualConstraints = Text.intercalate ", " [entry.name <> " ==" <> entry.version | entry <- (inventory :: Prepared.BuildInventory).packages, not ("kenshou-" `Text.isPrefixOf` entry.name)]
-  Text.IO.writeFile (work </> "bounds.project") (boundsProject <> "\nconstraints: " <> actualConstraints <> "\n")
-  _ <- loggedProcess (work </> "bounds.log") "cabal" ["build", "all", "--dry-run", "--project-file=" <> work </> "bounds.project", "--builddir=" <> work </> "bounds-dist"]
-  cabalPlan <- ByteString.readFile (work </> "bounds-dist" </> "cache" </> "plan.json") >>= decode "bounds plan"
+  Text.IO.writeFile (work </> "nix-bounds.project") (boundsProject <> "\nconstraints: " <> actualConstraints <> "\n")
+  _ <- loggedProcess (work </> "bounds.log") "cabal" ["build", "all", "--dry-run", "--project-file=" <> work </> "nix-bounds.project", "--builddir=" <> work </> "nix-bounds-dist"]
+  cabalPlan <- ByteString.readFile (work </> "nix-bounds-dist" </> "cache" </> "plan.json") >>= decode "bounds plan"
   bounds <- requireInput (Prepared.cabalInventory harness revision cabalPlan)
   boundsIdentity <- either (throwIO . PerfFailure 4 . Text.pack . show) pure (Cohort.identityFromPlan descriptor (Text.drop 7 (sha256Hex descriptorBytes)) cabalPlan)
   unless (null (Cohort.checkCohort descriptor boundsIdentity)) (throwIO (PerfFailure 4 "independent bounds plan differs from the generated cohort"))
+  requireInput (Prepared.validateArmInventories descriptor inventory bounds)
   encodeFile (work </> "build-inventory.json") inventory
   encodeFile (work </> "bounds-inventory.json") bounds
   let key = Prepared.buildKeyFor revision descriptor lock inventory bounds
@@ -205,7 +219,7 @@ generatedFlake harness revision descriptor = do
           "    pkgs = import inputs.nixpkgs { system = \"x86_64-linux\"; };",
           "  in { packages.x86_64-linux." <> quote ("kenshou-" <> Cohort.unCohortName descriptor.descriptorName) <> " = import (harness + \"/nix/kenshou/packages.nix\") {",
           "    inherit inputs pkgs; cohort = " <> quote (Cohort.unCohortName descriptor.descriptorName) <> "; variant = \"default\";",
-          "    descriptorFile = ./cohort.json; lockFile = ./source-lock.json; strictBounds = true;",
+          "    descriptorFile = ./cohort.json; lockFile = ./source-lock.json; resolvedLockFile = ./resolved-lock.json; strictBounds = true;",
           "  }; };",
           "}"
         ]

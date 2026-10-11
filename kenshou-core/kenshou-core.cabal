@@ -74,6 +74,7 @@ library
     Kenshou.Perf.Plan
     Kenshou.Perf.Prepared
     Kenshou.Perf.Request
+    Kenshou.Perf.Result
     Kenshou.Perf.Source
     Kenshou.Plan.Catalog
     Kenshou.Plan.Change
@@ -131,6 +132,7 @@ test-suite kenshou-core-test
   main-is: Main.hs
   other-modules:
     Kenshou.PerfPreparedSpec
+    Kenshou.PerfResultSpec
     Kenshou.PerfSpec
     Kenshou.PlanSpec
 

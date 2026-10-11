@@ -41,6 +41,7 @@
         pkgs.postgresql_18.dev
         pkgs.openssl.dev
         pkgs.jq
+        pkgs.python3
         # librdkafka (nixpkgs: rdkafka). hw-kafka-client links -lrdkafka; both
         # the runtime lib and its .dev (headers + pkg-config) are needed.
         pkgs.rdkafka

@@ -4118,7 +4118,10 @@
             "fixture": "effectful"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "effectful-core",
@@ -4127,7 +4130,10 @@
             "fixture": "effectful-core"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "ephemeral-pg",
@@ -4136,7 +4142,10 @@
             "fixture": "ephemeral-pg"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "hs-opentelemetry-api",
@@ -4145,7 +4154,10 @@
             "fixture": "hs-opentelemetry-api"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "hs-opentelemetry-exporter-in-memory",
@@ -4154,7 +4166,10 @@
             "fixture": "hs-opentelemetry-exporter-in-memory"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "hs-opentelemetry-exporter-otlp",
@@ -4163,7 +4178,10 @@
             "fixture": "hs-opentelemetry-exporter-otlp"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "hs-opentelemetry-exporter-prometheus",
@@ -4172,7 +4190,10 @@
             "fixture": "hs-opentelemetry-exporter-prometheus"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "hs-opentelemetry-otlp",
@@ -4181,7 +4202,10 @@
             "fixture": "hs-opentelemetry-otlp"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "hs-opentelemetry-propagator-w3c",
@@ -4190,7 +4214,10 @@
             "fixture": "hs-opentelemetry-propagator-w3c"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "hs-opentelemetry-sdk",
@@ -4199,7 +4226,10 @@
             "fixture": "hs-opentelemetry-sdk"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "hs-opentelemetry-semantic-conventions",
@@ -4208,7 +4238,10 @@
             "fixture": "hs-opentelemetry-semantic-conventions"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "hw-kafka-client",
@@ -4217,7 +4250,10 @@
             "fixture": "hw-kafka-client"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "hw-kafka-streamly",
@@ -4226,7 +4262,10 @@
             "fixture": "hw-kafka-streamly"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "kafka-effectful",
@@ -4235,7 +4274,10 @@
             "fixture": "kafka-effectful"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "keiki",
@@ -4244,7 +4286,10 @@
             "fixture": "keiki"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "keiki-codec-json",
@@ -4253,7 +4298,10 @@
             "fixture": "keiki-codec-json"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "keiro",
@@ -4262,7 +4310,10 @@
             "fixture": "keiro"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "keiro-core",
@@ -4271,7 +4322,10 @@
             "fixture": "keiro-core"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "keiro-migrations",
@@ -4280,7 +4334,10 @@
             "fixture": "keiro-migrations"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "keiro-ops",
@@ -4289,7 +4346,10 @@
             "fixture": "keiro-ops"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "keiro-pgmq",
@@ -4298,7 +4358,10 @@
             "fixture": "keiro-pgmq"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "keiro-test-support",
@@ -4307,7 +4370,10 @@
             "fixture": "keiro-test-support"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "kiroku-cli",
@@ -4316,7 +4382,10 @@
             "fixture": "kiroku-cli"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "kiroku-metrics",
@@ -4325,7 +4394,10 @@
             "fixture": "kiroku-metrics"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "kiroku-otel",
@@ -4334,7 +4406,10 @@
             "fixture": "kiroku-otel"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "kiroku-store",
@@ -4343,7 +4418,10 @@
             "fixture": "kiroku-store"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "kiroku-store-migrations",
@@ -4352,7 +4430,10 @@
             "fixture": "kiroku-store-migrations"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "pg-migrate",
@@ -4361,7 +4442,10 @@
             "fixture": "pg-migrate"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "pg-migrate-cli",
@@ -4370,7 +4454,10 @@
             "fixture": "pg-migrate-cli"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "pg-migrate-embed",
@@ -4379,7 +4466,10 @@
             "fixture": "pg-migrate-embed"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "pg-migrate-import-codd",
@@ -4388,7 +4478,10 @@
             "fixture": "pg-migrate-import-codd"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "pg-migrate-import-hasql-migration",
@@ -4397,7 +4490,10 @@
             "fixture": "pg-migrate-import-hasql-migration"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "pgmq-config",
@@ -4406,7 +4502,10 @@
             "fixture": "pgmq-config"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "pgmq-core",
@@ -4415,7 +4514,10 @@
             "fixture": "pgmq-core"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "pgmq-effectful",
@@ -4424,7 +4526,10 @@
             "fixture": "pgmq-effectful"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "pgmq-hasql",
@@ -4433,7 +4538,10 @@
             "fixture": "pgmq-hasql"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "pgmq-migration",
@@ -4442,7 +4550,10 @@
             "fixture": "pgmq-migration"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "shibuya-core",
@@ -4451,7 +4562,10 @@
             "fixture": "shibuya-core"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "shibuya-kafka-adapter",
@@ -4460,7 +4574,10 @@
             "fixture": "shibuya-kafka-adapter"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "shibuya-kiroku-adapter",
@@ -4469,7 +4586,10 @@
             "fixture": "shibuya-kiroku-adapter"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "shibuya-metrics",
@@ -4478,7 +4598,10 @@
             "fixture": "shibuya-metrics"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "shibuya-pgmq-adapter",
@@ -4487,7 +4610,10 @@
             "fixture": "shibuya-pgmq-adapter"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         }
       ]
     },
@@ -4964,7 +5090,7 @@
       "schema": "kenshou.payload/v1",
       "variant": "default"
     },
-    "buildKey": "sha256:b262f710c6b8d40d85d2dfe2494abbf5a7b5159f8d8539c3fa2c73f68283d08e"
+    "buildKey": "sha256:b0896bd2056a02e771c8efb1ff069306577c01820bacdab7da2421bb5f4d3885"
   },
   "candidate": {
     "descriptor": {
@@ -5989,7 +6115,10 @@
             "fixture": "effectful"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "effectful-core",
@@ -5998,7 +6127,10 @@
             "fixture": "effectful-core"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "ephemeral-pg",
@@ -6007,7 +6139,10 @@
             "fixture": "ephemeral-pg"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "hs-opentelemetry-api",
@@ -6016,7 +6151,10 @@
             "fixture": "hs-opentelemetry-api"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "hs-opentelemetry-exporter-in-memory",
@@ -6025,7 +6163,10 @@
             "fixture": "hs-opentelemetry-exporter-in-memory"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "hs-opentelemetry-exporter-otlp",
@@ -6034,7 +6175,10 @@
             "fixture": "hs-opentelemetry-exporter-otlp"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "hs-opentelemetry-exporter-prometheus",
@@ -6043,7 +6187,10 @@
             "fixture": "hs-opentelemetry-exporter-prometheus"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "hs-opentelemetry-otlp",
@@ -6052,7 +6199,10 @@
             "fixture": "hs-opentelemetry-otlp"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "hs-opentelemetry-propagator-w3c",
@@ -6061,7 +6211,10 @@
             "fixture": "hs-opentelemetry-propagator-w3c"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "hs-opentelemetry-sdk",
@@ -6070,7 +6223,10 @@
             "fixture": "hs-opentelemetry-sdk"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "hs-opentelemetry-semantic-conventions",
@@ -6079,7 +6235,10 @@
             "fixture": "hs-opentelemetry-semantic-conventions"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "hw-kafka-client",
@@ -6088,7 +6247,10 @@
             "fixture": "hw-kafka-client"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "hw-kafka-streamly",
@@ -6097,7 +6259,10 @@
             "fixture": "hw-kafka-streamly"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "kafka-effectful",
@@ -6106,7 +6271,10 @@
             "fixture": "kafka-effectful"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "keiki",
@@ -6115,7 +6283,10 @@
             "fixture": "keiki"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "keiki-codec-json",
@@ -6124,7 +6295,10 @@
             "fixture": "keiki-codec-json"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "keiro",
@@ -6133,7 +6307,10 @@
             "fixture": "keiro"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "keiro-core",
@@ -6142,7 +6319,10 @@
             "fixture": "keiro-core"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "keiro-migrations",
@@ -6151,7 +6331,10 @@
             "fixture": "keiro-migrations"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "keiro-ops",
@@ -6160,7 +6343,10 @@
             "fixture": "keiro-ops"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "keiro-pgmq",
@@ -6169,7 +6355,10 @@
             "fixture": "keiro-pgmq"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "keiro-test-support",
@@ -6178,7 +6367,10 @@
             "fixture": "keiro-test-support"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "kiroku-cli",
@@ -6187,7 +6379,10 @@
             "fixture": "kiroku-cli"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "kiroku-metrics",
@@ -6196,7 +6391,10 @@
             "fixture": "kiroku-metrics"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "kiroku-otel",
@@ -6205,7 +6403,10 @@
             "fixture": "kiroku-otel"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "kiroku-store",
@@ -6214,7 +6415,10 @@
             "fixture": "kiroku-store"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "kiroku-store-migrations",
@@ -6223,7 +6427,10 @@
             "fixture": "kiroku-store-migrations"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "pg-migrate",
@@ -6232,7 +6439,10 @@
             "fixture": "pg-migrate"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "pg-migrate-cli",
@@ -6241,7 +6451,10 @@
             "fixture": "pg-migrate-cli"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "pg-migrate-embed",
@@ -6250,7 +6463,10 @@
             "fixture": "pg-migrate-embed"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "pg-migrate-import-codd",
@@ -6259,7 +6475,10 @@
             "fixture": "pg-migrate-import-codd"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "pg-migrate-import-hasql-migration",
@@ -6268,7 +6487,10 @@
             "fixture": "pg-migrate-import-hasql-migration"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "pgmq-config",
@@ -6277,7 +6499,10 @@
             "fixture": "pgmq-config"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "pgmq-core",
@@ -6286,7 +6511,10 @@
             "fixture": "pgmq-core"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "pgmq-effectful",
@@ -6295,7 +6523,10 @@
             "fixture": "pgmq-effectful"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "pgmq-hasql",
@@ -6304,7 +6535,10 @@
             "fixture": "pgmq-hasql"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "pgmq-migration",
@@ -6313,7 +6547,10 @@
             "fixture": "pgmq-migration"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "shibuya-core",
@@ -6322,7 +6559,10 @@
             "fixture": "shibuya-core"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "shibuya-kafka-adapter",
@@ -6331,7 +6571,10 @@
             "fixture": "shibuya-kafka-adapter"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "shibuya-kiroku-adapter",
@@ -6340,7 +6583,10 @@
             "fixture": "shibuya-kiroku-adapter"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "shibuya-metrics",
@@ -6349,7 +6595,10 @@
             "fixture": "shibuya-metrics"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         },
         {
           "name": "shibuya-pgmq-adapter",
@@ -6358,7 +6607,10 @@
             "fixture": "shibuya-pgmq-adapter"
           },
           "flags": {},
-          "settings": {}
+          "settings": {
+            "jailbreak": false,
+            "configureFlags": []
+          }
         }
       ]
     },
@@ -6835,6 +7087,6 @@
       "schema": "kenshou.payload/v1",
       "variant": "default"
     },
-    "buildKey": "sha256:b262f710c6b8d40d85d2dfe2494abbf5a7b5159f8d8539c3fa2c73f68283d08e"
+    "buildKey": "sha256:b0896bd2056a02e771c8efb1ff069306577c01820bacdab7da2421bb5f4d3885"
   }
 }

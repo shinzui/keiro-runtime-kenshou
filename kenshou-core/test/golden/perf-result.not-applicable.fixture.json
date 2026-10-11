@@ -1,0 +1,17 @@
+{
+  "schema": "kenshou.perf-result/v1",
+  "requestSha256": "sha256:7a0072d3819fddd8d6ef0278182b4a696a7006922e4f93610d3ff3d8338f59ac",
+  "preparedSha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "purpose": "calibration",
+  "coverage": "not-applicable",
+  "changeCoverage": "incomplete",
+  "performanceVerdict": "not-applicable",
+  "infrastructureState": "healthy",
+  "blockingRuntimeFailures": [],
+  "gatingEligible": false,
+  "configurations": [],
+  "exclusions": [],
+  "uncoveredScenarios": [],
+  "evidenceVerified": true,
+  "exitCode": 0
+}

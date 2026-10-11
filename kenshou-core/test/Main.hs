@@ -31,6 +31,7 @@ import Kenshou.Core.Scenario (CohortScope (..), KnownDefect (..), PackageConditi
 import Kenshou.Core.Selector (matchesSelector, parseSelector)
 import Kenshou.Core.Selftest qualified as Selftest
 import Kenshou.PerfPreparedSpec qualified
+import Kenshou.PerfResultSpec qualified
 import Kenshou.PerfSpec qualified
 import Kenshou.PlanSpec qualified
 import System.Environment (lookupEnv)
@@ -52,6 +53,7 @@ import Test.Hspec
 
 main :: IO ()
 main = hspec do
+  Kenshou.PerfResultSpec.spec
   descriptorSpec
   hashSpec
   mismatchSpec

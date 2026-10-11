@@ -11,6 +11,7 @@ module Kenshou.Perf.Prepared
     preparedDigest,
     buildKeyFor,
     validatePrepared,
+    validateArmInventories,
     renderBoundsProject,
   )
 where
@@ -146,6 +147,7 @@ validatePrepared prepared = do
           )
           arm.sourceLock
       unless (arm.buildKey == buildKeyFor prepared.harnessRevision arm.descriptor arm.sourceLock arm.buildInventory arm.boundsInventory) (Left "prepared build key mismatch")
+      validateArmInventories arm.descriptor arm.buildInventory arm.boundsInventory
       _ <-
         parse
           "payload identity"
@@ -164,6 +166,42 @@ validatePrepared prepared = do
           )
           arm.payload
       pure ()
+
+-- Run this before publication, and repeat it during offline preparation loading.
+validateArmInventories :: CohortDescriptor -> BuildInventory -> BuildInventory -> Either Text ()
+validateArmInventories descriptor nix bounds = do
+  compareInventories [] nix nix
+  compareInventories [] bounds bounds
+  mapM_ strictPackage nix.packages
+  let nixPackages = Map.fromList [(entry.name, entry) | entry <- nix.packages]
+      cabalPackages = Map.fromList [(entry.name, entry) | entry <- bounds.packages]
+  mapM_
+    ( \pin -> do
+        actual <- maybe (Left "cohort pin missing from Nix inventory") Right (Map.lookup pin.pinName nixPackages)
+        bound <- maybe (Left "cohort pin missing from bounds inventory") Right (Map.lookup pin.pinName cabalPackages)
+        unless (actual.version == pin.pinVersion && bound.version == pin.pinVersion) (Left "resolved inventory version differs from cohort pin")
+    )
+    (concatMap (.componentPackages) descriptor.descriptorComponents)
+  mapM_
+    ( \entry -> case Map.lookup entry.name cabalPackages of
+        Nothing -> Right ()
+        Just bound -> unless (entry.version == bound.version && entry.flags == bound.flags) (Left ("Nix package version or flags differs from bounds plan: " <> entry.name))
+    )
+    nix.packages
+  where
+    strictPackage entry =
+      either
+        (Left . Text.pack)
+        Right
+        ( parseEither
+            ( withObject "PackageSettings" \s -> do
+                jailbreak <- s .: "jailbreak"
+                flags <- s .: "configureFlags" :: Parser [Text]
+                let allowed = map ("--allow-newer=" <>) descriptor.descriptorAllowNewer
+                unless (not jailbreak && all (\flag -> not ("--allow-newer" `Text.isPrefixOf` flag) || flag `elem` allowed) flags) (fail "package has unreviewed bound lifting")
+            )
+            entry.settings
+        )
 
 -- Cabal's plan source and revision fields are documented by the upstream
 -- ProjectPlanOutput implementation. Include description revisions and all
@@ -194,7 +232,7 @@ cabalInventory harnessRoot harnessRevision document = do
           else do
             descriptionHash <- unit .:? "pkg-cabal-sha256" :: Parser (Maybe Text)
             sourceHash <- unit .:? "pkg-src-sha256" :: Parser (Maybe Text)
-            revision <- unit .:? "pkg-revision" .!= (0 :: Int)
+            revision <- unit .:? "pkg-revision" :: Parser (Maybe Int)
             location <- unit .: "pkg-src" >>= normalizeSource name
             pure (object ["location" .= location, "sourceSha256" .= sourceHash, "descriptionSha256" .= descriptionHash, "descriptionRevision" .= revision])
       pure (InventoryPackage name version source flags (object []))

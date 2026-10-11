@@ -5,12 +5,14 @@
 , descriptorFile ? ../../cohort + "/${cohort}.json"
 , lockFile ? ../cohort-locks + "/${cohort}.lock.json"
 , strictBounds ? false
+, resolvedLockFile ? null
 }:
 let
   lib = pkgs.lib;
   descriptor = builtins.fromJSON (builtins.readFile descriptorFile);
   lock = builtins.fromJSON (builtins.readFile lockFile);
   descriptorHash = builtins.hashFile "sha256" descriptorFile;
+  resolved = if resolvedLockFile == null then null else builtins.fromJSON (builtins.readFile resolvedLockFile);
   channel = inputs.haskell-nix.lib.mkChannelExtension {
     channel = "hackage";
     disableProfiling = variant != "profiled";
@@ -78,9 +80,19 @@ let
     (lib.mapAttrs
       (_: value:
         if lib.isDerivation value && value ? getCabalDeps then
-          pkgs.haskell.lib.compose.appendConfigureFlags
-            (map (exception: "--allow-newer=${exception}") descriptor.allowNewer)
-            (pkgs.haskell.lib.compose.dontJailbreak value)
+          pkgs.haskell.lib.compose.overrideCabal
+            (args: {
+              jailbreak = false;
+              doCheck = false;
+              doBenchmark = false;
+              configureFlags =
+                (if resolved != null && builtins.hasAttr value.pname resolved.flags then
+                  lib.filter (flag: !(lib.hasPrefix "-f" flag)) (args.configureFlags or [ ])
+                  ++ lib.mapAttrsToList (name: enabled: "-f${if enabled then "" else "-"}${name}") resolved.flags.${value.pname}
+                else args.configureFlags or [ ])
+                ++ map (exception: "--allow-newer=${exception}") descriptor.allowNewer;
+            })
+            value
         else value)
       hsuper);
   hp = pkgs.haskell.packages.ghc9124.override {
@@ -90,6 +102,7 @@ let
       yamlOutput
       requiredPackages
       (import ./cohort-overlay.nix { inherit pkgs lock; })
+      (if resolved == null then (_: _: { }) else import ./resolved-overlay.nix { inherit pkgs resolved; })
       local
       enforceBounds
     ];

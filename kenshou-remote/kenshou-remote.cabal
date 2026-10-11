@@ -61,6 +61,8 @@ library
     Kenshou.Remote.Payload.Nix
     Kenshou.Remote.Payload.Publish
     Kenshou.Remote.Payload.Publisher
+    Kenshou.Remote.Perf.Journal
+    Kenshou.Remote.Perf.Runner
     Kenshou.Remote.Selftest
     Kenshou.Remote.Store
     Kenshou.Remote.Store.File
@@ -102,6 +104,8 @@ test-suite kenshou-remote-test
     PairSpec
     ParitySpec
     PayloadSpec
+    PerfJournalSpec
+    PerfRunnerSpec
     PrepareSpec
     SessionSpec
     SubmitSpec

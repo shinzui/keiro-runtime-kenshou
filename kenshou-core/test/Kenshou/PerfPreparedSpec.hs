@@ -26,6 +26,12 @@ spec = describe "performance preparation integrity" do
     validatePrepared prepared {baseline = baselineArm {buildKey = "sha256:changed"}} `shouldSatisfy` isLeft
     decoded <- right (eitherDecode (encode prepared) :: Either String PerfPrepared)
     toJSON decoded `shouldBe` toJSON prepared
+  it "rejects bound lifting inside a resealed inventory even when its toolchain claims strict bounds" do
+    prepared <- eitherDecodeFileStrict' "test/golden/perf-prepared.fixture.json" >>= right
+    let arm = (prepared :: PerfPrepared).baseline
+        corrupt = arm.buildInventory {packages = [entry {settings = object ["jailbreak" .= True, "configureFlags" .= ([] :: [Text])]} | entry <- arm.buildInventory.packages]}
+        changed = arm {buildInventory = corrupt, buildKey = buildKeyFor prepared.harnessRevision arm.descriptor arm.sourceLock corrupt arm.boundsInventory}
+    validatePrepared prepared {baseline = changed, candidate = changed} `shouldSatisfy` isLeft
   it "allows only target source/version changes; target flags still must match" do
     compareInventories ["runtime"] inventory inventory {packages = [runtime {version = "2", source = String "candidate"}, dependency]} `shouldBe` Right ()
     compareInventories ["runtime"] inventory inventory {packages = [runtime {flags = Map.singleton "feature" True}, dependency]} `shouldSatisfy` isLeft

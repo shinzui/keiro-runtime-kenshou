@@ -20,3 +20,4 @@ result-*
 /payloads/
 .pre-commit-config.yaml
 /cell-runs/
+__pycache__/
