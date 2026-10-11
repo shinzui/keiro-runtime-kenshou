@@ -50,6 +50,7 @@ import Kenshou.Remote.Payload qualified as Payload
 import Kenshou.Remote.Store (Bucket (..), ObjectName (..), ObjectStore (..), Precondition (..))
 import Kenshou.Remote.Store.File (newFileStore)
 import Kenshou.Telemetry.Overhead (OverheadState (..), SlotRun (..), loadOverheadState)
+import PerfSessionSpec qualified
 import System.Directory (Permissions (..), copyFile, createDirectoryIfMissing, doesFileExist, doesPathExist, getPermissions, listDirectory, makeAbsolute, setPermissions, withCurrentDirectory)
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.Exit (ExitCode (..))
@@ -71,6 +72,7 @@ readInboxFixture path = do
 
 main :: IO ()
 main = hspec do
+  PerfSessionSpec.spec
   describe "performance planning CLI" do
     it "exposes calibration publication and rejects malformed batches before storage effects" $ withSystemTempDirectory "kenshou-calibration-malformed" \directory -> do
       let input = directory </> "definition.json"

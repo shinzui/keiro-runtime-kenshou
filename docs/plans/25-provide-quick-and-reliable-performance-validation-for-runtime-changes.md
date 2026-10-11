@@ -279,8 +279,36 @@ claim timeout against the file store and a lost-lease runtime-failure control.
 Full healthy multi-profile CLI replay, live interruption acceptance, owner cleanup
 and calibration acceptance remain open; no delivery milestone is closed.
 
+File-backed CLI and owner isolation (2026-10-11): The CLI now exercises both
+initial profiles with twenty sealed raw trials under one lease, publishes a
+complete report, and preserves its decisions through online/offline verification
+and completed-session resume without redispatch. A second control retains a known
+runtime defect with process exit zero and returns exit 1 throughout. The remote
+and CLI suites pass (154 and 143 examples). Replay rejects unlinked trial/cell
+directories even when their local inventory and receipt have been resealed.
+Both controls also reconstruct an interrupted checkpoint after comparison
+publication but before the attempt-result and root completion writes. Resume
+keeps the original comparison bytes, replaces a partial result write atomically,
+and dispatches no new trials; five focused CLI controls pass after that change.
+Owner commit `022bcba` in `mori://shinzui/load-testing-infra` adds generic
+payload-owned shared-file cleanup and supervised-unit ownership/control-group
+checks, with sealed cleanup counts. Its 62 Rust library examples and three CLI
+examples pass, with one unrelated opt-in example ignored. These are synthetic
+protocol and local isolation controls, not live benchmark calibration. Broader
+process isolation, repeated-failure quarantine with verified recovery, both-arm
+pre-staging, the owner admission probe, Linux preparation/cache acceptance, live
+cell acceptance, both calibration batches and CI/local parity remain unfinished.
+
 ## Surprises & Discoveries
 
+
+2026-10-11 implementation: Writing an attempt comparison before its root completion
+checkpoint can leave a valid comparison alongside a missing or partial result.
+Recomputing it with a new analysis ID would rewrite retained evidence despite
+identical trials. `kenshou-cli/src/Kenshou/Cli/Command/Perf/Session.hs` now uses
+atomic comparison/result/receipt writes and reuses the original comparison only
+after independent semantic replay matches. File-backed controls cover this
+boundary for both a healthy run and an exit-zero known runtime defect.
 
 2026-10-10 review: `compareMetrics` in
 `kenshou-measure/src/Kenshou/Measure/Compare.hs` compares only metric names present

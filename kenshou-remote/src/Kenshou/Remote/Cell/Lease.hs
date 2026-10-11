@@ -125,17 +125,17 @@ acquireLease store ref request = newRunId >>= acquireLeaseWithId store ref reque
 -- The caller may durably retain this identity before issuing a remote claim.
 -- Reconciliation never renews or revives an expired/cancelled claim.
 acquireLeaseWithId :: ObjectStore -> CellRef -> LeaseRequest -> LeaseId -> IO AcquireOutcome
-acquireLeaseWithId store ref request identifier = do
+acquireLeaseWithId store ref request proposedId = do
   unless (validCellName ref.cellName && not (Text.null request.owner) && not (Text.null request.purpose) && request.ttlSeconds > 0) (ioError (userError "invalid lease request"))
   current <- readCurrent store ref
   now <- store.serverTime
   case current of
     Just (lease, meta)
-      | lease.leaseId == identifier ->
+      | lease.leaseId == proposedId ->
           if not lease.cancelRequested && addUTCTime (fromIntegral lease.ttlSeconds + 30) meta.updated >= now
             then accept lease meta
             else pure (Busy lease)
-    _ -> acquire identifier (0 :: Int)
+    _ -> acquire proposedId (0 :: Int)
   where
     acquire identifier attempts = do
       unless (attempts < maxCasAttempts) (ioError (userError "lease claim contention exceeded retry limit"))

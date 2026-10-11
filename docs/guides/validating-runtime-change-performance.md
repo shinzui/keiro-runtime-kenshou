@@ -4,7 +4,7 @@ title: Validating runtime change performance
 description: Prepare exact runtime revisions, execute bounded paired comparisons, recover sessions, and verify durable performance evidence.
 docId: DOC-6
 tags: [performance, runtime-changes, verification-cells, evidence, ci]
-generated: {by: 'codex/gpt-6.1-sol', at: '2026-10-11T08:45:55Z'}
+generated: {by: 'codex/gpt-6.1-sol', at: '2026-10-11T09:13:18Z'}
 ---
 
 # Validating runtime change performance
@@ -128,8 +128,11 @@ performance statistics pass or its outer pair is rejected.
 counts, lease identities and the first execution deadline. Resume keeps those
 budgets. Compatible retained leases can continue; a lost lease starts a separate
 configuration attempt, and evidence from different leases is not pooled.
-Completed verified configurations are reused. Only one client may mutate a
-session. Status reads local state without cloud actions.
+Completed verified configurations are reused. If the comparison file was saved
+just before interruption, replay preserves its original bytes and identity when
+the recomputed decision matches. Comparison, attempt-result and receipt writes
+use atomic replacement so an interrupted write cannot become an accepted file.
+Only one client may mutate a session. Status reads local state without cloud actions.
 
 The client retains its proposed lease ID before claiming. If the claim response
 times out, resume reconciles that same ID without claiming another lease. The
@@ -143,7 +146,9 @@ waits for the exact owned work to reach a terminal sealed/rejected state.
 Recovery cancels the exact old lease before inspecting submission markers and
 collects any sealed runtime failures before starting a fresh attempt. Ambiguous
 work remains fenced by its lease rather than being declared finished.
-Owner cleanup, quarantine and live interruption acceptance remain open.
+The owner's generic payload-owned file cleanup and supervised-unit cleanup have
+local controls. Live contamination acceptance, broader process isolation,
+repeated-failure quarantine/recovery and live interruption acceptance remain open.
 
 The report snapshot includes `result.json`, `report.md`, an inventory manifest,
 retained comparisons and nested cell evidence. Create-only storage and full

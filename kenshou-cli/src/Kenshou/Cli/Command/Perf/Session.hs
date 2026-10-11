@@ -397,10 +397,8 @@ execute environment store inputs payloads prepared output = do
                 renameFile (schedulePath <> ".next") schedulePath
                 pure planned
           policy <- require (policyFor prepared entry)
-          result <- executeAttempt identity entry schedule policy (axesFor prepared) directory callbacks (executeCellTrial (adapter environment store inputs payloads p) acquired schedule directory entry.profile callbacks.recordRuntimeFailure)
-          maybe (pure ()) (encodeFile (directory </> "comparison.json")) result.comparison
-          encodeFile (directory </> "result.json") result
-          pure result
+          computed <- executeAttempt identity entry schedule policy (axesFor prepared) directory callbacks (executeCellTrial (adapter environment store inputs payloads p) acquired schedule directory entry.profile callbacks.recordRuntimeFailure)
+          retainAttemptResult directory computed
       verify result = verifyConfiguration inputs prepared output result
       hooks =
         RunnerHooks
@@ -426,7 +424,7 @@ execute environment store inputs payloads prepared output = do
                 waitForOwnedWork store (ref identity) identity journals
               owned <- Lease.reattachLease store (ref identity) identity.leaseId
               case owned of
-                Just handle -> Lease.releaseLease store (ref identity) handle
+                Just acquired -> Lease.releaseLease store (ref identity) acquired
                 Nothing -> do
                   history <- readPerfSession (output </> "session.json") >>= require
                   -- An absent ambiguous proposal must stay unresolved. A known
@@ -536,6 +534,14 @@ auditProfileAttempts recover inputs prepared output entry wanted = do
                   let journalPaths = [path | path <- files, ["trials", _, "session.json"] <- [splitDirectories path]]
                       expectedPaths = ["trials" </> Text.unpack (renderRunId run.runId) </> "session.json" | run <- schedule.runs]
                   unless (all (`elem` expectedPaths) journalPaths) (ioError (userError "retained cell journal names an unplanned trial"))
+                  journals <- traverse (\path -> readSessionJournal (directory </> path) >>= require) journalPaths
+                  let linkedDirectories = map (Text.unpack . renderRunId . (.runId)) schedule.runs <> [Text.unpack (renderRunId slice.cellRun) | journal <- journals, slice <- journal.slices]
+                      attemptFiles = ["schedule.json", "attempt.json", "trial-paths.json", "trial-failures.json", "comparison.json", "result.json"]
+                      interpreted path = case splitDirectories path of
+                        [name] -> name `elem` attemptFiles || name `elem` map (<> ".next") attemptFiles
+                        "trials" : identifier : _ -> identifier `elem` linkedDirectories
+                        _ -> False
+                  unless (all interpreted files) (ioError (userError "retained attempt contains unlinked evidence outside its scheduled trials and cell journals"))
                   mapM_
                     ( \run -> do
                         let identifier = renderRunId run.runId
@@ -666,8 +672,37 @@ publishSnapshot store inputs prepared output session result = do
       unless (fmap fst retained == Just bytes) (ioError (userError "durable publication receipt retrieval differs"))
       receiptRetrievedAt <- getCurrentTime
       unless (maybe True (receiptRetrievedAt <=) state.executionDeadline) (ioError (userError "receipt retrieval exceeded the original execution deadline"))
-      Lazy.writeFile (output </> "receipt.json") bytes
+      atomicBytes (output </> "receipt.json") bytes
       pure True
+
+-- An interruption after comparison publication but before the root checkpoint
+-- must preserve that comparison's original identity and bytes on reanalysis.
+retainAttemptResult :: FilePath -> ConfigurationResult -> IO ConfigurationResult
+retainAttemptResult directory computed = do
+  let comparisonPath = directory </> "comparison.json"
+      resultPath = directory </> "result.json"
+  comparisonExists <- doesFileExist comparisonPath
+  comparison <- case (comparisonExists, computed.comparison) of
+    (False, Nothing) -> pure Nothing
+    (True, Nothing) -> ioError (userError "retained comparison no longer matches completed trial evidence")
+    (False, Just document) -> atomicBytes comparisonPath (encode document) >> pure (Just document)
+    (True, Just document) -> do
+      original <- readJSON comparisonPath
+      retained <- require (semanticComparison original)
+      replayed <- require (semanticComparison document)
+      unless (retained == replayed) (ioError (userError "retained comparison differs from interrupted attempt replay"))
+      pure (Just original)
+  let result = computed {comparison = comparison}
+  exists <- doesFileExist resultPath
+  if exists
+    then do
+      original <- readJSON resultPath
+      unless (original == result) (ioError (userError "retained attempt result differs from interrupted replay"))
+      pure original
+    else atomicBytes resultPath (encode result) >> pure result
+
+atomicBytes :: FilePath -> Lazy.ByteString -> IO ()
+atomicBytes path bytes = Lazy.writeFile (path <> ".next") bytes >> renameFile (path <> ".next") path
 
 runCalibrationPublish :: Bool -> FilePath -> Text -> CliEnv -> IO ExitCode
 runCalibrationPublish definition path uri _ = guarded do
@@ -907,10 +942,12 @@ renderReport result =
       Nothing -> []
       Just document -> case parseEither metrics document of
         Left problem -> ["", "Retained metric report could not be rendered: " <> Text.pack problem]
-        Right rows -> ["", "## " <> configuration.profile, "", "Intervals and thresholds below are retained comparison results.", "", "| Metric | Unit | Ratio estimate [low, high] | Delta estimate [low, high] | Relative limit | Absolute floor | Status |", "| --- | --- | --- | --- | ---: | ---: | --- |"] <> rows
+        Right (rows, reasons) -> ["", "## " <> configuration.profile, "", "Intervals and thresholds below are retained comparison results.", "", "| Metric | Unit | Ratio estimate [low, high] | Delta estimate [low, high] | Relative limit | Absolute floor | Status | Explanation |", "| --- | --- | --- | --- | ---: | ---: | --- | --- |"] <> rows <> ["", "Comparison reasons: " <> if null reasons then "none" else Text.intercalate "; " reasons]
     metrics = withObject "Comparison" \document -> do
       values <- document .: "metrics"
-      traverse metric (Map.toAscList (values :: Map.Map Text Value))
+      reasons <- document .:? "reasons" .!= []
+      rows <- traverse metric (Map.toAscList (values :: Map.Map Text Value))
+      pure (rows, reasons)
     metric (name, document) =
       withObject
         "MetricComparison"
@@ -921,7 +958,8 @@ renderReport result =
             limit <- fields .: "relativeLimit"
             floorValue <- fields .: "absoluteFloor"
             status <- fields .: "status"
-            pure ("| " <> name <> " | " <> unit <> " | " <> ratio <> " | " <> delta <> " | " <> number limit <> " | " <> number floorValue <> " | " <> status <> " |")
+            message <- fields .: "message"
+            pure ("| " <> name <> " | " <> unit <> " | " <> ratio <> " | " <> delta <> " | " <> number limit <> " | " <> number floorValue <> " | " <> status <> " | " <> Text.replace "\n" " " (Text.replace "|" "\\|" message) <> " |")
         )
         document
     interval = withObject "Interval" \fields -> do

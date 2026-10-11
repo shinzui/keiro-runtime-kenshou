@@ -1,6 +1,7 @@
 # Bundle Update Log
 
 ## 2026-10-11
+* **Update**: Document atomic comparison/result/receipt writes, original comparison reuse at interrupted checkpoints, and the owner's remaining isolation acceptance.
 * **Update**: Document persisted lease proposals, bounded claim transport and cancellation before interrupted submission recovery.
 * **Update**: Document independently replayed health windows, calibrated machine/image and health-policy identity, and the read-only calibration fingerprint command.
 * **Update**: Document frozen calibration declaration, complete receipt inventories and independent admission verification for DOC-6.

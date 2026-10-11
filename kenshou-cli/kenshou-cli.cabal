@@ -127,6 +127,7 @@ test-suite kenshou-cli-test
   type: exitcode-stdio-1.0
   hs-source-dirs: test
   main-is: Main.hs
+  other-modules: PerfSessionSpec
   build-depends:
     aeson >=2.2 && <2.3,
     base >=4.21 && <4.22,
@@ -137,6 +138,7 @@ test-suite kenshou-cli-test
     hspec >=2.11 && <2.12,
     kenshou-cli,
     kenshou-core,
+    kenshou-measure,
     kenshou-remote,
     kenshou-telemetry,
     temporary,
