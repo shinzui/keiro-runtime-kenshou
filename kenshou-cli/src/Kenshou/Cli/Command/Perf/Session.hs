@@ -7,14 +7,14 @@ import Data.Aeson hiding (decode)
 import Data.Aeson.Types (parseEither)
 import Data.ByteString qualified as Bytes
 import Data.ByteString.Lazy.Char8 qualified as Lazy
-import Data.List (find)
+import Data.List (find, isSuffixOf)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.IO qualified as TextIO
-import Data.Time (diffUTCTime, getCurrentTime)
+import Data.Time (UTCTime, diffUTCTime, getCurrentTime)
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import Kenshou.Cli.Command.Cell (startCellInstances)
 import Kenshou.Core.Canonical (canonicalEncode, sha256Hex)
@@ -61,6 +61,30 @@ import System.IO.Temp (withSystemTempDirectory)
 data SessionFailure = SessionFailure Int Text deriving stock (Show)
 
 instance Exception SessionFailure
+
+data PublicationReceipt = PublicationReceipt
+  { snapshot :: Text,
+    manifestUri :: Text,
+    manifestSha256 :: Text,
+    resultSha256 :: Text,
+    payloadsReadyAt :: UTCTime,
+    publicationStartedAt :: UTCTime,
+    verifiedReportAt :: UTCTime,
+    totalElapsedSeconds :: Double
+  }
+  deriving stock (Eq, Show)
+
+instance ToJSON PublicationReceipt where
+  toJSON receipt = object ["schema" .= ("kenshou.perf-publication/v1" :: Text), "snapshot" .= receipt.snapshot, "manifestUri" .= receipt.manifestUri, "manifestSha256" .= receipt.manifestSha256, "resultSha256" .= receipt.resultSha256, "payloadsReadyAt" .= receipt.payloadsReadyAt, "publicationStartedAt" .= receipt.publicationStartedAt, "verifiedReportAt" .= receipt.verifiedReportAt, "totalElapsedSeconds" .= receipt.totalElapsedSeconds]
+
+instance FromJSON PublicationReceipt where
+  parseJSON = withObject "PerformanceReceipt" \v -> do
+    strictObject ["schema", "snapshot", "manifestUri", "manifestSha256", "resultSha256", "payloadsReadyAt", "publicationStartedAt", "verifiedReportAt", "totalElapsedSeconds"] v
+    schema <- v .: "schema"
+    unless (schema == ("kenshou.perf-publication/v1" :: Text)) (fail "unsupported publication receipt")
+    receipt <- PublicationReceipt <$> v .: "snapshot" <*> v .: "manifestUri" <*> v .: "manifestSha256" <*> v .: "resultSha256" <*> v .: "payloadsReadyAt" <*> v .: "publicationStartedAt" <*> v .: "verifiedReportAt" <*> v .: "totalElapsedSeconds"
+    unless (receipt.payloadsReadyAt <= receipt.publicationStartedAt && receipt.publicationStartedAt <= receipt.verifiedReportAt && abs (receipt.totalElapsedSeconds - realToFrac (diffUTCTime receipt.verifiedReportAt receipt.payloadsReadyAt)) < 0.000001) (fail "publication receipt timing mismatch")
+    pure receipt
 
 data ExecutionInputs = ExecutionInputs
   { controlBucket :: Text,
@@ -114,13 +138,13 @@ runNew preparedPath uri destination bucket start environment = guarded do
   pinned <- traverse (loadCell store projects capabilityDirectory bucket) prepared.plan.request.cells
   let inputs = ExecutionInputs bucket label projects start pinned
   payloads <- loadPayloads store prepared
+  payloadsReady <- getCurrentTime
   identifier <- newRunId
   preflight environment store inputs payloads prepared identifier
   -- The create-only probe is retained as evidence of the actual destination
   -- permissions. It needs object creation and retrieval, never deletion.
   accessProbe store uri identifier prepared
-  now <- getCurrentTime
-  session <- require (initialSession identifier (Prepared.preparedDigest prepared) prepared.plan uri now)
+  session <- require (initialSession identifier (Prepared.preparedDigest prepared) prepared.plan uri payloadsReady)
   createDirectoryIfMissing True (takeDirectory output)
   createDirectory output
   copyTree (takeDirectory preparedPath) (output </> "preparation")
@@ -148,12 +172,23 @@ runResume destination environment = guarded do
     require (validateSessionInputs prepared session)
     checkRootInputs output prepared
     inputs <- require (parseInputs session)
-    (store, label) <- openStore (Bucket inputs.controlBucket)
-    unless (inputs.storeLabel == label) (ioError (userError "object store differs from the immutable performance session"))
-    mapM_ (checkCell store inputs) inputs.cells
-    payloads <- loadPayloads store prepared
-    preflight environment store inputs payloads prepared session.sessionId
-    execute environment store inputs payloads prepared output
+    state <- require (journalState session)
+    receiptExists <- doesFileExist (output </> "receipt.json")
+    if receiptExists && state.lease == Nothing && state.activeComparison == Nothing && Map.size state.completed == length session.plan.selected
+      then do
+        (result, _) <- verifySessionEvidence output False
+        receipt <- readJSON (output </> "receipt.json")
+        retained <- readPerfSession (output </> Text.unpack (receipt :: PublicationReceipt).snapshot </> "session.json") >>= require
+        unless (retained == session) (ioError (userError "published report does not describe the current session"))
+        Lazy.putStrLn (encode result)
+        pure (exit result.exitCode)
+      else do
+        (store, label) <- openStore (Bucket inputs.controlBucket)
+        unless (inputs.storeLabel == label) (ioError (userError "object store differs from the immutable performance session"))
+        mapM_ (checkCell store inputs) inputs.cells
+        payloads <- loadPayloads store prepared
+        preflight environment store inputs payloads prepared session.sessionId
+        execute environment store inputs payloads prepared output
 
 runStatus :: FilePath -> CliEnv -> IO ExitCode
 runStatus output _ = guarded do
@@ -329,6 +364,7 @@ execute environment store inputs payloads prepared output = do
               owned <- Lease.reattachLease store (ref identity) identity.leaseId
               maybe (pure False) (Lease.releaseLease store (ref identity)) owned
           )
+          (describeReport output)
           (publishSnapshot store inputs prepared output)
   createDirectoryIfMissing True (output </> "configurations")
   result <- runPerformance hooks prepared (output </> "session.json")
@@ -375,11 +411,54 @@ verifyConfiguration inputs prepared output result = do
       [name | name <- attempts, "attempt-" `Text.isPrefixOf` Text.pack name]
   pure (or candidates)
 
+describeReport :: FilePath -> PerfSession -> PerfResult -> IO PerfResult
+describeReport output session result = do
+  identifier <- newRunId
+  now <- getCurrentTime
+  let base = session.evidenceBaseUri <> "/sessions/" <> renderRunId session.sessionId <> "/snapshots/" <> renderRunId identifier
+      leaseTimes = [event.at | event <- session.events, LeaseAcquired _ <- [event.action]]
+      elapsed from to = realToFrac (diffUTCTime to from) :: Double
+      timings =
+        Map.fromList
+          ( [("totalAtReportAssembly", elapsed session.createdAt now)] <> case leaseTimes of
+              [] -> [("initialAdmission", elapsed session.createdAt now), ("measurementAndCleanupToAssembly", 0)]
+              first : _ -> [("initialAdmission", elapsed session.createdAt first), ("measurementAndCleanupToAssembly", elapsed first now)]
+          )
+  files <- treeFiles (output </> "configurations")
+  let relativeFiles = ["prepared.json", "request.json", "plan.json", "session.json"] <> ["configurations/" <> path | path <- files, "comparison.json" `isSuffixOf` path || "manifest.json" `isSuffixOf` path]
+  references <-
+    traverse
+      ( \path -> do
+          (digest, _) <- digestFile (output </> path)
+          pure (ArtifactReference (if "manifest.json" `isSuffixOf` path then "cell-or-runtime-manifest" else if "comparison.json" `isSuffixOf` path then "comparison" else Text.pack path) (base <> "/" <> Text.pack path) (Just ("sha256:" <> digest)))
+      )
+      relativeFiles
+  pure result {stageSeconds = timings, artifactReferences = ArtifactReference "aggregate-manifest" (base <> "/manifest.json") Nothing : ArtifactReference "publication-receipt" (base <> "/receipt.json") Nothing : references}
+
+treeFiles :: FilePath -> IO [FilePath]
+treeFiles root = do
+  names <- listDirectory root
+  fmap
+    concat
+    ( traverse
+        ( \name -> do
+            let path = root </> name
+            linked <- pathIsSymbolicLink path
+            when linked (ioError (userError "performance evidence contains a symbolic link"))
+            directory <- doesDirectoryExist path
+            if directory then map (name </>) <$> treeFiles path else pure [name]
+        )
+        names
+    )
+
 publishSnapshot :: ObjectStore -> ExecutionInputs -> Prepared.PerfPrepared -> FilePath -> PerfSession -> PerfResult -> IO Bool
 publishSnapshot store _ _ output session result = do
-  identifier <- newRunId
-  let relative = "snapshots/" <> Text.unpack (renderRunId identifier)
-      directory = output </> relative
+  publicationStarted <- getCurrentTime
+  manifestReference <- case filter ((== "aggregate-manifest") . (.kind)) result.artifactReferences of
+    [reference] -> pure reference.uri
+    _ -> ioError (userError "report has no unique aggregate manifest reference")
+  relative <- maybe (ioError (userError "aggregate reference is outside its pinned session")) pure (Text.stripPrefix (session.evidenceBaseUri <> "/sessions/" <> renderRunId session.sessionId <> "/") manifestReference >>= Text.stripSuffix "/manifest.json")
+  let directory = output </> Text.unpack relative
   createDirectoryIfMissing True directory
   mapM_ (\name -> copyTree (output </> name) (directory </> name)) ["preparation", "configurations"]
   mapM_ (\name -> copyFile (output </> name) (directory </> name)) ["prepared.json", "request.json", "plan.json", "session.json"]
@@ -387,28 +466,34 @@ publishSnapshot store _ _ output session result = do
   TextIO.writeFile (directory </> "report.md") (renderReport result)
   sealPerfDirectory directory >>= require
   (bucket, prefix) <- require (parseDestination session.evidenceBaseUri)
-  published <- publishEvidence store bucket (prefix <> "/sessions/" <> renderRunId session.sessionId <> "/" <> Text.pack relative) directory
+  published <- publishEvidence store bucket (prefix <> "/sessions/" <> renderRunId session.sessionId <> "/" <> relative) directory
   case published of
     Left problem -> TextIO.hPutStrLn stderr problem >> pure False
     Right uri -> do
       manifest <- Bytes.readFile (directory </> "manifest.json")
-      encodeFile (output </> "receipt.json") (object ["snapshot" .= relative, "manifestUri" .= uri, "manifestSha256" .= sha256Hex manifest, "resultSha256" .= sha256Hex (canonicalEncode (toJSON result))])
+      verified <- getCurrentTime
+      let receipt = PublicationReceipt relative uri (sha256Hex manifest) (sha256Hex (canonicalEncode (toJSON result))) session.createdAt publicationStarted verified (realToFrac (diffUTCTime verified session.createdAt))
+          bytes = encode receipt
+          name = ObjectName (prefix <> "/sessions/" <> renderRunId session.sessionId <> "/" <> relative <> "/receipt.json")
+      _ <- store.putObject bucket name "application/json" DoesNotExist bytes
+      retained <- store.getObject bucket name
+      unless (fmap fst retained == Just bytes) (ioError (userError "durable publication receipt retrieval differs"))
+      Lazy.writeFile (output </> "receipt.json") bytes
       pure True
 
 runVerify :: FilePath -> Bool -> CliEnv -> IO ExitCode
 runVerify output offline _ = guarded do
+  (result, uri) <- verifySessionEvidence output offline
+  Lazy.putStrLn (encode (object ["verified" .= True, "offline" .= offline, "manifestUri" .= uri, "result" .= result]))
+  pure (exit result.exitCode)
+
+verifySessionEvidence :: FilePath -> Bool -> IO (PerfResult, Text)
+verifySessionEvidence output offline = do
   receipt <- readJSON (output </> "receipt.json")
-  (relative, uri, manifestDigest, resultDigest) <-
-    either
-      (ioError . userError)
-      pure
-      ( parseEither
-          ( withObject "PerformanceReceipt" \v -> do
-              strictObject ["snapshot", "manifestUri", "manifestSha256", "resultSha256"] v
-              (,,,) <$> v .: "snapshot" <*> v .: "manifestUri" <*> v .: "manifestSha256" <*> v .: "resultSha256"
-          )
-          receipt
-      )
+  let relative = (receipt :: PublicationReceipt).snapshot
+      uri = receipt.manifestUri
+      manifestDigest = receipt.manifestSha256
+      resultDigest = receipt.resultSha256
   unless ("snapshots/" `Text.isPrefixOf` relative && Text.all (\c -> c `elem` (['a' .. 'z'] <> ['0' .. '9'] <> ['-', '/'])) relative && Text.count "/" relative == 1) (ioError (userError "unsafe retained snapshot"))
   let directory = output </> Text.unpack relative
   verifyPerfManifest directory >>= require
@@ -418,23 +503,39 @@ runVerify output offline _ = guarded do
   checkRootInputs directory prepared
   session <- readPerfSession (directory </> "session.json") >>= require
   require (validateSessionInputs prepared session)
+  unless (receipt.payloadsReadyAt == session.createdAt) (ioError (userError "receipt timing origin differs from its pinned session"))
   unless (uri == session.evidenceBaseUri <> "/sessions/" <> renderRunId session.sessionId <> "/" <> relative <> "/manifest.json") (ioError (userError "receipt destination differs from its pinned session"))
   inputs <- require (parseInputs session)
   result <- readJSON (directory </> "result.json")
   unless (sha256Hex (canonicalEncode (toJSON (result :: PerfResult))) == resultDigest) (ioError (userError "retained aggregate differs from durable receipt"))
+  unless (maybe False (<= receipt.totalElapsedSeconds) (Map.lookup "totalAtReportAssembly" result.stageSeconds)) (ioError (userError "report timing exceeds its verified publication time"))
+  let base = Text.dropEnd (Text.length ("/manifest.json" :: Text)) uri
+  unless ([reference.uri | reference <- result.artifactReferences, reference.kind == "aggregate-manifest"] == [uri] && [reference.uri | reference <- result.artifactReferences, reference.kind == "publication-receipt"] == [base <> "/receipt.json"]) (ioError (userError "report does not reference its own publication and receipt"))
+  mapM_
+    ( \reference -> case reference.sha256 of
+        Nothing -> unless (reference.kind `elem` ["aggregate-manifest", "publication-receipt"]) (ioError (userError "artifact reference has no digest"))
+        Just expected -> do
+          path <- maybe (ioError (userError "artifact reference is outside the sealed snapshot")) pure (Text.stripPrefix (base <> "/") reference.uri)
+          unless (all (\part -> not (Text.null part) && part `notElem` [".", ".."]) (Text.splitOn "/" path) && not (Text.any (`elem` ['\\', '\n', '\r']) path)) (ioError (userError "unsafe artifact reference"))
+          (actual, _) <- digestFile (directory </> Text.unpack path)
+          unless (expected == "sha256:" <> actual) (ioError (userError "artifact reference digest differs"))
+    )
+    result.artifactReferences
   state <- require (journalState session)
   let completed = Map.elems state.completed
   valid <- traverse (verifyConfiguration inputs prepared directory) completed
   unless (and valid) (ioError (userError "retained comparison replay differs"))
   recomputed <- require (aggregateResult session.plan session.preparedSha256 result.evidenceVerified result.configurations)
-  unless (toJSON recomputed == toJSON result && all (\entry -> any (\retained -> retained.profile == entry.profile && retained.comparison == entry.comparison && retained.runtimeFailures == entry.runtimeFailures) result.configurations) completed) (ioError (userError "aggregate differs from the pinned session results"))
+  unless (recomputed == result {stageSeconds = Map.empty, artifactReferences = []} && all (\entry -> any (\retained -> retained.profile == entry.profile && retained.comparison == entry.comparison && retained.runtimeFailures == entry.runtimeFailures) result.configurations) completed) (ioError (userError "aggregate differs from the pinned session results"))
   unless offline do
     destination <- maybe (ioError (userError "receipt has no manifest URI")) pure (Text.stripSuffix "/manifest.json" uri)
     (bucket, prefix) <- require (parseDestination destination)
     (store, _) <- openStore bucket
     verifyPublication store bucket prefix directory >>= require
-  Lazy.putStrLn (encode (object ["verified" .= True, "offline" .= offline, "manifestUri" .= (uri :: Text), "result" .= result]))
-  pure (exit result.exitCode)
+    stored <- store.getObject bucket (ObjectName (prefix <> "/receipt.json"))
+    bytes <- Lazy.readFile (output </> "receipt.json")
+    unless (fmap fst stored == Just bytes) (ioError (userError "retained publication receipt differs from durable storage"))
+  pure (result, uri)
 
 accessProbe :: ObjectStore -> Text -> RunId -> Prepared.PerfPrepared -> IO ()
 accessProbe store uri identifier prepared = do

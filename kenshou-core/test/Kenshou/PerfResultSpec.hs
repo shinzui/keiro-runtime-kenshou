@@ -3,6 +3,7 @@ module Kenshou.PerfResultSpec (spec) where
 import Data.Aeson
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Either (isLeft)
+import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Kenshou.Perf.Plan
 import Kenshou.Perf.Plan qualified as Plan
@@ -28,6 +29,13 @@ spec = describe "performance aggregate results" do
     result.purpose `shouldBe` "calibration"
     result.changeCoverage `shouldBe` plan.changeCoverage
     (eitherDecode (encode result) :: Either String PerfResult) `shouldBe` Right result
+  it "retains report references and measured stages while rejecting invalid metadata" do
+    plan <- fixture
+    result <- accepted (aggregateResult plan digest True (map (configuration "pass") plan.selected))
+    let reported = result {stageSeconds = Map.singleton "totalAtReportAssembly" 17.5, artifactReferences = [ArtifactReference "aggregate-manifest" "gs://fixture-evidence/performance/manifest.json" Nothing]}
+    (eitherDecode (encode reported) :: Either String PerfResult) `shouldBe` Right reported
+    validateResult reported {stageSeconds = Map.singleton "negative" (-1)} `shouldSatisfy` isLeft
+    validateResult reported {artifactReferences = [ArtifactReference "prepared" "gs://fixture-evidence/performance/prepared.json" (Just "mutable")]} `shouldSatisfy` isLeft
   it "uses 4 before 1 before 3 while preserving blockers and omissions" do
     plan <- fixture
     let (first, second) = twoProfiles plan

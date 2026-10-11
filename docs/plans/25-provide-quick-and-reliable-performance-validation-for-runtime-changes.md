@@ -178,6 +178,17 @@ Schema checks pass. These are synthetic protocol controls, not live performance
 acceptance. Complete report metadata/timings, all-attempt graph verification,
 completed-report resume reuse and independent calibration admission remain open.
 
+Report publication handoff (2026-10-10): Aggregate results now carry measured
+stage times and immutable references to the pinned inputs, ordinary comparisons,
+and retained cell/runtime manifests. A retrieved, create-only publication receipt
+anchors the snapshot manifest and records elapsed time from fresh payload
+verification through full report retrieval. Completed-session resume reuses the
+verified report without publishing a new snapshot or submitting work. Focused
+controls pass: 46 core, 24 remote and 10 CLI examples; schema checks pass, including
+the new synthetic publication-receipt fixture. All-attempt semantic/binding audits,
+owner cleanup fencing, independent calibration admission and real performance
+acceptance remain open. No live timing target is inferred from synthetic tests.
+
 ## Surprises & Discoveries
 
 

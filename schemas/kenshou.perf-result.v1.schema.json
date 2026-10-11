@@ -3,45 +3,226 @@
   "title": "Kenshou scoped performance aggregate",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "requestSha256", "preparedSha256", "purpose", "coverage", "changeCoverage", "performanceVerdict", "infrastructureState", "blockingRuntimeFailures", "gatingEligible", "configurations", "exclusions", "uncoveredScenarios", "evidenceVerified", "exitCode"],
+  "required": [
+    "schema",
+    "requestSha256",
+    "preparedSha256",
+    "purpose",
+    "coverage",
+    "changeCoverage",
+    "performanceVerdict",
+    "infrastructureState",
+    "blockingRuntimeFailures",
+    "gatingEligible",
+    "configurations",
+    "exclusions",
+    "uncoveredScenarios",
+    "evidenceVerified",
+    "exitCode"
+  ],
   "properties": {
-    "schema": {"const": "kenshou.perf-result/v1"},
-    "requestSha256": {"$ref": "#/$defs/digest"},
-    "preparedSha256": {"$ref": "#/$defs/digest"},
-    "purpose": {"enum": ["gating", "calibration"]},
-    "coverage": {"$ref": "#/$defs/coverage"},
-    "changeCoverage": {"$ref": "#/$defs/coverage"},
-    "performanceVerdict": {"enum": ["pass", "regression", "inconclusive", "not-applicable"]},
-    "infrastructureState": {"$ref": "#/$defs/infrastructure"},
-    "blockingRuntimeFailures": {"type": "array", "items": {"type": "string"}},
-    "gatingEligible": {"type": "boolean"},
-    "configurations": {"type": "array", "items": {"$ref": "#/$defs/configuration"}},
+    "schema": {
+      "const": "kenshou.perf-result/v1"
+    },
+    "requestSha256": {
+      "$ref": "#/$defs/digest"
+    },
+    "preparedSha256": {
+      "$ref": "#/$defs/digest"
+    },
+    "purpose": {
+      "enum": [
+        "gating",
+        "calibration"
+      ]
+    },
+    "coverage": {
+      "$ref": "#/$defs/coverage"
+    },
+    "changeCoverage": {
+      "$ref": "#/$defs/coverage"
+    },
+    "performanceVerdict": {
+      "enum": [
+        "pass",
+        "regression",
+        "inconclusive",
+        "not-applicable"
+      ]
+    },
+    "infrastructureState": {
+      "$ref": "#/$defs/infrastructure"
+    },
+    "blockingRuntimeFailures": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "gatingEligible": {
+      "type": "boolean"
+    },
+    "configurations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/configuration"
+      }
+    },
     "exclusions": {
       "type": "array",
-      "items": {"type": "object", "additionalProperties": false, "required": ["profile", "reason"], "properties": {"profile": {"type": "string"}, "reason": {"type": "string"}}}
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "profile",
+          "reason"
+        ],
+        "properties": {
+          "profile": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      }
     },
-    "uncoveredScenarios": {"type": "array", "items": {"type": "string"}},
-    "evidenceVerified": {"type": "boolean"},
-    "exitCode": {"enum": [0, 1, 3, 4]}
+    "uncoveredScenarios": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "evidenceVerified": {
+      "type": "boolean"
+    },
+    "exitCode": {
+      "enum": [
+        0,
+        1,
+        3,
+        4
+      ]
+    },
+    "stageSeconds": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "number",
+        "minimum": 0
+      }
+    },
+    "artifactReferences": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "uri",
+          "sha256"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uri": {
+            "type": "string",
+            "pattern": "^gs://[^\\s?#]+$"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}$"
+              }
+            ]
+          }
+        }
+      }
+    }
   },
   "$defs": {
-    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
-    "coverage": {"enum": ["complete", "incomplete", "not-applicable"]},
-    "infrastructure": {"enum": ["healthy", "pending", "failed"]},
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "coverage": {
+      "enum": [
+        "complete",
+        "incomplete",
+        "not-applicable"
+      ]
+    },
+    "infrastructure": {
+      "enum": [
+        "healthy",
+        "pending",
+        "failed"
+      ]
+    },
     "configuration": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["profile", "workloadSha256", "performanceVerdict", "infrastructureState", "runtimeFailures", "validPairs", "requiredPairs", "attempts", "comparison"],
+      "required": [
+        "profile",
+        "workloadSha256",
+        "performanceVerdict",
+        "infrastructureState",
+        "runtimeFailures",
+        "validPairs",
+        "requiredPairs",
+        "attempts",
+        "comparison"
+      ],
       "properties": {
-        "profile": {"type": "string", "minLength": 1},
-        "workloadSha256": {"$ref": "#/$defs/digest"},
-        "performanceVerdict": {"enum": ["pass", "regression", "inconclusive", "not-run"]},
-        "infrastructureState": {"$ref": "#/$defs/infrastructure"},
-        "runtimeFailures": {"type": "array", "items": {"type": "string"}},
-        "validPairs": {"type": "integer", "minimum": 0},
-        "requiredPairs": {"type": "integer", "minimum": 5},
-        "attempts": {"type": "array", "items": {"type": "object"}},
-        "comparison": {"type": ["object", "null"]}
+        "profile": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workloadSha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "performanceVerdict": {
+          "enum": [
+            "pass",
+            "regression",
+            "inconclusive",
+            "not-run"
+          ]
+        },
+        "infrastructureState": {
+          "$ref": "#/$defs/infrastructure"
+        },
+        "runtimeFailures": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "validPairs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "requiredPairs": {
+          "type": "integer",
+          "minimum": 5
+        },
+        "attempts": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "comparison": {
+          "type": [
+            "object",
+            "null"
+          ]
+        }
       }
     }
   }

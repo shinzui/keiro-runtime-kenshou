@@ -1,0 +1,11 @@
+{
+  "schema": "kenshou.perf-publication/v1",
+  "snapshot": "snapshots/00000000-0000-7000-8000-000000000000",
+  "manifestUri": "gs://synthetic-evidence/performance/sessions/00000000-0000-7000-8000-000000000000/snapshots/00000000-0000-7000-8000-000000000000/manifest.json",
+  "manifestSha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "resultSha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "payloadsReadyAt": "2026-10-11T00:00:00Z",
+  "publicationStartedAt": "2026-10-11T00:00:05Z",
+  "verifiedReportAt": "2026-10-11T00:00:10Z",
+  "totalElapsedSeconds": 10
+}

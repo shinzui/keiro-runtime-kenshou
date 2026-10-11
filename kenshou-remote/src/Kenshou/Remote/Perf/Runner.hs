@@ -41,6 +41,7 @@ data RunnerHooks = RunnerHooks
     verifyCompleted :: ConfigurationResult -> IO Bool,
     cancelOwnedWork :: LeaseIdentity -> IO (),
     releaseOwnedLease :: LeaseIdentity -> IO Bool,
+    reportMetadata :: PerfSession -> PerfResult -> IO PerfResult,
     publishAndVerify :: PerfSession -> PerfResult -> IO Bool
   }
 
@@ -156,9 +157,18 @@ runPerformance hooks prepared path = do
           (session.plan.request.budgetMinutes * 60000000)
           (min (session.plan.request.budgetMinutes * 60000000) . max 0 . floor . (* 1000000) . (`diffUTCTime` publicationStarted))
           saved.cleanupDeadline
-  publication <- try @IOException (timeout publicationMicros (hooks.publishAndVerify session preliminary))
-  let published = either (const False) (== Just True) publication
-  require (aggregateResult session.plan session.preparedSha256 (published && either (const False) (const True) execution) completed)
+  publication <-
+    try @IOException
+      ( timeout publicationMicros do
+          reported <- hooks.reportMetadata session preliminary
+          require (validateResult reported)
+          unless (reported {stageSeconds = Map.empty, artifactReferences = []} == preliminary) (ioError (userError "report metadata changed a performance decision"))
+          published <- hooks.publishAndVerify session reported
+          pure (reported, published)
+      )
+  let (reported, published) = either (const (preliminary, False)) (maybe (preliminary, False) id) publication
+  final <- require (aggregateResult session.plan session.preparedSha256 (published && either (const False) (const True) execution) completed)
+  pure final {stageSeconds = reported.stageSeconds, artifactReferences = reported.artifactReferences}
   where
     verify result = hooks.verifyCompleted result >>= \valid -> unless valid (ioError (userError "retained completed configuration failed evidence verification"))
     cost entry = 2 * entry.profile.minimumPairs * (entry.profile.trialSeconds + entry.profile.resetSeconds + entry.profile.sealSeconds)

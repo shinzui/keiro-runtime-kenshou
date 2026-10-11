@@ -111,6 +111,9 @@ main = hspec do
         store.getObject (Bucket "tan-nb-exp-cells-control") (ObjectName "cells/alpha/lease.json") `shouldReturn` Nothing
         runWithArgs ["perf", "verify", "--session", output] `shouldReturnCode` ExitFailure 3
         runWithArgs ["perf", "verify", "--session", output, "--offline"] `shouldReturnCode` ExitFailure 3
+        originalResult <- LazyByteString.readFile (output </> "result.json")
+        runWithArgs ["perf", "resume", "--session", output] `shouldReturnCode` ExitFailure 3
+        LazyByteString.readFile (output </> "result.json") `shouldReturn` originalResult
         published <- store.listObjects (Bucket "fixture-evidence") "performance/sessions/"
         let reports = [name | (name, _) <- published, "/report.md" `Text.isSuffixOf` name.unObjectName]
         length reports `shouldBe` 1

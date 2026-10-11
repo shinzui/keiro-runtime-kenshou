@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "snapshot",
+    "manifestUri",
+    "manifestSha256",
+    "resultSha256",
+    "payloadsReadyAt",
+    "publicationStartedAt",
+    "verifiedReportAt",
+    "totalElapsedSeconds"
+  ],
+  "properties": {
+    "schema": {
+      "const": "kenshou.perf-publication/v1"
+    },
+    "snapshot": {
+      "type": "string",
+      "pattern": "^snapshots/[a-f0-9-]{36}$"
+    },
+    "manifestUri": {
+      "type": "string",
+      "pattern": "^gs://[^\\s?#]+/manifest[.]json$"
+    },
+    "manifestSha256": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "resultSha256": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "payloadsReadyAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "publicationStartedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "verifiedReportAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "totalElapsedSeconds": {
+      "type": "number",
+      "minimum": 0
+    }
+  }
+}

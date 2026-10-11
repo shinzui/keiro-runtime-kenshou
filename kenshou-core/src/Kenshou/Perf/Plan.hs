@@ -101,7 +101,7 @@ validateProfile catalog profile = do
     [value] -> Right value
     _ -> Left ("profile names an unknown or duplicate scenario: " <> profile.scenario)
   require (scenario.id.kind == Benchmark && scenario.revision == profile.scenarioRevision) "profile scenario revision/kind mismatch"
-  require (profile.revision > 0 && not (Text.null profile.name)) "invalid profile identity"
+  require (profile.revision > 0 && not (Text.null profile.name) && Text.all (`elem` (['a' .. 'z'] <> ['0' .. '9'] <> ['-'])) profile.name) "invalid profile identity"
   require (profile.workloadPurpose == "fixed-load-latency") "unsupported workload purpose; paced throughput is not capacity"
   -- These two revisions implement count-bound steady work, not timed phases.
   require

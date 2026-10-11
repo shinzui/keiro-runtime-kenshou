@@ -84,6 +84,7 @@ evidence-check:
 
 [group('verification')]
 schemas-check:
+    check-jsonschema --schemafile schemas/kenshou.perf-publication.v1.schema.json kenshou-cli/test/fixtures/perf-publication.synthetic.json
     check-jsonschema --schemafile schemas/kenshou.perf-session.v1.schema.json kenshou-remote/test/golden/perf-session.fixture.json
     check-jsonschema --schemafile schemas/kenshou.perf-result.v1.schema.json kenshou-core/test/golden/perf-result.*.fixture.json
     check-jsonschema --schemafile schemas/kenshou.perf-prepared.v1.schema.json kenshou-core/test/golden/perf-prepared.fixture.json

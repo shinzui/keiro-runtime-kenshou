@@ -9,6 +9,7 @@ import Kenshou.Core.Id (newRunId)
 import Kenshou.Perf.Plan
 import Kenshou.Perf.Prepared qualified as Prepared
 import Kenshou.Perf.Result
+import Kenshou.Perf.Result qualified as Result
 import Kenshou.Remote.Perf.Journal
 import Kenshou.Remote.Perf.Runner
 import System.FilePath ((</>))
@@ -61,6 +62,14 @@ spec = describe "performance runner orchestration" do
     recovered.exitCode `shouldBe` 0
     invalid <- runPerformance hooks {publishAndVerify = \_ _ -> pure False} prepared path
     invalid.exitCode `shouldBe` 4
+  it "rejects a report decorator that changes a performance decision" $ withSystemTempDirectory "perf-runner-report" \directory -> do
+    (prepared, path) <- fixture directory
+    calls <- newIORef ([] :: [(Text, Int, Bool)])
+    hooks <- fixtureHooks calls
+    published <- newIORef False
+    result <- runPerformance hooks {reportMetadata = \_ report -> pure report {Result.changeCoverage = "complete"}, publishAndVerify = \_ _ -> writeIORef published True >> pure True} prepared path
+    result.exitCode `shouldBe` 4
+    readIORef published `shouldReturn` False
   it "rejects changed immutable preparation before any admission" $ withSystemTempDirectory "perf-runner" \directory -> do
     (prepared, path) <- fixture directory
     calls <- newIORef ([] :: [(Text, Int, Bool)])
@@ -141,6 +150,7 @@ fixtureHooks calls = do
         verifyCompleted = \_ -> pure True,
         cancelOwnedWork = \_ -> pure (),
         releaseOwnedLease = \_ -> pure True,
+        reportMetadata = \_ result -> pure result,
         publishAndVerify = \_ _ -> pure True
       }
 

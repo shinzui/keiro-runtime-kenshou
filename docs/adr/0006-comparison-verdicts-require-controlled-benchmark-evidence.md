@@ -2,7 +2,7 @@
 type: Architecture Decision Record
 title: Comparison verdicts require controlled benchmark evidence
 description: Performance verdicts come only from paired, interleaved, compatibility-checked, benchmark-grade runs, while historical measurements remain telemetry.
-timestamp: 2026-10-11T06:10:23Z
+timestamp: 2026-10-11T06:41:03Z
 generated:
   by: process:codex
   at: "2026-09-21T16:14:01Z"
@@ -72,7 +72,13 @@ spent admission allowance, attempt and replacement counts across interruption.
 A new lease starts a separate unfinished comparison attempt; pairs from different
 leases are not pooled. Durable publication uses create-only objects and verifies
 every retrieved artifact, including pre-existing objects. Failed publication or
-retrieval cannot yield an authoritative success. Replay preserves the original
+retrieval cannot yield an authoritative success. Reports link input, comparison,
+outer-cell and nested-runtime artifacts in a separately sealed snapshot. A
+create-only, retrieved publication receipt anchors the root manifest digest and
+measured time from freshly verified payloads to a retrieved durable report; it
+remains outside that manifest to avoid a self-referential digest. Resuming a
+finished session verifies and reuses that report without extending its deadline
+or rerunning trials. Replay preserves the original
 sealed comparison bytes and compares evidence identities and statistical outputs
 while permitting a new analysis ID, clock and analysis-host fingerprint.
 

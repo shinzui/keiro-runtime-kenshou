@@ -1,6 +1,7 @@
 module Kenshou.Perf.Result
   ( ConfigurationResult (..),
     PerfResult (..),
+    ArtifactReference (..),
     aggregateResult,
     validateResult,
     semanticComparison,
@@ -12,6 +13,8 @@ import Data.Aeson
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.Types (Parser, parseEither)
 import Data.List (nub, sort)
+import Data.Map.Strict (Map)
+import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Kenshou.Perf.Plan
@@ -46,9 +49,26 @@ data PerfResult = PerfResult
     exclusions :: [(Text, Text)],
     uncoveredScenarios :: [Text],
     evidenceVerified :: Bool,
-    exitCode :: Int
+    exitCode :: Int,
+    stageSeconds :: Map Text Double,
+    artifactReferences :: [ArtifactReference]
   }
   deriving stock (Eq, Show)
+
+-- The root manifest and retrieval receipt anchor their own digests externally,
+-- avoiding a self-referential report. Other links carry an artifact digest.
+data ArtifactReference = ArtifactReference {kind :: Text, uri :: Text, sha256 :: Maybe Text}
+  deriving stock (Eq, Show)
+
+instance ToJSON ArtifactReference where
+  toJSON reference = object ["kind" .= reference.kind, "uri" .= reference.uri, "sha256" .= reference.sha256]
+
+instance FromJSON ArtifactReference where
+  parseJSON = withObject "PerformanceArtifactReference" \v -> do
+    strictObject ["kind", "uri", "sha256"] v
+    reference <- ArtifactReference <$> v .: "kind" <*> v .: "uri" <*> v .:? "sha256"
+    unless (not (Text.null reference.kind) && "gs://" `Text.isPrefixOf` reference.uri && not (Text.any (`elem` ['\n', '\r', ' ', '?', '#']) reference.uri) && maybe True digest reference.sha256) (fail "invalid performance artifact reference")
+    pure reference
 
 -- An aggregate's ordinary exit mapping also applies to calibration exercises;
 -- their purpose and gatingEligible fields keep them out of production gates.
@@ -68,7 +88,7 @@ aggregateResult plan preparedDigest verified configurations = do
       verdict = if scope == "not-applicable" then "not-applicable" else if regression then "regression" else if accepted && scope == "complete" && infrastructure == "healthy" then "pass" else "inconclusive"
       code = outcomeExit infrastructure blockers scope verdict
       eligible = plan.gatingEligible && code == 0 && verdict == "pass"
-      result = PerfResult plan.requestSha256 preparedDigest plan.request.purpose scope plan.changeCoverage verdict infrastructure blockers eligible configurations plan.excluded plan.uncoveredScenarios verified code
+      result = PerfResult plan.requestSha256 preparedDigest plan.request.purpose scope plan.changeCoverage verdict infrastructure blockers eligible configurations plan.excluded plan.uncoveredScenarios verified code Map.empty []
   validateResult result
   pure result
   where
@@ -89,6 +109,8 @@ validateResult result = do
   unless (result.purpose `elem` ["gating", "calibration"] && result.coverage `elem` ["complete", "incomplete", "not-applicable"] && result.changeCoverage `elem` ["complete", "incomplete", "not-applicable"] && result.performanceVerdict `elem` ["pass", "regression", "inconclusive", "not-applicable"]) (Left "invalid aggregate purpose, scope or verdict")
   unless (result.infrastructureState `elem` ["healthy", "pending", "failed"]) (Left "invalid aggregate infrastructure state")
   mapM_ validateConfiguration result.configurations
+  unless (all (\seconds -> not (isNaN seconds || isInfinite seconds) && seconds >= 0) (Map.elems result.stageSeconds)) (Left "invalid performance stage timing")
+  mapM_ (\reference -> case fromJSON (toJSON reference) :: Result ArtifactReference of Error problem -> Left (Text.pack problem); Success _ -> Right ()) result.artifactReferences
   let names = map (.profile) result.configurations
       blockers = concatMap (.runtimeFailures) result.configurations
       regression = any ((== "regression") . (.performanceVerdict)) result.configurations
@@ -151,11 +173,11 @@ instance FromJSON ConfigurationResult where
     pure result
 
 instance ToJSON PerfResult where
-  toJSON result = object ["schema" .= ("kenshou.perf-result/v1" :: Text), "requestSha256" .= result.requestSha256, "preparedSha256" .= result.preparedSha256, "purpose" .= result.purpose, "coverage" .= result.coverage, "changeCoverage" .= result.changeCoverage, "performanceVerdict" .= result.performanceVerdict, "infrastructureState" .= result.infrastructureState, "blockingRuntimeFailures" .= result.blockingRuntimeFailures, "gatingEligible" .= result.gatingEligible, "configurations" .= result.configurations, "exclusions" .= [object ["profile" .= name, "reason" .= reason] | (name, reason) <- result.exclusions], "uncoveredScenarios" .= result.uncoveredScenarios, "evidenceVerified" .= result.evidenceVerified, "exitCode" .= result.exitCode]
+  toJSON result = object ["schema" .= ("kenshou.perf-result/v1" :: Text), "requestSha256" .= result.requestSha256, "preparedSha256" .= result.preparedSha256, "purpose" .= result.purpose, "coverage" .= result.coverage, "changeCoverage" .= result.changeCoverage, "performanceVerdict" .= result.performanceVerdict, "infrastructureState" .= result.infrastructureState, "blockingRuntimeFailures" .= result.blockingRuntimeFailures, "gatingEligible" .= result.gatingEligible, "configurations" .= result.configurations, "exclusions" .= [object ["profile" .= name, "reason" .= reason] | (name, reason) <- result.exclusions], "uncoveredScenarios" .= result.uncoveredScenarios, "evidenceVerified" .= result.evidenceVerified, "exitCode" .= result.exitCode, "stageSeconds" .= result.stageSeconds, "artifactReferences" .= result.artifactReferences]
 
 instance FromJSON PerfResult where
   parseJSON = withObject "PerfResult" \v -> do
-    strictObject ["schema", "requestSha256", "preparedSha256", "purpose", "coverage", "changeCoverage", "performanceVerdict", "infrastructureState", "blockingRuntimeFailures", "gatingEligible", "configurations", "exclusions", "uncoveredScenarios", "evidenceVerified", "exitCode"] v
+    strictObject ["schema", "requestSha256", "preparedSha256", "purpose", "coverage", "changeCoverage", "performanceVerdict", "infrastructureState", "blockingRuntimeFailures", "gatingEligible", "configurations", "exclusions", "uncoveredScenarios", "evidenceVerified", "exitCode", "stageSeconds", "artifactReferences"] v
     schema <- v .: "schema"
     unless (schema == ("kenshou.perf-result/v1" :: Text)) (fail "unsupported performance result schema")
     exclusions <-
@@ -165,6 +187,6 @@ instance FromJSON PerfResult where
               strictObject ["profile", "reason"] e
               (,) <$> e .: "profile" <*> e .: "reason"
           )
-    result <- PerfResult <$> v .: "requestSha256" <*> v .: "preparedSha256" <*> v .: "purpose" <*> v .: "coverage" <*> v .: "changeCoverage" <*> v .: "performanceVerdict" <*> v .: "infrastructureState" <*> v .: "blockingRuntimeFailures" <*> v .: "gatingEligible" <*> v .: "configurations" <*> pure exclusions <*> v .: "uncoveredScenarios" <*> v .: "evidenceVerified" <*> v .: "exitCode"
+    result <- PerfResult <$> v .: "requestSha256" <*> v .: "preparedSha256" <*> v .: "purpose" <*> v .: "coverage" <*> v .: "changeCoverage" <*> v .: "performanceVerdict" <*> v .: "infrastructureState" <*> v .: "blockingRuntimeFailures" <*> v .: "gatingEligible" <*> v .: "configurations" <*> pure exclusions <*> v .: "uncoveredScenarios" <*> v .: "evidenceVerified" <*> v .: "exitCode" <*> (v .:? "stageSeconds" .!= Map.empty) <*> (v .:? "artifactReferences" .!= [])
     either (fail . Text.unpack) pure (validateResult result)
     pure result
