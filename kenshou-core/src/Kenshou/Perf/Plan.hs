@@ -149,8 +149,8 @@ conservativeChanges graph repository paths mapped = (changes, unknown, documenta
 
 -- The admission map is populated only by an evidence verifier, never by a
 -- catalog's self-asserted calibrated flag. It maps workload digest to verified
--- calibration evidence digest. Until that verifier is implemented the CLI
--- supplies an empty map and ordinary gating requests remain incomplete.
+-- calibration evidence digest. A catalog link cannot populate this map without
+-- full receipt retrieval, raw report replay and acceptance-batch verification.
 planPerformance :: PerfRequest -> ComponentGraph -> [Catalog.ScenarioInfo] -> ProfileCatalog -> [Change] -> [FilePath] -> [FilePath] -> Map Text Text -> Map Text Text -> Either Text PerfPlan
 planPerformance request graph catalog profiles changes unknown documentation policyDigests admitted = do
   validateRequest request

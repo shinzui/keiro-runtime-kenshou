@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "kenshou.perf-calibration-acceptance/v1"
+    },
+    "batchId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "aa": {
+      "type": "array",
+      "minItems": 20,
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "seed": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "receipts": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 21,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "uri": {
+                  "type": "string",
+                  "pattern": "^gs://[a-z0-9.-]+/.+$"
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                }
+              },
+              "required": [
+                "uri",
+                "sha256"
+              ]
+            }
+          }
+        },
+        "required": [
+          "seed",
+          "receipts"
+        ]
+      }
+    },
+    "slowdown": {
+      "type": "array",
+      "minItems": 20,
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "seed": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "receipts": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 21,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "uri": {
+                  "type": "string",
+                  "pattern": "^gs://[a-z0-9.-]+/.+$"
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                }
+              },
+              "required": [
+                "uri",
+                "sha256"
+              ]
+            }
+          }
+        },
+        "required": [
+          "seed",
+          "receipts"
+        ]
+      }
+    }
+  },
+  "required": [
+    "schema",
+    "batchId",
+    "aa",
+    "slowdown"
+  ]
+}

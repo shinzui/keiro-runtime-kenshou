@@ -1,6 +1,6 @@
 {-# LANGUAGE FieldSelectors #-}
 
-module Kenshou.Perf.Artifacts (verifyPerfManifest, sealPerfDirectory) where
+module Kenshou.Perf.Artifacts (verifyPerfManifest, sealPerfDirectory, safePath) where
 
 import Control.Exception (IOException, displayException, try)
 import Control.Monad (unless)

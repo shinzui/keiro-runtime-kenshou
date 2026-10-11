@@ -1,6 +1,7 @@
 # Bundle Update Log
 
 ## 2026-10-11
+* **Create**: Record independent generated-cohort checks, verified calibration admission, scoped results, persistent budgets and durable publication for ADR-23.
 * **Update**: ADR-6 binds controlled performance reports to a retrieved publication receipt with artifact references and measured turnaround.
 * **Update**: ADR-6 requires sealed cell conditions, persistent orchestration budgets and retrieval-verified durable performance evidence.
 * **Update**: ADR-2 binds generated performance builds to authenticated solver sources, selected description revisions and final flag compatibility.

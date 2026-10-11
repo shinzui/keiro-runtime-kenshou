@@ -3,6 +3,7 @@
 module Kenshou.PerfPreparedSpec (spec) where
 
 import Data.Aeson
+import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString qualified as ByteString
 import Data.Either (isLeft)
 import Data.Map.Strict qualified as Map
@@ -11,6 +12,7 @@ import Data.Text qualified
 import Kenshou.Core.Cohort qualified as Cohort
 import Kenshou.Core.Manifest qualified as Manifest
 import Kenshou.Perf.Artifacts
+import Kenshou.Perf.Calibration qualified as Calibration
 import Kenshou.Perf.Prepared hiding (plan)
 import System.Directory (createFileLink)
 import System.FilePath ((</>))
@@ -26,6 +28,18 @@ spec = describe "performance preparation integrity" do
     validatePrepared prepared {baseline = baselineArm {buildKey = "sha256:changed"}} `shouldSatisfy` isLeft
     decoded <- right (eitherDecode (encode prepared) :: Either String PerfPrepared)
     toJSON decoded `shouldBe` toJSON prepared
+  it "binds actual inventories to the planning toolchain while allowing catalog-only promotion" do
+    prepared <- eitherDecodeFileStrict' "test/golden/perf-prepared.fixture.json" >>= right
+    let inventory = (prepared :: PerfPrepared).baseline.buildInventory
+    case (prepared.inputs, inventory.toolchain) of
+      (Object inputs, Object toolchain) -> do
+        let expected = Object (KeyMap.delete "harnessRevision" toolchain)
+            pinned = prepared {inputs = Object (KeyMap.insert "buildToolchain" expected inputs)}
+            changed = inventory {toolchain = Object (KeyMap.insert "harnessRevision" (String "another catalog commit") toolchain)}
+        validatePrepared pinned `shouldBe` Right ()
+        Calibration.toolchainDigest inventory `shouldBe` Calibration.toolchainDigest changed
+        validatePrepared prepared {inputs = Object (KeyMap.insert "buildToolchain" (object ["strictBounds" .= False]) inputs)} `shouldSatisfy` isLeft
+      _ -> expectationFailure "invalid synthetic inventory fixture"
   it "rejects bound lifting inside a resealed inventory even when its toolchain claims strict bounds" do
     prepared <- eitherDecodeFileStrict' "test/golden/perf-prepared.fixture.json" >>= right
     let arm = (prepared :: PerfPrepared).baseline

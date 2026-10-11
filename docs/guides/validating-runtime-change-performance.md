@@ -4,7 +4,7 @@ title: Validating runtime change performance
 description: Prepare exact runtime revisions, execute bounded paired comparisons, recover sessions, and verify durable performance evidence.
 docId: DOC-6
 tags: [performance, runtime-changes, verification-cells, evidence, ci]
-generated: {by: 'codex/gpt-6.1-sol', at: '2026-10-11T07:25:00Z'}
+generated: {by: 'codex/gpt-6.1-sol', at: '2026-10-11T07:43:09Z'}
 ---
 
 # Validating runtime change performance
@@ -19,8 +19,8 @@ The command family is implemented. The initial core and PGMQ profiles are still
 uncalibrated, and live build, cell, timing and CI acceptance remain open in
 [Plan 25](../plans/25-provide-quick-and-reliable-performance-validation-for-runtime-changes.md).
 Ordinary gating requests exclude uncalibrated profiles and return incomplete
-coverage rather than a pass. Calibration admission verification is not yet
-implemented; editing a catalog calibration link does not enable a gate.
+coverage rather than a pass. Calibration admission retrieves frozen records and
+replays every retained report; a catalog link alone does not enable a gate.
 
 ## Pin the request and inspect its scope
 
@@ -172,6 +172,58 @@ toolchain or machine changes invalidate the designation. No current profile has
 completed that acceptance. For uncovered behavior or a longer workload, run a
 separate explicit comparison using [measuring and comparing](measuring-and-comparing.md);
 retain its scope and budget instead of silently broadening a quick request.
+
+## Freeze and verify a calibration batch
+
+First pin the profile to the designated cell's actual machine profile, its
+effective knobs, required metrics and policy. Retain a clean test-only slowdown
+commit and review its deterministic delay at the real operation boundary. Its
+declared latency effect must exceed both the policy's relative and absolute
+thresholds. Keep that candidate outside runtime releases.
+
+Create a `kenshou.perf-calibration-definition/v1` document using
+`schemas/kenshou.perf-calibration-definition.v1.schema.json`. Bind one profile's
+workload digest, the prepared compiler/platform/toolchain digest, the planning
+inputs' `harnessSemanticsSha256`, both source commits, the injected mechanism and
+target effect. Declare twenty unique seeds, a finite infrastructure retry cap
+(at most twenty), and an explicit expiry. Publish before any acceptance trial:
+
+```bash
+kenshou perf calibration declare --definition definition.json \
+  --uri "$CALIBRATION_DEFINITION_URI"
+```
+
+The returned URI, digest and storage timestamp anchor the frozen batch. Run one
+profile per calibration request, with its declared seed. Retain all twenty A/A
+and twenty slowdown slots, including every infrastructure retry. A completed
+statistical result cannot be replaced with a more favorable result. Every attempt
+needs a durable publication receipt; a missing receipt cannot be hidden as a
+retry. A slot's A/A timing includes its retained retries. The acceptance check
+requires nineteen expected verdicts, zero opposite verdicts, at most one
+inconclusive verdict, no runtime blockers, and nearest-rank p95 at most 900 seconds.
+
+Create the complete receipt inventory using
+`schemas/kenshou.perf-calibration-acceptance.v1.schema.json`; its two arrays follow
+the declared seed order. Publish it and construct a reference document with the
+definition/acceptance URIs and SHA-256 digests:
+
+```bash
+kenshou perf calibration publish --acceptance acceptance.json \
+  --uri "$CALIBRATION_ACCEPTANCE_URI"
+kenshou perf calibration verify --reference reference.json \
+  --prepared .dev/single-profile-preparation/evidence/prepared.json
+```
+
+Publishing an inventory does not certify it. Verification retrieves every report
+graph, replays its ordinary comparisons and checks batch identities, counts,
+retry bounds and timings. Planning repeats that verification before admitting a
+catalog reference. Gating execution and online verification also recheck it.
+The full flake lock and compiler/platform/variant bind the toolchain. The harness
+source hash deliberately excludes catalog calibration links and documentation;
+attaching evidence can therefore promote an unchanged workload without creating
+a digest cycle. Other tracked Haskell, Cabal, Nix or Python source changes
+conservatively require a fresh batch. These are protocol controls; neither initial
+profile has completed a real acceptance batch.
 
 ## Configure reusable CI
 

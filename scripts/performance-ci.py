@@ -130,7 +130,8 @@ def measure(environ):
         require(report["result"]["purpose"] == "gating", "calibration is not a CI gate")
         require(report["result"]["exitCode"] == code == verification_code and code in (0, 1, 2, 3, 4), "CLI and replay exits differ")
         if code == 0:
-            require(report["result"]["gatingEligible"] is True, "pass is not gating eligible")
+            not_applicable = report["result"].get("performanceVerdict") == "not-applicable" and report["result"].get("coverage") == "not-applicable" and not report["result"].get("configurations")
+            require(report["result"]["gatingEligible"] is True or not_applicable, "pass is not gating eligible or proved not applicable")
         manifest_uri = report["manifestUri"]
         receipt = json.loads((session / "receipt.json").read_text())
         summary = session / receipt["snapshot"] / "report.md"

@@ -1,16 +1,17 @@
-module Kenshou.Remote.Perf.Publication (publishEvidence, verifyPublication) where
+module Kenshou.Remote.Perf.Publication (publishEvidence, verifyPublication, retrieveEvidence) where
 
 import Control.Exception (IOException, bracket, displayException, try)
 import Control.Monad (unless)
 import Data.Aeson (eitherDecodeFileStrict')
+import Data.List (nub)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Kenshou.Core.Manifest (Manifest (..), ManifestFile (..))
-import Kenshou.Perf.Artifacts (verifyPerfManifest)
+import Kenshou.Perf.Artifacts (safePath, verifyPerfManifest)
 import Kenshou.Remote.Payload.Publish (digestFile)
 import Kenshou.Remote.Store
-import System.Directory (getTemporaryDirectory, removeFile)
-import System.FilePath ((</>))
+import System.Directory (createDirectoryIfMissing, getTemporaryDirectory, removeFile)
+import System.FilePath (takeDirectory, (</>))
 import System.IO (hClose, openBinaryTempFile)
 
 -- Manifest is published last. Every object is create-only, and even existing
@@ -47,6 +48,27 @@ verifyPublication store bucket prefix directory = protected do
       unless (present /= Nothing) (ioError (userError ("published artifact is missing: " <> relative)))
       (actual, actualBytes) <- digestFile temporary
       unless (actual == expected && toInteger actualBytes == bytes) (ioError (userError ("published artifact differs: " <> relative)))
+
+-- Retrieve into a fresh caller-owned directory. Validate the complete inventory
+-- before allowing any remote name to become a local output path.
+retrieveEvidence :: ObjectStore -> Bucket -> Text -> Text -> FilePath -> IO (Either Text ())
+retrieveEvidence store bucket prefix expectedManifest directory = protected do
+  validatePrefix prefix
+  createDirectoryIfMissing True directory
+  fetch "manifest.json"
+  (digest, _) <- digestFile (directory </> "manifest.json")
+  unless ("sha256:" <> digest == expectedManifest) (ioError (userError "retrieved performance manifest differs from its receipt"))
+  manifest <- eitherDecodeFileStrict' (directory </> "manifest.json") >>= either (ioError . userError) pure
+  let paths = map (.path) (manifest :: Manifest).files
+  unless (all safePath paths && "manifest.json" `notElem` paths && nub paths == paths && all ((>= 0) . (.bytes)) manifest.files) (ioError (userError "unsafe calibration report inventory"))
+  mapM_ fetch paths
+  verifyPerfManifest directory >>= require
+  where
+    fetch relative = do
+      let path = directory </> relative
+      createDirectoryIfMissing True (takeDirectory path)
+      present <- store.downloadTo bucket (ObjectName (prefix <> "/" <> Text.pack relative)) path
+      unless (present /= Nothing) (ioError (userError ("missing calibration report artifact: " <> relative)))
 
 publicationFiles :: FilePath -> IO [(FilePath, Text, Integer, Text)]
 publicationFiles directory = do

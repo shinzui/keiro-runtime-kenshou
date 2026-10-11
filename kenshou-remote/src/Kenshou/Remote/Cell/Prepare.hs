@@ -45,7 +45,7 @@ import Kenshou.Remote.Store (Bucket (..))
 
 cellMachineProfile :: CellDescriptor -> Text
 cellMachineProfile descriptor =
-  "gcp/" <> descriptor.zone <> "/shape-" <> Text.take 16 (Text.drop 7 (sha256Hex (LazyByteString.toStrict (encode descriptor.shape)))) <> "/pg" <> Text.pack (show descriptor.postgresMajor)
+  "gcp/" <> descriptor.zone <> "/shape-" <> Text.take 16 (Text.drop 7 (sha256Hex (LazyByteString.toStrict (encode descriptor.shape)))) <> "/images-" <> Text.take 16 (Text.drop 7 (sha256Hex (LazyByteString.toStrict (encode descriptor.images)))) <> "/pg" <> Text.pack (show descriptor.postgresMajor)
 
 data Granularity = GranularityAuto | GranularityPlan | GranularityRun
   deriving stock (Eq, Show)

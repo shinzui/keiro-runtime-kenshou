@@ -3,19 +3,21 @@
 module Kenshou.Cli.Command.Perf (perfCommand, validateProfilePolicy) where
 
 import Control.Exception (Exception, IOException, catch, displayException, throwIO)
-import Control.Monad (unless, when)
+import Control.Monad (foldM, unless, when)
 import Data.Aeson hiding (decode)
+import Data.Aeson.Key qualified as Key
 import Data.Aeson.Types (parseEither)
+import Data.Aeson.Types qualified as Aeson
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Lazy.Char8 qualified as LazyByteString
-import Data.List (nub)
+import Data.List (nub, sort)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as Text.Encoding
 import Data.Text.IO qualified as Text.IO
 import Data.Time.Clock (diffUTCTime, getCurrentTime)
-import Kenshou.Cli.Command.Perf.Session (sessionCommands)
+import Kenshou.Cli.Command.Perf.Session (sessionCommands, verifyCalibrationAdmission)
 import Kenshou.Core.Bundle (allScenarios)
 import Kenshou.Core.Canonical (canonicalEncode, sha256Hex)
 import Kenshou.Core.Cli
@@ -23,6 +25,7 @@ import Kenshou.Core.Cohort qualified as Cohort
 import Kenshou.Measure.Compare.Policy qualified as Policy
 import Kenshou.Measure.Perf (validateProfilePolicy)
 import Kenshou.Perf.Artifacts (sealPerfDirectory, verifyPerfManifest)
+import Kenshou.Perf.Calibration (toolchainDigest)
 import Kenshou.Perf.Plan
 import Kenshou.Perf.Prepared qualified as Prepared
 import Kenshou.Perf.Request
@@ -42,7 +45,7 @@ import Options.Applicative qualified as Options
 import System.Directory (createDirectory, createDirectoryIfMissing, doesFileExist, doesPathExist, getCurrentDirectory, listDirectory, makeAbsolute, renameFile)
 import System.Environment (lookupEnv)
 import System.Exit (ExitCode (..))
-import System.FilePath (takeDirectory, (</>))
+import System.FilePath (takeDirectory, takeExtension, (</>))
 import System.IO (stderr)
 import System.IO.Temp (withSystemTempDirectory, withTempDirectory)
 import System.Process (readProcessWithExitCode)
@@ -286,6 +289,39 @@ runPlan requestPath output environment = guarded do
   LazyByteString.putStrLn (encode plan)
   pure ExitSuccess
 
+planningToolchain :: Cohort.CohortDescriptor -> IO Prepared.BuildInventory
+planningToolchain descriptor = do
+  bytes <- ByteString.readFile "flake.lock"
+  lock <- decode "flake lock" bytes
+  (nixpkgs, haskellNix) <- requireInput (either (Left . Text.pack) Right (parseEither pins lock))
+  pure (Prepared.BuildInventory "nix" descriptor.descriptorCompiler "x86_64-linux" (object ["nixpkgsRevision" .= nixpkgs, "haskellNixRevision" .= haskellNix, "flakeLockSha256" .= sha256Hex bytes, "variant" .= ("default" :: Text), "strictBounds" .= True]) [])
+  where
+    pins = withObject "FlakeLock" \v -> do
+      nodes <- v .: "nodes"
+      root <- v .: "root"
+      let node name = withObject "LockNodes" (.: Key.fromText name) nodes
+          follow :: Int -> Text -> Text -> Aeson.Parser Text
+          follow depth name key = do
+            when (depth > 32) (fail "cyclic or excessive flake follows chain")
+            value <- node name >>= withObject "LockNode" (.: "inputs") >>= withObject "LockInputs" (.: Key.fromText key)
+            case value of
+              String destination -> pure destination
+              Array _ -> parseJSON @[Text] value >>= foldM (follow (depth + 1)) root
+              _ -> fail "unsupported flake input reference"
+          revision input = do
+            name <- follow 0 root input
+            value <- node name >>= withObject "LockNode" (.: "locked") >>= withObject "LockedInput" (.: "rev")
+            unless (immutableRevision value) (fail "toolchain input needs an immutable commit")
+            pure value
+      (,) <$> revision "nixpkgs" <*> revision "haskell-nix"
+
+harnessSemantics :: IO Text
+harnessSemantics = do
+  listed <- process "git" ["ls-files", "-z"]
+  let paths = sort [Text.unpack path | path <- Text.splitOn "\0" listed, takeExtension (Text.unpack path) `elem` [".hs", ".cabal", ".nix", ".py"] || path `elem` ["flake.lock", "cabal.project"]]
+  records <- traverse (\path -> do bytes <- ByteString.readFile path; pure (object ["path" .= path, "sha256" .= sha256Hex bytes])) paths
+  pure (sha256Hex (canonicalEncode (toJSON records)))
+
 createPlan :: FilePath -> FilePath -> CliEnv -> Maybe (Text, Bool) -> IO PerfPlan
 createPlan requestPath output environment pinnedHarness = do
   occupied <- doesPathExist output
@@ -323,7 +359,20 @@ createPlan requestPath output environment pinnedHarness = do
     let paths = map Text.unpack (filter (not . Text.null) (Text.splitOn "\0" changedText))
     (mapped, _) <- Git.changesFromUpstream graph (Git.UpstreamDiff sourceProject.repository checkout request.baselineRevision request.candidateRevision) >>= requireInput
     let (changes, unknown, documentation) = conservativeChanges graph sourceProject.repository paths mapped
-    plan <- requireInput (planPerformance request graph catalog profiles changes unknown documentation policyMap Map.empty)
+    provisional <- requireInput (planPerformance request {purpose = "calibration"} graph catalog profiles changes unknown documentation policyMap Map.empty)
+    toolchain <- planningToolchain descriptor
+    semantics <- harnessSemantics
+    admissionChecks <-
+      traverse
+        ( \entry -> do
+            policy <- case [document | (path, document, _) <- policies, path == entry.profile.policy] of [value] -> pure value; _ -> throwIO (PerfFailure 2 "missing calibration policy")
+            verified <- if request.purpose == "calibration" then pure (Left "calibration requests do not consume gating admissions") else case entry.profile.calibration of Nothing -> pure (Left "no calibration evidence"); Just _ -> verifyCalibrationAdmission entry (toolchainDigest toolchain) semantics policy
+            pure (entry, verified)
+        )
+        provisional.selected
+    let admitted = Map.fromList [(entry.workloadSha256, digest) | (entry, Right digest) <- admissionChecks]
+        calibrationProblems = Map.fromList [(entry.profile.name, problem) | (entry, Left problem) <- admissionChecks]
+    plan <- requireInput (planPerformance request graph catalog profiles changes unknown documentation policyMap admitted)
     (harnessRevision, harnessDirty) <- case pinnedHarness of
       Just snapshot -> pure snapshot
       Nothing -> do
@@ -338,6 +387,10 @@ createPlan requestPath output environment pinnedHarness = do
               "baselineSource" .= baseline,
               "candidateSource" .= candidate,
               "harness" .= object ["revision" .= harnessRevision, "dirty" .= harnessDirty],
+              "harnessSemanticsSha256" .= semantics,
+              "buildToolchain" .= toolchain.toolchain,
+              "calibrationAdmissions" .= admitted,
+              "calibrationProblems" .= calibrationProblems,
               "graph" .= graph,
               "scenarioCatalog" .= catalog,
               "profileCatalog" .= profiles,

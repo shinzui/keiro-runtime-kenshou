@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "definitionUri": {
+      "type": "string",
+      "pattern": "^gs://[a-z0-9.-]+/.+$"
+    },
+    "definitionSha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "acceptanceUri": {
+      "type": "string",
+      "pattern": "^gs://[a-z0-9.-]+/.+$"
+    },
+    "acceptanceSha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  },
+  "required": [
+    "definitionUri",
+    "definitionSha256",
+    "acceptanceUri",
+    "acceptanceSha256"
+  ]
+}

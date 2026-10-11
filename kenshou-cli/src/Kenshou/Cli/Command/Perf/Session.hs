@@ -1,4 +1,4 @@
-module Kenshou.Cli.Command.Perf.Session (sessionCommands) where
+module Kenshou.Cli.Command.Perf.Session (sessionCommands, replayCalibrationReceipt, verifyCalibrationAdmission) where
 
 import Control.Concurrent (threadDelay)
 import Control.Exception (Exception, IOException, catch, displayException, throwIO, try)
@@ -23,9 +23,12 @@ import Kenshou.Core.Id
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Measure.Compare.Compatibility (VaryingAxis (..))
 import Kenshou.Measure.Compare.Ordering (PairedOrdering (ABBA))
-import Kenshou.Measure.Compare.Policy (Policy)
+import Kenshou.Measure.Compare.Policy (Direction (..), MetricRule (..), Policy, matchesRule)
+import Kenshou.Measure.Compare.Policy qualified as Policy
 import Kenshou.Perf.Artifacts
+import Kenshou.Perf.Calibration qualified as Calibration
 import Kenshou.Perf.Plan
+import Kenshou.Perf.Plan qualified as PerfPlan
 import Kenshou.Perf.Prepared qualified as Prepared
 import Kenshou.Perf.Request (PerfRequest (..), strictObject)
 import Kenshou.Perf.Result
@@ -117,12 +120,19 @@ sessionCommands =
     <> command "status" (info (statusParser <**> helper) (progDesc "Read persistent performance session state without cell actions"))
     <> command "resume" (info (resumeParser <**> helper) (progDesc "Verify inputs and reconcile a retained performance session"))
     <> command "verify" (info (verifyParser <**> helper) (progDesc "Replay retained comparisons and verify published evidence without executing trials"))
+    <> command "calibration" (info (calibrationParser <**> helper) (progDesc "Freeze calibration batches and verify their retained acceptance evidence"))
   where
     session = strOption (long "session" <> metavar "DIRECTORY")
     runParser = runNew <$> strOption (long "prepared" <> metavar "FILE") <*> strOption (long "evidence-base-uri" <> metavar "GS_URI") <*> strOption (long "out" <> metavar "DIRECTORY") <*> strOption (long "control-bucket" <> value "tan-nb-exp-cells-control" <> showDefault) <*> switch (long "start" <> help "Start stopped instances after acquiring their cell lease")
     statusParser = runStatus <$> session
     resumeParser = runResume <$> session
     verifyParser = runVerify <$> session <*> switch (long "offline" <> help "Verify the retained sealed snapshot and receipt without contacting storage")
+    calibrationParser =
+      hsubparser
+        ( command "declare" (info (runCalibrationPublish True <$> strOption (long "definition" <> metavar "FILE") <*> strOption (long "uri" <> metavar "GS_URI")) (progDesc "Create and retrieve a frozen definition before any acceptance trials"))
+            <> command "publish" (info (runCalibrationPublish False <$> strOption (long "acceptance" <> metavar "FILE") <*> strOption (long "uri" <> metavar "GS_URI")) (progDesc "Create and retrieve the complete acceptance receipt inventory"))
+            <> command "verify" (info (runCalibrationVerify <$> strOption (long "reference" <> metavar "FILE") <*> strOption (long "prepared" <> metavar "FILE")) (progDesc "Replay every calibration receipt against one prepared profile"))
+        )
 
 runNew :: FilePath -> Text -> FilePath -> Text -> Bool -> CliEnv -> IO ExitCode
 runNew preparedPath uri destination bucket start environment = guarded do
@@ -133,6 +143,7 @@ runNew preparedPath uri destination bucket start environment = guarded do
   verifyPerfManifest (takeDirectory preparedPath) >>= require
   exists <- doesPathExist destination
   when exists (throwIO (SessionFailure 2 "performance output already exists"))
+  verifyGatingCalibration prepared
   output <- makeAbsolute destination
   (store, label) <- openStore (Bucket bucket)
   projects <- maybe ["tan-nb-exp"] (map Text.strip . Text.splitOn "," . Text.pack) <$> lookupEnv "KENSHOU_GCP_ALLOWED_PROJECTS"
@@ -173,6 +184,7 @@ runResume destination environment = guarded do
     session <- readPerfSession (output </> "session.json") >>= require
     require (validateSessionInputs prepared session)
     checkRootInputs output prepared
+    verifyGatingCalibration prepared
     inputs <- require (parseInputs session)
     state <- require (journalState session)
     receiptExists <- doesFileExist (output </> "receipt.json")
@@ -331,25 +343,26 @@ execute environment store inputs payloads prepared output = do
       compareOne identity entry index _ callbacks = do
         p <- pinned identity
         acquired <- handle identity
-        when inputs.start (startCellInstances (fst p))
-        let directory = attemptDirectory output entry index
-            schedulePath = directory </> "schedule.json"
-        exists <- doesFileExist schedulePath
-        schedule <-
-          if exists
-            then readJSON schedulePath >>= require . decodeWorkPlan
-            else do
-              identifier <- newRunId
-              planned <- makeSchedule prepared entry identifier
-              createDirectoryIfMissing True directory
-              encodeFile (schedulePath <> ".next") planned
-              renameFile (schedulePath <> ".next") schedulePath
-              pure planned
-        policy <- require (policyFor prepared entry)
-        result <- executeAttempt identity entry schedule policy (axesFor prepared) directory callbacks (executeCellTrial (adapter environment store inputs payloads p) acquired schedule directory entry.profile callbacks.recordRuntimeFailure)
-        maybe (pure ()) (encodeFile (directory </> "comparison.json")) result.comparison
-        encodeFile (directory </> "result.json") result
-        pure result
+        Lease.withHeartbeat store (ref identity) acquired \_ -> do
+          when inputs.start (startCellInstances (fst p))
+          let directory = attemptDirectory output entry index
+              schedulePath = directory </> "schedule.json"
+          exists <- doesFileExist schedulePath
+          schedule <-
+            if exists
+              then readJSON schedulePath >>= require . decodeWorkPlan
+              else do
+                identifier <- newRunId
+                planned <- makeSchedule prepared entry identifier
+                createDirectoryIfMissing True directory
+                encodeFile (schedulePath <> ".next") planned
+                renameFile (schedulePath <> ".next") schedulePath
+                pure planned
+          policy <- require (policyFor prepared entry)
+          result <- executeAttempt identity entry schedule policy (axesFor prepared) directory callbacks (executeCellTrial (adapter environment store inputs payloads p) acquired schedule directory entry.profile callbacks.recordRuntimeFailure)
+          maybe (pure ()) (encodeFile (directory </> "comparison.json")) result.comparison
+          encodeFile (directory </> "result.json") result
+          pure result
       verify result = verifyConfiguration inputs prepared output result
       hooks =
         RunnerHooks
@@ -568,8 +581,113 @@ publishSnapshot store _ _ output session result = do
       _ <- store.putObject bucket name "application/json" DoesNotExist bytes
       retained <- store.getObject bucket name
       unless (fmap fst retained == Just bytes) (ioError (userError "durable publication receipt retrieval differs"))
+      receiptRetrievedAt <- getCurrentTime
+      unless (maybe True (receiptRetrievedAt <=) state.executionDeadline) (ioError (userError "receipt retrieval exceeded the original execution deadline"))
       Lazy.writeFile (output </> "receipt.json") bytes
       pure True
+
+runCalibrationPublish :: Bool -> FilePath -> Text -> CliEnv -> IO ExitCode
+runCalibrationPublish definition path uri _ = guarded do
+  bytes <- Lazy.readFile path
+  (bucket, name) <- input (parseDestination uri)
+  now <- getCurrentTime
+  if definition
+    then do
+      document <- either (throwIO . SessionFailure 2 . Text.pack) pure (eitherDecode bytes :: Either String Calibration.CalibrationDefinition)
+      input (Calibration.validateCalibrationDefinition now now document)
+    else do
+      document <- either (throwIO . SessionFailure 2 . Text.pack) pure (eitherDecode bytes :: Either String Calibration.CalibrationAcceptance)
+      unless (length document.aa == 20 && length document.slowdown == 20 && all (not . null . (.receipts)) (document.aa <> document.slowdown)) (throwIO (SessionFailure 2 "acceptance inventory needs both twenty-slot experiments"))
+  (store, _) <- openStore bucket
+  _ <- store.putObject bucket (ObjectName name) "application/json" DoesNotExist bytes
+  retained <- store.getObject bucket (ObjectName name)
+  (retrieved, metadata) <- maybe (ioError (userError "calibration publication retrieval failed")) pure retained
+  unless (retrieved == bytes) (ioError (userError "create-only calibration publication differs"))
+  Lazy.putStrLn (encode (object ["uri" .= uri, "sha256" .= sha256Hex (Lazy.toStrict bytes), "declaredAt" .= metadata.updated]))
+  pure ExitSuccess
+
+runCalibrationVerify :: FilePath -> FilePath -> CliEnv -> IO ExitCode
+runCalibrationVerify referencePath preparedPath _ = guarded do
+  prepared <- loadPreparation preparedPath
+  reference <- readJSON referencePath :: IO Calibration.CalibrationReference
+  entry <- case prepared.plan.selected of [selected] -> pure selected; _ -> throwIO (SessionFailure 2 "calibration verification needs one prepared profile")
+  (semantics, policies) <- require (either (Left . Text.pack) Right (parseEither (withObject "PinnedInputs" \v -> (,) <$> v .: "harnessSemanticsSha256" <*> v .: "policies") prepared.inputs))
+  policy <- maybe (ioError (userError "missing pinned calibration policy")) pure (Map.lookup entry.profile.policy (policies :: Map.Map FilePath Value))
+  digest <- verifyCalibrationAdmission entry {PerfPlan.profile = entry.profile {calibration = Just (toJSON reference)}} (Calibration.toolchainDigest prepared.baseline.buildInventory) semantics policy >>= require
+  Lazy.putStrLn (encode (object ["verified" .= True, "profile" .= entry.profile.name, "acceptanceSha256" .= digest, "gatingEligible" .= False]))
+  pure ExitSuccess
+
+verifyCalibrationAdmission :: PlannedProfile -> Text -> Text -> Value -> IO (Either Text Text)
+verifyCalibrationAdmission entry expectedToolchain semantics policyValue = do
+  outcome <- try @IOException do
+    reference <- require (either (Left . Text.pack) Right (parseEither (parseJSON @Calibration.CalibrationReference) (fromMaybe Null entry.profile.calibration)))
+    (definitionBytes, declared) <- readPinned reference.definitionUri reference.definitionSha256
+    (acceptanceBytes, _) <- readPinned reference.acceptanceUri reference.acceptanceSha256
+    definition <- either (ioError . userError) pure (eitherDecode definitionBytes :: Either String Calibration.CalibrationDefinition)
+    acceptance <- either (ioError . userError) pure (eitherDecode acceptanceBytes :: Either String Calibration.CalibrationAcceptance)
+    unless ((definition.profile, definition.machineProfile, definition.workloadSha256, definition.toolchainSha256, definition.harnessSemanticsSha256) == (entry.profile.name, entry.profile.machineProfile, entry.workloadSha256, expectedToolchain, semantics)) (ioError (userError "calibration definition differs from the current workload, toolchain or harness"))
+    unless (not ("pending" `Text.isInfixOf` entry.profile.machineProfile)) (ioError (userError "calibration requires an actual designated machine profile"))
+    policy <- require (either (Left . Text.pack) Right (parseEither parseJSON policyValue))
+    rule <- case filter (\rule -> matchesRule rule.match definition.targetMetric) (policy :: Policy).metricRules of
+      [metricRule] -> pure metricRule
+      _ -> ioError (userError "injected metric needs one unambiguous policy rule")
+    unless (definition.targetMetric `elem` map (.name) entry.profile.requiredMetrics && rule.direction == LowerIsBetter && definition.targetRelativeEffect > rule.relativeLimit && definition.targetAbsoluteEffect > rule.absoluteFloor) (ioError (userError "injected latency effect must exceed both frozen policy thresholds"))
+    aa <- traverse (traverse replayCalibrationReceipt . (.receipts)) acceptance.aa
+    slowdown <- traverse (traverse replayCalibrationReceipt . (.receipts)) acceptance.slowdown
+    now <- getCurrentTime
+    _ <- require (Calibration.validateCalibration now declared definition acceptance aa slowdown)
+    pure reference.acceptanceSha256
+  pure (either (Left . Text.pack . displayException) Right outcome)
+  where
+    readPinned uri digest = do
+      (bucket, name) <- require (parseDestination uri)
+      (store, _) <- openStore bucket
+      retained <- store.getObject bucket (ObjectName name)
+      (bytes, metadata) <- maybe (ioError (userError "calibration record is missing")) pure retained
+      unless (sha256Hex (Lazy.toStrict bytes) == digest) (ioError (userError "calibration record digest differs"))
+      pure (bytes, metadata.updated)
+
+verifyGatingCalibration :: Prepared.PerfPrepared -> IO ()
+verifyGatingCalibration prepared = when prepared.plan.gatingEligible do
+  (semantics, policies, admissions) <- require (either (Left . Text.pack) Right (parseEither (withObject "PinnedInputs" \v -> (,,) <$> v .: "harnessSemanticsSha256" <*> v .: "policies" <*> v .: "calibrationAdmissions") prepared.inputs))
+  mapM_
+    ( \entry -> do
+        policy <- maybe (ioError (userError "pinned calibration policy is absent")) pure (Map.lookup entry.profile.policy (policies :: Map.Map FilePath Value))
+        evidence <- verifyCalibrationAdmission entry (Calibration.toolchainDigest prepared.baseline.buildInventory) semantics policy >>= require
+        unless (Map.lookup entry.workloadSha256 (admissions :: Map.Map Text Text) == Just evidence) (ioError (userError "pinned calibration admission differs"))
+    )
+    prepared.plan.selected
+
+replayCalibrationReceipt :: Calibration.CalibrationReceipt -> IO Calibration.VerifiedCalibrationTrial
+replayCalibrationReceipt reference = do
+  (bucket, objectName) <- require (parseDestination reference.uri)
+  prefix <- maybe (ioError (userError "calibration must reference a publication receipt")) pure (Text.stripSuffix "/receipt.json" objectName)
+  (store, _) <- openStore bucket
+  retained <- store.getObject bucket (ObjectName objectName)
+  bytes <- maybe (ioError (userError "calibration receipt is missing")) (pure . fst) retained
+  unless (sha256Hex (Lazy.toStrict bytes) == reference.sha256) (ioError (userError "calibration receipt digest differs"))
+  receipt <- either (ioError . userError) pure (eitherDecode bytes :: Either String PublicationReceipt)
+  unless (receipt.manifestUri == "gs://" <> bucket.unBucket <> "/" <> prefix <> "/manifest.json") (ioError (userError "calibration receipt destination differs"))
+  unless ("snapshots/" `Text.isPrefixOf` receipt.snapshot && Text.count "/" receipt.snapshot == 1 && Text.all (\c -> c `elem` (['a' .. 'z'] <> ['0' .. '9'] <> ['-', '/'])) receipt.snapshot) (ioError (userError "unsafe calibration snapshot"))
+  withSystemTempDirectory "kenshou-calibration-replay-" \root -> do
+    let directory = root </> Text.unpack receipt.snapshot
+    retrieveEvidence store bucket prefix receipt.manifestSha256 directory >>= require
+    Lazy.writeFile (root </> "receipt.json") bytes
+    (result, _) <- verifySessionEvidence root True
+    prepared <- loadPreparation (directory </> "preparation/prepared.json")
+    session <- readPerfSession (directory </> "session.json") >>= require
+    unless (result.purpose == "calibration" && not result.gatingEligible && length result.configurations == 1 && length prepared.plan.selected == 1) (ioError (userError "calibration needs a single-profile non-gating report"))
+    configuration <- case result.configurations of [retainedConfiguration] -> pure retainedConfiguration; _ -> ioError (userError "missing calibration configuration")
+    semantics <- require (either (Left . Text.pack) Right (parseEither (withObject "PinnedInputs" (.: "harnessSemanticsSha256")) prepared.inputs))
+    inputs <- require (parseInputs session)
+    entry <- case prepared.plan.selected of [selected] -> pure selected; _ -> ioError (userError "missing calibration profile")
+    let leasedCells = [identity.cell | event <- session.events, LeaseAcquired identity <- [event.action]]
+    actualProfiles <-
+      traverse
+        (\cell -> maybe (ioError (userError "calibration lease is outside the frozen pool")) (pure . cellMachineProfile . fst) (find ((== cell) . (.name) . fst) inputs.cells))
+        leasedCells
+    unless (all (== entry.profile.machineProfile) actualProfiles && (result.infrastructureState /= "healthy" || not (null actualProfiles))) (ioError (userError "calibration ran on a different machine or image profile"))
+    pure (Calibration.VerifiedCalibrationTrial session.sessionId prepared.plan.request.seed prepared.plan.request.control prepared.plan.request.project prepared.plan.request.baselineRevision prepared.plan.request.candidateRevision configuration.profile entry.profile.machineProfile configuration.workloadSha256 (Calibration.toolchainDigest prepared.baseline.buildInventory) semantics configuration.performanceVerdict result.infrastructureState result.blockingRuntimeFailures session.createdAt receipt.totalElapsedSeconds)
 
 runVerify :: FilePath -> Bool -> CliEnv -> IO ExitCode
 runVerify output offline _ = guarded do
@@ -593,6 +711,7 @@ verifySessionEvidence output offline = do
   checkRootInputs directory prepared
   session <- readPerfSession (directory </> "session.json") >>= require
   require (validateSessionInputs prepared session)
+  unless offline (verifyGatingCalibration prepared)
   unless (receipt.payloadsReadyAt == session.createdAt) (ioError (userError "receipt timing origin differs from its pinned session"))
   unless (uri == session.evidenceBaseUri <> "/sessions/" <> renderRunId session.sessionId <> "/" <> relative <> "/manifest.json") (ioError (userError "receipt destination differs from its pinned session"))
   inputs <- require (parseInputs session)

@@ -1,0 +1,6 @@
+{
+  "definitionUri": "gs://fixture-evidence/definition.json",
+  "definitionSha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "acceptanceUri": "gs://fixture-evidence/acceptance.json",
+  "acceptanceSha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+}

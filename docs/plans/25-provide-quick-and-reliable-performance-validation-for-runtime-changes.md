@@ -234,6 +234,25 @@ strict guide validation passes for six concepts. The workflow has not run live,
 and no protected runner or environment has been configured. Calibration, owner
 acceptance and real CI/local parity still block milestone completion.
 
+Calibration admission implementation (2026-10-11): Added strict definition,
+acceptance-inventory and reference codecs/schemas, create-only declaration and
+publication commands, and independent receipt retrieval plus full report replay.
+The verifier enforces twenty declared seeds per experiment, fixed infrastructure
+retries, nineteen expected/zero opposite outcomes, retained inconclusives and
+runtime blockers, batch chronology/expiry, and retry-inclusive A/A p95. Planning
+and gating execution bind that admission to effective workload/policy, the actual
+build toolchain/full flake lock, actual leased machine/image profile and a separate
+harness source hash. Whole-configuration heartbeat covers startup, trial gaps and
+comparison serialization. Catalog links
+and documentation do not create a promotion hash cycle. Synthetic controls pass
+(52 core performance, 38 remote performance and 12 CLI examples); all schema
+checks and strict validation of 23 ADRs and six guides pass. ADR-23 records the
+durable preparation, calibration, scope, recovery and publication decisions.
+The full `nix develop -c just verify` passed before the final machine/image and
+heartbeat changes; follow-up core/remote/CLI suites validate those changes.
+No real calibration batch or Linux payload build is claimed. Owner-side cleanup,
+health reconstruction, bounded admission transport, live preparation/cache controls, cell acceptance and CI parity remain unfinished.
+
 ## Surprises & Discoveries
 
 

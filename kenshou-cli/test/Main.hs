@@ -72,6 +72,29 @@ readInboxFixture path = do
 main :: IO ()
 main = hspec do
   describe "performance planning CLI" do
+    it "exposes calibration publication and rejects malformed batches before storage effects" $ withSystemTempDirectory "kenshou-calibration-malformed" \directory -> do
+      let input = directory </> "definition.json"
+      Aeson.encodeFile input Aeson.Null
+      runWithArgs ["perf", "calibration", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["perf", "calibration", "declare", "--definition", input, "--uri", "gs://fixture-evidence/calibration/definition.json"] `shouldReturnCode` ExitFailure 2
+    it "publishes a calibration definition create-only and retrieves its identical bytes" $ withSystemTempDirectory "kenshou-calibration-publication" \directory -> do
+      raw <- withPerfRoot (Aeson.eitherDecodeFileStrict' "kenshou-core/test/golden/perf-calibration-definition.synthetic.json" >>= either fail pure)
+      now <- getCurrentTime
+      let input = directory </> "definition.json"
+          storeRoot = directory </> "store"
+          document = replacePerfField "expiresAt" (Aeson.toJSON (addUTCTime 3600 now)) raw
+          uri = "gs://fixture-evidence/calibration/definition.json"
+      Aeson.encodeFile input document
+      store <- newFileStore storeRoot
+      withCellStore storeRoot do
+        runWithArgs ["perf", "calibration", "declare", "--definition", input, "--uri", uri] `shouldReturnCode` ExitSuccess
+        bytes <- LazyByteString.readFile input
+        retained <- store.getObject (Bucket "fixture-evidence") (ObjectName "calibration/definition.json")
+        fmap fst retained `shouldBe` Just bytes
+        runWithArgs ["perf", "calibration", "declare", "--definition", input, "--uri", uri] `shouldReturnCode` ExitSuccess
+        Aeson.encodeFile input (replacePerfField "injectionMechanism" (Aeson.String "changed after declaration") document)
+        runWithArgs ["perf", "calibration", "declare", "--definition", input, "--uri", uri] `shouldReturnCode` ExitFailure 4
+        store.getObject (Bucket "fixture-evidence") (ObjectName "calibration/definition.json") >>= \current -> fmap fst current `shouldBe` Just bytes
     it "exposes persistent execution, status, resume and evidence replay" do
       forM_ ["run", "status", "resume", "verify"] \name -> do
         runWithArgs ["perf", name, "--help"] `shouldReturnCode` ExitSuccess

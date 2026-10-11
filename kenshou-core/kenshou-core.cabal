@@ -71,6 +71,7 @@ library
     Kenshou.Core.Selftest
     Kenshou.Core.Version
     Kenshou.Perf.Artifacts
+    Kenshou.Perf.Calibration
     Kenshou.Perf.Plan
     Kenshou.Perf.Prepared
     Kenshou.Perf.Request
@@ -131,6 +132,7 @@ test-suite kenshou-core-test
   hs-source-dirs: test
   main-is: Main.hs
   other-modules:
+    Kenshou.PerfCalibrationSpec
     Kenshou.PerfPreparedSpec
     Kenshou.PerfResultSpec
     Kenshou.PerfSpec
@@ -150,6 +152,7 @@ test-suite kenshou-core-test
     process,
     temporary,
     text >=2.1 && <2.2,
+    time,
 
   if flag(keiro-schema)
     cpp-options: -DKENSHOU_KEIRO_SCHEMA

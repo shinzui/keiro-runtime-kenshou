@@ -18,6 +18,7 @@ where
 
 import Control.Monad (unless)
 import Data.Aeson
+import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Aeson.Types (Parser, parseEither)
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.List (nub, sortOn)
@@ -135,6 +136,12 @@ validatePrepared prepared = do
               unless (revision == prepared.harnessRevision && strict && immutableRevision nixpkgs && immutableRevision haskellNix) (fail "unverified or mutable prepared toolchain")
           )
           arm.buildInventory.toolchain
+      expected <- parse "pinned build toolchain" (withObject "PinnedInputs" (.:? "buildToolchain")) prepared.inputs
+      case expected of
+        Nothing -> unless (not prepared.plan.gatingEligible) (Left "gating preparation requires a pinned build toolchain")
+        Just value -> case arm.buildInventory.toolchain of
+          Object actual -> unless (Object (KeyMap.delete "harnessRevision" actual) == value) (Left "actual build toolchain differs from frozen planning inputs")
+          _ -> Left "actual build toolchain is not an object"
       let descriptorDigest = sha256Hex (LazyByteString.toStrict (encode arm.descriptor))
       _ <-
         parse

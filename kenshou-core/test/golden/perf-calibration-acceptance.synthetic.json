@@ -1,0 +1,368 @@
+{
+  "schema": "kenshou.perf-calibration-acceptance/v1",
+  "batchId": "0199a3c3-7b1e-7c44-9d0a-3f5e2a61b7c9",
+  "aa": [
+    {
+      "seed": 1,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/aa/1/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 2,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/aa/2/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 3,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/aa/3/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 4,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/aa/4/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 5,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/aa/5/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 6,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/aa/6/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 7,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/aa/7/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 8,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/aa/8/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 9,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/aa/9/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 10,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/aa/10/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 11,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/aa/11/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 12,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/aa/12/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 13,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/aa/13/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 14,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/aa/14/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 15,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/aa/15/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 16,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/aa/16/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 17,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/aa/17/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 18,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/aa/18/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 19,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/aa/19/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 20,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/aa/20/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    }
+  ],
+  "slowdown": [
+    {
+      "seed": 1,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/slowdown/1/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 2,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/slowdown/2/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 3,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/slowdown/3/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 4,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/slowdown/4/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 5,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/slowdown/5/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 6,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/slowdown/6/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 7,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/slowdown/7/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 8,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/slowdown/8/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 9,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/slowdown/9/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 10,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/slowdown/10/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 11,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/slowdown/11/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 12,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/slowdown/12/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 13,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/slowdown/13/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 14,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/slowdown/14/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 15,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/slowdown/15/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 16,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/slowdown/16/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 17,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/slowdown/17/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 18,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/slowdown/18/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 19,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/slowdown/19/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    {
+      "seed": 20,
+      "receipts": [
+        {
+          "uri": "gs://fixture-evidence/slowdown/20/receipt.json",
+          "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    }
+  ]
+}

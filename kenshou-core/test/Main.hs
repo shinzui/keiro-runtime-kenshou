@@ -30,6 +30,7 @@ import Kenshou.Core.RunSpec.Resolve (resolveRunSpec)
 import Kenshou.Core.Scenario (CohortScope (..), KnownDefect (..), PackageCondition (..), Scenario (..), failedWith)
 import Kenshou.Core.Selector (matchesSelector, parseSelector)
 import Kenshou.Core.Selftest qualified as Selftest
+import Kenshou.PerfCalibrationSpec qualified
 import Kenshou.PerfPreparedSpec qualified
 import Kenshou.PerfResultSpec qualified
 import Kenshou.PerfSpec qualified
@@ -53,6 +54,7 @@ import Test.Hspec
 
 main :: IO ()
 main = hspec do
+  Kenshou.PerfCalibrationSpec.spec
   Kenshou.PerfResultSpec.spec
   descriptorSpec
   hashSpec

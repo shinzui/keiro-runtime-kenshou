@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "kenshou.perf-calibration-definition/v1"
+    },
+    "batchId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "project": {
+      "type": "string",
+      "pattern": "^mori://[a-z0-9_-]+/[a-z0-9_-]+$"
+    },
+    "profile": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workloadSha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "toolchainSha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "harnessSemanticsSha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "baselineRevision": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "slowdownRevision": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "injectionMechanism": {
+      "type": "string",
+      "minLength": 1
+    },
+    "targetMetric": {
+      "type": "string",
+      "minLength": 1
+    },
+    "targetRelativeEffect": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "targetAbsoluteEffect": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "seeds": {
+      "type": "array",
+      "minItems": 20,
+      "maxItems": 20,
+      "uniqueItems": true,
+      "items": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      }
+    },
+    "infrastructureRetryCap": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 20
+    },
+    "expiresAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "machineProfile": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "schema",
+    "batchId",
+    "project",
+    "profile",
+    "workloadSha256",
+    "toolchainSha256",
+    "harnessSemanticsSha256",
+    "baselineRevision",
+    "slowdownRevision",
+    "injectionMechanism",
+    "targetMetric",
+    "targetRelativeEffect",
+    "targetAbsoluteEffect",
+    "seeds",
+    "infrastructureRetryCap",
+    "expiresAt",
+    "machineProfile"
+  ]
+}

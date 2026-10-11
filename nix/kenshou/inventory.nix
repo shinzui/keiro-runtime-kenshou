@@ -81,6 +81,7 @@ in
     harnessRevision = inputs.self.rev or "dirty";
     nixpkgsRevision = inputs.nixpkgs.rev;
     haskellNixRevision = inputs.haskell-nix.rev;
+    flakeLockSha256 = "sha256:" + builtins.hashFile "sha256" ../../flake.lock;
     inherit variant strictBounds;
   };
   packages = lib.sort (left: right: left.name < right.name) (map record closure);

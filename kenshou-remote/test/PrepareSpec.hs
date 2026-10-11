@@ -24,7 +24,7 @@ import Kenshou.Plan.Components (ComponentId (..), ComponentRef (..))
 import Kenshou.Plan.Policy (defaultPlanPolicy)
 import Kenshou.Plan.RunPlan (PlanContext (..), PlanInputs (..), PlannedRun (PlannedRun), RunPlan (..))
 import Kenshou.Plan.Selector (parseSelector)
-import Kenshou.Remote.Cell.Docs (CachePolicy (..), CellBuckets (..), CellDescriptor (..), CollectOptions (..), Limits (..), PgReset (..), ResetBlock (..), Submission (..))
+import Kenshou.Remote.Cell.Docs (CachePolicy (..), CellBuckets (..), CellDescriptor (..), CellImages (..), CollectOptions (..), Limits (..), PgReset (..), ResetBlock (..), Submission (..))
 import Kenshou.Remote.Cell.Lease (CellRef (..))
 import Kenshou.Remote.Cell.Prepare (Granularity (..), OtlpSink (..), PrepareOptions (..), Prepared (..), PreparedRun (..), RejectReason (..), Routed (..), Slice (..), SubmissionInputs (..), prepareForCell, routePlan, slicePlan, sliceRuns, submissionFor)
 import Kenshou.Remote.Cell.Prepare qualified as Prepare
@@ -42,6 +42,13 @@ import Test.Hspec
 
 spec :: Spec
 spec = describe "cell run slicing" do
+  it "invalidates machine profiles when cell images change and preserves equivalent hardware profiles" do
+    (_, descriptor, _) <- preparationFixture
+    let original = Prepare.cellMachineProfile descriptor
+    Prepare.cellMachineProfile descriptor {name = "same-shape-other-cell"} `shouldBe` original
+    Prepare.cellMachineProfile descriptor {images = descriptor.images {driver = "different-driver-image"}} `shouldNotBe` original
+    Prepare.cellMachineProfile descriptor {images = descriptor.images {postgres = "different-postgres-image"}} `shouldNotBe` original
+
   it "prepares durable PostgreSQL work and records reset settings and payload cohort" do
     (plan, descriptor, payload) <- preparationFixture
     let registry = either (error . show) id (mkRegistry [Selftest.bundle])
