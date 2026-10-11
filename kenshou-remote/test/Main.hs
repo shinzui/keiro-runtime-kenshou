@@ -24,6 +24,7 @@ import PairSpec qualified
 import ParitySpec qualified
 import PayloadSpec qualified
 import PerfAttemptSpec qualified
+import PerfCleanupSpec qualified
 import PerfConditionsSpec qualified
 import PerfJournalSpec qualified
 import PerfLockSpec qualified
@@ -70,6 +71,7 @@ tests = do
   PerfPublicationSpec.spec
   PerfConditionsSpec.spec
   PerfAttemptSpec.spec
+  PerfCleanupSpec.spec
   PerfLockSpec.spec
   PrepareSpec.spec
   SessionSpec.spec

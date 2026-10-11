@@ -11,6 +11,7 @@ module Kenshou.Remote.Cell.Lease
     resizeLease,
     releaseLease,
     reattachLease,
+    reattachActiveLease,
     requestCancel,
     leaseSnapshot,
     leaseHeld,
@@ -207,6 +208,21 @@ reattachLease store ref identifier = do
   current <- readCurrent store ref
   case current of
     Just (lease, meta) | lease.leaseId == identifier -> Just <$> newHandle lease meta.generation
+    _ -> pure Nothing
+
+-- Performance recovery must treat an expired or cancelled lease as lost, even
+-- when its old object still exists. The unfenced reattachment above remains
+-- available to cancellation/release code that needs its original generation.
+reattachActiveLease :: ObjectStore -> CellRef -> LeaseId -> IO (Maybe LeaseHandle)
+reattachActiveLease store ref identifier = do
+  current <- readCurrent store ref
+  now <- store.serverTime
+  case current of
+    Just (lease, meta)
+      | lease.leaseId == identifier,
+        not lease.cancelRequested,
+        addUTCTime (fromIntegral lease.ttlSeconds + 30) meta.updated >= now ->
+          Just <$> newHandle lease meta.generation
     _ -> pure Nothing
 
 requestCancel :: ObjectStore -> CellRef -> Maybe LeaseId -> Bool -> IO Bool

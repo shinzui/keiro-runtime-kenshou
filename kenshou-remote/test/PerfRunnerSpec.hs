@@ -102,6 +102,20 @@ spec = describe "performance runner orchestration" do
     state <- readPerfSession path >>= right >>= right . journalState
     Map.elems state.replacements `shouldBe` [1, 1]
     length state.replacementIdentities `shouldBe` 2
+  it "does not restart cancellation or release grace for an expired interrupted session" $ withSystemTempDirectory "perf-expired-cleanup" \directory -> do
+    (prepared, path) <- fixture directory
+    session <- readPerfSession path >>= right
+    identifier <- newRunId
+    acquired <- right (appendEvent (SessionEvent now (LeaseAcquired (LeaseIdentity "alpha" identifier))) session)
+    active <- right (appendEvent (SessionEvent now (ComparisonStarted "shibuya-core-quick" 0)) acquired)
+    writePerfSession path active
+    calls <- newIORef ([] :: [(Text, Int, Bool)])
+    cleanupCalls <- newIORef (0 :: Int)
+    hooks <- fixtureHooks calls
+    result <- runPerformance hooks {clock = pure (addUTCTime 1870 now), cancelOwnedWork = \_ -> modifyIORef' cleanupCalls (+ 1), releaseOwnedLease = \_ -> modifyIORef' cleanupCalls (+ 1) >> pure True} prepared path
+    result.exitCode `shouldBe` 4
+    readIORef calls `shouldReturn` []
+    readIORef cleanupCalls `shouldReturn` 0
   it "releases an incompatible lease before admitting the next configuration" $ withSystemTempDirectory "perf-runner-cells" \directory -> do
     (prepared, path) <- fixture directory
     calls <- newIORef ([] :: [(Text, Int, Bool)])

@@ -68,7 +68,9 @@ runPerformance hooks prepared path = do
         case saved.lease of
           Nothing -> pure ()
           Just identity -> do
-            _ <- timeout 60000000 (hooks.cancelOwnedWork identity >> hooks.releaseOwnedLease identity)
+            now <- hooks.clock
+            let micros = maybe 60000000 (min 60000000 . max 0 . floor . (* 1000000) . (`diffUTCTime` now)) saved.cleanupDeadline
+            _ <- timeout micros (hooks.cancelOwnedWork identity >> hooks.releaseOwnedLease identity)
             checkpoint (LeaseLost "client interrupted; owned cleanup requested")
       execute = do
         saved <- state
@@ -125,7 +127,9 @@ runPerformance hooks prepared path = do
         result <- timeout micros (hooks.compareConfiguration identity entry index resuming callbacks)
         case result of
           Nothing -> do
-            _ <- timeout 60000000 (hooks.cancelOwnedWork identity)
+            cleanupAt <- hooks.clock
+            let cleanupMicros = maybe 60000000 (min 60000000 . max 0 . floor . (* 1000000) . (`diffUTCTime` cleanupAt)) saved.cleanupDeadline
+            _ <- timeout cleanupMicros (hooks.cancelOwnedWork identity)
             checkpoint (ComparisonCompleted (ConfigurationResult entry.profile.name entry.workloadSha256 "inconclusive" "pending" [] 0 entry.profile.minimumPairs [] Nothing))
             release identity
           Just comparison -> checkpoint (ComparisonCompleted comparison) >> execute

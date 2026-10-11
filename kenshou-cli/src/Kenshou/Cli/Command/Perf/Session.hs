@@ -43,6 +43,7 @@ import Kenshou.Remote.Payload (Bundle (..), CellPayload (..), PayloadDescriptor 
 import Kenshou.Remote.Payload.Publish (digestFile)
 import Kenshou.Remote.Perf.Attempt
 import Kenshou.Remote.Perf.Cell
+import Kenshou.Remote.Perf.Cleanup
 import Kenshou.Remote.Perf.Journal
 import Kenshou.Remote.Perf.Lock
 import Kenshou.Remote.Perf.Publication
@@ -54,9 +55,10 @@ import Options.Applicative hiding (Success, action)
 import System.Directory
 import System.Environment (lookupEnv)
 import System.Exit (ExitCode (..))
-import System.FilePath (takeDirectory, (</>))
+import System.FilePath (splitDirectories, takeDirectory, (</>))
 import System.IO (stderr)
 import System.IO.Temp (withSystemTempDirectory)
+import Text.Printf (printf)
 
 data SessionFailure = SessionFailure Int Text deriving stock (Show)
 
@@ -301,7 +303,7 @@ execute :: CliEnv -> ObjectStore -> ExecutionInputs -> Map.Map Text PayloadDescr
 execute environment store inputs payloads prepared output = do
   let ref identity = Lease.CellRef identity.cell (Bucket inputs.controlBucket)
       pinned identity = maybe (ioError (userError "leased cell is outside frozen pool")) pure (find ((== identity.cell) . (.name) . fst) inputs.cells)
-      handle identity = Lease.reattachLease store (ref identity) identity.leaseId >>= maybe (ioError (userError "performance lease is no longer owned")) pure
+      handle identity = Lease.reattachActiveLease store (ref identity) identity.leaseId >>= maybe (ioError (userError "performance lease is no longer active")) pure
       supports entry p = do
         planned <- makeSchedule prepared entry =<< newRunId
         let a = adapter environment store inputs payloads p
@@ -352,7 +354,7 @@ execute environment store inputs payloads prepared output = do
         RunnerHooks
           getCurrentTime
           admission
-          (\identity -> maybe False (const True) <$> Lease.reattachLease store (ref identity) identity.leaseId)
+          (\identity -> maybe False (const True) <$> Lease.reattachActiveLease store (ref identity) identity.leaseId)
           (\identity entry -> pinned identity >>= supports entry)
           compareOne
           verify
@@ -361,6 +363,12 @@ execute environment store inputs payloads prepared output = do
               pure ()
           )
           ( \identity -> do
+              files <- treeFiles (output </> "configurations")
+              journals <- traverse (\path -> readSessionJournal (output </> "configurations" </> path) >>= require) [path | path <- files, [_, _, "trials", _, "session.json"] <- [splitDirectories path]]
+              settled <- ownedWorkSettled store (ref identity) identity journals
+              unless settled do
+                _ <- Lease.requestCancel store (ref identity) (Just identity.leaseId) False
+                waitForOwnedWork store (ref identity) identity journals
               owned <- Lease.reattachLease store (ref identity) identity.leaseId
               maybe (pure False) (Lease.releaseLease store (ref identity)) owned
           )
@@ -415,6 +423,9 @@ describeReport :: FilePath -> PerfSession -> PerfResult -> IO PerfResult
 describeReport output session result = do
   identifier <- newRunId
   now <- getCurrentTime
+  let summaryPath = output </> "preparation/preparation-summary.json"
+  summaryExists <- doesFileExist summaryPath
+  preparationTimes <- if summaryExists then readJSON summaryPath >>= either (ioError . userError) pure . parseEither (withObject "PreparationSummary" (.: "stageSeconds")) else pure Map.empty
   let base = session.evidenceBaseUri <> "/sessions/" <> renderRunId session.sessionId <> "/snapshots/" <> renderRunId identifier
       leaseTimes = [event.at | event <- session.events, LeaseAcquired _ <- [event.action]]
       elapsed from to = realToFrac (diffUTCTime to from) :: Double
@@ -433,7 +444,7 @@ describeReport output session result = do
           pure (ArtifactReference (if "manifest.json" `isSuffixOf` path then "cell-or-runtime-manifest" else if "comparison.json" `isSuffixOf` path then "comparison" else Text.pack path) (base <> "/" <> Text.pack path) (Just ("sha256:" <> digest)))
       )
       relativeFiles
-  pure result {stageSeconds = timings, artifactReferences = ArtifactReference "aggregate-manifest" (base <> "/manifest.json") Nothing : ArtifactReference "publication-receipt" (base <> "/receipt.json") Nothing : references}
+  pure result {stageSeconds = timings <> Map.mapKeys ("preparation." <>) preparationTimes, artifactReferences = ArtifactReference "aggregate-manifest" (base <> "/manifest.json") Nothing : ArtifactReference "publication-receipt" (base <> "/receipt.json") Nothing : references}
 
 treeFiles :: FilePath -> IO [FilePath]
 treeFiles root = do
@@ -568,7 +579,48 @@ copyTree source destination = do
     else copyFile source destination
 
 renderReport :: PerfResult -> Text
-renderReport result = Text.unlines (["# Runtime performance validation", "", "Performance: " <> result.performanceVerdict, "Coverage: " <> result.coverage <> " (whole change: " <> result.changeCoverage <> ")", "Infrastructure: " <> result.infrastructureState, "Exit: " <> Text.pack (show result.exitCode), "", "| Profile | Verdict | Valid pairs | Infrastructure |", "| --- | --- | --- | --- |"] <> ["| " <> item.profile <> " | " <> item.performanceVerdict <> " | " <> Text.pack (show item.validPairs) <> "/" <> Text.pack (show item.requiredPairs) <> " | " <> item.infrastructureState <> " |" | item <- result.configurations] <> ["", "Runtime blockers: " <> Text.intercalate "; " result.blockingRuntimeFailures])
+renderReport result =
+  Text.unlines
+    ( ["# Runtime performance validation", "", "Performance: " <> result.performanceVerdict, "Coverage: " <> result.coverage <> " (whole change: " <> result.changeCoverage <> ")", "Infrastructure: " <> result.infrastructureState, "Purpose: " <> result.purpose, "Gating eligible: " <> Text.pack (show result.gatingEligible), "Exit: " <> Text.pack (show result.exitCode), "", "| Profile | Verdict | Valid pairs | Infrastructure |", "| --- | --- | --- | --- |"]
+        <> ["| " <> item.profile <> " | " <> item.performanceVerdict <> " | " <> Text.pack (show item.validPairs) <> "/" <> Text.pack (show item.requiredPairs) <> " | " <> item.infrastructureState <> " |" | item <- result.configurations]
+        <> concatMap effects result.configurations
+        <> ["", "Runtime blockers: " <> if null result.blockingRuntimeFailures then "none" else Text.intercalate "; " result.blockingRuntimeFailures]
+        <> ["", "## Scope", ""]
+        <> ["- Excluded " <> scenario <> ": " <> reason | (scenario, reason) <- result.exclusions]
+        <> ["- Uncovered: " <> scenario | scenario <- result.uncoveredScenarios]
+        <> ["", "## Timings", "", "| Stage | Seconds |", "| --- | ---: |"]
+        <> ["| " <> stage <> " | " <> number seconds <> " |" | (stage, seconds) <- Map.toAscList result.stageSeconds]
+        <> ["", "Full report retrieval time is recorded in the linked publication receipt.", "", "## Evidence", ""]
+        <> ["- [" <> reference.kind <> "](" <> reference.uri <> ")" <> maybe "" (\digest -> " (`" <> digest <> "`)") reference.sha256 | reference <- result.artifactReferences]
+    )
+  where
+    number amount = Text.pack (printf "%.4g" (amount :: Double))
+    effects configuration = case configuration.comparison of
+      Nothing -> []
+      Just document -> case parseEither metrics document of
+        Left problem -> ["", "Retained metric report could not be rendered: " <> Text.pack problem]
+        Right rows -> ["", "## " <> configuration.profile, "", "Intervals and thresholds below are retained comparison results.", "", "| Metric | Unit | Ratio estimate [low, high] | Delta estimate [low, high] | Relative limit | Absolute floor | Status |", "| --- | --- | --- | --- | ---: | ---: | --- |"] <> rows
+    metrics = withObject "Comparison" \document -> do
+      values <- document .: "metrics"
+      traverse metric (Map.toAscList (values :: Map.Map Text Value))
+    metric (name, document) =
+      withObject
+        "MetricComparison"
+        ( \fields -> do
+            unit <- fields .: "unit"
+            ratio <- fields .: "ratio" >>= interval
+            delta <- fields .: "delta" >>= interval
+            limit <- fields .: "relativeLimit"
+            floorValue <- fields .: "absoluteFloor"
+            status <- fields .: "status"
+            pure ("| " <> name <> " | " <> unit <> " | " <> ratio <> " | " <> delta <> " | " <> number limit <> " | " <> number floorValue <> " | " <> status <> " |")
+        )
+        document
+    interval = withObject "Interval" \fields -> do
+      low <- fields .: "low"
+      estimate <- fields .: "estimate"
+      high <- fields .: "high"
+      pure (number estimate <> " [" <> number low <> ", " <> number high <> "]")
 
 openStore :: Bucket -> IO (ObjectStore, Text)
 openStore bucket = do

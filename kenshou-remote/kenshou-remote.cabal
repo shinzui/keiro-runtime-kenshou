@@ -63,6 +63,7 @@ library
     Kenshou.Remote.Payload.Publisher
     Kenshou.Remote.Perf.Attempt
     Kenshou.Remote.Perf.Cell
+    Kenshou.Remote.Perf.Cleanup
     Kenshou.Remote.Perf.Conditions
     Kenshou.Remote.Perf.Journal
     Kenshou.Remote.Perf.Lock
@@ -110,6 +111,7 @@ test-suite kenshou-remote-test
     ParitySpec
     PayloadSpec
     PerfAttemptSpec
+    PerfCleanupSpec
     PerfConditionsSpec
     PerfJournalSpec
     PerfLockSpec

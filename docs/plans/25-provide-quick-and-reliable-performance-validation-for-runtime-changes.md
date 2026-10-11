@@ -189,6 +189,17 @@ the new synthetic publication-receipt fixture. All-attempt semantic/binding audi
 owner cleanup fencing, independent calibration admission and real performance
 acceptance remain open. No live timing target is inferred from synthetic tests.
 
+Cleanup and report work (2026-10-10): Performance recovery now treats an expired
+or cancelled retained lease as lost. Release inspects only the exact owner's
+retained submissions and waits for owner rejection or a sealed terminal status;
+an ambiguous submitted slice keeps the lease until the original cleanup timeout.
+Five file-backed cleanup controls cover unpublished work, running/sealed work,
+rejection, identity mismatches and active-versus-expired reattachment. The compact
+report now includes retained effect intervals and thresholds, exclusions,
+preparation/execution stage times and artifact links. Owner-side generic cleanup,
+quarantine and live recovery acceptance remain open. Thirty remote performance
+controls and ten CLI controls pass, including expired interrupted cleanup grace.
+
 ## Surprises & Discoveries
 
 
