@@ -15,6 +15,17 @@ provenance:
       at: 2026-10-11T00:05:28Z
       mode: "other"
       note: "Completed the initial six-milestone plan and clarified scoped coverage and calibration acceptance."
+    - model: "gpt-6-astra"
+      harness: "codex-cli"
+      at: 2026-10-11T04:12:25Z
+      mode: "update"
+      note: "Close review gaps in metric completeness, calibration admission, workload phases, resume budgets, replay, and CI prerequisites."
+  reviews:
+    - model: "gpt-6-astra"
+      harness: "codex-cli"
+      at: 2026-10-11T04:15:51Z
+      verdict: "approved"
+      note: "Approved revised design after fixing metric completeness, calibration admission, phase compatibility, and recovery contracts; graph, cell help, ADR validation, links, and structure passed. Live acceptance remains pending."
 ---
 
 # Provide quick and reliable performance validation for runtime changes
@@ -71,11 +82,31 @@ time. No implementation or live infrastructure changes were performed. It is a
 standalone follow-on to the existing cell work, not a new child silently added to
 an existing MasterPlan.
 
+Review handoff (2026-10-10): The revised design passed repository/source review.
+`nix develop -c cabal run -v0 kenshou -- plan --graph-check` passed for 27
+components; `nix develop -c cabal run -v0 kenshou -- help cells` passed;
+`nix develop -c just adr-validate` passed for 22 concepts. Local links, named
+context paths, section/milestone structure, fenced blocks, and the JSON example
+were checked, and the owner's IR-1 URI resolved through Mori. All six delivery
+milestones remain unimplemented; this review did not exercise live cells or
+establish the proposed calibration and latency targets.
+
 
 ## Surprises & Discoveries
 
 
-(None yet.)
+2026-10-10 review: `compareMetrics` in
+`kenshou-measure/src/Kenshou/Measure/Compare.hs` compares only metric names present
+in every input run and matched by a policy rule. It does not require a specific
+metric set or check that units agree. A missing latency metric can therefore
+leave other passing metrics and a passing comparison. The new profile admission
+checks must verify required metrics before accepting that comparison.
+
+2026-10-10 review: Both initial benchmark modules replace configured phases with
+zero warm-up, a fixed message count, and zero cooldown, and impose a 180-second
+timeout. Catalog phase declarations alone cannot change their measured behavior.
+Milestone 2 must either describe that behavior exactly or implement and test a
+new scenario revision before calibration.
 
 
 ## Decision Log
@@ -102,6 +133,12 @@ remain blockers even when a later attempt succeeds.
 criteria to measure, not current service guarantees. Keep a separate budget for
 build preparation, admission, and measurement. Do not weaken statistical limits
 or silently remove affected configurations to meet a time target.
+
+2026-10-10 review: Pin calibration purpose and A/A control in the request before
+selection and preparation. Require metric completeness independently of the
+existing statistical calculation, and carry deadlines and retry counters across
+resume. These constraints close paths by which a narrowed or restarted request
+could otherwise appear to satisfy its original acceptance contract.
 
 
 ## Outcomes & Retrospective
@@ -155,7 +192,11 @@ infrastructure failures. Session machinery lives under
 `policies/default.json` requires five pairs and 95% confidence, including both
 relative and absolute effect thresholds. `kenshou-measure/src/Kenshou/Measure/Compare.hs`
 already gives unhealthy or incomparable evidence precedence over statistics.
-Retain that calculation. `docs/reports/2026-10-10-shibuya-latest-timings.md`
+Retain that calculation and add profile-specific metric completeness checks
+around it. Its `compareRuns` also creates a fresh comparison ID, timestamps, and
+analysis-host fingerprint on every invocation; replay must compare semantic
+results rather than require byte-identical newly generated comparison documents.
+`docs/reports/2026-10-10-shibuya-latest-timings.md`
 records 30 successful local runs but two inconclusive performance comparisons;
 the paced throughput was not a capacity measurement. Its
 `docs/reports/data/2026-10-10-shibuya-timings/run-pairs.py` demonstrates the
@@ -166,8 +207,11 @@ The initial workload implementation points are
 `kenshou-shibuya/src/Kenshou/Suite/Shibuya/Bench/PgmqEndToEnd.hs`.
 `kenshou-cli/src/Kenshou/Cli/Registry.hs` registers commands.
 `.github/workflows/ci.yaml` currently builds, tests, and checks the harness; it
-does not provide runtime-project performance comparisons. Existing test suites
-include `kenshou-core-test`, `kenshou-remote-test`, and `kenshou-cli-test`; confirm
+does not provide runtime-project performance comparisons or a GCP authentication
+step. `docs/guides/running-on-gcp.md` describes operator `gcloud` authentication
+and a remote Linux builder, not a configured GitHub cloud identity. CI identity
+and builder availability are explicit Milestone 6 prerequisites. Existing test
+suites include `kenshou-core-test`, `kenshou-remote-test`, and `kenshou-cli-test`; confirm
 their Cabal declarations before extending their module lists.
 
 Relevant architecture decisions were read during creation. [ADR-2](../adr/0002-every-result-carries-a-resolved-cohort-identity.md)
@@ -219,15 +263,25 @@ and explains intended scope without leasing or building. Preparation resolves
 both arms and builds/publishes their payloads without holding a cell lease.
 
 A request names a canonical project URI, full baseline and candidate commits, a
-cohort-template path, an explicit target-component set, a suite, a calibrated
-profile set, coverage mode, a seed, a cell pool, a wait budget, and an execution
-budget. Resolve
+cohort-template path, an explicit target-component set, a suite, a profile set,
+coverage mode, purpose (`"gating"` by default or `"calibration"`), control
+(`"none"` by default or `"aa"`), a seed, a cell pool, a wait budget, and an
+execution budget. Resolve
 sources through Mori and verify the requested commits exist in the identified
 HTTPS upstream repository. Changing a mutable branch after preparation must not
 change either executable. Reject unknown components, a revision belonging to the
 wrong repository, local-path sources, dirty harness inputs for gating, or a
 package-set mismatch before publication. Read source manifests at each commit
 rather than assuming package versions and subdirectories are unchanged.
+
+Target-component IDs are cohort descriptor IDs, not component-graph node IDs.
+Expand their package lists into graph nodes for selection and inventory checks.
+This version accepts one source project and revision pair: reject targets whose
+package sources belong to another repository rather than applying one commit
+to several repositories. Keep all non-target sources fixed by the template.
+Pin normalized request fields, template contents, graph/catalog/profile/policy
+digests, and resolved commits in `prepared.json`; `run` and `resume` must not
+reload mutable catalog or template files as authoritative inputs.
 
 Create generated cohort inputs beneath the preparation directory, with separate
 Cabal build directories for both arms. Parameterize the Nix package function over
@@ -283,6 +337,30 @@ calibrated profile prevents full change acceptance. Documentation-only changes
 may be `not-applicable` only with the repository-scoped source-root proof required
 by ADR-5; an empty accidental selection is inconclusive.
 
+Before filtering for calibration, inspect the pinned request purpose. A
+calibration request can select explicit uncalibrated profiles and marks every
+result non-gating; a gating request cannot. A/A control retains its explicit
+profile list even for an empty source diff. Neither exception bypasses workload,
+environment, metric, or source-identity checks. Test this flow from `perf plan`
+through preparation, not only by toggling a flag at execution time.
+
+Each profile enumerates required metric names, units, and minimum steady sample
+counts, with a matching policy rule for every required metric. Before comparing,
+verify these against every retained arm and recompute summaries from raw samples.
+Missing or under-sampled required metrics make the configuration inconclusive;
+unit/schema mismatches or summary/digest corruption make it invalid evidence.
+Neither condition is a valid pass or a statistical retry. Test a missing p99
+metric while throughput remains present and passing, a changed unit, and a
+required metric with no policy rule. Apply the same checks in offline verification.
+
+For the initial scenarios, start with the existing count-bound, zero-warm-up
+behavior and record it explicitly in each candidate profile. Validate the actual
+steady count and phase boundaries in retained samples. If calibration requires
+warm-up or a longer window, change the relevant scenario module and its revision,
+including the fixed 180-second timeout and allowed knob ranges where necessary;
+prove warm-up samples are excluded before rerunning calibration. Reject profiles
+whose requested phases the selected scenario revision does not honor.
+
 Use `coverageMode: "affected"` by default: every affected path requiring evidence
 must have an admitted calibrated profile or the aggregate is incomplete. Permit
 `coverageMode: "selected-profiles"` only with an explicit nonempty profile list.
@@ -317,6 +395,17 @@ never move the arms of one pair to different cells or leases. Use only one cell
 at a time in the initial orchestrator, with a deterministic pool ordering and
 bounded waits; building a global scheduling service is outside this plan.
 
+On first `run`, persist a cumulative admission-wait allowance; after the first
+lease acquisition, persist a fixed execution deadline. Execution time includes
+resets, trials, sealing, retrieval, publication, and any subsequent lease waiting;
+only initial admission precedes that deadline. Report total elapsed time
+separately. Resume retains spent allowances, all replacement counts, and the
+original deadline, including client downtime. Acquiring a new lease does not
+reset them. Reserve a separately reported bounded cleanup grace period that
+can seal/cancel owned work but cannot collect additional measurement pairs.
+Test repeated interruption and lease loss near the deadline; neither may extend
+the request's measurement budget or start an unbudgeted fresh comparison.
+
 Keep the existing cold-reset default for authoritative pair execution. If a
 profile measures warmed application behavior, run identical declared warm-up
 phases after reset and exclude warm-up samples. Do not conflate a VM being warm
@@ -327,8 +416,8 @@ pairs unless its profile's validated policy requires more.
 
 Classify attempts using both the cell effective outcome and nested assertions.
 An infrastructure-invalid pair may be replaced up to the predeclared limit; both
-old arms remain in the evidence. A candidate assertion failure, incomplete work,
-wrong result, or new blocking runtime defect blocks acceptance and is not erased
+old arms remain in the evidence. An assertion failure in either arm, incomplete
+work, wrong result, or new blocking runtime defect blocks acceptance and is not erased
 by replacement. Never use shell exit zero alone: a reproduced known defect may
 also have exit zero. A noisy but otherwise valid pair is not an infrastructure
 retry. Collect the fixed valid-pair count and calculate once; a longer follow-up
@@ -355,6 +444,20 @@ not-applicable), 1 for a valid regression or runtime blocker, 2 for malformed
 input, 3 for inconclusive/incomplete scope, and 4 for infrastructure/preparation
 failure. If infrastructure failure and a runtime blocker coexist, return 4 and
 retain the blocker explicitly; no condition is hidden by aggregation.
+
+For mixed configurations use precedence 4, then 1, then 3, then 0 after request
+validation; malformed input exits 2 before execution. Thus a proven regression
+plus incomplete coverage exits 1 and retains both findings. A recovered transient
+infrastructure attempt remains visible but does not itself force exit 4 once a
+complete healthy comparison replaces it within the declared limits. Unresolved
+infrastructure failure does force exit 4.
+
+Offline replay must match selected input IDs/digests, policy, metric values and
+intervals, reasons, and verdict. Preserve the original sealed comparison bytes
+and identity; a fresh computation's generated ID, clock timestamps, and
+analysis-host fingerprint are not equality criteria. Recovery reuses an already
+verified comparison instead of overwriting it with a fresh ID. Test replay on a
+different analysis host after cell shutdown.
 
 Acceptance uses file-backed protocol tests to interrupt before submission, during
 an arm, after sealing, and before report publication. Each recovery must retain
@@ -449,14 +552,22 @@ scenario revision, relevant knobs, metric semantics, policy, toolchain, or machi
 profile changes. Calibration does not establish capacity, leak freedom, recovery,
 or unmeasured downstream behavior.
 
-Provide an explicit `perf run --calibration` mode so these experiments can execute
-profiles before they are calibrated. It runs the same comparison calculation but
-marks the aggregate `purpose: "calibration"` and `gatingEligible: false`. Its
+Provide explicit request `purpose: "calibration"` so these experiments can plan,
+prepare, and execute profiles before they are calibrated. It runs the same
+comparison calculation but marks the aggregate `purpose: "calibration"` and
+`gatingEligible: false`. Its
 exit code retains the ordinary outcome mapping, but even exit 0 is not a
 production acceptance result. Ordinary CI
 requests reject this mode, and a report cannot become gating merely by editing
 its purpose; promotion requires the catalog revision and verified acceptance
 evidence. Record a finite infrastructure retry cap before each calibration batch.
+
+Calibration records bind the workload definition digest, required metrics,
+policy, toolchain, machine profile, and frozen acceptance batch. Keep this
+workload digest separate from the catalog entry's calibration-evidence link,
+avoiding a self-referential digest. Promoting an unchanged workload by attaching
+verified calibration evidence does not invalidate that evidence; changing a
+bound workload input does.
 
 
 ### Milestone 6: Publish evidence and integrate runtime-project CI
@@ -467,8 +578,14 @@ and a manual dispatch path. Accept canonical project identity, immutable baselin
 and candidate revisions, cohort template, profiles, and time budgets. Invoke the
 same CLI used by developers, keep build and measurement stages separate, and
 expose the result JSON and Markdown summary as workflow artifacts plus durable
-object-store links. Use the existing authorized GCP identity mechanism; do not
-invent an account or place credentials in logs. Candidate code is executable
+object-store links. Require explicit caller configuration for an authorized GCP
+identity and an available Linux builder. The current CI has neither a cloud
+authentication step nor an established performance runner, so verify their
+availability before live acceptance and record missing access as an unmet
+prerequisite. Use a protected runner with preconfigured `gcloud` authentication
+or caller-supplied workload identity federation configuration, which exchanges
+GitHub's job identity for short-lived GCP credentials. Do not invent account
+names or place credentials in logs. Candidate code is executable
 input: keep cloud-enabled execution limited to trusted invocations, with no
 privileged `pull_request_target` checkout of untrusted candidate code.
 
@@ -530,6 +647,8 @@ created by this plan.
   "targetComponents": ["shibuya"],
   "suite": "change-performance",
   "coverageMode": "selected-profiles",
+  "purpose": "gating",
+  "control": "none",
   "profiles": ["shibuya-core-quick", "shibuya-pgmq-quick"],
   "seed": 20261010,
   "cells": ["alpha"],
@@ -563,8 +682,9 @@ nix develop -c cabal run -v0 kenshou -- perf verify \
 
 Configure the control/results buckets explicitly using the existing
 allowed-project checks. `--evidence-base-uri` names the aggregate report's durable
-destination; the example uses the existing evidence project, and preparation must
-check the caller's actual access before leasing. Persist the resolved destination
+destination; the example uses the existing evidence project, and `perf run` must
+check the caller's actual access before leasing, since preparation does not
+receive that destination. Persist the resolved destination
 in the session. The normal output directory
 contains `request.json`, `prepared.json`, `plan.json`, `session.json`,
 `result.json`, `report.md`, and per-configuration comparison and attempt trees.
@@ -608,17 +728,26 @@ not-applicable, incomplete coverage, runtime failure, performance regression,
 statistical inconclusive, and infrastructure failure. Unknown graph mappings and
 expired calibration must never yield a pass through empty selection.
 
-A same-payload A/A request is an explicit control mode in `perf prepare`, which
-retains the selected profiles even though the source diff is empty. Add `--control
-aa` for that purpose; reject combining it with different baseline/candidate
-revisions. Normal no-change requests remain not-applicable only when proved.
-This control flag is retained in every request digest and report. The slowdown
+A same-payload A/A request uses `control: "aa"` in the request, which retains
+the explicit selected profiles even though the source diff is empty. Reject
+combining it with different baseline/candidate revisions. For the calibration
+batch also set `purpose: "calibration"` before planning and preparation. Normal
+no-change requests remain not-applicable only when proved. These fields are
+retained in every request digest and report; execution cannot change them.
+Use distinct baseline/candidate arm labels even when both reference the same
+payload, and the existing `VaryControl` comparison axis. The slowdown
 calibration uses an ordinary different-revision request and records its test-only
 purpose. Calibration artifacts are validated independently of the production
 runtime's release history.
 
+Exercise required-metric omission, unit drift, unsupported warm-up, calibration
+promotion without a digest cycle, immutable prepared selection, a changed
+purpose on resume, and persistent deadline/retry limits in deterministic tests.
+These are acceptance conditions for Milestones 1–3, not checks deferred to the
+live calibration batch.
+
 The live proof must include the owner admission/isolation/failure experiments,
-20 A/A and 20 slowdown comparisons per initial profile, and a interrupted client
+20 A/A and 20 slowdown comparisons per initial profile, and an interrupted client
 that resumes without duplicating work. A storage-tampering test must make
 `perf verify` identify the changed artifact and refuse success. Verify both raw
 samples and derived comparisons; a matching JSON schema alone is insufficient.
@@ -698,3 +827,11 @@ this repository's plan path. Cross-repository commits use the canonical plan URI
 instead. Keep this document's provenance append-only through the skill scripts;
 update living sections with acceptance evidence rather than recording routine
 commands as progress.
+
+Revision note (2026-10-10): Reviewed the plan against the local planning
+specification, cited ADRs, source, and Mori-resolved infrastructure documentation.
+Added required-metric validation, request-time calibration/control semantics,
+phase/timeout compatibility, persistent recovery budgets, semantic replay rules,
+and explicit CI prerequisites. Corrected the evidence-access preflight stage and
+clarified component mapping and aggregate precedence. Implementation milestones
+remain open; no live performance or infrastructure acceptance is claimed.
