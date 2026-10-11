@@ -313,6 +313,17 @@ The full `nix develop -c just verify` also passes with this correction: 116 core
 they do not close live no-compilation cache
 acceptance or any delivery milestone.
 
+Clean CLI planning control (2026-10-11): Harness commit
+`3df07298bdf2a5cef865c6102e55bd4f4937b6f6` planned the compatible Shibuya
+`7512b5c692af1c005392e4445cfa26a9be41f9ea` A/A request with seeds 20261010
+and 20261011. Both invocations independently verified the registered upstream,
+retained two selected profiles, and produced identical baseline/candidate cohort
+documents while retaining distinct request digests. The generated cohort is
+`perf-f50d2378f949070073894841d882f6dee49471dd82bc27d69e136484ba18eec9`.
+Local diagnostic evidence is `.dev/perf-ep25-cache-plan-1` and
+`.dev/perf-ep25-cache-plan-2`. Both reports remain non-gating; planning built no
+payload and acquired no lease. This verifies CLI naming, not live cache reuse.
+
 ## Surprises & Discoveries
 
 
