@@ -94,7 +94,7 @@ profile to produce an authoritative gate.
 ## Progress
 
 
-- [ ] Milestone 1: Exact-revision preparation rejects unrelated drift before leasing; complete the final Linux payload build check.
+- [x] (2026-10-12) Milestone 1: Exact-revision preparation independently checks both inventories and declared bounds, rejects unrelated drift before leasing, and builds the complete generated Linux payload successfully at harness `e9f2150`; integrity/cache controls and the repository gate pass.
 - [x] (2026-10-12) Milestone 2: Bounded planning resolves profiles, explains coverage and omissions, and checks calibration admission; core controls and the full repository gate pass.
 - [x] (2026-10-12) Milestone 3: File-backed multi-profile execution, interruption/resume, online/offline replay, tampering and truthful exits pass; 154 remote and 143 CLI examples pass.
 - [x] (2026-10-12) Milestone 4: Owner isolation, quarantine/recovery and health infrastructure passes 69 library and three CLI controls; all five Linux images are registered. Deployment qualification is separate.
@@ -103,15 +103,15 @@ profile to produce an authoritative gate.
 
 Current handoff (2026-10-12): The live preparation was cancelled and the builder's
 idle timer restored after the user's scope correction. No benchmark comparison
-was submitted. Final checks use `nix develop -c just verify` and a direct Linux
-payload build, without acquiring a measurement lease or running a workload.
+was submitted. Final checks passed: `nix develop -c just verify` and the complete generated
+Linux payload build, without acquiring a measurement lease or running a benchmark.
 The full repository gate completed successfully, including 116 core, 154 remote
 and 143 CLI examples, remaining package suites, graph/link checks, schemas and
 self-tests. Evidence is `.dev/perf-ep25-infrastructure-final-verify.log`; the
 scope-corrected documentation also passes strict guide/ADR validation in
-`.dev/perf-ep25-infrastructure-docs-verify.log`. The only unfinished infrastructure
-acceptance is the direct Linux payload build retained in
-`.dev/perf-ep25-infrastructure-linux-build.log`.
+`.dev/perf-ep25-infrastructure-docs-verify.log`. The direct Linux payload build also completed with exit 0; evidence is retained
+in `.dev/perf-ep25-infrastructure-linux-build.log`. All six infrastructure
+milestones are complete under the user's clarified scope.
 Historical handoffs below retain the earlier evidence and incomplete experiments;
 their broader completion requirements are superseded by the scope above.
 
@@ -571,6 +571,23 @@ could otherwise appear to satisfy its original acceptance contract.
 ## Outcomes & Retrospective
 
 
+Completed infrastructure delivery (2026-10-12): All six scope-corrected
+milestones are complete. The full repository gate passes, including two-profile
+file-backed execution, interruption/resume without duplicate dispatch, raw-health
+and comparison replay, storage-tampering rejection, failure exits, schemas and
+CI controls. The full generated `x86_64-linux` payload built successfully through
+the existing `nix-builder-x86`, including the CLI and final runtime wrapper, at
+harness commit `e9f2150740a9a68f3fd1b5ceed7e1b99471b808e`. Source/inventory and
+bounds checks had independently passed for both arms before compilation.
+
+The reusable command family, workflow and DOC-6 guide are available to consuming
+projects. Operators supply their runtime revisions, cell access and any desired
+CI deployment or calibration evidence. No live benchmark comparison, calibrated
+initial profile, measured turnaround guarantee or deployed CI parity is claimed.
+The original delivery was delayed by treating those consumer experiments as
+implementation prerequisites. Keep infrastructure verification separate from
+consumer measurement, and follow every required build through its actual result.
+
 Partial implementation (2026-10-11): The `perf plan/prepare/run/status/resume/verify`
 command family, calibration admission/declaration commands, protected CI entry
 point and operator guide are implemented. Local protocol controls cover two-profile
@@ -584,7 +601,7 @@ recovery and account/process isolation pass local controls. Images are registere
 alpha's driver/PostgreSQL 18/monitoring roles are upgraded, and one sealed warm
 admission smoke plus capability probing succeeded. The command family and
 two-profile file-backed replay/recovery controls are implemented. The full local
-repository gate passes; Linux payload compilation remains in progress. No live performance
+repository gate and complete generated Linux payload build both pass. No live performance
 comparison, calibration batch, measured latency acceptance or deployed CI parity
 is claimed. Those experiments are outside the user's clarified delivery scope.
 
