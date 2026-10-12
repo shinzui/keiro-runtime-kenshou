@@ -62,13 +62,13 @@ exclusively leased set of measurement machines with a verified reset between
 trials. One pair is a baseline trial and a candidate trial under the same lease.
 
 Build this workflow on the existing planner, Linux payload publisher, cell
-sessions, comparison engine, and evidence machinery. Deliver a small calibrated
-performance suite, a resumable `kenshou perf` command family, and a reusable CI
+sessions, comparison engine, and evidence machinery. Deliver performance profile
+definitions, calibration tooling, a resumable `kenshou perf` command family, and a reusable CI
 workflow. An ordinary performance request must not run full release matrices or
 multi-hour soaks. It must also never turn missing required coverage, insufficient samples,
 a runtime correctness failure, or a cell failure into a green performance gate.
 
-The initial end-to-end acceptance uses the Shibuya core benchmark and its PGMQ
+The initial example profiles use the Shibuya core benchmark and its PGMQ
 adapter path. The request and selection protocols work for every registered
 runtime component, but uncalibrated paths explicitly remain non-gating. Extending
 calibrated coverage to every runtime component is subsequent work, not an implied
@@ -78,15 +78,42 @@ affected paths outside that scope; such a pass cannot be labeled whole-change
 acceptance.
 
 
+Scope clarification (2026-10-12): The user requested reliable infrastructure for
+other projects to run their own comparisons, not execution of those projects'
+benchmarks. Infrastructure acceptance covers source/build preparation, bounded
+planning, orchestration, recovery, verification, owner lifecycle controls and
+consumer interfaces. Validate those contracts with automated tests and Linux
+build checks. Live benchmark batches, measured sensitivity/turnaround guarantees,
+and provisioning a caller's GitHub runner or environment are outside this task.
+The earlier live-acceptance requirements below describe operator qualification
+of a deployment or profile; they do not block delivery of the infrastructure.
+This correction does not weaken result verification or permit an uncalibrated
+profile to produce an authoritative gate.
+
+
 ## Progress
 
 
-- [ ] Milestone 1: Exact-revision requests produce independently verified baseline and candidate payloads, with unrelated dependency drift rejected before leasing.
-- [ ] Milestone 2: Change-aware performance planning selects calibrated configurations, explains coverage and omissions, and accounts for paired execution cost.
-- [ ] Milestone 3: One resumable command executes several configuration comparisons, retains every attempt, and emits a verified aggregate result with truthful exit status.
-- [ ] Milestone 4: A designated quick-run cell passes contention, isolation, recovery, health-failure, and admission-latency acceptance.
-- [ ] Milestone 5: The initial core and PGMQ profiles pass A/A and injected-slowdown calibration within the measured turnaround targets.
-- [ ] Milestone 6: A reusable CI entry point and operator guide reproduce the accepted workflow from an upstream change and preserve its durable evidence.
+- [ ] Milestone 1: Exact-revision preparation rejects unrelated drift before leasing; complete the final Linux payload build check.
+- [x] (2026-10-12) Milestone 2: Bounded planning resolves profiles, explains coverage and omissions, and checks calibration admission; core controls and the full repository gate pass.
+- [x] (2026-10-12) Milestone 3: File-backed multi-profile execution, interruption/resume, online/offline replay, tampering and truthful exits pass; 154 remote and 143 CLI examples pass.
+- [x] (2026-10-12) Milestone 4: Owner isolation, quarantine/recovery and health infrastructure passes 69 library and three CLI controls; all five Linux images are registered. Deployment qualification is separate.
+- [x] (2026-10-12) Milestone 5: Profile definitions and calibration declaration/publication/verification tooling pass the deterministic admission and storage controls; no consumer calibration batch was run.
+- [x] (2026-10-12) Milestone 6: Reusable/manual CI and DOC-6 expose the consumer protocol; workflow configuration controls, schemas, six guides and 23 ADRs pass. Caller runner provisioning is separate.
+
+Current handoff (2026-10-12): The live preparation was cancelled and the builder's
+idle timer restored after the user's scope correction. No benchmark comparison
+was submitted. Final checks use `nix develop -c just verify` and a direct Linux
+payload build, without acquiring a measurement lease or running a workload.
+The full repository gate completed successfully, including 116 core, 154 remote
+and 143 CLI examples, remaining package suites, graph/link checks, schemas and
+self-tests. Evidence is `.dev/perf-ep25-infrastructure-final-verify.log`; the
+scope-corrected documentation also passes strict guide/ADR validation in
+`.dev/perf-ep25-infrastructure-docs-verify.log`. The only unfinished infrastructure
+acceptance is the direct Linux payload build retained in
+`.dev/perf-ep25-infrastructure-linux-build.log`.
+Historical handoffs below retain the earlier evidence and incomplete experiments;
+their broader completion requirements are superseded by the scope above.
 
 Creation handoff: this plan was grounded in the working tree on 2026-10-10 local
 time. No implementation or live infrastructure changes were performed. It is a
@@ -393,8 +420,8 @@ The pinned upstream source was consulted after Mori found no registered Nixpkgs
 source. No version, source hash or bound was changed. Fresh Linux preparation is
 still required; no milestone is closed.
 
-First usable comparison priority (2026-10-11 local): The user requested that work
-focus on one live comparison immediately. An unfinished optional pre-staging
+First usable comparison priority (2026-10-11 local, superseded): The implementation
+incorrectly interpreted urgency as requiring a live comparison. An unfinished optional pre-staging
 change was reverted. Owner commit `2783917` in
 `mori://shinzui/load-testing-infra` registers all five isolation images and
 upgrades alpha's driver, PostgreSQL 18 and monitoring roles. The broker remains
@@ -500,6 +527,12 @@ in the authenticated index.
 ## Decision Log
 
 
+2026-10-12: Follow the user's clarified infrastructure-only scope. Verify the
+implementation's contracts and Linux build, provide consumer commands and CI
+interfaces, and leave benchmark execution, profile calibration experiments and
+caller deployment qualification to their operators. Do not equate infrastructure
+delivery with a calibrated performance gate or claim unmeasured latency targets.
+
 2026-10-11: Derive new cohort identities from resolved build inputs, preserving
 baseline reuse across request changes. Read legacy prepared identities only when
 both arms match the exact original request-derived rule; do not mix naming rules
@@ -546,19 +579,22 @@ lease-loss recovery, artifact tampering and independent raw health replay. Owner
 commits `915fb2f` and `022bcba` in `mori://shinzui/load-testing-infra` add sealed
 execution windows and bounded supervised-unit/shared-file isolation.
 
-All six milestones remain open. No live Linux payload/cache acceptance, designated
-cell admission/isolation/recovery acceptance, eighty-comparison calibration batch
-or actual CI/local parity has completed. Owner reset-failure quarantine, verified recovery and broader account/process
-isolation now pass local controls; upgraded images and live acceptance remain
-pending. Remaining implementation includes both-arm pre-staging, an owner
-admission probe and additional CLI interruption controls. Do not promote either initial profile based on synthetic controls.
+Infrastructure handoff (2026-10-12): Owner reset-failure quarantine, verified
+recovery and account/process isolation pass local controls. Images are registered,
+alpha's driver/PostgreSQL 18/monitoring roles are upgraded, and one sealed warm
+admission smoke plus capability probing succeeded. The command family and
+two-profile file-backed replay/recovery controls are implemented. The full local
+repository gate passes; Linux payload compilation remains in progress. No live performance
+comparison, calibration batch, measured latency acceptance or deployed CI parity
+is claimed. Those experiments are outside the user's clarified delivery scope.
 
 GCP authentication is restored, and the user authorized use of the existing
 Linux performance machine. The builder is `nix-builder-x86` and the designated
-cell is `alpha`, in `tan-nb-exp`, `us-west1-a`. Live image publication and Linux
-preparation are in progress. The repository API still reports zero GitHub
-environments and self-hosted runners; protected CI configuration and actual
-parity remain unfinished.
+cell is `alpha`, in `tan-nb-exp`, `us-west1-a`. All five owner images were
+registered; live preparation was cancelled. The repository API previously
+reported zero GitHub environments and self-hosted runners. Protected runner
+configuration and actual CI parity require caller setup and are not prerequisites
+for shipping the reusable interface.
 
 
 ## Context and Orientation
@@ -721,10 +757,12 @@ package registry and upstream release tags; this plan selects no new versions.
 Reuse artifacts by a build key over the harness commit, full resolved input
 inventory, descriptor/source-lock digests, platform, variant, and build flags.
 Revalidate a cache hit's recorded identity and bundle digest. Keep build cache
-writes separate from measurement and retain failed build logs. Acceptance is a
-same-source request that reuses the payload on its second preparation, plus a
-candidate-only edit that produces a distinct payload while all unrelated source
-inputs remain equal. Concurrent preparations must leave `cohort/active.project`,
+writes separate from measurement and retain failed build logs. Infrastructure
+acceptance uses build-key, inventory and file-backed publisher controls to reject
+changed/invalid artifacts and distinguish target-only edits from unrelated drift,
+plus a direct generated Linux payload build. Consumers can separately measure
+cold preparation and unchanged-cache reuse without turning those measurements
+into infrastructure delivery blockers. Concurrent preparations must leave `cohort/active.project`,
 `cohort/released.json`, and each other's build plans unchanged.
 
 
@@ -739,7 +777,8 @@ required cell capabilities, calibrated machine profile, and supporting calibrati
 artifact. A profile distinguishes fixed-load latency from capacity; a paced
 throughput near the offered rate cannot certify peak capacity. Initially register
 candidate profiles for Shibuya core and PGMQ end-to-end, marked uncalibrated until
-Milestone 5. Reuse existing metric names and policies when appropriate.
+consumers provide independently verified acceptance evidence through Milestone 5's
+tooling. Reuse existing metric names and policies when appropriate.
 
 Use the existing component graph and upstream diff mapper to compute affected
 scenarios before applying the fast-suite profile catalog. Account for dependent
@@ -880,108 +919,49 @@ comparison for the same sealed inputs. Test mixed results across configurations,
 known-defect exit zero, and a runtime failure followed by a passing attempt.
 
 
-### Milestone 4: Prove that quick-run cells are isolated and available
+### Milestone 4: Provide reliable cell lifecycle and health contracts
 
 
-Implement generic owner changes in `mori://shinzui/load-testing-infra`, following
-that project's instructions, at project-relative `scripts/cell/`,
-`nixos/pkgs/cell-agent/src/`, and `infra/cells/` (artifact-level URIs pending).
-Keep a canonical cross-reference to this plan in owner commits:
-`mori://shinzui/keiro-runtime-kenshou/plans/25-provide-quick-and-reliable-performance-validation-for-runtime-changes`.
-Inspect current owner code and recorded acceptance first; close missing items
-without duplicating already demonstrated behavior. This milestone is an explicit
-cross-repository dependency; Kenshou's software can be tested before it passes,
-but the feature cannot be advertised as an accepted performance gate.
+Generic cell ownership remains in `mori://shinzui/load-testing-infra`, at
+project-relative `scripts/cell/`, `nixos/pkgs/cell-agent/src/` and `infra/cells/`
+(artifact-level URIs pending). Reuse exclusive leases, reset evidence, supervised
+payload ownership and idle-stop policies. The owner must isolate payload processes
+and writable files, fence repeated reset failures and require freshly verified
+recovery evidence before clearing a fence. Kenshou must reject missing, stale or
+failed health/reset evidence and retain the corresponding failures.
 
-Designate a cell for short comparisons during development hours; route soaks to
-other capacity or outside that window. Reuse the owner's idle-stop policy and
-existing lifecycle commands. Reuse baseline payloads and pre-stage both arms
-before measurement starts, outside timed windows. Avoid image rebuilds, compilers,
-cache garbage collection, and bulk artifact transfers during measurement. Keep
-monitoring collection bounded to the run window; profiles and dashboard exports
-remain optional diagnostics while raw benchmark samples remain mandatory.
-
-Prove exclusive leasing under two simultaneous requests, including an upgrade
-contender. Contaminate the runner with surviving child processes and owned files,
-and contaminate database state/settings; the next reset must remove the declared
-contamination and verify requested settings without harming unrelated processes.
-Inject maintenance/background-load and storage-pressure gate failures, missing
-health observations, stale agent identity, lease loss, and consecutive reset
-failures. Each must prevent authoritative success; repeated reset failures must
-quarantine the cell. A recovery must not clear quarantine without the owner's
-verified recovery procedure. Seal failure evidence when feasible and expose
-publication failure honestly when not feasible.
-
-Add or complete the owner's latency probe and run at least 20 warm and 20 stopped
-admission observations. Measure from lease/start request to accepted submission,
-report p50/p95 and every failed attempt, and separately record readiness/reset
-latency to the first measured operation. Acceptance is p95 at most 90 seconds warm
-and 180 seconds stopped, with no overlapping benchmark processes. Store the
-underlying timing samples and sealed fixture references in a dated Kenshou report.
-A missed target remains open work with a breakdown; example output cannot close
-this milestone. Verify retrieval and digests after the cell is stopped.
+Verify these contracts through the owner's existing library/CLI controls and
+Kenshou's file-backed lease, cleanup and raw-health replay controls. Registered
+Linux images and the existing sealed admission smoke support the deployment
+handoff; do not imply that this establishes measured latency or forced-failure
+acceptance for every role. The owner's admission probe remains available for
+operators to qualify their deployment. Running twenty warm/stopped observations,
+contention experiments or benchmark contamination batches is outside this task.
 
 
-### Milestone 5: Calibrate the initial benchmarks and time-to-verdict
+### Milestone 5: Supply profiles and calibration tooling to consumers
 
 
-Calibrate Shibuya core and PGMQ end-to-end separately on the designated cell,
-using the exact profiles selected in Milestone 2. Ensure each does enough work,
-retains full samples, observes steady behavior, and does not saturate the load
-generator. Capture planned operations, actual completions, schedule lag, errors,
-and any backlog. A profile may choose a longer window to control checkpoint or
-polling noise; a short run that misses important behavior remains exploratory.
-Pin the comparison policy and minimum meaningful relative and absolute effects
-before running the acceptance experiment. Do not use the default policy's metric
-limits as evidence that a workload can detect those limits.
+Provide the initial Shibuya core and PGMQ profile definitions, retaining full
+samples and required workload/metric inputs. Mark them uncalibrated. Implement
+`perf calibration fingerprint`, `declare`, `publish` and `verify` so consuming
+projects can freeze workload, policy, toolchain, machine and health identities,
+declare seeds and bounded retries, and independently replay published evidence.
 
-Run 20 complete A/A comparisons per profile, where both arms use the same
-payload. Require at least 19 passes, zero regressions, and at most one
-inconclusive result. Separately use a clean test-only candidate revision that
-adds a deterministic delay at the real operation boundary; preserve the workload,
-knobs, harness, and unrelated dependencies. The calibration profile records the
-injected mechanism and the target effect beyond both policy thresholds. Run 20
-comparisons and require at least 19 detected regressions, zero passes, and at
-most one inconclusive result. Infrastructure-failed comparisons are reported and
-repeated under a fixed, recorded retry cap; never drop statistical outcomes.
-Report these as observed calibration counts, not a proven population false-positive
-rate or a universal 95% detection guarantee. Retain the injected source and its
-full commit identity without merging the slowdown into a runtime release.
+The verifier must require twenty A/A and twenty slowdown slots, nineteen expected
+outcomes, zero opposite outcomes, at most one inconclusive outcome, no runtime
+blockers and retry-inclusive timing acceptance. Reject missing reports, changed
+bound inputs, expired records, reordered seeds and undeclared retries. Keep the
+workload digest independent of its catalog evidence link so attaching verified
+evidence does not create a digest cycle.
 
-For each accepted profile, require p95 at most 15 minutes from verified payloads
-ready to a verified durable comparison report on an uncontended warm cell,
-including lease admission, resets, five pairs, sealing, retrieval, and report
-publication. Use the 20 A/A exercises for these timing samples and show failures
-and cache state. Separately report a cold preparation and a repeated preparation;
-the repeated preparation must reuse unchanged payloads and perform no compilation.
-Do not promise a universal source-build duration. The aggregate suite remains
-bounded at 30 minutes; if two accepted profiles exceed that together, the report
-must expose the additional budget needed rather than omit one.
-
-Investigate missed calibration or latency targets and revise workload design
-with a new profile revision, followed by a fresh predeclared acceptance batch.
-A profile becomes gating only after both sensitivity and timing acceptance pass
-and links to the immutable calibration evidence. Invalidate that designation when
-scenario revision, relevant knobs, metric semantics, policy, toolchain, or machine
-profile changes. Calibration does not establish capacity, leak freedom, recovery,
-or unmeasured downstream behavior.
-
-Provide explicit request `purpose: "calibration"` so these experiments can plan,
-prepare, and execute profiles before they are calibrated. It runs the same
-comparison calculation but marks the aggregate `purpose: "calibration"` and
-`gatingEligible: false`. Its
-exit code retains the ordinary outcome mapping, but even exit 0 is not a
-production acceptance result. Ordinary CI
-requests reject this mode, and a report cannot become gating merely by editing
-its purpose; promotion requires the catalog revision and verified acceptance
-evidence. Record a finite infrastructure retry cap before each calibration batch.
-
-Calibration records bind the workload definition digest, required metrics,
-policy, toolchain, machine profile, and frozen acceptance batch. Keep this
-workload digest separate from the catalog entry's calibration-evidence link,
-avoiding a self-referential digest. Promoting an unchanged workload by attaching
-verified calibration evidence does not invalidate that evidence; changing a
-bound workload input does.
+Verify these admission rules using deterministic fixtures and file-backed
+publication/replay controls. The operator guide explains how a consuming project
+runs its own calibration batch. No real batch or injected slowdown run is required
+to deliver the infrastructure. An explicit `purpose: "calibration"` request can
+execute an uncalibrated profile and report its ordinary comparison outcome, but
+must retain `gatingEligible: false`; ordinary gating requests and CI must never
+promote that exploratory result into production acceptance.
 
 
 ### Milestone 6: Publish evidence and integrate runtime-project CI
@@ -1020,9 +1000,10 @@ scope, preparation failures, all exits, budget exhaustion, calibration expiry,
 resume, publication, and escalation to a separate longer comparison. Update the
 stale README status only where it describes this delivered behavior.
 
-Demonstrate a request using commits from `mori://shinzui/shibuya`, with the core
-and adapter profile coverage reported separately, through the reusable workflow
-and the local command. A small example caller can be checked into this repository;
+Demonstrate the shared request/exit contract through deterministic workflow
+controls and the file-backed CLI tests, with core and adapter profile coverage
+reported separately. Supply example requests using `mori://shinzui/shibuya` for
+consumers to execute themselves. A small example caller can be checked into this repository;
 rollout to additional upstream repositories is not required to complete this
 plan. The two entry points must share request semantics, digests, result schema,
 and exit behavior. Distill the new generated-cohort identity, calibration, and
@@ -1121,14 +1102,12 @@ nix develop -c just adr-validate
 nix develop -c just verify
 ```
 
-Run live acceptance only after local contracts pass. Record actual commands,
-request digests, owner image revisions, run IDs, report URIs, timings, and outcomes
-in a dated file under `docs/reports/` and summarize acceptance in Progress. The
-owner's new admission probe is to be implemented at project-relative
-`scripts/cell/measure-accept-latency.sh` in `mori://shinzui/load-testing-infra`
-(artifact-level URI pending); invoke it there with `alpha warm 20` and
-`alpha stopped 20` after reviewing its semantics. Never copy a plan's illustrative
-latency transcript as observed evidence.
+The command examples above are consumer instructions, not a request to execute
+benchmarks during infrastructure delivery. Operators can subsequently qualify a
+deployment using project-relative `scripts/cell/measure-accept-latency.sh` in
+`mori://shinzui/load-testing-infra` (artifact-level URI pending), then retain their
+actual commands, inputs, run IDs and evidence. Do not substitute illustrative or
+synthetic timings for observations.
 
 
 ## Validation and Acceptance
@@ -1160,22 +1139,17 @@ purpose on resume, and persistent deadline/retry limits in deterministic tests.
 These are acceptance conditions for Milestones 1–3, not checks deferred to the
 live calibration batch.
 
-The live proof must include the owner admission/isolation/failure experiments,
-20 A/A and 20 slowdown comparisons per initial profile, and an interrupted client
-that resumes without duplicating work. A storage-tampering test must make
-`perf verify` identify the changed artifact and refuse success. Verify both raw
-samples and derived comparisons; a matching JSON schema alone is insufficient.
-Recompute a finished report after the cell has stopped, retaining the same
-verdict and evidence identities. The reusable workflow must demonstrate its
-non-success handling as well as a pass, and must publish available failure
-evidence when a normal step exits nonzero.
+Infrastructure completion requires the repository gate, file-backed
+multi-profile CLI execution/recovery and online/offline semantic replay,
+publication/tampering controls, owner lifecycle tests, CI configuration controls
+and a Linux payload build check. A changed artifact must cause verification to
+fail even when other summaries look valid. Interrupted and completed sessions
+must resume without duplicate dispatch or changed decisions.
 
-Full completion requires both initial profiles calibrated, required owner
-acceptance closed, the time targets met on the declared machine/profile, and
-operator/CI parity demonstrated. An unimplemented owner dependency or unexplained
-latency miss is unfinished work. Broader family coverage remains explicitly
-limited in the final report; performance acceptance is always scoped to the
-selected calibrated workloads and their declared measurable effects.
+Consumer deployment qualification remains separate: operators provide their own
+protected CI runner/environment, calibration evidence and measured machine
+acceptance. No calibrated initial profile, live CI parity or observed turnaround
+service guarantee is asserted by completion of this infrastructure plan.
 
 
 ## Idempotence and Recovery
@@ -1249,3 +1223,8 @@ phase/timeout compatibility, persistent recovery budgets, semantic replay rules,
 and explicit CI prerequisites. Corrected the evidence-access preflight stage and
 clarified component mapping and aggregate precedence. Implementation milestones
 remain open; no live performance or infrastructure acceptance is claimed.
+
+Revision note (2026-10-12): Corrected the user's delivery scope to reusable,
+reliably tested infrastructure for other projects. Removed benchmark execution,
+calibration batches and caller CI provisioning from implementation acceptance;
+retained strict verification and calibration requirements for authoritative gates.

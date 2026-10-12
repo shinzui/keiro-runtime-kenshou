@@ -15,12 +15,22 @@ the request, generated cohorts, independent dependency inventories, raw trial
 evidence, ordinary comparisons and aggregate report. This is scoped performance
 evidence; it does not establish capacity, leak freedom or recovery correctness.
 
-The command family is implemented. The initial core and PGMQ profiles are still
-uncalibrated, and live build, cell, timing and CI acceptance remain open in
+The command family is infrastructure for consuming projects to run their own
+comparisons. The initial core and PGMQ profiles are still uncalibrated; this
+delivery does not claim calibrated sensitivity, measured turnaround guarantees
+or a provisioned caller CI runner. Implementation and validation evidence live in
 [Plan 25](../plans/25-provide-quick-and-reliable-performance-validation-for-runtime-changes.md).
 Ordinary gating requests exclude uncalibrated profiles and return incomplete
 coverage rather than a pass. Calibration admission retrieves frozen records and
 replays every retained report; a catalog link alone does not enable a gate.
+
+To run an initial comparison with the supplied uncalibrated profiles, use the
+request below with `purpose: "calibration"` and `control: "none"`. Use two
+different compatible source commits. The same prepare/run/verify commands work,
+and the report retains `gatingEligible: false` while showing the measured
+comparison. No calibration batch is required for that exploratory use. Keep
+`purpose: "gating"` only when the selected profiles have verified calibration
+evidence. For an A/A control, use equal commits and `control: "aa"` explicitly.
 
 ## Pin the request and inspect its scope
 
@@ -296,6 +306,7 @@ account. Credential files and payload build trees are excluded from artifacts.
 CI refuses calibration requests and budgets above thirty minutes or admission
 allowances above ninety seconds. A missing or inconsistent replay is exit 4.
 
-The repository currently has no configured GitHub environment or self-hosted
-runner. Live CI/local parity is pending those settings and restored cloud access.
-Do not treat this workflow's presence as evidence of a completed performance gate.
+The reusable workflow requires the consuming repository's runner, environment
+and identity settings. They are caller deployment inputs rather than resources
+provisioned by Kenshou. The local command family can be used independently of
+GitHub. This workflow's presence does not establish a calibrated performance gate.

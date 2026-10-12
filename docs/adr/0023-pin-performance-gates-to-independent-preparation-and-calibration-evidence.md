@@ -108,5 +108,9 @@ Uncalibrated or uncovered paths remain incomplete rather than green. Frozen
 calibration verification adds preparation/read costs and requires all attempts to
 have durable evidence. Conservative source hashing can require a fresh batch after
 changes outside a particular scenario. Synthetic protocol checks do not establish
-cell latency, isolation, sensitivity or live CI acceptance. Those remain separate
-observable outcomes in the originating plan.
+cell latency, isolation, sensitivity or live CI acceptance. Reusable infrastructure
+delivery and consumer qualification are separate: operators execute their own
+benchmarks, admit calibration evidence and configure their CI deployment. Shipping
+the command family does not promote an initial profile or assert measured service
+guarantees. Those requirements still apply before advertising an authoritative
+performance gate.
