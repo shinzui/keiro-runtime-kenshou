@@ -338,8 +338,37 @@ Cabal's pre-existing compiler inventory and checks production argument names,
 allowing only independently identified compiler libraries to resolve as null.
 Four authenticated-index controls and six pure Nix dependency controls pass;
 the latter is registered in `schemas-check`. Fresh clean-harness preparation
-and no-compilation cache acceptance remain pending. CI runner/environment/identity
-settings are still requested; no configuration has been invented.
+and no-compilation cache acceptance remain pending. The user authorized the existing Linux performance machine. Cloud discovery
+identified the running `nix-builder-x86` builder and the designated `alpha` cell
+in `tan-nb-exp`, `us-west1-a`; connection settings are now known. The repository
+still has zero GitHub environments and self-hosted runners; CI configuration
+remains unfinished.
+
+
+Owner quarantine and account isolation (2026-10-11 local): Commit `fd9f560` in
+`mori://shinzui/load-testing-infra` persists consecutive reset failures, fences
+the cell after two failures and requires a current, fence-bound recovery lease
+plus freshly retrieved cold-reset/raw-health evidence before conditional clear.
+Local controls reject forged passing summaries, discontinuous observations,
+stale fences, changed leases, images and artifacts. Commit `990f22a` drains the
+dedicated payload account after supervised-unit cleanup and restricts payload
+privileges and writable paths. Sixty-nine Rust library examples and three CLI
+examples pass, with one unrelated opt-in example ignored; `nix build .#cellctl`
+also passes. Commit `d91f2e5` exports image artifacts through Nix before inspecting
+them outside the store; controls reject duplicate, missing, corrupt and symlink
+archives and unrelated cleanup targets. Upgraded image publication is running;
+no upgraded-cell live acceptance is claimed. Both-arm pre-staging, the admission
+probe and forced live controls remain open.
+
+Fresh validation and Linux preparation (2026-10-11 local): Harness `232dc6c`
+passes the full `nix develop -c just verify`, including 116 core, 154 remote,
+143 CLI examples, remaining package tests, schemas, link proof, 23 ADRs and six
+guides. The real `.dev/perf-ep25-live-preparation-3` passed authenticated compiler
+argument checking and generated further Linux metadata, then the builder stopped
+at 21:00 local and the transport closed during `cabal2nix-postgresql-binary`.
+Preparation exited 4 and acquired no lease. The builder restarted; direct
+inventory retry retains `.dev/perf-ep25-live-inventory-3.json` and its log.
+Payload publication and no-compilation cache acceptance remain unverified.
 
 ## Surprises & Discoveries
 
@@ -455,17 +484,17 @@ execution windows and bounded supervised-unit/shared-file isolation.
 
 All six milestones remain open. No live Linux payload/cache acceptance, designated
 cell admission/isolation/recovery acceptance, eighty-comparison calibration batch
-or actual CI/local parity has completed. Remaining implementation includes broader
-payload process isolation, repeated-failure quarantine with verified recovery,
-both-arm pre-staging, an owner admission probe and additional CLI interruption
-controls. Do not promote either initial profile based on synthetic controls.
+or actual CI/local parity has completed. Owner reset-failure quarantine, verified recovery and broader account/process
+isolation now pass local controls; upgraded images and live acceptance remain
+pending. Remaining implementation includes both-arm pre-staging, an owner
+admission probe and additional CLI interruption controls. Do not promote either initial profile based on synthetic controls.
 
-Live work requires renewed GCP authentication; the user has been asked to run
-`gcloud auth login` and confirm completion. CI also requires the user's protected
-Linux runner labels, existing environment, authorized identity and, when using
-federation, provider/service-account identifiers. The repository API currently
-reports no environments or self-hosted runners. Those prerequisites are pending;
-no alternate credentials or infrastructure settings have been inferred.
+GCP authentication is restored, and the user authorized use of the existing
+Linux performance machine. The builder is `nix-builder-x86` and the designated
+cell is `alpha`, in `tan-nb-exp`, `us-west1-a`. Live image publication and Linux
+preparation are in progress. The repository API still reports zero GitHub
+environments and self-hosted runners; protected CI configuration and actual
+parity remain unfinished.
 
 
 ## Context and Orientation

@@ -5,8 +5,8 @@ description: Scoped runtime performance gates bind independently checked payload
 docId: ADR-23
 status: Accepted
 date: 2026-10-11
-timestamp: 2026-10-12T03:43:53Z
-generated: {by: 'codex/gpt-6.1-sol', at: '2026-10-12T03:43:53Z'}
+timestamp: 2026-10-12T04:03:28Z
+generated: {by: 'codex/gpt-6.1-sol', at: '2026-10-12T04:03:28Z'}
 originatingPlan: docs/plans/25-provide-quick-and-reliable-performance-validation-for-runtime-changes.md
 ---
 
@@ -71,6 +71,17 @@ replacement identities and runtime blockers. Never pool pairs across lost leases
 Replay completed and abandoned attempts against their journaled leases, scheduled
 seeds, payloads and raw metrics. Keep original comparison bytes. Requested-scope
 coverage and whole-change coverage remain separate report fields.
+
+Keep reset-failure quarantine and recovery in the infrastructure owner,
+`mori://shinzui/load-testing-infra`. Two consecutive unverified resets persist a
+fence; an ordinary successful reset cannot erase it. Recovery uses a separate
+purpose-bound lease acquired after the fence and binds its exact stored digest.
+Clear requires a freshly retrieved, sealed cold reset with independently replayed
+continuous role health, current identity and a still-active matching lease. Write
+an immutable recovery receipt before deleting only the observed fence generation.
+Payload isolation uses the dedicated account, supervised control groups and
+restricted writable paths. Local controls cannot substitute for upgraded-image
+contamination and forced-failure acceptance.
 
 Keep statistical outcomes, runtime blockers, infrastructure and coverage separate.
 Aggregate precedence is infrastructure failure (4), regression/runtime failure (1),

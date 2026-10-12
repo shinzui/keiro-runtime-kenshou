@@ -1,6 +1,7 @@
 # Bundle Update Log
 
 ## 2026-10-12
+* **Update**: Record persistent owner reset-failure quarantine, fence-bound recovery proof and dedicated payload-account isolation; live image and fault acceptance remain pending.
 * **Update**: ADR-23: distinguish authenticated compiler-provided Nix libraries from absent production dependencies.
 
 ## 2026-10-11
