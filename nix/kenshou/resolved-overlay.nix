@@ -31,10 +31,11 @@ let
       dependencies = import ./resolved-dependencies.nix {
         inherit arguments named;
         haskellPackages = hself;
-        systemPackages = pkgs;
+        systemPackages = pkgs.__splicedPackages;
         compilerPackages = resolved.compilerPackages;
       };
-      base = hself.callPackage expression (lib.genAttrs dependencies.missing (_: null));
+      base = hself.callPackage expression
+        ((lib.genAttrs dependencies.missing (_: null)) // dependencies.systemOverrides);
     in
     pkgs.haskell.lib.compose.overrideCabal
       (args:

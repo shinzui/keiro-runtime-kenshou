@@ -5,8 +5,8 @@ description: Scoped runtime performance gates bind independently checked payload
 docId: ADR-23
 status: Accepted
 date: 2026-10-11
-timestamp: 2026-10-12T04:03:28Z
-generated: {by: 'codex/gpt-6.1-sol', at: '2026-10-12T04:03:28Z'}
+timestamp: 2026-10-12T04:37:12Z
+generated: {by: 'codex/gpt-6.1-sol', at: '2026-10-12T04:37:12Z'}
 originatingPlan: docs/plans/25-provide-quick-and-reliable-performance-validation-for-runtime-changes.md
 ---
 
@@ -43,6 +43,13 @@ only for the independently selected compiler inventory. Inspect generated
 production dependency names before resolution, rejecting absent or otherwise
 disabled production inputs while allowing unused disabled-test arguments. This
 does not authorize bound lifting or a different compiler selection.
+
+Resolve generated system, framework and pkg-config dependencies explicitly from
+the spliced native package set. Nix's default Haskell scope takes precedence over
+native packages; the Haskell `zlib` and its C `zlib` input otherwise form a cycle.
+Reject missing production native inputs and arguments used ambiguously for both
+Haskell and native dependencies. This preserves the generated dependency roles
+without changing package versions or relaxing bounds.
 
 Derive generated cohort names from the resolved descriptor, independently of the
 measurement request and arm label. Seeds, cell selection, budgets and an unrelated

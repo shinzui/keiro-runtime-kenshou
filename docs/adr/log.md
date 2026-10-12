@@ -1,6 +1,7 @@
 # Bundle Update Log
 
 ## 2026-10-12
+* **Update**: Resolve generated native dependencies from the spliced system package set and reject missing or ambiguous production inputs.
 * **Update**: Record persistent owner reset-failure quarantine, fence-bound recovery proof and dedicated payload-account isolation; live image and fault acceptance remain pending.
 * **Update**: ADR-23: distinguish authenticated compiler-provided Nix libraries from absent production dependencies.
 

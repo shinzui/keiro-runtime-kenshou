@@ -370,7 +370,37 @@ Preparation exited 4 and acquired no lease. The builder restarted; direct
 inventory retry retains `.dev/perf-ep25-live-inventory-3.json` and its log.
 Payload publication and no-compilation cache acceptance remain unverified.
 
+Owner admission tooling (2026-10-11 local): Commits `00257b8` and `cec8b80` in
+`mori://shinzui/load-testing-infra` add serial warm/stopped admission probes,
+first-operation timestamps, strict result schemas and retained per-observation
+evidence. Four probe controls and the image-export controls pass; the Linux hello
+fixture builds. The observed admission latency conservatively includes status
+polling and retrieval. No live observations have run yet. Image registration
+exposed an Ubuntu login-shell logout hook that changed successful cleanup into
+exit 1; owner commit `9f3979a` uses a non-login shell with an explicit tool path.
+Driver and PostgreSQL 17 images are registered; the other images are building.
+The builder's idle timer is temporarily stopped with a four-hour restoration
+timer armed, to prevent its watchdog interrupting authenticated metadata builds.
+Restore it when the builds finish. No cell idle policy was changed.
+
+Native dependency correction (2026-10-11 local): Inventory retry passed metadata
+downloads after a transient Hackage HTTP/2 failure, then rejected an infinite
+recursion in `zlib`. The generated call bypassed the native argument overrides
+present in the pinned upstream package set. Native inputs now resolve explicitly
+from the spliced system package set; nine pure dependency controls pass, including
+native name collision, missing native input and ambiguous argument rejection.
+The pinned upstream source was consulted after Mori found no registered Nixpkgs
+source. No version, source hash or bound was changed. Fresh Linux preparation is
+still required; no milestone is closed.
+
 ## Surprises & Discoveries
+
+2026-10-11 implementation: The generated Cabal-to-Nix function has a native
+`zlib` parameter. Haskell `callPackage` resolves that name to its own Haskell
+package unless it is explicitly overridden, producing an infinite derivation
+cycle. The pinned Nixpkgs package-set generator explicitly passes `pkgs.zlib`.
+Generated preparation now reproduces that native dependency distinction rather
+than relying on the default Haskell scope.
 
 
 2026-10-11 implementation: The pinned Nix GHC package set deliberately represents
