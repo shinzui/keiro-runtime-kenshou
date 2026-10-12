@@ -14,6 +14,15 @@ loader.loader.exec_module(resolved)
 
 
 class ResolvedLockTests(unittest.TestCase):
+    def test_compiler_libraries_require_unambiguous_pre_existing_plan_units(self):
+        builtin = {"type": "pre-existing", "pkg-name": "base", "pkg-version": "4.21.0.0"}
+        registry = {"type": "configured", "pkg-name": "aeson", "pkg-version": "2.2.5.1"}
+        self.assertEqual(resolved.compiler_packages({"install-plan": [builtin, builtin, registry]}), {"base": "4.21.0.0"})
+        with self.assertRaisesRegex(ValueError, "ambiguous compiler"):
+            resolved.compiler_packages({"install-plan": [builtin, builtin | {"pkg-version": "4.20.0.0"}]})
+        with self.assertRaisesRegex(ValueError, "unsafe compiler"):
+            resolved.compiler_packages({"install-plan": [builtin | {"pkg-name": "../base"}]})
+
     def test_selected_older_description_is_pinned_by_hash(self):
         old = b"name: example\nversion: 1.0\n"
         new = old + b"x-revision: 1\n"

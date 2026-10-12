@@ -26,6 +26,11 @@ provenance:
       at: 2026-10-11T04:20:16Z
       mode: "implement"
       note: "Implement exact-revision requests and bounded performance planning."
+    - model: "gpt-6.1-sol"
+      harness: "codex-cli"
+      at: 2026-10-12T03:31:29Z
+      mode: "implement"
+      note: "Resume live Linux preparation and implement persistent owner reset-failure quarantine with verified recovery."
   reviews:
     - model: "gpt-6-astra"
       harness: "codex-cli"
@@ -324,7 +329,28 @@ Local diagnostic evidence is `.dev/perf-ep25-cache-plan-1` and
 `.dev/perf-ep25-cache-plan-2`. Both reports remain non-gating; planning built no
 payload and acquired no lease. This verifies CLI naming, not live cache reuse.
 
+Preparation resumed (2026-10-11 local): GCP token authentication and Linux
+builder transport now work. Fresh preparation at harness `afb22ba` retained
+`.dev/perf-ep25-live-preparation-2` and rejected `aeson` metadata before any
+lease. The old null-input assertion incorrectly classified compiler-provided
+libraries as missing production dependencies. Authenticated selection now retains
+Cabal's pre-existing compiler inventory and checks production argument names,
+allowing only independently identified compiler libraries to resolve as null.
+Four authenticated-index controls and six pure Nix dependency controls pass;
+the latter is registered in `schemas-check`. Fresh clean-harness preparation
+and no-compilation cache acceptance remain pending. CI runner/environment/identity
+settings are still requested; no configuration has been invented.
+
 ## Surprises & Discoveries
+
+
+2026-10-11 implementation: The pinned Nix GHC package set deliberately represents
+`base`, `bytestring`, `containers` and other compiler-provided libraries as null.
+The strict generated-overlay assertion rejected those valid production inputs.
+Named production dependencies now distinguish authenticated compiler libraries,
+unavailable production packages and absent disabled-test parameters. Mori had
+no registered Nixpkgs source; the pinned upstream package-set and GHC configuration
+were read from the authoritative NixOS repository. No dependency pin was changed.
 
 
 2026-10-11 implementation: Naming a cohort from the request digest invalidated

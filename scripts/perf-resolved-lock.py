@@ -46,6 +46,20 @@ def selected_packages(plan):
     return packages, flags
 
 
+def compiler_packages(plan):
+    packages = {}
+    for unit in plan["install-plan"]:
+        if unit.get("type") != "pre-existing":
+            continue
+        name, version = unit["pkg-name"], unit["pkg-version"]
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*", name) or not re.fullmatch(r"[0-9]+(?:\.[0-9]+)*", version):
+            raise ValueError("unsafe compiler package name or version")
+        if name in packages and packages[name] != version:
+            raise ValueError(f"ambiguous compiler package identity for {name}")
+        packages[name] = version
+    return packages
+
+
 def description_revisions(index_path, packages):
     wanted = {f"{name}/{entry['version']}/{name}.cabal": name for name, entry in packages.items()}
     found = {}
@@ -99,7 +113,8 @@ def main():
             unpacked = nix("nix-prefetch-url", "--type", "sha256", "--unpack", url)
             entry["sha256"] = nix("nix", "hash", "convert", "--hash-algo", "sha256", "--from", "nix32", "--to", "sri", unpacked)
         entry["descriptionRevision"] = revisions[name]
-    output = {"schema": "kenshou.perf-resolved-lock/v1", "packages": packages, "flags": flags}
+    output = {"schema": "kenshou.perf-resolved-lock/v1", "packages": packages, "flags": flags,
+              "compilerPackages": compiler_packages(plan)}
     Path(options.out).write_text(json.dumps(output, sort_keys=True) + "\n")
 
 

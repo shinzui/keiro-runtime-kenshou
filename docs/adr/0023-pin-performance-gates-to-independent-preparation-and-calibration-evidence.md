@@ -5,8 +5,8 @@ description: Scoped runtime performance gates bind independently checked payload
 docId: ADR-23
 status: Accepted
 date: 2026-10-11
-timestamp: 2026-10-11T09:35:07Z
-generated: {by: 'codex/gpt-6.1-sol', at: '2026-10-11T09:35:07Z'}
+timestamp: 2026-10-12T03:43:53Z
+generated: {by: 'codex/gpt-6.1-sol', at: '2026-10-12T03:43:53Z'}
 originatingPlan: docs/plans/25-provide-quick-and-reliable-performance-validation-for-runtime-changes.md
 ---
 
@@ -35,6 +35,14 @@ into the strict Nix selection, and compare the actual complete inventories befor
 leasing. Only the requested target's source/version may differ between arms;
 unrelated packages, flags and toolchain inputs must remain fixed. Cache reuse
 requires bundle retrieval and byte/inventory checks.
+
+Treat Nix compiler-provided libraries separately from absent dependencies. The
+pinned package set represents GHC bundled libraries as null derivations; retain
+Cabal's pre-existing compiler package identities and permit those null arguments
+only for the independently selected compiler inventory. Inspect generated
+production dependency names before resolution, rejecting absent or otherwise
+disabled production inputs while allowing unused disabled-test arguments. This
+does not authorize bound lifting or a different compiler selection.
 
 Derive generated cohort names from the resolved descriptor, independently of the
 measurement request and arm label. Seeds, cell selection, budgets and an unrelated

@@ -1,5 +1,8 @@
 # Bundle Update Log
 
+## 2026-10-12
+* **Update**: ADR-23: distinguish authenticated compiler-provided Nix libraries from absent production dependencies.
+
 ## 2026-10-11
 * **Update**: Separate resolved payload cohort identities from measurement request settings while preserving exact legacy report replay.
 * **Create**: Record independent generated-cohort checks, verified calibration admission, scoped results, persistent budgets and durable publication for ADR-23.

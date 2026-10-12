@@ -20,27 +20,27 @@ let
         src = description;
         extraCabal2nixOptions = lib.escapeShellArgs ([ "--no-check" ] ++ flags);
       };
-      # cabal2nix includes disabled test arguments in its function signature.
-      # Permit absent arguments only when they disappear from the production
-      # dependency lists; the assertion below rejects any required null input.
-      missing = lib.filter
-        (argument: !(builtins.hasAttr argument hself) && !(builtins.hasAttr argument pkgs))
-        (builtins.attrNames (builtins.functionArgs (import expression)));
-      base = hself.callPackage expression (lib.genAttrs missing (_: null));
+      arguments = builtins.attrNames (builtins.functionArgs (import expression));
+      # Inspect names before resolving them: nixpkgs represents GHC-provided
+      # libraries with null. Cabal's independent plan authenticates those names;
+      # an absent production argument must still fail before compilation.
+      named = (import expression) (lib.genAttrs arguments
+        (argument:
+          if argument == "mkDerivation" then (args: args)
+          else if argument == "lib" then lib else argument));
+      dependencies = import ./resolved-dependencies.nix {
+        inherit arguments named;
+        haskellPackages = hself;
+        systemPackages = pkgs;
+        compilerPackages = resolved.compilerPackages;
+      };
+      base = hself.callPackage expression (lib.genAttrs dependencies.missing (_: null));
     in
     pkgs.haskell.lib.compose.overrideCabal
       (args:
         assert lib.assertMsg
-          (lib.all (dependency: dependency != null)
-            (lib.concatMap (key: args.${key} or [ ]) [
-              "libraryHaskellDepends"
-              "executableHaskellDepends"
-              "setupHaskellDepends"
-              "libraryToolDepends"
-              "executableToolDepends"
-              "setupToolDepends"
-            ]))
-          "resolved production dependency is unavailable for ${name}";
+          (dependencies.unavailableProduction == [ ])
+          "resolved production dependency is unavailable for ${name}: ${lib.concatStringsSep ", " dependencies.unavailableProduction}";
         {
           src = source;
           revision = toString entry.descriptionRevision;
