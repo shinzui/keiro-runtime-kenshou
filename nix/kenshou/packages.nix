@@ -85,12 +85,13 @@ let
               jailbreak = false;
               doCheck = false;
               doBenchmark = false;
+              # allowNewer belongs to the independent Cabal solver project;
+              # Setup configure rejects that option and retains its bound checks.
               configureFlags =
                 (if resolved != null && builtins.hasAttr value.pname resolved.flags then
                   lib.filter (flag: !(lib.hasPrefix "-f" flag)) (args.configureFlags or [ ])
                   ++ lib.mapAttrsToList (name: enabled: "-f${if enabled then "" else "-"}${name}") resolved.flags.${value.pname}
-                else args.configureFlags or [ ])
-                ++ map (exception: "--allow-newer=${exception}") descriptor.allowNewer;
+                else args.configureFlags or [ ]);
             })
             value
         else value)

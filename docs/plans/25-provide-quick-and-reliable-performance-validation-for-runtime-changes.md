@@ -393,6 +393,29 @@ The pinned upstream source was consulted after Mori found no registered Nixpkgs
 source. No version, source hash or bound was changed. Fresh Linux preparation is
 still required; no milestone is closed.
 
+First usable comparison priority (2026-10-11 local): The user requested that work
+focus on one live comparison immediately. An unfinished optional pre-staging
+change was reverted. Owner commit `2783917` in
+`mori://shinzui/load-testing-infra` registers all five isolation images and
+upgrades alpha's driver, PostgreSQL 18 and monitoring roles. The broker remains
+on its prior image. One warm admission smoke observation completed with zero
+failures, verified reset and raw health evidence; reset took 9.362426 seconds.
+This does not satisfy the required twenty-observation latency acceptance.
+The measured run is `65841ced-e761-4529-bb2f-ae039c4f50bb`, manifest
+`gs://tan-nb-exp-cells-results/runs/65841ced-e761-4529-bb2f-ae039c4f50bb/manifest.json`.
+Alpha's refreshed capability probe also passed against descriptor digest
+`329ed1fe3b037e18c070effef2c33426eac88f14e7b3c017581180bf84f190e6`.
+
+Preparation `.dev/perf-ep25-live-preparation-4` at harness `d47a048` passed both
+inventories and independent declared-bound checks after cached metadata was
+built using the existing Linux builder. Publication then failed because strict
+Nix configuration passed the solver-only `--allow-newer` option to every
+package's `Setup configure`. Remove that option from Setup flags; the independently
+checked Cabal solver project retains the declared exception, and Setup retains
+its bound checks. Retained failure: `work/baseline/publication-failure.json`.
+Retry preparation and the same-commit comparison before extending infrastructure
+or running full calibration. Payload publication and live comparison remain open.
+
 ## Surprises & Discoveries
 
 2026-10-11 implementation: The generated Cabal-to-Nix function has a native
