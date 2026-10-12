@@ -48,6 +48,11 @@ let
           editedCabalFile = entry.descriptionSha256;
           doCheck = false;
           doBenchmark = false;
+        } // lib.optionalAttrs (name == "postgresql-libpq-configure") {
+          # Restore the native configure provider from mori://nixos/nixpkgs
+          # (artifact-level URI pending), pkgs/development/haskell-modules/configuration-nix.nix.
+          librarySystemDepends = (args.librarySystemDepends or [ ]) ++ [ pkgs.libpq ];
+          libraryToolDepends = (args.libraryToolDepends or [ ]) ++ [ pkgs.libpq.pg_config ];
         })
       base;
 in

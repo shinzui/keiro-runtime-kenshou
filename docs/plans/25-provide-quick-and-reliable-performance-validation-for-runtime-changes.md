@@ -416,6 +416,17 @@ its bound checks. Retained failure: `work/baseline/publication-failure.json`.
 Retry preparation and the same-commit comparison before extending infrastructure
 or running full calibration. Payload publication and live comparison remain open.
 
+PostgreSQL provider build correction (2026-10-12): Preparation 5 passed both
+inventories, then failed because the generated overlay omitted the pinned
+Nixpkgs configure provider's `libpq` and `pg_config` native inputs. Its queued
+comparison did not execute; the builder idle timer was restored successfully.
+Restore those two inputs for `postgresql-libpq-configure`, matching the pinned
+`mori://nixos/nixpkgs` configuration without changing versions or Cabal flags.
+The direct Linux provider build passed, including its PostgreSQL linking check;
+evidence is `.dev/perf-ep25-postgres-provider-smoke.log`. Full payload publication
+and the first live comparison still require retry. A queued command is not
+completed acceptance; follow its result through before handing off.
+
 ## Surprises & Discoveries
 
 2026-10-11 implementation: The generated Cabal-to-Nix function has a native
