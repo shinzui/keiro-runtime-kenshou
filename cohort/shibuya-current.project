@@ -7,7 +7,10 @@ packages:
   kenshou-diagnose/kenshou-diagnose.cabal,
   kenshou-measure/kenshou-measure.cabal,
   kenshou-telemetry/kenshou-telemetry.cabal,
-  kenshou-shibuya/kenshou-shibuya.cabal
+  kenshou-shibuya/kenshou-shibuya.cabal,
+  kenshou-evidence/kenshou-evidence.cabal,
+  kenshou-remote/kenshou-remote.cabal,
+  kenshou-cli/kenshou-cli.cabal
 
 with-compiler: ghc-9.12.4
 index-state: 2026-10-10T19:40:06Z
@@ -16,6 +19,9 @@ test-show-details: direct
 
 -- The isolated lane never exercises Keiro schemas; released Keiro migration
 -- bounds exclude the Kiroku schema required by shibuya-kiroku-adapter 0.6.
+package kenshou-cli
+  flags: -runtime-suites
+
 package kenshou-core
   flags: -keiro-schema
 

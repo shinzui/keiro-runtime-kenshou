@@ -1,3 +1,5 @@
+{-# LANGUAGE CPP #-}
+
 module Kenshou.Cli.Command.Run (runCommand) where
 
 import Data.Aeson qualified as Aeson
@@ -19,7 +21,9 @@ import Kenshou.Core.Run
 import Kenshou.Core.RunResult (RunResult (..))
 import Kenshou.Core.RunSpec
 import Kenshou.Core.RunSpec.Resolve
+#ifdef FULL_RUNTIME_SUITES
 import Kenshou.Env.Kafka.Spec (kafkaEnvSpecFromValue)
+#endif
 import Options.Applicative
 import Settei hiding (optional)
 import Settei.Env (envSnapshot)
@@ -97,7 +101,7 @@ runHandler options environment = case schemaDiagnostic options.config.diagnostic
           input <- loadInput options
           case input >>= applyOverrides options of
             Left err -> Text.IO.hPutStrLn stderr ("kenshou: " <> err) >> pure (ExitFailure 2)
-            Right spec -> case kafkaEnvSpecFromValue spec.environment.kafka of
+            Right spec -> case validateKafkaEnvironment spec.environment.kafka of
               Left err -> Text.IO.hPutStrLn stderr ("kenshou: " <> err) >> pure (ExitFailure 2)
               Right _ -> do
                 resolved <- resolveRunSpec environment.registry spec
@@ -207,3 +211,11 @@ readPlacement :: String -> Either String SpecPlacement
 readPlacement "local" = Right RunLocal
 readPlacement "cell" = Right RunOnCell
 readPlacement value = Left ("unknown placement " <> show value)
+
+validateKafkaEnvironment :: Maybe Aeson.Value -> Either Text ()
+#ifdef FULL_RUNTIME_SUITES
+validateKafkaEnvironment value = () <$ kafkaEnvSpecFromValue value
+#else
+validateKafkaEnvironment Nothing = Right ()
+validateKafkaEnvironment (Just _) = Left "Kafka environments are unavailable in the isolated Shibuya build"
+#endif

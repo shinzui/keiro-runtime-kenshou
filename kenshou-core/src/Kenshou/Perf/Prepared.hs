@@ -13,6 +13,7 @@ module Kenshou.Perf.Prepared
     validatePrepared,
     validateArmInventories,
     renderBoundsProject,
+    isolatedShibuyaCohort,
   )
 where
 
@@ -286,6 +287,14 @@ compareInventories targets baseline candidate = do
         | previous /= current -> Left ("unrelated resolved dependency changed: " <> name)
         | otherwise -> Right ()
 
+-- | Select the existing isolated lane by its component set, not the generated
+-- cohort name. Full-runtime cohorts retain their ordinary package set and flags.
+isolatedShibuyaCohort :: CohortDescriptor -> Bool
+isolatedShibuyaCohort descriptor =
+  "shibuya" `elem` names && all (`elem` ["shibuya", "shibuya-pgmq-adapter", "pgmq-hs", "kiroku"]) names
+  where
+    names = map (unComponentId . (.componentId)) descriptor.descriptorComponents
+
 -- Standalone projects never import active.project or project.local. They pin
 -- every cohort package and use only already reviewed, package-scoped exceptions.
 renderBoundsProject :: [FilePath] -> CohortDescriptor -> Either Text Text
@@ -296,9 +305,13 @@ renderBoundsProject harnessPackages descriptor = do
   gitStanzas <- traverse gitComponent descriptor.descriptorComponents
   pure
     ( Text.unlines
-        (["packages: " <> Text.intercalate ", " (map Text.pack harnessPackages), "with-compiler: " <> descriptor.descriptorCompiler, "index-state: " <> descriptor.descriptorIndexState, "tests: False", "benchmarks: False", "extra-packages: " <> Text.intercalate ", " (map (.pinName) pins), "constraints: " <> Text.intercalate ", " [pin.pinName <> " ==" <> pin.pinVersion | pin <- pins], "allow-newer: " <> (if null descriptor.descriptorAllowNewer then "none" else Text.intercalate ", " descriptor.descriptorAllowNewer)] <> concat gitStanzas)
+        (["packages: " <> Text.intercalate ", " (map Text.pack harnessPackages), "with-compiler: " <> descriptor.descriptorCompiler, "index-state: " <> descriptor.descriptorIndexState, "tests: False", "benchmarks: False", "extra-packages: " <> Text.intercalate ", " (map (.pinName) pins), "constraints: " <> Text.intercalate ", " [pin.pinName <> " ==" <> pin.pinVersion | pin <- pins], "allow-newer: " <> (if null descriptor.descriptorAllowNewer then "none" else Text.intercalate ", " descriptor.descriptorAllowNewer)] <> laneFlags <> concat gitStanzas)
     )
   where
+    laneFlags =
+      if isolatedShibuyaCohort descriptor
+        then ["package kenshou-cli", "  flags: -runtime-suites", "package kenshou-core", "  flags: -keiro-schema"]
+        else []
     pins = concatMap (.componentPackages) descriptor.descriptorComponents
     safeAtom value = not (null value) && all (`notElem` ['\n', '\r', '\t', ' ', ',', '"']) value
     scopedException value = case Text.splitOn ":" value of

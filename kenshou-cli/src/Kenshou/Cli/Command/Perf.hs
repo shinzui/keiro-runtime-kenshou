@@ -175,7 +175,11 @@ resolveArm output harness revision arm = do
   lock <- ByteString.readFile lockPath >>= decode "source lock"
   names <- listDirectory harness
   packages <- filterMIO (\name -> doesFileExist (harness </> name </> name <> ".cabal")) (filter (Text.isPrefixOf "kenshou-" . Text.pack) names)
-  boundsProject <- requireInput (Prepared.renderBoundsProject [harness </> name </> name <> ".cabal" | name <- packages] descriptor)
+  let selectedPackages =
+        if Prepared.isolatedShibuyaCohort descriptor
+          then filter (`notElem` ["kenshou-kafka", "kenshou-keiro", "kenshou-kiroku", "kenshou-pgmq", "kenshou-runtime"]) packages
+          else packages
+  boundsProject <- requireInput (Prepared.renderBoundsProject [harness </> name </> name <> ".cabal" | name <- selectedPackages] descriptor)
   let projectPath = work </> "bounds.project"
       planPath = work </> "bounds-dist" </> "cache" </> "plan.json"
   Text.IO.writeFile projectPath boundsProject

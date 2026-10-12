@@ -101,6 +101,17 @@ spec = describe "performance preparation integrity" do
     project `shouldNotContainText` "active.project"
     renderBoundsProject ["/harness/package.cabal"] descriptor {Cohort.descriptorAllowNewer = ["all"]} `shouldSatisfy` isLeft
     renderBoundsProject ["/unsafe path/package.cabal"] descriptor `shouldSatisfy` isLeft
+  it "keeps the isolated current Shibuya cohort independent of runtime suites" do
+    bytes <- ByteString.readFile "../cohort/shibuya-current.json"
+    descriptor <- right (eitherDecodeStrict' bytes :: Either String Cohort.CohortDescriptor)
+    isolatedShibuyaCohort descriptor `shouldBe` True
+    project <- right (renderBoundsProject ["/harness/kenshou-cli/kenshou-cli.cabal"] descriptor)
+    project `shouldSatisfy` Data.Text.isInfixOf "flags: -runtime-suites"
+    project `shouldSatisfy` Data.Text.isInfixOf "flags: -keiro-schema"
+    released <- ByteString.readFile "../cohort/released.json" >>= right . eitherDecodeStrict'
+    isolatedShibuyaCohort released `shouldBe` False
+    full <- right (renderBoundsProject ["/harness/kenshou-cli/kenshou-cli.cabal"] released)
+    full `shouldNotContainText` "flags: -runtime-suites"
   it "verifies the complete sealed file set and refuses an omitted file" $ withSystemTempDirectory "perf-seal" \root -> do
     writeFile (root </> "input.json") "{}"
     sealPerfDirectory root `shouldReturn` Right ()

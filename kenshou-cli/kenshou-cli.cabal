@@ -13,6 +13,11 @@ extra-source-files:
   help/*.md
   test/fixtures/*.json
 
+flag runtime-suites
+  description: Link the full runtime scenario suites (disable for the isolated Shibuya cohort).
+  default: True
+  manual: True
+
 common warnings
   ghc-options:
     -Wall
@@ -87,13 +92,8 @@ library
     kenshou-core,
     kenshou-diagnose,
     kenshou-evidence,
-    kenshou-kafka,
-    kenshou-keiro,
-    kenshou-kiroku,
     kenshou-measure,
-    kenshou-pgmq,
     kenshou-remote,
-    kenshou-runtime,
     kenshou-shibuya,
     kenshou-telemetry,
     optparse-applicative >=0.19 && <0.20,
@@ -107,6 +107,15 @@ library
     text >=2.1 && <2.2,
     time,
     uuid,
+
+  if flag(runtime-suites)
+    cpp-options: -DFULL_RUNTIME_SUITES
+    build-depends:
+      kenshou-kafka,
+      kenshou-keiro,
+      kenshou-kiroku,
+      kenshou-pgmq,
+      kenshou-runtime,
 
 executable kenshou
   import: warnings
@@ -148,6 +157,9 @@ test-suite kenshou-cli-test
 
 test-suite kenshou-linkproof
   import: warnings
+
+  if !flag(runtime-suites)
+    buildable: False
   type: exitcode-stdio-1.0
   hs-source-dirs: linkproof
   main-is: Main.hs

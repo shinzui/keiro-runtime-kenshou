@@ -34,6 +34,9 @@ evidence. For an A/A control, use equal commits and `control: "aa"` explicitly.
 
 ## Pin the request and inspect its scope
 
+For Shibuya 0.10 revisions, use the existing `shibuya-current` template. It builds the same cell CLI with only the Shibuya suite and kernel self-tests, with `runtime-suites` and `keiro-schema` disabled in both Cabal and Nix. The historical full runtime template remains available for revisions compatible with its older dependency bounds. No dependency bounds are relaxed.
+
+
 Work from a clean, committed harness in `nix develop`. Discover the source
 project through `mori registry list`, `mori registry show <project> --full`, and
 `mori registry docs <project>`. Use its canonical project URI and full lowercase
@@ -48,7 +51,7 @@ Create `request.json`, replacing the revision and cell placeholders:
   "project": "mori://shinzui/shibuya",
   "baselineRevision": "<full-baseline-commit>",
   "candidateRevision": "<full-candidate-commit>",
-  "cohortTemplate": "cohort/released.json",
+  "cohortTemplate": "cohort/shibuya-current.json",
   "targetComponents": ["shibuya"],
   "suite": "change-performance",
   "coverageMode": "selected-profiles",

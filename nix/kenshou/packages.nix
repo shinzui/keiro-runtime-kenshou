@@ -51,18 +51,27 @@ let
       (_: { enableSeparateBinOutput = false; })
       hsuper.yaml;
   };
+  componentNames = map (component: component.id) descriptor.components;
+  isolatedShibuya = builtins.elem "shibuya" componentNames && builtins.all
+    (name: builtins.elem name [ "shibuya" "shibuya-pgmq-adapter" "pgmq-hs" "kiroku" ])
+    componentNames;
   localNames = lib.filter
-    (name: lib.hasPrefix "kenshou-" name && builtins.pathExists (../.. + "/${name}/${name}.cabal"))
+    (name: lib.hasPrefix "kenshou-" name && (!isolatedShibuya || !(builtins.elem name [ "kenshou-kafka" "kenshou-keiro" "kenshou-kiroku" "kenshou-pgmq" "kenshou-runtime" ])) && builtins.pathExists (../.. + "/${name}/${name}.cabal"))
     (builtins.attrNames (builtins.readDir ../..));
   gitHash = inputs.self.shortRev or "dirty";
   local = hself: _: lib.genAttrs localNames (name:
     let
-      base = hself.callCabal2nix name
+      options =
+        if isolatedShibuya && name == "kenshou-cli" then "--flag=-runtime-suites"
+        else if isolatedShibuya && name == "kenshou-core" then "--flag=-keiro-schema"
+        else "";
+      base = hself.callCabal2nixWithOptions name
         (lib.cleanSourceWith {
           name = "${name}-source";
           src = ../.. + "/${name}";
           filter = _: _: true;
         })
+        options
         { };
       withVersion =
         if name == "kenshou-cli" then
