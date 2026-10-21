@@ -229,5 +229,27 @@ in  Schema.Project::{
         , description = Some
             "Improvement requests for Kenshou's own harness and packaging"
         }
+      , Schema.OkfBundle::{
+        , name = "research"
+        , path = "docs/research"
+        , profile = Some "docs/research/profile.dhall"
+        , profileBinding = Some
+            ( Schema.ProfileBinding.Published
+                Schema.PinnedImport::{
+                , publisher = "shinzui/okf-profiles"
+                , publisherRef = Some Schema.MoriRef::{
+                  , namespace = "shinzui"
+                  , name = "okf-profiles"
+                  }
+                , export = Some "documentation.researchDocuments"
+                , version = Some "v0.20.0"
+                , pin = Some
+                    "sha256:079a5b3679dccafd2070535b3d59a0ffdf28e20bf9cacfe095dca96c8012879a"
+                }
+            )
+        , okfVersion = "0.2"
+        , description = Some
+            "Research records behind Kenshou's planner, suite and evidence decisions"
+        }
       ]
     }

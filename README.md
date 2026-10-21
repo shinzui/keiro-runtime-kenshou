@@ -102,6 +102,7 @@ docs/improvement-requests/
 docs/findings/      runtime defects found by the suite
 docs/guides/        operator guides: measuring, diagnosing, telemetry arms
 docs/layers/        per-layer coverage notes
+docs/research/      research records behind planner, suite and evidence decisions
 docs/planning.md    planning and executing verification runs
 ```
 

@@ -11,7 +11,7 @@ default:
     just --list
 
 [group('meta')]
-verify: process-compose-check fmt-check haskell-build haskell-test link-proof cohort-assert-released cohort-check graph-check adr-validate terminology-validate runbooks-validate guides-validate evidence-validate evidence-index-check evidence-profile-test evidence-check schemas-check selftest
+verify: process-compose-check fmt-check haskell-build haskell-test link-proof cohort-assert-released cohort-check graph-check adr-validate terminology-validate runbooks-validate guides-validate research-validate evidence-validate evidence-index-check evidence-profile-test evidence-check schemas-check selftest
 
 [group('verification')]
 graph-check:
@@ -58,6 +58,16 @@ terminology-validate:
 improvement-requests-validate:
     okf validate docs/improvement-requests --strict \
       --profile mori/improvement-requests-profile.dhall \
+      --profile-enforce \
+      --log-enforce
+
+# Strict OKF enforcement for the research bundle (docs/research, registered as
+# OKF bundle "research" in mori.dhall). Stable RES-N handles and review
+# provenance follow the shared documentation.researchDocuments profile.
+[group('docs')]
+research-validate:
+    okf validate docs/research --strict \
+      --profile docs/research/profile.dhall \
       --profile-enforce \
       --log-enforce
 
