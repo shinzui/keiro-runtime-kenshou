@@ -26,6 +26,16 @@
     #
     #   haskellProject.extraDevPackages = [ pkgs.ghciwatch pkgs.haskellPackages.hpack ];
 
+    # Explicit runtime adoption (see upgrade-haskell-runtime's qualified target):
+    # haskellProject.runtime = builtins.fromJSON (builtins.readFile ./runtime-selection.json);
+    # Declare custom ownPackages/applicationOverlays and select production recipes
+    # from config.haskellProject.applicationScope. Root/CLI scaffolds declare theirs.
+    # Never fill missing selections from defaults or override retained shared recipes.
+    # haskellProject.extraBuildInputs = [ pkgs.openssl.dev ];
+    # haskellProject.inputsFrom = [ compatibleEnvironment ];
+    # haskellProject.withHls = null;
+    # haskellProject.shellHook = "export PROJECT_SETTING=value";
+
     # Add extra package / app / check outputs:
     #
     #   packages.my-tool = pkgs.hello;
@@ -96,6 +106,6 @@
   # To pull in a brand-new flake input you must add it to flake.nix's top-level
   # `inputs` (a Nix requirement — inputs cannot be declared from an imported
   # module). That is the one edit that will conflict on a future migration;
-  # resolve it with "accept new" and re-add your input line. (haskell-nix is
+  # preview it and preserve your input through the three-way merge. (haskell-nix is
   # already module-owned and available as inputs.haskell-nix; do not add it by hand.)
 }

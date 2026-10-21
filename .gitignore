@@ -3,7 +3,6 @@
 .seihou/manifest.json.tmp
 CLAUDE.local.md
 .mina/
-.envrc
 .envrc.local
 dist
 dist-*
