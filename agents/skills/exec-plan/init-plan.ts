@@ -204,6 +204,9 @@ should be revised when the implementation approach changes.
 Describe how to exercise the system and what to observe. Phrase acceptance as behavior with
 specific inputs and outputs. If tests are involved, name the exact test commands and expected
 results. Show that the change is effective beyond compilation.
+If an uncertain interface connects independently developed pieces, identify an early
+representative interaction check appropriate to the project and authorized environment.
+Distinguish required acceptance from proposals for additional scope.
 
 
 ## Idempotence and Recovery
@@ -216,6 +219,8 @@ rollback path.
 
 Name the libraries, modules, and services whose choice matters. Specify key types or
 interfaces that other work depends on, using full module paths.
+For a child plan, identify prerequisite artifacts or behavior and the parent-declared
+plan or milestone that must be accepted before this work begins.
 `;
 
 writeFileSync(path, fm.join("\n") + skeleton, "utf8");

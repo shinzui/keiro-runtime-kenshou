@@ -79,6 +79,8 @@ Be idempotent and safe. Write the steps so they can be run multiple times withou
 
 Validation is not optional. Include tests and a useful behavioral check appropriate to the change, including how to start the system if applicable. State the commands and the observations that distinguish success from failure. Show how to prove the change works beyond compilation when that matters for acceptance. Broaden testing for material risk, rather than prescribing exhaustive checks for routine changes.
 
+When the design depends on an uncertain interaction between independently developed pieces, exercise a representative producer/consumer path before expanding variants. Choose proof appropriate to the project and authorized environment: a library consumer test, a public command, or a native roundtrip. Use that check's failures to guide implementation. Isolated changes need no extra integration fixture, and existing acceptance checks can supply this proof.
+
 Capture evidence that proves acceptance or explains a material discovery. Use short fenced snippets with an appropriate language tag (`text` for plain output, `diff` for patches, `log` or `console` for transcripts). Do not accumulate routine command transcripts. If a patch is necessary, prefer a small excerpt that a reader can recreate by following the instructions.
 
 
@@ -87,6 +89,8 @@ Capture evidence that proves acceptance or explains a material discovery. Use sh
 Milestones are narrative, not bureaucracy. If you break the work into milestones, introduce each with a brief paragraph describing the scope, what will exist at the end, and how to verify it. Keep it readable as a story: goal, work, result, proof. Progress summarizes these outcomes; it is not a second task breakdown. Include details that affect implementation or acceptance, while leaving routine execution choices to the implementer.
 
 Each milestone must be independently verifiable and incrementally implement the overall goal of the execution plan.
+
+Keep acceptance tied to the authorized outcome. A discovered defect or missing integration needed to meet an existing criterion remains implementation work. A new capability or guarantee is a proposed scope change and needs a scope decision before becoming required acceptance. Splitting or reordering work preserves the existing acceptance obligations unless the user changes them.
 
 
 ## Living Plan Sections

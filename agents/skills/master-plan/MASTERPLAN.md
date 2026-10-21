@@ -54,11 +54,13 @@ When deciding where to draw boundaries, consider the following. Minimize cross-p
 
 MasterPlans model three kinds of relationships between child plans.
 
-Hard dependencies mean plan B cannot begin until plan A is complete. Use these sparingly as they serialize work and extend timelines. A hard dependency is warranted when plan B's code would not compile or make sense without plan A's artifacts (types, modules, configurations).
+Hard dependencies identify artifacts or behavior that must be accepted before dependent work begins. A reference to a whole child requires that child to be Complete. When only one milestone is needed, explicitly name that milestone and its required output in the registry and Dependency Graph, and reflect the prerequisite in the affected child plans. Use hard dependencies sparingly as they serialize work and extend timelines; do not silently reinterpret an existing whole-child dependency as a milestone dependency.
 
 Soft dependencies mean plan B benefits from plan A being complete but can proceed independently, perhaps with temporary stubs or assumptions. Soft dependencies are the norm when two plans share context but not code artifacts.
 
 Integration dependencies mean plans A and B both define interfaces or data structures that must agree. Neither blocks the other, but a reconciliation step is needed before or after implementation to ensure the interfaces align. Document the shared interfaces in the Integration Points section of the MasterPlan.
+
+Keep a simple child-by-child sequence when it fits the dependencies. When coupled work needs interleaving, describe an explicit milestone sequence in Dependency Graph using the existing child milestones and their acceptance conditions. The registry continues to track whole-child status. Interleaving does not waive hard dependencies or require another progress checklist.
 
 
 ## Integration Points
@@ -66,6 +68,8 @@ Integration dependencies mean plans A and B both define interfaces or data struc
 When multiple child plans touch the same files, types, or interfaces, the MasterPlan must document these shared concerns in its Integration Points section. For each integration point, state which child plans are involved, what the shared artifact is (type, module, configuration file, database table), which plan is responsible for defining it (typically the earliest plan in dependency order), and how later plans should consume or extend it.
 
 Integration points prevent silent conflicts where two plans make incompatible assumptions about shared code.
+
+When a shared interface or behavior is uncertain, name a representative producer/consumer check and its owner, and schedule it before expanding dependent variants. Use the actual implementation path appropriate to the project, such as a library consumer test or an authorized native roundtrip. An isolated change needs no additional integration exercise; reuse existing acceptance where it already proves the interaction.
 
 
 ## Living Document Requirements

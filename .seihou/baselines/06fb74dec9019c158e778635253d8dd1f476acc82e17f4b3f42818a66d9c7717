@@ -151,6 +151,8 @@ If no relevant ADR exists, say so.
 
 Status values: Not Started, In Progress, Complete, Cancelled.
 Hard Deps and Soft Deps reference other rows by their # prefix (e.g., EP-1, EP-3).
+A whole-child hard dependency requires that child to be Complete. If only a milestone's
+accepted output is needed, name it explicitly (e.g., EP-1 M1) and explain it below.
 
 
 ## Dependency Graph
@@ -158,6 +160,8 @@ Hard Deps and Soft Deps reference other rows by their # prefix (e.g., EP-1, EP-3
 Describe the ordering constraints between child plans in prose. Explain why each hard
 dependency exists — what artifact or behavior from the earlier plan does the later plan
 require? Identify which plans can proceed in parallel and under what conditions.
+Keep a simple child-by-child order unless integration needs interleaving; in that case,
+state the sequence of existing child milestones and their required outputs here.
 
 
 ## Integration Points
@@ -168,6 +172,8 @@ which plan is responsible for defining it, and how later plans should consume or
 it. Identify any cross-plan decisions that should become ADRs, especially architecture
 boundaries, durable integration constraints, shared interface ownership, decomposition
 rationale that will matter later, and deliberate exclusions.
+For uncertain shared behavior, identify an early representative producer/consumer check
+and its owner before expanding dependent variants. Reuse existing acceptance where it fits.
 
 (None identified, or list each integration point.)
 

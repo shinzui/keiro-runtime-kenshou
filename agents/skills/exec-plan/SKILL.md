@@ -135,19 +135,19 @@ Create a new ExecPlan. The remaining arguments describe the feature or change.
 
 Implement an existing ExecPlan. The argument is the plan file path (e.g., `docs/plans/1-add-template-engine.md`).
 
-1. Read the entire ExecPlan file. This is your sole source of truth. Do not rely on any context outside the plan and the working tree.
+1. Read the entire ExecPlan file and, for a child, the relevant parent coordination and dependency guidance. Use these documents and the working tree to resume without relying on prior conversation memory; the user's current instructions govern scope.
 
-2. Identify the next unfinished milestone and check the working tree against the plan; the Progress section may lag work in progress.
+2. Identify the next unfinished milestone within the requested scope and any parent execution order. Check its prerequisites and recorded acceptance evidence against the working tree; the Progress section may lag work in progress.
 
-3. Continue through the implementation the user authorized. Use the plan's acceptance criteria to decide when a milestone is complete.
+3. Select an observable acceptance criterion, implement a cohesive set of changes toward it, and validate the result. Mark a milestone complete only when all its required acceptance criteria pass. Follow PLANS.md's early integration guidance when uncertain interfaces are involved. Continue through the implementation the user authorized; a commit or passing test suite is a checkpoint, not a reason to stop while authorized work can proceed.
 
 4. Update the ExecPlan when a milestone is verified, a material blocker or course change arises, or work is handed off. Keep Progress at milestone or substantial-deliverable scale: record the outcome, date, and concise evidence, and describe partial work in a short handoff note when needed. Do not add checkboxes for routine actions or split items merely to show session activity. Record consequential discoveries and decisions in their respective sections. Update or create ADRs when durable project context changes. The first time you write to the plan in this session, record one provenance revision entry with `--mode implement` (see Provenance).
 
-5. Resolve routine ambiguities autonomously. Record decisions only when they change the plan's scope, architecture, interfaces, acceptance, or future implementation path.
+5. Resolve routine ambiguities and defects within the accepted scope autonomously. Distinguish work needed to meet an existing criterion from a proposed new requirement; obtain a scope decision before adding the latter to acceptance. Record decisions only when they change the plan's scope, architecture, interfaces, acceptance, or future implementation path.
 
 6. Commit at meaningful working boundaries. Every commit must include an `ExecPlan:` git trailer linking to the plan file (see Git Trailers above).
 
-7. Validate each completed milestone as described in the plan and record concise evidence. Broaden or repeat checks when a failure or remaining risk warrants it.
+7. Use focused checks while developing and run the required milestone checks at a coherent boundary. Record concise acceptance evidence. Repeat checks when relevant changes, failures, or remaining risks invalidate that evidence; preserve applicable results while honoring any required final-candidate validation.
 
 8. At completion, fill in the Outcomes & Retrospective section.
 
