@@ -1,5 +1,7 @@
 module Kenshou.Suite.Keiro.Queue.Telemetry (scenarios) where
 
+import Kenshou.Suite.Schema (pgmqSchema)
+
 import Control.Concurrent (newEmptyMVar, putMVar, readMVar, threadDelay, tryPutMVar)
 import Control.Concurrent.Async (async, cancel)
 import Control.Exception (finally)
@@ -22,7 +24,7 @@ import Keiro.PGMQ.Job (Job (..), JobOrdering (..), JobOutcome (..), JobPolling (
 import Keiro.PGMQ.Runtime (JobRuntime (..), QueueRef (..), queueRef, runJobEff, withJobRuntime)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary, requirePostgres)
 import Kenshou.Core.Dimension
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Phase (zeroPhases)
@@ -144,7 +146,7 @@ queueSignals =
             pgVersion = Supported (Support (Pg18 :| []) Pg18)
           },
       phases = zeroPhases,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaPgmq] [] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [pgmqSchema] [] False)},
       knownDefect = Nothing,
       run = runQueueSignals
     }

@@ -28,7 +28,6 @@ import Kenshou.Check.Process (Child, Supervisor, awaitReady, readChildMessages, 
 import Kenshou.Check.Scenario (CheckEnv, withCheck)
 import Kenshou.Core.Context (ArtifactDir (..), RunContext (..), SummarySection (..), artifactPath, declareMediaType, putSummary)
 import Kenshou.Core.Dimension (noDimensions)
-import Kenshou.Core.Env (kafkaEnvironment)
 import Kenshou.Core.Id (parseScenarioId, unSeed)
 import Kenshou.Core.Knob (knobInt, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
@@ -37,6 +36,7 @@ import Kenshou.Core.Scenario (CohortScope (..), KnownDefect (..), PackageConditi
 import Kenshou.Diagnose.Leak (LeakReport (..), LeakSpec (..), LeakVerdict (..), ProbeReport (..), ProbeSpec (..), analyseSeriesDirectory, defaultLeakSpec)
 import Kenshou.Env.Kafka
 import Kenshou.Suite.Kafka.Fixture (firstBrokers, intKnob)
+import Kenshou.Suite.Schema (kafkaEnvironment)
 import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.Exit (ExitCode (..))
 import System.FilePath ((</>))

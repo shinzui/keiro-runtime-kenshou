@@ -79,12 +79,8 @@ is the source of truth for plan status.
 ```text
 cabal.project       imports the active cohort; discovers every kenshou-* package
 cohort/             released/head solver inputs and machine-readable descriptors
-kenshou-core/       done: cohort identity, harness kernel, component graph, planner
-kenshou-cli/        done: `kenshou` CLI (list, plan, execute, compare, …) and link-proof
-kenshou-measure/    done: load generators, recorder, samplers, paired comparison
-kenshou-check/      done: ledgers, invariants, fault injection, process control
-kenshou-diagnose/   done: leak verdicts, stall watchdog, profiling variants
-kenshou-telemetry/  done: tracing/metrics arms and overhead measurement
+kenshou-suite/      Keiro executable assembly, graph and attestation routing
+kenshou-support/    shared runtime migration names and components
 kenshou-pgmq/       in progress: isolated PGMQ coverage (leak and comparison gates open)
 kenshou-kiroku/     in progress: isolated Kiroku coverage (network-partition miss open)
 kenshou-shibuya/    in progress: Shibuya core and PGMQ/Kiroku adapter coverage
@@ -121,6 +117,18 @@ The [runbook bundle](docs/runbooks/index.md) uses the shared OKF runbook profile
 and is checked by `just runbooks-validate` as part of `just verify`.
 
 ## Getting started
+
+The generic kernel, toolkits and command library are dependencies from
+[mori://shinzui/kenshou](mori://shinzui/kenshou). `cohort/kenshou.project`
+pins upstream commit `b90da77822002de46dfe310ab378f3ccd44cb1db` while the
+first release is available only as Hackage candidates. Cabal fetches that
+immutable source; Nix uses the same revision with a fixed source hash.
+This repository owns the six runtime layers and the `kenshou-suite` executable.
+
+For evidence history, set
+`KENSHOU_EVIDENCE_BUNDLE_URI=mori://shinzui/keiro-runtime-kenshou/okf/verification`.
+The `just` recipes supply this default.
+
 
 Enter the locked development environment with `nix develop`, build the workspace
 with `cabal build all`, and inspect the resolved dependency identity with

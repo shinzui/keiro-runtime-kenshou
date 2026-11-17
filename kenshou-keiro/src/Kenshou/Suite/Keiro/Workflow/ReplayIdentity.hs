@@ -4,6 +4,8 @@ module Kenshou.Suite.Keiro.Workflow.ReplayIdentity
   )
 where
 
+import Kenshou.Suite.Schema (keiroSchema, kirokuSchema)
+
 import Control.Concurrent (threadDelay)
 import Data.Aeson (FromJSON, ToJSON, Value, object, parseJSON, toJSON, withObject, (.:), (.=))
 import Data.Aeson.Types (parseMaybe)
@@ -25,7 +27,7 @@ import Keiro.Workflow.Sleep (drainWorkflowSleepTimers)
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary, requirePostgres)
 import Kenshou.Core.Dimension
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Phase (zeroPhases)
@@ -58,7 +60,7 @@ replayAndJournalIdentity =
             pgVersion = Supported (Support (Pg18 :| []) Pg18)
           },
       phases = zeroPhases,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku, SchemaKeiro] [] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [kirokuSchema, keiroSchema] [] False)},
       knownDefect = Nothing,
       run = runReplay
     }

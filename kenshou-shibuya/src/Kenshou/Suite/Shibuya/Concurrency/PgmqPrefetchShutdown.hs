@@ -1,5 +1,7 @@
 module Kenshou.Suite.Shibuya.Concurrency.PgmqPrefetchShutdown (scenario) where
 
+import Kenshou.Suite.Schema (pgmqSchema)
+
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (async, wait)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
@@ -16,7 +18,7 @@ import Data.Time.Clock (diffUTCTime, getCurrentTime)
 import Effectful (Limit (..), Persistence (..), UnliftStrategy (..), liftIO, withEffToIO)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension (PgDurability (..), PgVersion (..), noDimensions, postgresDimensions)
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
@@ -42,7 +44,7 @@ scenario =
       knobs = [],
       dimensions = postgresDimensions (PgDurable :| []) (Pg18 :| [Pg17]) noDimensions,
       phases = zeroPhases,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaPgmq] [] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [pgmqSchema] [] False)},
       knownDefect = Nothing,
       run = runPrefetchShutdown
     }

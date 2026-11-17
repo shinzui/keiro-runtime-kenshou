@@ -40,6 +40,19 @@ library
   import: warnings
   hs-source-dirs: src
   exposed-modules:
+    Kenshou.Check.Oracle.Keiro
+    Kenshou.Cli.Attest.KeiroBatch
+    Kenshou.Cli.Attest.KeiroInbox
+    Kenshou.Cli.Attest.KeiroLease
+    Kenshou.Cli.Attest.KeiroPoison
+    Kenshou.Cli.Attest.KeiroProducerIdentity
+    Kenshou.Cli.Attest.KeiroQueueConfig
+    Kenshou.Cli.Attest.KeiroQueueOrdering
+    Kenshou.Cli.Attest.KeiroQueueOutcomes
+    Kenshou.Cli.Attest.KeiroQueuePolling
+    Kenshou.Cli.Attest.KeiroQueueWorkers
+    Kenshou.Cli.Attest.KeiroTerminal
+    Kenshou.Cli.Attest.KeiroZombie
     Kenshou.Suite.Keiro
     Kenshou.Suite.Keiro.Command.Backlog
     Kenshou.Suite.Keiro.Command.Bench
@@ -175,7 +188,9 @@ library
     kenshou-check,
     kenshou-core,
     kenshou-diagnose,
+    kenshou-evidence,
     kenshou-measure,
+    kenshou-support,
     kenshou-telemetry,
     kiroku-metrics,
     kiroku-store,
@@ -220,7 +235,9 @@ test-suite kenshou-keiro-test
     keiro-pgmq,
     kenshou-check,
     kenshou-core,
+    kenshou-evidence,
     kenshou-keiro,
+    kenshou-support,
     kiroku-store,
     pgmq-core,
     shibuya-core,

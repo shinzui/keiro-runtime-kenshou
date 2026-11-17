@@ -3,6 +3,8 @@
 -- mori://shinzui/kiroku/plans/81-make-consumer-group-topology-durable-and-resize-without-gaps
 module Kenshou.Suite.Kiroku.Bench.Hardening (scenario) where
 
+import Kenshou.Suite.Schema (kirokuSchema)
+
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text (Text)
 import Kenshou.Core.Dimension
@@ -47,7 +49,7 @@ scenario =
           (Supported (Support (PgDurable :| []) PgDurable))
           (Supported (Support (Pg18 :| [Pg17]) Pg18)),
       phases = CorePhase.PhasePlan 30 61 30,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku] [("shared_preload_libraries", "'pg_stat_statements'")] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [kirokuSchema] [("shared_preload_libraries", "'pg_stat_statements'")] False)},
       knownDefect = Nothing,
       run = \_ -> pure (infrastructureFailureBecause "requires the dedicated matched MP-12 cell payload")
     }

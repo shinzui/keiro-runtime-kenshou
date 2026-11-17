@@ -1,5 +1,7 @@
 module Kenshou.Suite.Kiroku.Concurrency.Fault (scenarios) where
 
+import Kenshou.Suite.Schema (kirokuSchema)
+
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar, tryReadMVar)
 import Control.Concurrent.STM (atomically)
@@ -31,7 +33,7 @@ import Kenshou.Check.Process (ProgressSnapshot (..), awaitMark, awaitReady, kill
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Core.Context (Environment (..), RunContext (..), SummarySection (..), putSummary, requirePostgres)
 import Kenshou.Core.Dimension
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..), ServerControl (..), StopMode (..))
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), knobBool, knobInt, mkKnobName)
@@ -67,7 +69,7 @@ postgresRestart =
             pgVersion = Supported (Support (Pg18 :| [Pg17]) Pg18)
           },
       phases = zeroPhases,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku] [] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [kirokuSchema] [] False)},
       knownDefect = Nothing,
       run = runRestart
     }

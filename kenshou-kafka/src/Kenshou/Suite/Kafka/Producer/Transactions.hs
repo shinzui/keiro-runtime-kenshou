@@ -15,13 +15,13 @@ import Kenshou.Check.Process (awaitMark, awaitReady, childPid, killChild, restar
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension (allTelemetryArms, noDimensions)
-import Kenshou.Core.Env (kafkaEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Role (ControlMessage (..))
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
 import Kenshou.Env.Kafka
 import Kenshou.Suite.Kafka.Fixture (firstBrokers, produceValues, sabotageKnob, sabotaged)
+import Kenshou.Suite.Schema (kafkaEnvironment)
 
 scenarios :: [Scenario]
 scenarios =

@@ -1,5 +1,7 @@
 module Kenshou.Suite.Keiro.ProcessManager.Correctness (scenarios) where
 
+import Kenshou.Suite.Schema (keiroSchema, kirokuSchema)
+
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (async, cancel, wait)
 import Control.Monad (forM, forM_)
@@ -27,7 +29,7 @@ import Keiro.Telemetry (KeiroMetrics, kirokuEventBridge, newKeiroMetrics)
 import Keiro.Timer (TimerId (..), cancelTimer)
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (parseScenarioId, unSeed)
 import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobInt, knobText, mkKnobName)
@@ -703,7 +705,7 @@ deterministicIdsRedelivery =
             pgVersion = Supported (Support (Pg18 :| []) Pg18)
           },
       phases = zeroPhases,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku, SchemaKeiro] [] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [kirokuSchema, keiroSchema] [] False)},
       knownDefect = Nothing,
       run = runDeterministic
     }

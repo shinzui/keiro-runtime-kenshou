@@ -15,71 +15,17 @@
       # partitioned-queue scenarios need pg_partman available to each server.
       postgres17 = pkgs.postgresql_17.withPackages (ps: [ ps.pg_partman ]);
       postgres18 = pkgs.postgresql_18.withPackages (ps: [ ps.pg_partman ]);
+      released = import ./nix/kenshou/packages.nix {
+        inherit inputs pkgs;
+        cohort = "released";
+        variant = "default";
+      };
       pgEnvHook = pkgs.makeSetupHook { name = "kenshou-pg-env"; }
         (pkgs.writeText "kenshou-pg-env.sh" ''
           export KENSHOU_PG17_BIN="${postgres17}/bin"
           export KENSHOU_PG18_BIN="${postgres18}/bin"
         '');
 
-      haskellPackages = pkgs.haskell.packages.ghc9124.override {
-        overrides = inputs.haskell-nix.lib.haskellExtension pkgs.haskell.lib.compose pkgs;
-      };
-      gitRev = inputs.self.shortRev or "dirty";
-      kenshou-core =
-        haskellPackages.callCabal2nix "kenshou-core" (inputs.self + "/kenshou-core") { };
-      kenshou-check =
-        haskellPackages.callCabal2nix "kenshou-check" (inputs.self + "/kenshou-check") {
-          inherit kenshou-core;
-        };
-      kenshou-measure =
-        haskellPackages.callCabal2nix "kenshou-measure" (inputs.self + "/kenshou-measure") {
-          inherit kenshou-core;
-        };
-      kenshou-diagnose =
-        haskellPackages.callCabal2nix "kenshou-diagnose" (inputs.self + "/kenshou-diagnose") {
-          inherit kenshou-core kenshou-measure;
-        };
-      kenshou-telemetry =
-        haskellPackages.callCabal2nix "kenshou-telemetry" (inputs.self + "/kenshou-telemetry") {
-          inherit kenshou-core kenshou-measure;
-        };
-      kenshou-evidence =
-        haskellPackages.callCabal2nix "kenshou-evidence" (inputs.self + "/kenshou-evidence") {
-          inherit kenshou-core;
-        };
-      kenshou-remote =
-        haskellPackages.callCabal2nix "kenshou-remote" (inputs.self + "/kenshou-remote") {
-          inherit kenshou-core;
-        };
-      kenshou-pgmq =
-        haskellPackages.callCabal2nix "kenshou-pgmq" (inputs.self + "/kenshou-pgmq") {
-          inherit kenshou-check kenshou-core kenshou-diagnose kenshou-measure kenshou-telemetry;
-        };
-      kenshou-kafka =
-        haskellPackages.callCabal2nix "kenshou-kafka" (inputs.self + "/kenshou-kafka") {
-          inherit kenshou-check kenshou-core kenshou-diagnose kenshou-measure kenshou-telemetry;
-        };
-      kenshou-keiro =
-        haskellPackages.callCabal2nix "kenshou-keiro" (inputs.self + "/kenshou-keiro") {
-          inherit kenshou-check kenshou-core kenshou-diagnose kenshou-measure kenshou-telemetry;
-        };
-      kenshou-kiroku =
-        haskellPackages.callCabal2nix "kenshou-kiroku" (inputs.self + "/kenshou-kiroku") {
-          inherit kenshou-check kenshou-core kenshou-diagnose kenshou-measure kenshou-telemetry;
-        };
-      kenshou-shibuya =
-        haskellPackages.callCabal2nix "kenshou-shibuya" (inputs.self + "/kenshou-shibuya") {
-          inherit kenshou-check kenshou-core kenshou-measure kenshou-telemetry;
-        };
-      kenshou-cli = pkgs.haskell.lib.compose.overrideCabal
-        (drv: {
-          configureFlags = (drv.configureFlags or [ ]) ++ [
-            "--ghc-option=-DGIT_HASH=\"${builtins.substring 0 7 gitRev}\""
-          ];
-        })
-        (haskellPackages.callCabal2nix "kenshou-cli" (inputs.self + "/kenshou-cli") {
-          inherit kenshou-check kenshou-core kenshou-diagnose kenshou-evidence kenshou-kafka kenshou-keiro kenshou-kiroku kenshou-measure kenshou-pgmq kenshou-remote kenshou-shibuya kenshou-telemetry;
-        });
     in
     {
       haskellProject.extraDevPackages =
@@ -88,8 +34,10 @@
 
       treefmt.programs.fourmolu.package = pkgs.haskell.packages.ghc9124.fourmolu;
 
-      packages.kenshou-core = kenshou-core;
-      packages.kenshou-remote = kenshou-remote;
-      packages.kenshou-cli = kenshou-cli;
+      packages.kenshou-core = released.hp.kenshou-core;
+      packages.kenshou-remote = released.hp.kenshou-remote;
+      # Keep the existing executable output while exposing its consumer owner.
+      packages.kenshou-cli = released;
+      packages.kenshou-suite = released;
     };
 }

@@ -1,5 +1,7 @@
 module Kenshou.Suite.Shibuya.Concurrency.PgmqMultiProcess (scenario) where
 
+import Kenshou.Suite.Schema (pgmqSchema)
+
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM (atomically)
 import Control.Exception (SomeException, displayException, try)
@@ -19,7 +21,7 @@ import Kenshou.Check.Process (ProgressSnapshot (..), awaitMark, awaitReady, prog
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension (PgDurability (..), PgVersion (..), noDimensions, postgresDimensions)
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Role (ControlMessage (..))
@@ -40,7 +42,7 @@ scenario =
       knobs = [],
       dimensions = postgresDimensions (PgDurable :| []) (Pg18 :| [Pg17]) noDimensions,
       phases = zeroPhases,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaPgmq] [] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [pgmqSchema] [] False)},
       knownDefect = Nothing,
       run = runCompetition
     }

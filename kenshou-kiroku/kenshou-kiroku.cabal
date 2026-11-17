@@ -36,6 +36,7 @@ library
   import: warnings
   hs-source-dirs: src
   exposed-modules:
+    Kenshou.Check.Oracle.Kiroku
     Kenshou.Suite.Kiroku
     Kenshou.Suite.Kiroku.Bench.Append
     Kenshou.Suite.Kiroku.Bench.Hardening
@@ -94,6 +95,7 @@ library
     kenshou-core,
     kenshou-diagnose,
     kenshou-measure,
+    kenshou-support,
     kenshou-telemetry,
     kiroku-metrics ==0.1.0.8,
     kiroku-otel ==0.2.0.8,
@@ -121,5 +123,6 @@ test-suite kenshou-kiroku-test
     kenshou-check,
     kenshou-core,
     kenshou-kiroku,
+    kenshou-support,
     kiroku-store ==0.8.0.1,
     temporary,

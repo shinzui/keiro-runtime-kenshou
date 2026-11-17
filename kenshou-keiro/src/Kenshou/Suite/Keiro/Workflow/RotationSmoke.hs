@@ -1,5 +1,7 @@
 module Kenshou.Suite.Keiro.Workflow.RotationSmoke (scenarios) where
 
+import Kenshou.Suite.Schema (keiroSchema, kirokuSchema)
+
 import Data.Aeson (withObject, (.:))
 import Data.Aeson.Types (parseMaybe)
 import Data.IORef (atomicModifyIORef', newIORef, readIORef)
@@ -15,7 +17,7 @@ import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Check.Verdict (InvariantClass (..))
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Phase (zeroPhases)
@@ -46,7 +48,7 @@ rotationAbandonsOldId =
             pgVersion = Supported (Support (Pg18 :| []) Pg18)
           },
       phases = zeroPhases,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku, SchemaKeiro] [] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [kirokuSchema, keiroSchema] [] False)},
       knownDefect = Nothing,
       run = runRotationAbandonsOldId
     }

@@ -1,3 +1,4 @@
+import: kenshou.project
 -- HISTORICAL RELEASED COHORT: the Hackage runtime baseline verified on 2026-09-20.
 -- Current shibuya-core is 0.10.0.0; use cohort/shibuya-current.project for
 -- the isolated current Shibuya release lane. Descriptor: cohort/released.json.
@@ -103,4 +104,9 @@ constraints:
 -- Evidence: kenshou-linkproof starts the fixture and migrates three components.
 -- Discharge: remove when keiro releases the bound in its commit 9fb54d56.
 allow-newer:
-  keiro-test-support:ephemeral-pg
+  keiro-test-support:ephemeral-pg,
+  -- mori://shinzui/kiroku/packages/kiroku-cli uses tlsManagerSettings,
+  -- whose type is preserved by http-client-tls 0.4. The extracted remote
+  -- package requires 0.4; remove this exception when Kiroku releases its bound.
+  -- The link-proof and TLS manager integration validate the used surface.
+  kiroku-cli:http-client-tls

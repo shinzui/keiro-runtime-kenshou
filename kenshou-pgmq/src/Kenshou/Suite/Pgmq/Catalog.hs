@@ -10,6 +10,8 @@ module Kenshou.Suite.Pgmq.Catalog
   )
 where
 
+import Kenshou.Suite.Schema (pgmqSchema)
+
 import Control.Applicative ((<|>))
 import Data.Aeson (Value (String), object, (.=))
 import Data.List.NonEmpty (NonEmpty (..))
@@ -19,7 +21,7 @@ import Data.Vector qualified as Vector
 import GHC.Clock (getMonotonicTimeNSec)
 import Kenshou.Core.Context (RunContext, SummarySection (..), putSummary)
 import Kenshou.Core.Dimension
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Id (Kind (Benchmark, Soak), parseScenarioId)
 import Kenshou.Core.Knob (KnobSpec (..), KnobValue (..))
 import Kenshou.Core.Knob qualified as CoreKnob
@@ -87,7 +89,7 @@ pgmqScenario definition =
       knobs = scenarioCommonKnobs definition.identifier <> telemetryKnobs <> workloadKnobs definition.identifier,
       dimensions = supportFor definition.identifier,
       phases = phasePlan definition.identifier definition.tier,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaPgmq] (postgresSettings definition.identifier) (needsControl definition.identifier))},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [pgmqSchema] (postgresSettings definition.identifier) (needsControl definition.identifier))},
       knownDefect = definition.defect,
       run = \context -> maybe (runProbe definition context) id (runCorrectness definition.identifier context <|> runConcurrency definition.identifier context <|> runBenchmark definition.identifier context <|> runSoak definition.identifier context)
     }

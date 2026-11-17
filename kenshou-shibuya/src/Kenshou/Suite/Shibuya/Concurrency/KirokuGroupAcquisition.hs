@@ -1,5 +1,7 @@
 module Kenshou.Suite.Shibuya.Concurrency.KirokuGroupAcquisition (scenario) where
 
+import Kenshou.Suite.Schema (kirokuSchema)
+
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (cancel, waitCatch, withAsync)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
@@ -22,7 +24,7 @@ import Kenshou.Check.Fault (Fault (..))
 import Kenshou.Check.Fault.Postgres (Backend (..), BackendSelector (..), listBackends, terminateBackends)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary, requirePostgres)
 import Kenshou.Core.Dimension (PgDurability (..), PgVersion (..), noDimensions, postgresDimensions)
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (parseScenarioId, renderRunId)
 import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), knobInt, mkKnobName)
@@ -50,7 +52,7 @@ scenario =
       knobs = [KnobSpec observeKnob "Seconds to observe subscription SQL after cleanup" KnobInt (VInt 35) (IntRange 1 60) []],
       dimensions = postgresDimensions (PgDurable :| []) (Pg18 :| [Pg17]) noDimensions,
       phases = zeroPhases,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku] [("shared_preload_libraries", "'pg_stat_statements'")] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [kirokuSchema] [("shared_preload_libraries", "'pg_stat_statements'")] False)},
       knownDefect =
         Just
           KnownDefect

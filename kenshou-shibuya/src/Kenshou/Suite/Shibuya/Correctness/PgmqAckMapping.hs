@@ -1,5 +1,7 @@
 module Kenshou.Suite.Shibuya.Correctness.PgmqAckMapping (scenario) where
 
+import Kenshou.Suite.Schema (pgmqSchema)
+
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, displayException, try)
 import Control.Monad (unless, when)
@@ -13,7 +15,7 @@ import Data.Time.Clock (UTCTime, diffUTCTime, getCurrentTime)
 import Effectful (Eff, IOE, liftIO, (:>))
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension (PgDurability (..), PgVersion (..), noDimensions, postgresDimensions)
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
@@ -38,7 +40,7 @@ scenario =
       knobs = [],
       dimensions = postgresDimensions (PgDurable :| []) (Pg18 :| [Pg17]) noDimensions,
       phases = zeroPhases,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaPgmq] [] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [pgmqSchema] [] False)},
       knownDefect = Nothing,
       run = runMapping
     }

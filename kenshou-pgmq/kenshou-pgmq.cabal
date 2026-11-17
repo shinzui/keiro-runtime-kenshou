@@ -38,6 +38,7 @@ library
   import: warnings
   hs-source-dirs: src
   exposed-modules:
+    Kenshou.Check.Oracle.Pgmq
     Kenshou.Suite.Pgmq
     Kenshou.Suite.Pgmq.Bench.Backlog
     Kenshou.Suite.Pgmq.Bench.Fifo
@@ -97,6 +98,7 @@ library
     kenshou-core,
     kenshou-diagnose,
     kenshou-measure,
+    kenshou-support,
     kenshou-telemetry,
     pgmq-config ==0.6.1.0,
     pgmq-core ==0.6.1.0,
@@ -122,6 +124,7 @@ test-suite kenshou-pgmq-test
     hspec >=2.11 && <2.12,
     kenshou-core,
     kenshou-pgmq,
+    kenshou-support,
     pgmq-core ==0.6.1.0,
     text >=2.1 && <2.2,
     time >=1.12 && <1.15,

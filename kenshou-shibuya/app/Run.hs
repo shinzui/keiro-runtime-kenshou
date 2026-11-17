@@ -14,6 +14,7 @@ import Kenshou.Core.Role.Dispatch (runWorker)
 import Kenshou.Core.Run (RunOutput (..), RunnerConfig (..), executeRun)
 import Kenshou.Core.RunResult (RunResult (..))
 import Kenshou.Core.RunSpec (RunSpec)
+import Kenshou.Suite.Schema (schemaBundle)
 import Kenshou.Suite.Shibuya (bundle)
 import System.Environment (getArgs)
 import System.Exit (ExitCode (..), exitWith)
@@ -26,7 +27,7 @@ main = do
     ["run", specPath, outRoot] -> runCurrent arguments specPath outRoot "dist-newstyle/cache/plan.json"
     ["run", specPath, outRoot, "--plan-json", planPath] -> runCurrent arguments specPath outRoot planPath
     ["worker", "--role", roleText] -> do
-      registry <- either (fail . show . NonEmpty.toList) pure (mkRegistry [bundle])
+      registry <- either (fail . show . NonEmpty.toList) pure (mkRegistry [schemaBundle, bundle])
       role <- either (fail . Text.unpack) pure (mkRoleName (Text.pack roleText))
       exitWith =<< runWorker registry role
     _ -> do
@@ -44,7 +45,7 @@ runCurrent arguments specPath outRoot planPath = do
   plan <- either (fail . ("Cabal plan: " <>)) pure (eitherDecodeStrict' planBytes)
   identity <- either (fail . show) pure (identityFromPlan descriptor (sha256Hex descriptorBytes) plan)
   specification <- ByteString.readFile specPath >>= either (fail . ("run spec: " <>)) pure . eitherDecodeStrict' @RunSpec
-  registry <- either (fail . show . NonEmpty.toList) pure (mkRegistry [bundle])
+  registry <- either (fail . show . NonEmpty.toList) pure (mkRegistry [schemaBundle, bundle])
   output <- executeRun (RunnerConfig registry outRoot identity Nothing False False arguments) specification
   case output of
     Left problems -> fail (show (NonEmpty.toList problems))

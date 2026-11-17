@@ -1,5 +1,7 @@
 module Kenshou.Suite.Kiroku.Correctness.Retention (scenarios) where
 
+import Kenshou.Suite.Schema (kirokuSchema)
+
 import Control.Concurrent (threadDelay)
 import Data.Aeson (object)
 import Data.List.NonEmpty (NonEmpty (..))
@@ -14,7 +16,7 @@ import Hasql.Transaction qualified as Tx
 import Hasql.Transaction.Sessions qualified as TxSessions
 import Kenshou.Core.Context (RunContext (..))
 import Kenshou.Core.Dimension
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), knobInt, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
@@ -44,7 +46,7 @@ leasesBlockHardDelete =
             pgVersion = Supported (Support (Pg18 :| [Pg17]) Pg18)
           },
       phases = zeroPhases,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku] [] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [kirokuSchema] [] False)},
       knownDefect = Nothing,
       run = runRetention
     }

@@ -1,5 +1,7 @@
 module Kenshou.Suite.Keiro.Outbox.Telemetry (scenarios) where
 
+import Kenshou.Suite.Schema (keiroSchema, kirokuSchema)
+
 import Data.Aeson (object, (.=))
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
@@ -10,7 +12,7 @@ import Keiro.Outbox (OutboxPublishOptions (..), OutboxPublishSummary (..), Outbo
 import Keiro.Telemetry (traceContextFromCurrentSpan)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobValue (..), renderKnobName)
 import Kenshou.Core.Phase (zeroPhases)
@@ -47,7 +49,7 @@ outboxSignals =
             pgVersion = Supported (Support (Pg18 :| []) Pg18)
           },
       phases = zeroPhases,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku, SchemaKeiro] [] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [kirokuSchema, keiroSchema] [] False)},
       knownDefect = Nothing,
       run = runOutboxSignals
     }

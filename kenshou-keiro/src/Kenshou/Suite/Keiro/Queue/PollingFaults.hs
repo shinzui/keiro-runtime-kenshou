@@ -1,5 +1,7 @@
 module Kenshou.Suite.Keiro.Queue.PollingFaults (scenario, roles) where
 
+import Kenshou.Suite.Schema (pgmqSchema)
+
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (waitCatch, withAsync)
 import Control.Concurrent.STM (atomically)
@@ -31,7 +33,7 @@ import Kenshou.Check.Process (ProgressSnapshot (..), awaitMark, awaitReady, kill
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobDouble, knobInt, knobText, mkKnobName)
@@ -71,7 +73,7 @@ scenario =
             pgVersion = Supported (Support (Pg18 :| []) Pg18)
           },
       phases = zeroPhases,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaPgmq] [] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [pgmqSchema] [] False)},
       knownDefect = Nothing,
       run = runScenario
     }

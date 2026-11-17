@@ -18,13 +18,13 @@ import Kafka.Effectful.Producer qualified as P
 import Kafka.Types (BatchSize (..), KafkaError, Timeout (..), TopicName)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension (DimensionSupport (..), MetricsArm (..), Support (..), Supported (..), TracingArm (..))
-import Kenshou.Core.Env (kafkaEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), knobText, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
 import Kenshou.Env.Kafka
 import Kenshou.Suite.Kafka.Fixture (firstBrokers)
+import Kenshou.Suite.Schema (kafkaEnvironment)
 import Kenshou.Telemetry (TelemetryHandles (..), telemetryKnobs, telemetrySpecFromContext, withTelemetry)
 import Kenshou.Telemetry.Continuity (ContinuityResult (..), IsolationResult (..), SpanSelector (..), checkIsolation)
 import Kenshou.Telemetry.Continuity qualified as Continuity

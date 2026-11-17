@@ -13,7 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 BUNDLE = ROOT / "docs/verification"
 PROFILE = BUNDLE / "profile.dhall"
-CASES = ROOT / "kenshou-evidence/test/fixtures/profile-invalid/cases.json"
+CASES = ROOT / "kenshou-suite/fixtures/evidence/fixtures/profile-invalid/cases.json"
 CACHE = ROOT / ".tmp/xdg-cache"
 RUN_ID = "01999a00-0000-7000-8000-000000000001"
 COMPARISON_ID = "01999a00-0000-7000-8000-000000000002"

@@ -1,5 +1,7 @@
 module Kenshou.Suite.Keiro.Shard.LeaseSmoke (scenarios) where
 
+import Kenshou.Suite.Schema (keiroSchema, kirokuSchema)
+
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Set qualified as Set
 import Data.Time (getCurrentTime)
@@ -10,7 +12,7 @@ import Keiro.Subscription.Shard (ShardLease (..), WorkerId (..), acquireOwnedBuc
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Phase (zeroPhases)
@@ -41,7 +43,7 @@ leaseCoverageSmoke =
             pgVersion = Supported (Support (Pg18 :| []) Pg18)
           },
       phases = zeroPhases,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku, SchemaKeiro] [] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [kirokuSchema, keiroSchema] [] False)},
       knownDefect = Nothing,
       run = runLeaseCoverageSmoke
     }

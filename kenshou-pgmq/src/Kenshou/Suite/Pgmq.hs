@@ -1,7 +1,8 @@
 module Kenshou.Suite.Pgmq (bundle) where
 
-import Kenshou.Core.Bundle (LayerBundle (..))
-import Kenshou.Core.Id (Layer (Pgmq))
+import Kenshou.Core.Bundle (LayerBundle (..), mkBundle)
+import Kenshou.Core.Contribution (RoutingRule (..), RuleCondition (..))
+import Kenshou.Core.Id (mkLayerId)
 import Kenshou.Suite.Pgmq.Bench.Backlog qualified as BenchBacklog
 import Kenshou.Suite.Pgmq.Bench.Fifo qualified as BenchFifo
 import Kenshou.Suite.Pgmq.Bench.Ladder qualified as BenchLadder
@@ -32,7 +33,7 @@ import Kenshou.Suite.Pgmq.Roles qualified as Roles
 import Kenshou.Suite.Pgmq.Soak.SteadyState qualified as SteadyState
 
 bundle :: LayerBundle
-bundle = LayerBundle Pgmq scenarios Roles.roles
+bundle = (mkBundle (either (error . show) id (mkLayerId "pgmq")) scenarios Roles.roles) {routingRules = [RoutingRule (KnobEquals "pgmq.queue-kind" "partitioned") "postgres.pg_partman" "Partitioned PGMQ queues require pg_partman on the cell PostgreSQL server."], evidenceSubject = Just "mori://shinzui/pgmq-hs"}
   where
     scenarios =
       concat

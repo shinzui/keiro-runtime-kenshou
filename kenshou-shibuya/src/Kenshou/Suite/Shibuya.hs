@@ -1,7 +1,7 @@
 module Kenshou.Suite.Shibuya (bundle) where
 
-import Kenshou.Core.Bundle (LayerBundle (..))
-import Kenshou.Core.Id (Layer (Shibuya))
+import Kenshou.Core.Bundle (LayerBundle (..), mkBundle)
+import Kenshou.Core.Id (mkLayerId)
 import Kenshou.Suite.Shibuya.Bench.BatchSizeTimeout qualified as BatchSizeTimeout
 import Kenshou.Suite.Shibuya.Bench.ConcurrencySweep qualified as ConcurrencySweep
 import Kenshou.Suite.Shibuya.Bench.FrameworkTax qualified as FrameworkTax
@@ -31,4 +31,4 @@ import Kenshou.Suite.Shibuya.Roles qualified as Roles
 import Kenshou.Suite.Shibuya.Soak.CoreBatch qualified as SoakCoreBatch
 
 bundle :: LayerBundle
-bundle = LayerBundle Shibuya (CoreRunner.scenarios <> ConcurrentCoreRunner.scenarios <> [FrameworkTax.scenario, ConcurrencySweep.scenario, BatchSizeTimeout.scenario, PgmqEndToEnd.scenario, KirokuEndToEnd.scenario] <> CoreOrdering.scenarios <> ConcurrentCoreOrdering.scenarios <> [KeyedModel.scenario] <> ConcurrentCoreBatch.scenarios <> CoreBatch.scenarios <> SoakCoreBatch.scenarios <> Metrics.scenarios <> PgmqAdapter.scenarios <> [PgmqTrace.scenario, KirokuAckMapping.scenario, KirokuDepth.scenario, KirokuReplay.scenario, KirokuTrace.scenario, KirokuTwoOwners.scenario, KirokuRetryRestart.scenario, KirokuStaticGroup.scenario, KirokuGroupAcquisition.scenario, KirokuOutage.scenario, KirokuSigkillReplay.scenario]) Roles.roles
+bundle = (mkBundle (either (error . show) id (mkLayerId "shibuya")) (CoreRunner.scenarios <> ConcurrentCoreRunner.scenarios <> [FrameworkTax.scenario, ConcurrencySweep.scenario, BatchSizeTimeout.scenario, PgmqEndToEnd.scenario, KirokuEndToEnd.scenario] <> CoreOrdering.scenarios <> ConcurrentCoreOrdering.scenarios <> [KeyedModel.scenario] <> ConcurrentCoreBatch.scenarios <> CoreBatch.scenarios <> SoakCoreBatch.scenarios <> Metrics.scenarios <> PgmqAdapter.scenarios <> [PgmqTrace.scenario, KirokuAckMapping.scenario, KirokuDepth.scenario, KirokuReplay.scenario, KirokuTrace.scenario, KirokuTwoOwners.scenario, KirokuRetryRestart.scenario, KirokuStaticGroup.scenario, KirokuGroupAcquisition.scenario, KirokuOutage.scenario, KirokuSigkillReplay.scenario]) Roles.roles) {evidenceSubject = Just "mori://shinzui/shibuya"}

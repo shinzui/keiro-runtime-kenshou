@@ -2,6 +2,8 @@
 
 module Kenshou.Suite.Shibuya.Correctness.PgmqTrace (scenario) where
 
+import Kenshou.Suite.Schema (pgmqSchema)
+
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, displayException, try)
 import Data.Aeson (Value (..), object, (.=))
@@ -17,7 +19,7 @@ import Effectful (liftIO, runEff)
 import Effectful.Error.Static (runErrorNoCallStack)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension (DimensionSupport (..), MetricsArm (..), PgDurability (..), PgVersion (..), Support (..), Supported (..), TracingArm (..))
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
@@ -55,7 +57,7 @@ scenario =
             pgVersion = Supported (Support (Pg18 :| [Pg17]) Pg18)
           },
       phases = zeroPhases,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaPgmq] [] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [pgmqSchema] [] False)},
       knownDefect = Nothing,
       run = runTraceContinuity
     }

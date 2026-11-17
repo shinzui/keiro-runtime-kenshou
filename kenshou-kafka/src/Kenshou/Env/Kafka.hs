@@ -1,5 +1,6 @@
 module Kenshou.Env.Kafka
-  ( BrokerBackend (..),
+  ( kafkaProvider,
+    BrokerBackend (..),
     BrokerControlHooks (..),
     KafkaEnvSpec (..),
     kafkaEnvSpecFromValue,
@@ -33,11 +34,14 @@ where
 
 import Control.Exception (IOException, bracket, try)
 import Control.Monad (forM_, unless, when)
-import Data.Aeson (object, (.=))
+import Data.Aeson (Value (..), object, (.=))
 import Data.List (isPrefixOf)
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
+import Kenshou.Core.Resource (CellBinding (..), ProvisionedResource (..), ResourceProvider (..))
+import Kenshou.Core.Resource.Types (legacyKafkaName)
 import Kenshou.Env.Kafka.Access
 import Kenshou.Env.Kafka.Admin
 import Kenshou.Env.Kafka.External (withExternalBrokers)
@@ -115,3 +119,16 @@ processAlive :: Int -> IO Bool
 processAlive pid = do
   result <- try @IOException (signalProcess nullSignal (fromIntegral pid))
   pure case result of Right () -> True; Left _ -> False
+
+-- The scenario fixture owns broker fault hooks and process lifetime. Register its
+-- configuration so the kernel can validate requirements, carry it to workers,
+-- and bind existing external-broker cells through the named-resource protocol.
+kafkaProvider :: ResourceProvider
+kafkaProvider =
+  ResourceProvider
+    { name = legacyKafkaName,
+      summary = "Private or cell-provided Kafka broker configuration",
+      normalize = \value -> kafkaEnvSpecFromValue value >> pure (fromMaybe Null value),
+      withLocal = \_ value action -> action (ProvisionedResource value value),
+      cell = Just (CellBinding "kafka" (Just (object ["wipe" .= True])))
+    }

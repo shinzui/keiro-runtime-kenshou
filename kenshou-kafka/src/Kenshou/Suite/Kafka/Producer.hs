@@ -12,12 +12,12 @@ import Kafka.Effectful.Producer qualified as P
 import Kafka.Types (KafkaError, TopicName)
 import Kenshou.Core.Context (RunContext)
 import Kenshou.Core.Dimension (allTelemetryArms, noDimensions)
-import Kenshou.Core.Env (kafkaEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
 import Kenshou.Env.Kafka
 import Kenshou.Suite.Kafka.Fixture (consumeValues, firstBrokers, produceValues, sabotageDropFirst, sabotageKnob)
+import Kenshou.Suite.Schema (kafkaEnvironment)
 
 scenarios :: [Scenario]
 scenarios =

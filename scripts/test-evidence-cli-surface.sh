@@ -69,7 +69,7 @@ done
 
 "$binary" help evidence --width 80 > "$scratch/help-80"
 awk 'length($0) > 80 { print "help line exceeds 80 columns: " NR > "/dev/stderr"; exit 1 }' "$scratch/help-80"
-cmp kenshou-cli/test/golden/help-evidence-80.txt "$scratch/help-80"
+cmp kenshou-suite/test/golden/help-evidence-80.txt "$scratch/help-80"
 "$binary" help evidence > "$scratch/help-default-first"
 "$binary" help evidence > "$scratch/help-default-second"
 cmp "$scratch/help-default-first" "$scratch/help-default-second"

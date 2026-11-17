@@ -1,3 +1,4 @@
+import: kenshou.project
 -- HISTORICAL HEAD COHORT: 2026-09-20 packages with selected remediation commits.
 -- Descriptor: cohort/head.json. Verified by build and cohort check on 2026-09-27.
 index-state: 2026-09-20T13:44:47Z
@@ -89,7 +90,12 @@ constraints:
   hs-opentelemetry-semantic-conventions ==1.40.0.0
 
 allow-newer:
-  keiro-test-support:ephemeral-pg
+  keiro-test-support:ephemeral-pg,
+  -- mori://shinzui/kiroku/packages/kiroku-cli uses tlsManagerSettings,
+  -- whose type is preserved by http-client-tls 0.4. The extracted remote
+  -- package requires 0.4; remove this exception when Kiroku releases its bound.
+  -- The link-proof and TLS manager integration validate the used surface.
+  kiroku-cli:http-client-tls
 
 -- shibuya master: unreleased lifecycle remediation.
 source-repository-package

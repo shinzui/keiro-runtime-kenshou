@@ -1,0 +1,7 @@
+{
+  "reviewedPhaseContracts": [
+    { "scenario": "shibuya/core-ordering/benchmark/concurrency-sweep", "revision": 2 },
+    { "scenario": "shibuya/pgmq-adapter/benchmark/end-to-end-throughput-latency", "revision": 1 }
+  ],
+  "steadyCountKnob": "shibuya.messages"
+}

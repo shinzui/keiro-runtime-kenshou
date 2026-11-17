@@ -1,5 +1,7 @@
 set shell := ["zsh", "-cu"]
 
+export KENSHOU_EVIDENCE_BUNDLE_URI := env_var_or_default("KENSHOU_EVIDENCE_BUNDLE_URI", "mori://shinzui/keiro-runtime-kenshou/okf/verification")
+
 pg_host := env_var_or_default("PGHOST", "db")
 pg_data := env_var_or_default("PGDATA", "db/db")
 pg_log := env_var_or_default("PGLOG", "db/postgres.log")
@@ -94,66 +96,66 @@ evidence-check:
 
 [group('verification')]
 schemas-check:
-    check-jsonschema --schemafile schemas/kenshou.perf-calibration-definition.v1.schema.json kenshou-core/test/golden/perf-calibration-definition.synthetic.json
-    check-jsonschema --schemafile schemas/kenshou.perf-calibration-acceptance.v1.schema.json kenshou-core/test/golden/perf-calibration-acceptance.synthetic.json
-    check-jsonschema --schemafile schemas/kenshou.perf-calibration-reference.v1.schema.json kenshou-core/test/golden/perf-calibration-reference.synthetic.json
-    check-jsonschema --schemafile schemas/kenshou.perf-publication.v1.schema.json kenshou-cli/test/fixtures/perf-publication.synthetic.json
-    check-jsonschema --schemafile schemas/kenshou.perf-session.v1.schema.json kenshou-remote/test/golden/perf-session.fixture.json
-    check-jsonschema --schemafile schemas/kenshou.perf-result.v1.schema.json kenshou-core/test/golden/perf-result.*.fixture.json
-    check-jsonschema --schemafile schemas/kenshou.perf-prepared.v1.schema.json kenshou-core/test/golden/perf-prepared.fixture.json
-    check-jsonschema --schemafile schemas/kenshou.perf-plan.v1.schema.json kenshou-core/test/golden/perf-plan.json
-    check-jsonschema --schemafile schemas/kenshou.perf-request.v1.schema.json kenshou-core/test/golden/perf-request.json
+    check-jsonschema --schemafile schemas/kenshou.perf-calibration-definition.v1.schema.json kenshou-suite/fixtures/core/golden/perf-calibration-definition.synthetic.json
+    check-jsonschema --schemafile schemas/kenshou.perf-calibration-acceptance.v1.schema.json kenshou-suite/fixtures/core/golden/perf-calibration-acceptance.synthetic.json
+    check-jsonschema --schemafile schemas/kenshou.perf-calibration-reference.v1.schema.json kenshou-suite/fixtures/core/golden/perf-calibration-reference.synthetic.json
+    check-jsonschema --schemafile schemas/kenshou.perf-publication.v1.schema.json kenshou-suite/test/fixtures/perf-publication.synthetic.json
+    check-jsonschema --schemafile schemas/kenshou.perf-session.v1.schema.json kenshou-suite/fixtures/remote/golden/perf-session.fixture.json
+    check-jsonschema --schemafile schemas/kenshou.perf-result.v1.schema.json kenshou-suite/fixtures/core/golden/perf-result.*.fixture.json
+    check-jsonschema --schemafile schemas/kenshou.perf-prepared.v1.schema.json kenshou-suite/fixtures/core/golden/perf-prepared.fixture.json
+    check-jsonschema --schemafile schemas/kenshou.perf-plan.v1.schema.json kenshou-suite/fixtures/core/golden/perf-plan.json
+    check-jsonschema --schemafile schemas/kenshou.perf-request.v1.schema.json kenshou-suite/fixtures/core/golden/perf-request.json
     check-jsonschema --schemafile schemas/kenshou.perf-catalog.v1.schema.json policies/performance/catalog.v1.json
     python3 scripts/test-perf-resolved-lock.py
     nix eval --json --file scripts/test-perf-resolved-dependencies.nix
     python3 scripts/test-performance-ci.py
-    for fixture in kenshou-remote/test/golden/cell/cell.*.v1.json; do schema="${fixture%.json}.schema.json"; check-jsonschema --base-uri "file://$PWD/$schema" --schemafile "$schema" "$fixture" || exit; done
-    check-jsonschema --schemafile schemas/kenshou.cohort-identity.v1.schema.json kenshou-core/test/fixtures/cohort-identity.golden.json
-    check-jsonschema --schemafile schemas/kenshou.queue-lease-observations.v1.schema.json kenshou-cli/test/fixtures/queue-lease-observations.json
+    for fixture in kenshou-suite/fixtures/remote/golden/cell/cell.*.v1.json; do schema="${fixture%.json}.schema.json"; check-jsonschema --base-uri "file://$PWD/$schema" --schemafile "$schema" "$fixture" || exit; done
+    check-jsonschema --schemafile schemas/kenshou.cohort-identity.v1.schema.json kenshou-suite/fixtures/core/fixtures/cohort-identity.golden.json
+    check-jsonschema --schemafile schemas/kenshou.queue-lease-observations.v1.schema.json kenshou-suite/test/fixtures/queue-lease-observations.json
     check-jsonschema --schemafile schemas/kenshou.queue-physical-outcomes.v1.schema.json kenshou-keiro/test/fixtures/queue-physical-outcomes.json
     check-jsonschema --schemafile schemas/kenshou.queue-job-observations.v1.schema.json kenshou-keiro/test/fixtures/queue-job-observations.json
     check-jsonschema --schemafile schemas/kenshou.queue-ordering-observations.v1.schema.json kenshou-keiro/test/fixtures/queue-ordering-observations.json
     check-jsonschema --schemafile schemas/kenshou.queue-ordering-observations.v2.schema.json kenshou-keiro/test/fixtures/queue-ordering-retry-observations.json
     check-jsonschema --schemafile schemas/kenshou.queue-ordering-observations.v3.schema.json kenshou-keiro/test/fixtures/queue-ordering-lease-observations.json
     check-jsonschema --schemafile schemas/kenshou.outbox-producer-identity.v1.schema.json kenshou-keiro/test/fixtures/outbox-producer-identity.json
-    check-jsonschema --schemafile schemas/kenshou.outbox-zombie-observations.v1.schema.json kenshou-cli/test/fixtures/outbox-zombie-observations.json
+    check-jsonschema --schemafile schemas/kenshou.outbox-zombie-observations.v1.schema.json kenshou-suite/test/fixtures/outbox-zombie-observations.json
     check-jsonschema --schemafile schemas/kenshou.queue-polling-observations.v1.schema.json kenshou-keiro/test/fixtures/queue-polling-observations.json
     check-jsonschema --schemafile schemas/kenshou.queue-worker-outcomes.v1.schema.json kenshou-keiro/test/fixtures/queue-worker-outcomes.json
-    check-jsonschema --schemafile schemas/kenshou.queue-config-rejections.v1.schema.json kenshou-keiro/test/fixtures/queue-config-rejections.json kenshou-cli/test/fixtures/queue-config-rejections.json
+    check-jsonschema --schemafile schemas/kenshou.queue-config-rejections.v1.schema.json kenshou-keiro/test/fixtures/queue-config-rejections.json kenshou-suite/test/fixtures/queue-config-rejections.json
     check-jsonschema --schemafile schemas/kenshou.inbox-matrix-sql.v1.schema.json kenshou-keiro/test/fixtures/inbox-matrix-sql.json
     check-jsonschema --schemafile schemas/kenshou.inbox-matrix-intake.v1.schema.json kenshou-keiro/test/fixtures/inbox-matrix-intake.json
-    check-jsonschema --schemafile schemas/kenshou.inbox-delegated-observations.v1.schema.json kenshou-cli/test/fixtures/inbox-delegated-*.json
-    check-jsonschema --schemafile schemas/kenshou.inbox-poison-observations.v1.schema.json kenshou-cli/test/fixtures/inbox-poison-*.json
-    check-jsonschema --schemafile schemas/kenshou.inbox-batch-observations.v1.schema.json kenshou-cli/test/fixtures/inbox-batch-*.json
-    for fixture in kenshou-cli/test/fixtures/outbox-terminal-*.json; do jq .observations "$fixture" | check-jsonschema --schemafile schemas/kenshou.outbox-terminal-observations.v1.schema.json - || exit; done
-    check-jsonschema --schemafile schemas/kenshou.payload.v1.schema.json kenshou-remote/test/golden/payload.json
-    check-jsonschema --schemafile schemas/kenshou.payload-identity.v1.schema.json kenshou-remote/test/golden/payload-identity.json
+    check-jsonschema --schemafile schemas/kenshou.inbox-delegated-observations.v1.schema.json kenshou-suite/test/fixtures/inbox-delegated-*.json
+    check-jsonschema --schemafile schemas/kenshou.inbox-poison-observations.v1.schema.json kenshou-suite/test/fixtures/inbox-poison-*.json
+    check-jsonschema --schemafile schemas/kenshou.inbox-batch-observations.v1.schema.json kenshou-suite/test/fixtures/inbox-batch-*.json
+    for fixture in kenshou-suite/test/fixtures/outbox-terminal-*.json; do jq .observations "$fixture" | check-jsonschema --schemafile schemas/kenshou.outbox-terminal-observations.v1.schema.json - || exit; done
+    check-jsonschema --schemafile schemas/kenshou.payload.v1.schema.json kenshou-suite/fixtures/remote/golden/payload.json
+    check-jsonschema --schemafile schemas/kenshou.payload-identity.v1.schema.json kenshou-suite/fixtures/remote/golden/payload-identity.json
     for lock in nix/cohort-locks/*.lock.json; do check-jsonschema --schemafile schemas/kenshou.cohort-nix-lock.v1.schema.json "$lock" || exit; done
-    check-jsonschema --schemafile schemas/kenshou.cell-run.v1.schema.json kenshou-remote/test/golden/cell-run.json
-    check-jsonschema --schemafile schemas/kenshou.cell-session.v1.schema.json kenshou-remote/test/golden/cell-session.json
-    check-jsonschema --schemafile schemas/kenshou.cell-capabilities.v1.schema.json kenshou-remote/test/golden/cell-capabilities.json
-    check-jsonschema --schemafile schemas/kenshou.cell-route.v1.schema.json kenshou-remote/test/golden/cell-route.json
-    check-jsonschema --schemafile schemas/kenshou.parity-report.v1.schema.json kenshou-remote/test/golden/parity-report.json
+    check-jsonschema --schemafile schemas/kenshou.cell-run.v1.schema.json kenshou-suite/fixtures/remote/golden/cell-run.json
+    check-jsonschema --schemafile schemas/kenshou.cell-session.v1.schema.json kenshou-suite/fixtures/remote/golden/cell-session.json
+    check-jsonschema --schemafile schemas/kenshou.cell-capabilities.v1.schema.json kenshou-suite/fixtures/remote/golden/cell-capabilities.json
+    check-jsonschema --schemafile schemas/kenshou.cell-route.v1.schema.json kenshou-suite/fixtures/remote/golden/cell-route.json
+    check-jsonschema --schemafile schemas/kenshou.parity-report.v1.schema.json kenshou-suite/fixtures/remote/golden/parity-report.json
     check-jsonschema --schemafile schemas/kenshou.cell-routing.v1.schema.json policies/cell-routing.json
-    check-jsonschema --schemafile schemas/kenshou.cell-session.v1.schema.json kenshou-remote/test/golden/cell-session.json
-    check-jsonschema --schemafile schemas/component-graph.v1.schema.json kenshou-core/data/components.json
-    check-jsonschema --schemafile schemas/run-plan.v1.schema.json kenshou-core/test/golden/run-plan.minimal.json
-    check-jsonschema --schemafile schemas/plan-summary.v1.schema.json kenshou-core/test/golden/plan-summary.minimal.json
+    check-jsonschema --schemafile schemas/kenshou.cell-session.v1.schema.json kenshou-suite/fixtures/remote/golden/cell-session.json
+    check-jsonschema --schemafile schemas/component-graph.v1.schema.json kenshou-suite/data/components.json
+    check-jsonschema --schemafile schemas/run-plan.v1.schema.json kenshou-suite/fixtures/core/golden/run-plan.minimal.json
+    check-jsonschema --schemafile schemas/plan-summary.v1.schema.json kenshou-suite/fixtures/core/golden/plan-summary.minimal.json
     check-jsonschema --schemafile schemas/suite.v1.schema.json suites/*.json
-    check-jsonschema --schemafile schemas/run-spec-v1.schema.json kenshou-core/test/golden/run-spec.minimal.json kenshou-core/test/golden/run-spec.effective.json kenshou-core/test/golden/run-spec.external.json
-    check-jsonschema --schemafile schemas/run-result-v1.schema.json kenshou-core/test/golden/run-result.passed.json kenshou-core/test/golden/run-result.known-defect.json
-    check-jsonschema --schemafile schemas/artifact-manifest-v1.schema.json kenshou-core/test/golden/manifest.json
+    check-jsonschema --schemafile schemas/run-spec-v1.schema.json kenshou-suite/fixtures/core/golden/run-spec.minimal.json kenshou-suite/fixtures/core/golden/run-spec.effective.json kenshou-suite/fixtures/core/golden/run-spec.external.json
+    check-jsonschema --schemafile schemas/run-result-v1.schema.json kenshou-suite/fixtures/core/golden/run-result.passed.json kenshou-suite/fixtures/core/golden/run-result.known-defect.json
+    check-jsonschema --schemafile schemas/artifact-manifest-v1.schema.json kenshou-suite/fixtures/core/golden/manifest.json
     check-jsonschema --schemafile schemas/comparison-policy-v1.schema.json policies/default.json policies/selftest.json
     check-jsonschema --schemafile schemas/overhead-policy-v1.schema.json policies/telemetry-overhead.json
-    check-jsonschema --schemafile schemas/overhead-report-v1.schema.json kenshou-telemetry/test/golden/overhead-report.minimal.json
-    check-jsonschema --schemafile schemas/health-notice-v1.schema.json kenshou-measure/test/fixtures/health-notice.json
-    check-jsonschema --schemafile schemas/diagnosis.v1.schema.json kenshou-diagnose/test/golden/leak-diagnosis.json
+    check-jsonschema --schemafile schemas/overhead-report-v1.schema.json kenshou-suite/fixtures/telemetry/golden/overhead-report.minimal.json
+    check-jsonschema --schemafile schemas/health-notice-v1.schema.json kenshou-suite/fixtures/measure/fixtures/health-notice.json
+    check-jsonschema --schemafile schemas/diagnosis.v1.schema.json kenshou-suite/fixtures/diagnose/golden/leak-diagnosis.json
     check-jsonschema --schemafile schemas/leak-policy.v1.schema.json policies/leak-default.json
-    check-jsonschema --schemafile schemas/scenario-list-v1.schema.json kenshou-core/test/golden/scenario-list.json
+    check-jsonschema --schemafile schemas/scenario-list-v1.schema.json kenshou-suite/fixtures/core/golden/scenario-list.json
     tmpdir=$(mktemp -d); trap 'rm -rf -- "$tmpdir"' EXIT; K=$(cabal list-bin kenshou); "$K" evidence check --json > "$tmpdir/evidence-check.json"; check-jsonschema --schemafile schemas/evidence-check-v1.schema.json "$tmpdir/evidence-check.json"
     tmpdir=$(mktemp -d); trap 'rm -rf -- "$tmpdir"' EXIT; K=$(cabal list-bin kenshou); "$K" history --scenario selftest/kernel/correctness/always-pass --json > "$tmpdir/evidence-history.json"; check-jsonschema --schemafile schemas/evidence-history-v1.schema.json "$tmpdir/evidence-history.json"
     tmpdir=$(mktemp -d); trap 'rm -rf -- "$tmpdir"' EXIT; K=$(cabal list-bin kenshou); "$K" attest invalid --project fixture --json > "$tmpdir/attest-result.json" || test "$?" = 2; check-jsonschema --schemafile schemas/attest-result-v1.schema.json "$tmpdir/attest-result.json"
-    jq -c . kenshou-core/test/golden/worker-messages.jsonl | while IFS= read -r line; do printf '%s\n' "$line" | check-jsonschema --schemafile schemas/worker-message-v1.schema.json -; done
+    jq -c . kenshou-suite/fixtures/core/golden/worker-messages.jsonl | while IFS= read -r line; do printf '%s\n' "$line" | check-jsonschema --schemafile schemas/worker-message-v1.schema.json -; done
     tmpdir=$(mktemp -d); trap 'rm -rf -- "$tmpdir"' EXIT; K=$(cabal list-bin kenshou); "$K" list --json > "$tmpdir/scenario-list.json"; "$K" run selftest/kernel/correctness/always-pass --out "$tmpdir/runs" >/dev/null; rundir=$(find "$tmpdir/runs" -mindepth 1 -maxdepth 1 -type d | head -1); check-jsonschema --schemafile schemas/scenario-list-v1.schema.json "$tmpdir/scenario-list.json"; check-jsonschema --schemafile schemas/run-spec-v1.schema.json "$rundir/run-spec.json"; check-jsonschema --schemafile schemas/run-result-v1.schema.json "$rundir/run-result.json"; check-jsonschema --schemafile schemas/artifact-manifest-v1.schema.json "$rundir/manifest.json"
     tmpdir=$(mktemp -d); trap 'rm -rf -- "$tmpdir"' EXIT; K=$(cabal list-bin kenshou); "$K" run selftest/check/correctness/ledger-detects-loss-dup-reorder --set ledger.facts=1000 --out "$tmpdir" >/dev/null; rundir=$(find "$tmpdir" -mindepth 1 -maxdepth 1 -type d | head -1); check-jsonschema --schemafile schemas/kenshou.verdict.v1.schema.json "$rundir"/verdicts/*.json; jq '{"$schema": .["$schema"], "type": "array", "items": .}' schemas/kenshou.ledger-fact.v1.schema.json > "$tmpdir/ledger-array.schema.json"; jq -s 'map(select(.schema == "kenshou.ledger-fact/v1"))' "$rundir"/verdicts/ledger/*.jsonl > "$tmpdir/ledger-facts.json"; check-jsonschema --schemafile "$tmpdir/ledger-array.schema.json" "$tmpdir/ledger-facts.json"
 
@@ -168,26 +170,21 @@ haskell-build:
 
 [group('haskell')]
 haskell-test:
-    cabal test kenshou-core:tests
+    cabal test kenshou-pgmq:test:kenshou-pgmq-test kenshou-kiroku:test:kenshou-kiroku-test kenshou-shibuya:test:kenshou-shibuya-test kenshou-kafka:test:kenshou-kafka-test kenshou-runtime:test:kenshou-runtime-test
     cabal test kenshou-keiro:test:kenshou-keiro-test
-    cabal test kenshou-remote:test:kenshou-remote-test
-    cabal test kenshou-measure:test:kenshou-measure-test
-    cabal test kenshou-check:test:kenshou-check-test
-    cabal test kenshou-diagnose:test:kenshou-diagnose-test
-    cabal test kenshou-cli:test:kenshou-cli-test
-    cabal test kenshou-evidence:test:kenshou-evidence-test
+    cabal test kenshou-suite:test:kenshou-suite-test
 
 [group('haskell')]
 link-proof:
-    cabal test kenshou-cli:test:kenshou-linkproof
+    cabal test kenshou-suite:test:kenshou-linkproof
 
 [group('diagnostics')]
 diagnose-build-info-table:
-    cabal --project-file=cabal.diagnose-info-table.project --builddir=dist-diagnose/info-table build kenshou-cli:exe:kenshou
+    cabal --project-file=cabal.diagnose-info-table.project --builddir=dist-diagnose/info-table build kenshou-suite:exe:kenshou
 
 [group('diagnostics')]
 diagnose-build-profiled:
-    cabal --project-file=cabal.diagnose-profiled.project --builddir=dist-diagnose/profiled build kenshou-cli:exe:kenshou
+    cabal --project-file=cabal.diagnose-profiled.project --builddir=dist-diagnose/profiled build kenshou-suite:exe:kenshou
 
 [group('diagnostics')]
 diagnose-tools:

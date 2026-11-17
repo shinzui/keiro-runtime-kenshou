@@ -7,4 +7,3 @@
 - [selftest/measure/benchmark/sleep-service passed on released](01a0e11f-9472-748f-8055-955a2bc9b17b.md) - Recorded selftest/measure/benchmark/sleep-service run against cohort released with digest-pinned data.
 - [selftest/measure/benchmark/sleep-service comparison inconclusive](01a0e120-694b-72f7-9c29-a0e355ebba6e.md) - Recorded comparison of 1 paired runs with digest-pinned data.
 - [selftest/kernel/correctness/always-pass passed on released](01a0e126-38aa-715b-818d-cfea53d4a429.md) - Recorded selftest/kernel/correctness/always-pass run against cohort released with digest-pinned data.
-

@@ -1,16 +1,11 @@
+import: kenshou.project
 -- Isolated current Shibuya release lane. The full runtime cohort still pins
 -- keiro-pgmq 0.17.0.0, whose shibuya-core bound excludes the 0.10 release line.
 -- Cabal resolves package paths from the working directory at the repo root.
 packages:
-  kenshou-core/kenshou-core.cabal,
-  kenshou-check/kenshou-check.cabal,
-  kenshou-diagnose/kenshou-diagnose.cabal,
-  kenshou-measure/kenshou-measure.cabal,
-  kenshou-telemetry/kenshou-telemetry.cabal,
   kenshou-shibuya/kenshou-shibuya.cabal,
-  kenshou-evidence/kenshou-evidence.cabal,
-  kenshou-remote/kenshou-remote.cabal,
-  kenshou-cli/kenshou-cli.cabal
+  kenshou-support/kenshou-support.cabal,
+  kenshou-suite/kenshou-suite.cabal
 
 with-compiler: ghc-9.12.4
 index-state: 2026-10-10T19:40:06Z
@@ -19,10 +14,10 @@ test-show-details: direct
 
 -- The isolated lane never exercises Keiro schemas; released Keiro migration
 -- bounds exclude the Kiroku schema required by shibuya-kiroku-adapter 0.6.
-package kenshou-cli
+package kenshou-suite
   flags: -runtime-suites
 
-package kenshou-core
+package kenshou-support
   flags: -keiro-schema
 
 extra-packages:

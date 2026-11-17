@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://shinzui.github.io/keiro-runtime-kenshou/schemas/kenshou.cohort-nix-lock.v1.schema.json",
+  "$id": "https://shinzui.github.io/kenshou/schemas/kenshou.cohort-nix-lock.v1.schema.json",
   "title": "Kenshou cohort Nix source lock",
   "type": "object",
   "additionalProperties": false,

@@ -1,5 +1,7 @@
 module Kenshou.Suite.Keiro.Shard.Mismatch (scenarios) where
 
+import Kenshou.Suite.Schema (keiroSchema, kirokuSchema)
+
 import Control.Concurrent.STM (atomically, retry)
 import Data.Aeson (object, (.=))
 import Data.List.NonEmpty (NonEmpty (..))
@@ -18,7 +20,7 @@ import Kenshou.Check.Scenario (finishWithVerdicts, withCheck)
 import Kenshou.Check.Verdict (InvariantClass (..), Verdict (..), VerdictStatus (..))
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Phase (zeroPhases)
@@ -53,7 +55,7 @@ mismatchProbe =
             pgVersion = Supported (Support (Pg18 :| []) Pg18)
           },
       phases = zeroPhases,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku, SchemaKeiro] [] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [kirokuSchema, keiroSchema] [] False)},
       knownDefect = Just (KnownDefect "mori://shinzui/keiro/okf/improvement-requests/concepts/IR-49" "A larger mismatched worker inserts extra shard rows before rejecting itself" ["shard-larger-worker-left-four", "shard-correct-worker-recovers"] AllCohorts),
       run = runMismatchProbe
     }

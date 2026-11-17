@@ -1,5 +1,7 @@
 module Kenshou.Suite.Shibuya.Concurrency.PgmqHandlerOutlivesLease (scenario) where
 
+import Kenshou.Suite.Schema (pgmqSchema)
+
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM (atomically)
 import Control.Exception (SomeException, displayException, try)
@@ -14,7 +16,7 @@ import Kenshou.Check.Process (ProgressSnapshot (..), awaitMark, awaitReady, prog
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary, requirePostgres)
 import Kenshou.Core.Dimension (PgDurability (..), PgVersion (..), noDimensions, postgresDimensions)
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Phase (zeroPhases)
@@ -38,7 +40,7 @@ scenario =
       knobs = [],
       dimensions = postgresDimensions (PgDurable :| []) (Pg18 :| [Pg17]) noDimensions,
       phases = zeroPhases,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaPgmq] [] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [pgmqSchema] [] False)},
       knownDefect = Nothing,
       run = runOverlap
     }

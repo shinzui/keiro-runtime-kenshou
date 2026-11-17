@@ -1,5 +1,7 @@
 module Kenshou.Suite.Kiroku.Bench.Subscription (scenarios) where
 
+import Kenshou.Suite.Schema (kirokuSchema)
+
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.MVar (MVar, newEmptyMVar, takeMVar, tryPutMVar)
 import Control.Concurrent.STM (atomically, retry)
@@ -28,7 +30,7 @@ import Kenshou.Check.Process (Child, ProgressSnapshot (..), awaitReady, progress
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Id (Kind (..), parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), knobInt, knobText, mkKnobName)
 import Kenshou.Core.Outcome (Outcome (..))
@@ -69,7 +71,7 @@ catchUp =
             pgVersion = Supported (Support (Pg18 :| [Pg17]) Pg18)
           },
       phases = PhasePlan 30 120 15,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku] [("shared_preload_libraries", "'pg_stat_statements'")] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [kirokuSchema] [("shared_preload_libraries", "'pg_stat_statements'")] False)},
       knownDefect = Nothing,
       run = runCatchUp
     }

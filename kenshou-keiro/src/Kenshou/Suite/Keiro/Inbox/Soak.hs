@@ -1,5 +1,7 @@
 module Kenshou.Suite.Keiro.Inbox.Soak (scenarios) where
 
+import Kenshou.Suite.Schema (keiroSchema, kirokuSchema)
+
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (async, cancel)
 import Control.Exception (finally)
@@ -16,7 +18,7 @@ import Keiro.Inbox (garbageCollectCompleted, listInbox)
 import Keiro.Integration.Event (IntegrationEvent (..))
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension
-import Kenshou.Core.Env (PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Env qualified as Env
 import Kenshou.Core.Id (Kind (..), parseScenarioId, unSeed)
 import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobInt, knobText, mkKnobName)
@@ -70,7 +72,7 @@ dedupeWindow reduced =
             pgVersion = Supported (Support (Pg18 :| []) Pg18)
           },
       phases = CorePhase.PhasePlan 5 (if reduced then 1200 else 14400) 5,
-      requires = noEnvironment {Env.postgres = Just (PostgresRequirement [SchemaKiroku, SchemaKeiro] [("shared_preload_libraries", "'pg_stat_statements'")] False)},
+      requires = noEnvironment {Env.postgres = Just (PostgresRequirement [kirokuSchema, keiroSchema] [("shared_preload_libraries", "'pg_stat_statements'")] False)},
       knownDefect = Nothing,
       run = runDedupeWindow
     }

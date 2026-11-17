@@ -8,11 +8,13 @@ module Kenshou.Suite.Kiroku.Soak.Common
   )
 where
 
+import Kenshou.Suite.Schema (kirokuSchema)
+
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text (Text)
 import Kenshou.Core.Context (RunContext (..))
 import Kenshou.Core.Dimension
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Id (Kind (..), parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), knobInt, mkKnobName)
 import Kenshou.Core.Outcome (Outcome (..))
@@ -51,7 +53,7 @@ soakPair definition = [build FullSoak, build ReducedSoak]
                 pgVersion = Supported (Support (Pg18 :| [Pg17]) Pg18)
               },
           phases = defaultPhases profile,
-          requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku] [("shared_preload_libraries", "'pg_stat_statements'")] False)},
+          requires = noEnvironment {postgres = Just (PostgresRequirement [kirokuSchema] [("shared_preload_libraries", "'pg_stat_statements'")] False)},
           knownDefect = Nothing,
           run = definition.runSoak profile
         }

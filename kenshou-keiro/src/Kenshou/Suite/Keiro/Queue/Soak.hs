@@ -1,5 +1,7 @@
 module Kenshou.Suite.Keiro.Queue.Soak (scenarios) where
 
+import Kenshou.Suite.Schema (pgmqSchema)
+
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (async, cancel, wait)
 import Control.Exception (finally)
@@ -23,7 +25,7 @@ import Keiro.PGMQ.Job (Job (..), JobOrdering (..), JobOutcome (..), JobPolling (
 import Keiro.PGMQ.Runtime (JobRuntime (..), QueueRef (..), queueRef, runJobEff, withJobRuntime)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary, requirePostgres)
 import Kenshou.Core.Dimension
-import Kenshou.Core.Env (PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Env qualified as Env
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (Kind (..), parseScenarioId)
@@ -67,7 +69,7 @@ queueGrowth reduced =
             pgVersion = Supported (Support (Pg18 :| []) Pg18)
           },
       phases = CorePhase.PhasePlan 5 (if reduced then 1200 else 14400) 5,
-      requires = noEnvironment {Env.postgres = Just (PostgresRequirement [SchemaPgmq] [("shared_preload_libraries", "'pg_stat_statements'")] False)},
+      requires = noEnvironment {Env.postgres = Just (PostgresRequirement [pgmqSchema] [("shared_preload_libraries", "'pg_stat_statements'")] False)},
       knownDefect = Nothing,
       run = runQueueGrowth
     }

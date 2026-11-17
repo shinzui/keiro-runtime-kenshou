@@ -1,6 +1,6 @@
 {
   "cohort": "head",
-  "descriptorSha256": "34b76ed760b3208f4d0180f217568aee5d553ffb7df2c60f46b4c4b13209f5db",
+  "descriptorSha256": "7841852b690aac3dec7c47af823960825ced7c884c8ee35979b9b4bb1c88779a",
   "packages": {
     "effectful": {
       "sha256": "sha256-krNjGxqdbmFpt1g3anTd5ajGtYnyvGaG+AiDLfJN8No=",

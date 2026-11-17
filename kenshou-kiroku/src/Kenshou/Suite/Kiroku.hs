@@ -1,7 +1,10 @@
 module Kenshou.Suite.Kiroku (bundle) where
 
-import Kenshou.Core.Bundle (LayerBundle (..))
-import Kenshou.Core.Id (Layer (Kiroku))
+import Kenshou.Check.Oracle (OracleQuery (..))
+import Kenshou.Check.Oracle.Kiroku qualified as Oracle
+import Kenshou.Core.Bundle (LayerBundle (..), mkBundle)
+import Kenshou.Core.Contribution (OracleSpec (..), PoolMethodology (..))
+import Kenshou.Core.Id (mkLayerId)
 import Kenshou.Suite.Kiroku.Bench.Append qualified as BenchAppend
 import Kenshou.Suite.Kiroku.Bench.Ladder qualified as BenchLadder
 import Kenshou.Suite.Kiroku.Bench.Read qualified as BenchRead
@@ -32,4 +35,4 @@ import Kenshou.Suite.Kiroku.Soak.DeadLetter qualified as SoakDeadLetter
 import Kenshou.Suite.Kiroku.Soak.Retention qualified as SoakRetention
 
 bundle :: LayerBundle
-bundle = LayerBundle Kiroku (Append.scenarios <> Read.scenarios <> Lifecycle.scenarios <> Transaction.scenarios <> Subscription.scenarios <> Overflow.scenarios <> DeadLetter.scenarios <> Notifier.scenarios <> Retention.scenarios <> ConsumerGroup.scenarios <> Metrics.scenarios <> Otel.scenarios <> ConcurrencyAppend.scenarios <> ConcurrencyConsumerGroup.scenarios <> ConcurrencyFault.scenarios <> ConcurrencySubscription.scenarios <> ConcurrencyTelemetry.scenarios <> KnownDefects.scenarios <> BenchAppend.scenarios <> BenchLadder.scenarios <> BenchRead.scenarios <> BenchSubscription.scenarios <> BenchTransaction.scenarios <> BenchTelemetry.scenarios <> SoakAppendSubscribe.scenarios <> SoakDeadLetter.scenarios <> SoakRetention.scenarios) Roles.roles
+bundle = (mkBundle (either (error . show) id (mkLayerId "kiroku")) (Append.scenarios <> Read.scenarios <> Lifecycle.scenarios <> Transaction.scenarios <> Subscription.scenarios <> Overflow.scenarios <> DeadLetter.scenarios <> Notifier.scenarios <> Retention.scenarios <> ConsumerGroup.scenarios <> Metrics.scenarios <> Otel.scenarios <> ConcurrencyAppend.scenarios <> ConcurrencyConsumerGroup.scenarios <> ConcurrencyFault.scenarios <> ConcurrencySubscription.scenarios <> ConcurrencyTelemetry.scenarios <> KnownDefects.scenarios <> BenchAppend.scenarios <> BenchLadder.scenarios <> BenchRead.scenarios <> BenchSubscription.scenarios <> BenchTransaction.scenarios <> BenchTelemetry.scenarios <> SoakAppendSubscribe.scenarios <> SoakDeadLetter.scenarios <> SoakRetention.scenarios) Roles.roles) {oracles = [OracleSpec query.name query.sql | query <- [Oracle.globalPositionGaps, Oracle.streamVersionGaps, Oracle.checkpoints]], methodology = Just (PoolMethodology 12 (10, 13)), evidenceSubject = Just "mori://shinzui/kiroku"}

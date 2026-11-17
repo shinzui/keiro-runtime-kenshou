@@ -1,5 +1,7 @@
 module Kenshou.Suite.Keiro.Outbox.Concurrency (scenarios) where
 
+import Kenshou.Suite.Schema (keiroSchema, kirokuSchema)
+
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (wait, withAsync)
 import Control.Concurrent.STM (atomically, putTMVar)
@@ -33,7 +35,7 @@ import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Check.Verdict (InvariantClass (..))
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobBool, knobInt, knobText, mkKnobName)
@@ -450,7 +452,7 @@ crashBetweenPublishAndMark =
             pgVersion = Supported (Support (Pg18 :| []) Pg18)
           },
       phases = zeroPhases,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku, SchemaKeiro] [] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [kirokuSchema, keiroSchema] [] False)},
       knownDefect = Nothing,
       run = runCrashBetweenPublishAndMark
     }

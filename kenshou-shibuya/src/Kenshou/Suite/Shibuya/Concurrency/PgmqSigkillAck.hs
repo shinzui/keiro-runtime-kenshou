@@ -1,5 +1,7 @@
 module Kenshou.Suite.Shibuya.Concurrency.PgmqSigkillAck (scenario) where
 
+import Kenshou.Suite.Schema (pgmqSchema)
+
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (forConcurrently)
 import Control.Concurrent.STM (atomically)
@@ -19,7 +21,7 @@ import Kenshou.Check.Process (Child, ProgressSnapshot (..), awaitMark, awaitRead
 import Kenshou.Check.Scenario (deriveSeed, withCheck)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension (PgDurability (..), PgVersion (..), noDimensions, postgresDimensions)
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Id (parseScenarioId, unSeed)
 import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), knobInt, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
@@ -46,7 +48,7 @@ scenario =
         ],
       dimensions = postgresDimensions (PgDurable :| []) (Pg18 :| [Pg17]) noDimensions,
       phases = zeroPhases,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaPgmq] [] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [pgmqSchema] [] False)},
       knownDefect = Nothing,
       run = runCrashes
     }

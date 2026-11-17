@@ -1,5 +1,7 @@
 module Kenshou.Suite.Keiro.Inbox.Correctness (scenarios, ensureEffectTable, effectReadStatement, effectInsertStatement) where
 
+import Kenshou.Suite.Schema (keiroSchema, kirokuSchema)
+
 import Data.Aeson (Value, encodeFile, object, (.=))
 import Data.ByteString qualified as ByteString
 import Data.IORef (atomicModifyIORef', modifyIORef', newIORef, readIORef)
@@ -26,7 +28,7 @@ import Keiro.Integration.Event qualified as Integration
 import Keiro.Outbox (OutboxPublishOptions (..), OutboxRow (..), defaultPublishOptions, listOutbox, publishClaimedOutbox)
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobInt, knobText, mkKnobName)
@@ -629,7 +631,7 @@ envelopeRoundTrip =
             pgVersion = Supported (Support (Pg18 :| []) Pg18)
           },
       phases = zeroPhases,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku, SchemaKeiro] [] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [kirokuSchema, keiroSchema] [] False)},
       knownDefect = Nothing,
       run = runEnvelopeRoundTrip
     }

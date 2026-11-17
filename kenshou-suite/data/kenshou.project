@@ -1,0 +1,14 @@
+-- Extracted harness: mori://shinzui/kenshou
+source-repository-package
+  type: git
+  location: https://github.com/shinzui/kenshou.git
+  tag: b90da77822002de46dfe310ab378f3ccd44cb1db
+  subdir:
+    kenshou-core
+    kenshou-check
+    kenshou-measure
+    kenshou-diagnose
+    kenshou-telemetry
+    kenshou-evidence
+    kenshou-remote
+    kenshou-cli

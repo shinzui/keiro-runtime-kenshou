@@ -10,6 +10,7 @@ import Kenshou.Core.Bundle (LayerBundle (..))
 import Kenshou.Core.Env (EnvRequirements (..))
 import Kenshou.Core.Id (renderScenarioId)
 import Kenshou.Core.Knob (KnobSpec (..), KnobValue (..), renderKnobName)
+import Kenshou.Core.Resource.Types (legacyKafkaName)
 import Kenshou.Core.Scenario (Scenario (..))
 import Kenshou.Env.Kafka (BrokerLane (..), GroupSnapshot (..), KafkaEnv (..), KafkaEnvUnavailable (..), PartitionOffsets (..), adminAddresses, groupLag, laneAt, laneProxy, requestLanes, requireControl, topicLag, unavailableReason)
 import Kenshou.Env.Kafka.Spec
@@ -25,8 +26,8 @@ main = hspec do
       let modelIds = fmap (.id) Model.scenarios
           brokerBacked = filter (\scenario -> scenario.id `notElem` modelIds) Kafka.bundle.scenarios
       map (.id) brokerBacked `shouldSatisfy` (not . null)
-      map (\scenario -> scenario.requires.kafka) brokerBacked `shouldSatisfy` and
-      map (\scenario -> scenario.requires.kafka) Model.scenarios `shouldSatisfy` (all not)
+      map (\scenario -> (legacyKafkaName `elem` scenario.requires.resources)) brokerBacked `shouldSatisfy` and
+      map (\scenario -> (legacyKafkaName `elem` scenario.requires.resources)) Model.scenarios `shouldSatisfy` (all not)
     it "gives every broker-backed correctness oracle without a known defect a sabotage control" do
       let modelIds = fmap (.id) Model.scenarios
           judged scenario =

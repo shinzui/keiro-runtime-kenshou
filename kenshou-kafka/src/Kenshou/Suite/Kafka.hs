@@ -1,7 +1,8 @@
 module Kenshou.Suite.Kafka (bundle) where
 
-import Kenshou.Core.Bundle (LayerBundle (..))
-import Kenshou.Core.Id (Layer (Kafka))
+import Kenshou.Core.Bundle (LayerBundle (..), mkBundle)
+import Kenshou.Core.Id (mkLayerId)
+import Kenshou.Env.Kafka (kafkaProvider)
 import Kenshou.Suite.Kafka.Benchmark.Pipeline qualified as Pipeline
 import Kenshou.Suite.Kafka.Benchmark.PollCap qualified as PollCap
 import Kenshou.Suite.Kafka.Benchmark.ProducerModes qualified as ProducerModes
@@ -33,4 +34,4 @@ import Kenshou.Suite.Kafka.Soak qualified as Soak
 import Kenshou.Suite.Kafka.Telemetry.Context qualified as KafkaTelemetry
 
 bundle :: LayerBundle
-bundle = LayerBundle Kafka (Fixture.scenarios <> Ack.scenarios <> Buffered.scenarios <> DeadLetter.scenarios <> Halt.scenarios <> MultiTopic.scenarios <> Records.scenarios <> Retry.scenarios <> NonSerial.scenarios <> Sigkill.scenarios <> AutoOffsetStore.scenarios <> StaticMembership.scenarios <> Fencing.scenarios <> HaltAssignment.scenarios <> BrokerOutage.scenarios <> GroupRebalance.scenarios <> StaleBarrier.scenarios <> Zombie.scenarios <> BarrierOverwrite.scenarios <> Model.scenarios <> Producer.scenarios <> ProducerModes.scenarios <> PollCap.scenarios <> Pipeline.scenarios <> KafkaTelemetry.scenarios <> Soak.scenarios <> BatchFailure.scenarios <> Transactions.scenarios) Roles.roles
+bundle = (mkBundle (either (error . show) id (mkLayerId "kafka")) (Fixture.scenarios <> Ack.scenarios <> Buffered.scenarios <> DeadLetter.scenarios <> Halt.scenarios <> MultiTopic.scenarios <> Records.scenarios <> Retry.scenarios <> NonSerial.scenarios <> Sigkill.scenarios <> AutoOffsetStore.scenarios <> StaticMembership.scenarios <> Fencing.scenarios <> HaltAssignment.scenarios <> BrokerOutage.scenarios <> GroupRebalance.scenarios <> StaleBarrier.scenarios <> Zombie.scenarios <> BarrierOverwrite.scenarios <> Model.scenarios <> Producer.scenarios <> ProducerModes.scenarios <> PollCap.scenarios <> Pipeline.scenarios <> KafkaTelemetry.scenarios <> Soak.scenarios <> BatchFailure.scenarios <> Transactions.scenarios) Roles.roles) {resources = [kafkaProvider], evidenceSubject = Just "mori://shinzui/kafka-effectful"}

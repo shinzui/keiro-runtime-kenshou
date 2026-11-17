@@ -5,6 +5,8 @@ module Kenshou.Suite.Keiro.Workflow.CrashWindows
   )
 where
 
+import Kenshou.Suite.Schema (keiroSchema, kirokuSchema)
+
 import Control.Concurrent (threadDelay)
 import Data.Aeson (Value (..), object, withObject, (.:), (.=))
 import Data.Aeson.Key qualified as Key
@@ -30,7 +32,7 @@ import Kenshou.Check.Process (Child, ChildSignal (..), Supervisor, awaitMark, aw
 import Kenshou.Check.Scenario (CheckEnv (..), withCheck)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary, requirePostgres)
 import Kenshou.Core.Dimension
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (ScenarioId, parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), knobDouble, knobInt, knobText)
@@ -59,7 +61,7 @@ durableOnly =
     }
 
 keiroPostgres :: EnvRequirements
-keiroPostgres = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku, SchemaKeiro] [] False)}
+keiroPostgres = noEnvironment {postgres = Just (PostgresRequirement [kirokuSchema, keiroSchema] [] False)}
 
 sid :: Text -> ScenarioId
 sid = either (error . show) Prelude.id . parseScenarioId

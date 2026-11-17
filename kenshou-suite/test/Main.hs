@@ -1,0 +1,1450 @@
+module Main (main) where
+
+import AssemblySpec qualified
+import Control.Concurrent (forkIO, killThread, threadDelay)
+import Control.Exception (bracket, finally)
+import Control.Monad (forM_)
+import Data.Aeson (Value, object, (.=))
+import Data.Aeson qualified as Aeson
+import Data.Aeson.Key qualified as Key
+import Data.Aeson.KeyMap qualified as KeyMap
+import Data.ByteString.Lazy qualified as LazyByteString
+import Data.Foldable (toList)
+import Data.List (find)
+import Data.List qualified as List
+import Data.Set qualified as Set
+import Data.Text (Text)
+import Data.Text qualified as Text
+import Data.Text.IO qualified as Text
+import Data.Time (UTCTime, addUTCTime, getCurrentTime)
+import Data.UUID qualified as UUID
+import Kenshou.Cli.Attest.KeiroBatch (replayBatchCells)
+import Kenshou.Cli.Attest.KeiroInbox (replayDelegatedCells, replayInboxCells)
+import Kenshou.Cli.Attest.KeiroLease (replayLeaseCells)
+import Kenshou.Cli.Attest.KeiroPoison (replayPoisonCells)
+import Kenshou.Cli.Attest.KeiroProducerIdentity (producerIdentityV1, replayProducerIdentityCells)
+import Kenshou.Cli.Attest.KeiroQueueConfig (replayQueueConfigCells)
+import Kenshou.Cli.Attest.KeiroQueueOrdering (replayOrderingCells)
+import Kenshou.Cli.Attest.KeiroQueueOutcomes (replayQueueOutcomeCells)
+import Kenshou.Cli.Attest.KeiroQueuePolling (replayPollingCells)
+import Kenshou.Cli.Attest.KeiroTerminal (replayTerminalCells)
+import Kenshou.Cli.Attest.KeiroZombie (replayZombieCells)
+import Kenshou.Cli.Cohort (resolveDefaultCohortIdentity)
+import Kenshou.Core.Canonical (sha256Hex)
+import Kenshou.Core.Cohort (CohortIdentity (..), CohortName (..))
+import Kenshou.Core.Id (newRunId, renderRunId)
+import Kenshou.Core.Manifest (Manifest (..), ManifestFile (..))
+import Kenshou.Core.Outcome qualified as Outcome
+import Kenshou.Perf.Artifacts (sealPerfDirectory)
+import Kenshou.Perf.Plan qualified as Perf
+import Kenshou.Perf.Prepared qualified as Prepared
+import Kenshou.Remote.Cell.Docs (Artifact (..), CellBuckets (..), CellDescriptor (..), CellManifest (..), CellOutcome (..), CellPhase (..), CellRunResult (..), CellStatus (..), Limits (..), LogChunks (..), ManifestPayload (..), Rejected (..), Submission (..), WorkObject (..))
+import Kenshou.Remote.Cell.Lease (Lease (..))
+import Kenshou.Remote.Cell.RouteRules (descriptorDigest)
+import Kenshou.Remote.Cell.Session.Journal (LeaseMode (..), SessionJournal (..), SliceJournal (..), SliceState (..), readSessionJournal, writeSessionJournal)
+import Kenshou.Remote.Cell.Submit (workObjectFor)
+import Kenshou.Remote.Payload (Bundle (..), CellPayload (..), PayloadDescriptor (..))
+import Kenshou.Remote.Payload qualified as Payload
+import Kenshou.Remote.Store (Bucket (..), ObjectName (..), ObjectStore (..), Precondition (..))
+import Kenshou.Remote.Store.File (newFileStore)
+import Kenshou.Suite.Attest (FencingFacts (..), fencingFacts)
+import Kenshou.Suite.Registry (runWithArgs)
+import Kenshou.Suite.Version (appVersionWithGit)
+import Kenshou.Telemetry.Overhead (OverheadState (..), SlotRun (..), loadOverheadState)
+import PerfSessionSpec qualified
+import System.Directory (Permissions (..), copyFile, createDirectoryIfMissing, doesFileExist, doesPathExist, getPermissions, listDirectory, makeAbsolute, setPermissions, withCurrentDirectory)
+import System.Environment (lookupEnv, setEnv, unsetEnv)
+import System.Exit (ExitCode (..))
+import System.FilePath ((</>))
+import System.IO.Temp (withSystemTempDirectory)
+import System.Timeout (timeout)
+import Test.Hspec (describe, expectationFailure, hspec, it, shouldBe, shouldReturn, shouldSatisfy)
+
+jsonField :: Key.Key -> Value -> Maybe Value
+jsonField key (Aeson.Object fields) = KeyMap.lookup key fields
+jsonField _ _ = Nothing
+
+readInboxFixture :: FilePath -> IO (Value, Value)
+readInboxFixture path = do
+  value <- Aeson.eitherDecodeFileStrict' path >>= either fail pure
+  case (jsonField "intake" value, jsonField "sql" value) of
+    (Just intake, Just sql) -> pure (intake, sql)
+    _ -> fail "inbox replay fixture must contain intake and SQL observations"
+
+main :: IO ()
+main = hspec do
+  AssemblySpec.spec
+  PerfSessionSpec.spec
+  describe "performance planning CLI" do
+    it "exposes calibration publication and rejects malformed batches before storage effects" $ withSystemTempDirectory "kenshou-calibration-malformed" \directory -> do
+      let input = directory </> "definition.json"
+      Aeson.encodeFile input Aeson.Null
+      runWithArgs ["perf", "calibration", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["perf", "calibration", "declare", "--definition", input, "--uri", "gs://fixture-evidence/calibration/definition.json"] `shouldReturnCode` ExitFailure 2
+    it "publishes a calibration definition create-only and retrieves its identical bytes" $ withSystemTempDirectory "kenshou-calibration-publication" \directory -> do
+      raw <- withPerfRoot (Aeson.eitherDecodeFileStrict' "kenshou-suite/fixtures/core/golden/perf-calibration-definition.synthetic.json" >>= either fail pure)
+      now <- getCurrentTime
+      let input = directory </> "definition.json"
+          storeRoot = directory </> "store"
+          document = replacePerfField "expiresAt" (Aeson.toJSON (addUTCTime 3600 now)) raw
+          uri = "gs://fixture-evidence/calibration/definition.json"
+      Aeson.encodeFile input document
+      store <- newFileStore storeRoot
+      withCellStore storeRoot do
+        runWithArgs ["perf", "calibration", "declare", "--definition", input, "--uri", uri] `shouldReturnCode` ExitSuccess
+        bytes <- LazyByteString.readFile input
+        retained <- store.getObject (Bucket "fixture-evidence") (ObjectName "calibration/definition.json")
+        fmap fst retained `shouldBe` Just bytes
+        runWithArgs ["perf", "calibration", "declare", "--definition", input, "--uri", uri] `shouldReturnCode` ExitSuccess
+        Aeson.encodeFile input (replacePerfField "injectionMechanism" (Aeson.String "changed after declaration") document)
+        runWithArgs ["perf", "calibration", "declare", "--definition", input, "--uri", uri] `shouldReturnCode` ExitFailure 4
+        store.getObject (Bucket "fixture-evidence") (ObjectName "calibration/definition.json") >>= \current -> fmap fst current `shouldBe` Just bytes
+    it "exposes persistent execution, status, resume and evidence replay" do
+      forM_ ["run", "status", "resume", "verify"] \name -> do
+        runWithArgs ["perf", name, "--help"] `shouldReturnCode` ExitSuccess
+        runWithArgs ["perf", name] `shouldReturnCode` ExitFailure 2
+    it "rejects malformed prepared input before creating a session or contacting a cell" $ withSystemTempDirectory "kenshou-perf-run-malformed" \directory -> do
+      let input = directory </> "prepared.json"
+          output = directory </> "session"
+      Aeson.encodeFile input Aeson.Null
+      runWithArgs ["perf", "run", "--prepared", input, "--out", output, "--evidence-base-uri", "gs://fixture-evidence/performance"] `shouldReturnCode` ExitFailure 2
+      doesPathExist output `shouldReturn` False
+    it "reads retained status without cloud authentication or execution" $ withSystemTempDirectory "kenshou-perf-status" \directory -> do
+      withPerfRoot (copyFile "kenshou-suite/fixtures/remote/golden/perf-session.fixture.json" (directory </> "session.json"))
+      runWithArgs ["perf", "status", "--session", directory] `shouldReturnCode` ExitSuccess
+    it "publishes and replays incomplete scope without leasing, and detects storage tampering" $ withSystemTempDirectory "kenshou-perf-incomplete" \directory -> do
+      let storeRoot = directory </> "store"
+          preparation = directory </> "preparation"
+          output = directory </> "session"
+          bytes = "synthetic payload; this control executes no runtime work"
+          digest = Text.drop 7 (sha256Hex (LazyByteString.toStrict bytes))
+          bundle = Bundle ("gs://control/payloads/sha256/" <> digest <> ".nar.zst") digest (LazyByteString.length bytes)
+          changePayload arm = case Aeson.fromJSON arm.payload of
+            Aeson.Error problem -> fail problem
+            Aeson.Success payload -> pure arm {Prepared.payload = Aeson.toJSON (payload {Payload.cell = payload.cell {Payload.bundle = bundle}} :: PayloadDescriptor)}
+      original <- withPerfRoot (Aeson.eitherDecodeFileStrict' "kenshou-suite/fixtures/core/golden/perf-prepared.fixture.json" >>= either fail pure)
+      baseline <- changePayload (original :: Prepared.PerfPrepared).baseline
+      candidate <- changePayload original.candidate
+      let prepared = original {Prepared.plan = original.plan {Perf.selected = [], Perf.coverage = "incomplete", Perf.estimateSeconds = 0}, Prepared.baseline = baseline, Prepared.candidate = candidate}
+      createDirectoryIfMissing True preparation
+      Aeson.encodeFile (preparation </> "prepared.json") prepared
+      sealPerfDirectory preparation >>= either (fail . Text.unpack) pure
+      descriptor <- withPerfRoot (LazyByteString.readFile "kenshou-suite/fixtures/remote/golden/cell/cell.descriptor.v1.json")
+      store <- newFileStore storeRoot
+      _ <- store.putObject (Bucket "control") (ObjectName ("payloads/sha256/" <> digest <> ".nar.zst")) "application/octet-stream" DoesNotExist bytes
+      _ <- store.putObject (Bucket "tan-nb-exp-cells-control") (ObjectName "cells/alpha/descriptor.json") "application/json" DoesNotExist descriptor
+      withCellStore storeRoot $ withCapabilityDir (directory </> "capabilities") do
+        runWithArgs ["perf", "run", "--prepared", preparation </> "prepared.json", "--out", output, "--evidence-base-uri", "gs://fixture-evidence/performance"] `shouldReturnCode` ExitFailure 3
+        store.getObject (Bucket "tan-nb-exp-cells-control") (ObjectName "cells/alpha/lease.json") `shouldReturn` Nothing
+        runWithArgs ["perf", "verify", "--session", output] `shouldReturnCode` ExitFailure 3
+        runWithArgs ["perf", "verify", "--session", output, "--offline"] `shouldReturnCode` ExitFailure 3
+        originalResult <- LazyByteString.readFile (output </> "result.json")
+        runWithArgs ["perf", "resume", "--session", output] `shouldReturnCode` ExitFailure 3
+        LazyByteString.readFile (output </> "result.json") `shouldReturn` originalResult
+        published <- store.listObjects (Bucket "fixture-evidence") "performance/sessions/"
+        let reports = [name | (name, _) <- published, "/report.md" `Text.isSuffixOf` name.unObjectName]
+        length reports `shouldBe` 1
+        forM_ reports \name -> do
+          _ <- store.putObject (Bucket "fixture-evidence") name "text/markdown" NoPrecondition "tampered"
+          pure ()
+        runWithArgs ["perf", "verify", "--session", output] `shouldReturnCode` ExitFailure 4
+    it "exposes the planning command and requires request/output arguments" do
+      runWithArgs ["perf", "plan", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["perf", "plan"] `shouldReturnCode` ExitFailure 2
+    it "exposes exact-revision preparation and rejects malformed requests without building" do
+      runWithArgs ["perf", "prepare", "--help"] `shouldReturnCode` ExitSuccess
+      withSystemTempDirectory "kenshou-perf-prepare-malformed" \directory -> do
+        let input = directory </> "request.json"
+            output = directory </> "preparation"
+        Aeson.encodeFile input Aeson.Null
+        runWithArgs ["perf", "prepare", "--request", input, "--out", output] `shouldReturnCode` ExitFailure 2
+        doesPathExist output `shouldReturn` False
+    it "rejects malformed requests before creating an output directory" do
+      withSystemTempDirectory "kenshou-perf-malformed" \directory -> do
+        let input = directory </> "request.json"
+            output = directory </> "plan"
+        Aeson.encodeFile input Aeson.Null
+        runWithArgs ["perf", "plan", "--request", input, "--out", output] `shouldReturnCode` ExitFailure 2
+        doesPathExist output `shouldReturn` False
+    it "rejects target components from a second repository before fetching" do
+      withPerfRoot $ withSystemTempDirectory "kenshou-perf-targets" \directory -> do
+        raw <- Aeson.eitherDecodeFileStrict' "kenshou-suite/fixtures/core/golden/perf-request.json" >>= either fail pure
+        let input = directory </> "request.json"
+            output = directory </> "plan"
+        Aeson.encodeFile input (replacePerfField "targetComponents" (Aeson.toJSON (["shibuya", "pgmq-hs"] :: [Text])) raw)
+        runWithArgs ["perf", "plan", "--request", input, "--out", output] `shouldReturnCode` ExitFailure 2
+        doesPathExist output `shouldReturn` False
+    it "rejects unknown profiles before fetching immutable sources" do
+      withPerfRoot $ withSystemTempDirectory "kenshou-perf-profiles" \directory -> do
+        raw <- Aeson.eitherDecodeFileStrict' "kenshou-suite/fixtures/core/golden/perf-request.json" >>= either fail pure
+        let input = directory </> "request.json"
+            output = directory </> "plan"
+        Aeson.encodeFile input (replacePerfField "profiles" (Aeson.toJSON (["missing"] :: [Text])) raw)
+        runWithArgs ["perf", "plan", "--request", input, "--out", output] `shouldReturnCode` ExitFailure 2
+        doesPathExist output `shouldReturn` False
+    it "refuses to overwrite an existing planning directory" do
+      withSystemTempDirectory "kenshou-perf-existing" \directory -> do
+        runWithArgs ["perf", "plan", "--request", "missing", "--out", directory] `shouldReturnCode` ExitFailure 2
+  describe "independent stale-publisher replay" do
+    let row status attempts second = object ["outboxId" .= ("row-1" :: Text), "messageId" .= ("message-1" :: Text), "source" .= ("kenshou-fixture-zombie" :: Text), "status" .= (status :: Text), "attemptCount" .= (attempts :: Int), "observedAt" .= (("2026-10-03T00:00:0" <> second <> "Z") :: Text)]
+        capture mode stale final copies =
+          object
+            [ "schema" .= ("kenshou.outbox-zombie-observations/v1" :: Text),
+              "outcome" .= (mode :: Text),
+              "maintenanceRequeued" .= [1 :: Int],
+              "firstClaim" .= row "OutboxPublishing" 1 "0",
+              "reclaimed" .= row "OutboxFailed" 1 "1",
+              "secondClaim" .= row "OutboxPublishing" 2 "2",
+              "afterStale" .= row stale 2 "3",
+              "finalRow" .= row final 2 "4",
+              "brokerHeaders" .= replicate copies [["keiro-message-id", "message-1"] :: [Text]]
+            ]
+        safe = capture "failed" "OutboxPublishing" "OutboxSent" 1
+        replace key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)
+        replace _ _ value = value
+        failures = fmap (map fst . filter (not . snd)) . replayZombieCells
+    it "replays the captured durable stale-publisher failure" do
+      raw <- Aeson.eitherDecodeFileStrict' "test/fixtures/outbox-zombie-observations.json" >>= either fail pure
+      failures raw `shouldBe` Right ["stale-finalization-no-effect", "terminal-consistent-with-success"]
+    it "preserves the three released stale-finalization outcomes" do
+      failures (capture "failed" "OutboxFailed" "OutboxFailed" 1) `shouldBe` Right ["stale-finalization-no-effect", "terminal-consistent-with-success"]
+      failures (capture "dead" "OutboxDead" "OutboxDead" 1) `shouldBe` Right ["stale-finalization-no-effect", "terminal-consistent-with-success"]
+      failures (capture "succeeded" "OutboxSent" "OutboxSent" 2) `shouldBe` Right ["stale-finalization-no-effect"]
+    it "accepts a preserved second claim and subsequent successful finalization" do
+      failures safe `shouldBe` Right []
+    it "detects missing reclamation and changed claims" do
+      failures (replace "maintenanceRequeued" (Aeson.toJSON [0 :: Int]) safe) `shouldBe` Right ["schedule-realised"]
+      failures (replace "afterStale" (row "OutboxPublishing" 3 "3") safe) `shouldBe` Right ["stale-finalization-no-effect"]
+    it "detects missing or duplicated broker appends" do
+      failures (capture "failed" "OutboxPublishing" "OutboxSent" 0) `shouldBe` Right ["terminal-consistent-with-success"]
+      failures (capture "failed" "OutboxPublishing" "OutboxSent" 2) `shouldBe` Right ["terminal-consistent-with-success"]
+    it "refuses mixed identities and reversed snapshot chronology" do
+      replayZombieCells (replace "finalRow" (replace "outboxId" (Aeson.String "other-row") (row "OutboxSent" 2 "4")) safe) `shouldSatisfy` either (const True) (const False)
+      replayZombieCells (replace "finalRow" (row "OutboxSent" 2 "0") safe) `shouldSatisfy` either (const True) (const False)
+    it "refuses missing observations and a substituted broker identity" do
+      replayZombieCells (object []) `shouldSatisfy` either (const True) (const False)
+      replayZombieCells (replace "brokerHeaders" (Aeson.toJSON [[["keiro-message-id", "other-message"] :: [Text]]]) safe) `shouldSatisfy` either (const True) (const False)
+
+  describe "independent producer identity replay" do
+    let loadFixture = Aeson.eitherDecodeFileStrict' "test/fixtures/producer-identity-controls.json" >>= either fail pure :: IO [Value]
+        replace key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)
+        replace _ _ value = value
+        array key raw = case jsonField key raw of Just (Aeson.Array values) -> toList values; _ -> []
+        change key f raw = maybe raw (\value -> replace key (f value) raw) (jsonField key raw)
+        failures = fmap (map fst . filter (not . snd)) . replayProducerIdentityCells
+        detects label raw = failures raw `shouldSatisfy` either (const False) (elem label)
+    it "matches independently generated UTF-8, framing, UUID and index boundary vectors" do
+      vectors <- Aeson.eitherDecodeFileStrict' "test/fixtures/producer-identity-vectors.json" >>= either fail pure :: IO [Value]
+      length vectors `shouldBe` 8
+      forM_ vectors \vector -> case (jsonField "source" vector, jsonField "name" vector, jsonField "namespace" vector, jsonField "eventId" vector, jsonField "index" vector) of
+        (Just (Aeson.String source), Just (Aeson.String name), Just (Aeson.String namespace), Just (Aeson.String event), Just index) -> case (UUID.fromText event, Aeson.fromJSON index) of
+          (Just eventId, Aeson.Success emissionIndex) -> Just (producerIdentityV1 source name namespace eventId emissionIndex) `shouldBe` jsonField "identity" vector
+          _ -> expectationFailure "invalid vector identity parameters"
+        _ -> expectationFailure "invalid producer vector"
+    it "replays both actual SQL captures" do
+      controls <- loadFixture
+      length controls `shouldBe` 2
+      forM_ controls \raw -> failures raw `shouldBe` Right []
+    it "rejects omitted, duplicated and mislabeled conflict classes" do
+      controls <- loadFixture
+      forM_ controls \raw -> do
+        let entries = array "conflicts" raw
+        forM_ [drop 1 entries, entries <> take 1 entries, map (replace "field" (Aeson.String "RoutingField")) entries] \changed ->
+          detects "one-field-conflicts" (replace "conflicts" (Aeson.toJSON changed) raw)
+    it "rejects full-row mutations and transient mutations restored before the final snapshot" do
+      controls <- loadFixture
+      forM_ controls \raw -> forM_ [("status", Aeson.String "published"), ("attempt_count", Aeson.Number 99), ("last_error", Aeson.String "changed"), ("updated_at", Aeson.String "2099-01-01T00:00:00+00:00")] \(key, value) -> do
+        let rows = Aeson.toJSON (map (replace key value) (array "before" raw))
+        detects "identical-replay-no-mutation" (replace "afterDuplicate" rows raw)
+        detects "equivalent-replays-do-not-mutate" (replace "finalRows" rows raw)
+        detects "conflicts-do-not-mutate" (replace "afterConflicts" rows raw)
+        case array "conflicts" raw of
+          entry : rest -> detects "conflicts-do-not-mutate" (replace "conflicts" (Aeson.toJSON (replace "rows" rows entry : rest)) raw)
+          _ -> expectationFailure "missing conflicts"
+    it "rejects a consistently forged API and stored identity" do
+      controls <- loadFixture
+      forM_ controls \raw -> do
+        let forged = Aeson.String "00000000-0000-0000-0000-000000000000"
+            api = change "first" (change "identity" (replace "outboxId" forged)) raw
+            sql = replace "before" (Aeson.toJSON (map (replace "outbox_id" forged) (array "before" raw))) api
+        detects "deterministic-identity" sql
+        detects "adr-42-frozen-vector" (change "frozenIdentity" (replace "outboxId" forged) raw)
+    it "requires duplicate outcomes for both equivalence controls and an identity conflict for namespace changes" do
+      controls <- loadFixture
+      forM_ controls \raw -> do
+        detects "microsecond-equivalence" (change "submicrosecond" (replace "type" (Aeson.String "inserted")) raw)
+        detects "attribute-key-order-equivalence" (change "reordered" (replace "type" (Aeson.String "inserted")) raw)
+        detects "namespace-change-is-identity-conflict" (change "identityConflict" (replace "fields" (Aeson.toJSON (["RoutingField"] :: [Text]))) raw)
+  describe "independent queue ordering replay" do
+    let loadFixture = Aeson.eitherDecodeFileStrict' "test/fixtures/queue-ordering-controls.json" >>= either fail pure :: IO [Value]
+        replace key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)
+        replace _ _ value = value
+        spans raw = case jsonField "spans" raw of Just (Aeson.Array values) -> toList values; _ -> []
+        failures = fmap (map fst . filter (not . snd) . fst) . replayOrderingCells
+        detects label raw = failures raw `shouldSatisfy` either (const False) (elem label)
+    it "replays all eight controls, keeping unordered violations observational" do
+      controls <- loadFixture
+      length controls `shouldBe` 8
+      forM_ controls \raw -> do
+        failures raw `shouldBe` Right []
+        if jsonField "ordering" raw == Just (Aeson.String "unordered")
+          then fmap snd (replayOrderingCells raw) `shouldBe` Right [("strict-group-order", False)]
+          else pure ()
+    it "rejects dropped, duplicated and substituted completions even for legacy modes" do
+      controls <- loadFixture
+      forM_ controls \raw -> do
+        let rows = spans raw
+            completed row = case row of Aeson.Array values -> last (toList values) /= Aeson.Null; _ -> False
+            done = filter completed rows
+            abandoned = filter (not . completed) rows
+        forM_ [drop 1 done, done <> take 1 done, take 1 done <> drop 1 (reverse done)] \changed ->
+          detects "all-jobs-completed" (replace "spans" (Aeson.toJSON (abandoned <> changed)) raw)
+        detects "all-jobs-completed" (replace "queueDepth" (Aeson.Number 1) raw)
+    it "requires a realised worker kill and competing-group progress" do
+      controls <- loadFixture
+      forM_ controls \raw -> do
+        detects "schedule-realised" (replace "blockedAtKill" (Aeson.Bool False) raw)
+        detects "other-groups-progress" (replace "spans" (Aeson.toJSON ([] :: [Value])) raw)
+        if jsonField "killWorker" raw == Just (Aeson.Bool True)
+          then do
+            let complete row = case row of Aeson.Array values -> last (toList values) /= Aeson.Null; _ -> False
+            detects "schedule-realised" (replace "spans" (Aeson.toJSON (filter complete (spans raw))) raw)
+          else pure ()
+    it "does not accept unordered reordering as a FIFO-head contract pass" do
+      controls <- loadFixture
+      forM_ [raw | raw <- controls, jsonField "ordering" raw == Just (Aeson.String "unordered")] \raw ->
+        detects "strict-group-order" (replace "ordering" (Aeson.String "fifo-heads") raw)
+      forM_ [raw | raw <- controls, jsonField "ordering" raw == Just (Aeson.String "fifo-heads")] \raw ->
+        detects "unordered-control-reorders" (replace "ordering" (Aeson.String "unordered") raw)
+    it "refuses unknown ordering, incomplete captures and unsafe legacy batches" do
+      controls <- loadFixture
+      forM_ controls \raw -> do
+        let rejected = either (const True) (const False)
+        failures (replace "ordering" (Aeson.String "unknown") raw) `shouldSatisfy` rejected
+        failures (replace "groups" (Aeson.Number 0) raw) `shouldSatisfy` rejected
+        failures (replace "spans" Aeson.Null raw) `shouldSatisfy` rejected
+        failures (replace "ordering" (Aeson.String "fifo-round-robin") (replace "batchSize" (Aeson.Number 8) raw)) `shouldSatisfy` rejected
+  describe "independent queue ordering retry replay" do
+    let loadFixture = Aeson.eitherDecodeFileStrict' "test/fixtures/queue-ordering-retry-controls.json" >>= either fail pure :: IO [Value]
+        replace key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)
+        replace _ _ value = value
+        rows :: Value -> [(Text, Int, UTCTime, Maybe UTCTime, Text)]
+        rows raw = case jsonField "attemptSpans" raw of
+          Just value -> case Aeson.fromJSON value of Aeson.Success entries -> entries; Aeson.Error _ -> []
+          Nothing -> []
+        changeRows change raw =
+          let changed = change (rows raw :: [(Text, Int, UTCTime, Maybe UTCTime, Text)])
+           in replace "attemptSpans" (Aeson.toJSON changed) (replace "spans" (Aeson.toJSON [(item, started, ended) | (item, _, started, ended, disposition) <- changed, disposition == "done" || ended == Nothing]) raw)
+        failures = fmap (map fst . filter (not . snd) . fst) . replayOrderingCells
+        detects label raw = failures raw `shouldSatisfy` either (const False) (elem label)
+    it "replays all ten retry, kill and no-retry controls" do
+      controls <- loadFixture
+      length controls `shouldBe` 10
+      forM_ controls \raw -> failures raw `shouldBe` Right []
+    it "detects missing or extra retries and incorrect attempt numbers" do
+      controls <- loadFixture
+      forM_ [raw | raw <- controls, jsonField "retryHeads" raw == Just (Aeson.Bool True)] \raw -> do
+        detects "scripted-head-retries" (changeRows (filter (\(_, _, _, _, disposition) -> disposition /= "retry")) raw)
+        detects "scripted-head-retries" (changeRows (\entries -> entries <> take 1 [entry | entry@(_, _, _, _, "retry") <- entries]) raw)
+        detects "scripted-head-retries" (changeRows (map (\(item, attempt, start, finish, disposition) -> (item, if disposition == "retry" then 7 else attempt, start, finish, disposition))) raw)
+    it "rejects retry delivery before the requested delay expires" do
+      controls <- loadFixture
+      forM_ [raw | raw <- controls, jsonField "retryHeads" raw == Just (Aeson.Bool True)] \raw -> do
+        let ends = [(item, finish) | (item, _, _, Just finish, "retry") <- rows raw]
+            early (item, attempt, start, finish, disposition) = (item, attempt, if attempt == 1 then maybe start id (lookup item ends) else start, finish, disposition)
+        detects "head-retry-delay" (changeRows (map early) raw)
+    it "includes first attempts when deciding predecessor ordering" do
+      controls <- loadFixture
+      forM_ [raw | raw <- controls, jsonField "ordering" raw == Just (Aeson.String "fifo-heads"), jsonField "retryHeads" raw == Just (Aeson.Bool True)] \raw -> do
+        let headStarts = [start | ("2:0", 0, start, _, _) <- rows raw]
+        case headStarts of
+          [headStart] -> detects "strict-group-order" (changeRows (map (\(item, attempt, start, finish, disposition) -> (item, attempt, if item == "2:1" then headStart else start, finish, disposition))) raw)
+          _ -> expectationFailure "fixture lacks retried group head"
+    it "refuses inconsistent projections or impossible attempt timestamps" do
+      controls <- loadFixture
+      forM_ controls \raw -> do
+        let rejected = either (const True) (const False)
+        failures (replace "spans" (Aeson.toJSON ([] :: [Value])) raw) `shouldSatisfy` rejected
+        failures (changeRows (map (\(item, attempt, start, finish, disposition) -> (item, attempt, start, fmap (const (addUTCTime (-1) start)) finish, disposition))) raw) `shouldSatisfy` rejected
+  describe "independent queue ordering lease replay" do
+    let loadFixture = Aeson.eitherDecodeFileStrict' "test/fixtures/queue-ordering-lease-controls.json" >>= either fail pure :: IO [Value]
+        replace key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)
+        replace _ _ value = value
+        rows :: Value -> [(Text, Int, UTCTime, Integer, Integer, UTCTime, UTCTime)]
+        rows raw = case jsonField "leaseSpans" raw of
+          Just value -> case Aeson.fromJSON value of Aeson.Success entries -> entries; Aeson.Error _ -> []
+          Nothing -> []
+        changes f raw = replace "leaseSpans" (Aeson.toJSON (f (rows raw))) raw
+        failures = fmap (map fst . filter (not . snd) . fst) . replayOrderingCells
+        detects raw = failures raw `shouldSatisfy` either (const False) (elem "lease-bound-handler-overlap")
+    it "independently validates SQL leases in every ordering mode" do
+      controls <- loadFixture
+      length controls `shouldBe` 10
+      forM_ controls \raw -> failures raw `shouldBe` Right []
+    it "rejects missing, repeated, rebound or stale delivery captures" do
+      controls <- loadFixture
+      forM_ controls \raw -> do
+        detects (changes (drop 1) raw)
+        detects (changes (\entries -> entries <> take 1 entries) raw)
+        detects (changes (map (\(p, a, t, _, r, rd, vt) -> (p, a, t, (1 :: Integer), r, rd, vt))) raw)
+        detects (changes (map (\(p, a, t, mid, r, rd, vt) -> (p, a, t, mid, r + 1, rd, vt))) raw)
+        detects (changes (map (\(p, a, t, mid, r, rd, vt) -> (p, a, t, mid, r, rd, addUTCTime 1 vt))) raw)
+    it "rejects premature redelivery even with coherent attempts and SQL timestamps" do
+      controls <- loadFixture
+      forM_ [raw | raw <- controls, jsonField "killWorker" raw == Just (Aeson.Bool True)] \raw -> do
+        let firstExpiry = [vt | ("0:0", 0, _, _, _, _, vt) <- rows raw]
+            attempts = case jsonField "attemptSpans" raw of
+              Just value -> case Aeson.fromJSON value :: Aeson.Result [(Text, Int, UTCTime, Maybe UTCTime, Text)] of Aeson.Success entries -> entries; Aeson.Error _ -> []
+              Nothing -> []
+        case firstExpiry of
+          [expiry] -> do
+            let early = addUTCTime (-1) expiry
+                modified = [(p, a, if p == "0:0" && a == 1 then early else t, end, disposition) | (p, a, t, end, disposition) <- attempts]
+                moved = replace "attemptSpans" (Aeson.toJSON modified) (replace "spans" (Aeson.toJSON [(p, t, end) | (p, _, t, end, disposition) <- modified, disposition == "done" || end == Nothing]) raw)
+            detects (changes (map (\(p, a, t, mid, r, rd, vt) -> if p == "0:0" && a == 1 then (p, a, early, mid, r, early, addUTCTime 10 early) else (p, a, t, mid, r, rd, vt))) moved)
+          _ -> expectationFailure "missing killed head's original lease"
+  describe "independent polling fault replay" do
+    let loadFixture = Aeson.eitherDecodeFileStrict' "test/fixtures/queue-polling-controls.json" >>= either fail pure :: IO [Value]
+        replace key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)
+        replace _ _ value = value
+        values (Aeson.Array entries) = toList entries
+        values _ = []
+        phases raw = maybe [] values (jsonField "faults" raw)
+        changePhases change raw = replace "faults" (Aeson.toJSON (change (phases raw))) raw
+        failures = fmap (map fst . filter (not . snd)) . replayPollingCells
+        detects label raw = failures raw `shouldSatisfy` either (const False) (elem label)
+        capture entry = maybe (error "fixture lacks raw capture") id (jsonField "raw" entry)
+    it "replays every captured fault and recovery result" do
+      entries <- loadFixture
+      length entries `shouldBe` 16
+      forM_ entries \entry -> Aeson.toJSON (either (error . Text.unpack) id (failures (capture entry))) `shouldBe` maybe Aeson.Null id (jsonField "failures" entry)
+    it "requires fresh work after the final fault even when final coverage is complete" do
+      entries <- loadFixture
+      forM_ entries \entry -> do
+        let raw = capture entry
+            warmup = Aeson.toJSON [Text.pack (show index) | index <- [1 .. 20 :: Int]]
+        detects "processing-resumed" (changePhases (map (replace "effectsAfter" warmup)) raw)
+        detects "processing-resumed" (changePhases (map (replace "recoveredAt" Aeson.Null)) raw)
+        detects "faults-injected" (changePhases (drop 1) raw)
+    it "rejects recovery after the five-second bound" do
+      entries <- loadFixture
+      let late raw = case jsonField "healedAt" raw of
+            Just value -> case Aeson.fromJSON value :: Aeson.Result UTCTime of
+              Aeson.Success stamp -> replace "recoveredAt" (Aeson.toJSON (addUTCTime 6 stamp)) raw
+              Aeson.Error _ -> raw
+            Nothing -> raw
+      forM_ [capture entry | entry <- entries, jsonField "failures" entry == Just (Aeson.toJSON ([] :: [Text]))] \raw -> do
+        failures raw `shouldBe` Right []
+        detects "processing-resumed" (changePhases (map late) raw)
+    it "binds injection to a blocked polling backend" do
+      entries <- loadFixture
+      forM_ entries \entry -> do
+        let raw = capture entry
+        forM_ [("victimPid", Aeson.Number 0), ("victimQuery", Aeson.String "SELECT 1"), ("victimWait", Aeson.Null), ("injected", Aeson.Bool False)] \(key, value) ->
+          detects "faults-injected" (changePhases (map (replace key value)) raw)
+    it "requires visible exit and restart for long outages and uninterrupted apps for short faults" do
+      entries <- loadFixture
+      forM_ entries \entry -> do
+        let raw = capture entry
+            long = jsonField "outageSeconds" raw == Just (Aeson.Number 10)
+        detects "processing-resumed" (changePhases (map (replace "appExited" (Aeson.Bool (not long)))) raw)
+        detects "processing-resumed" (changePhases (map (replace "restarted" (Aeson.Bool (not long)))) raw)
+        detects "processing-resumed" (replace "appExitedAtEnd" (Aeson.Bool True) raw)
+    it "detects missing or substituted work and excess duplicates" do
+      entries <- loadFixture
+      forM_ entries \entry -> do
+        let raw = capture entry
+            effects = maybe [] values (jsonField "effects" raw)
+        detects "no-loss" (replace "effects" (Aeson.toJSON (drop 1 effects)) raw)
+        detects "no-loss" (replace "effects" (Aeson.toJSON (Aeson.String "foreign" : drop 1 effects)) raw)
+        detects "bounded-duplicates" (replace "effects" (Aeson.toJSON (effects <> effects)) raw)
+        detects "no-loss" (replace "queueDepth" (Aeson.Number 1) raw)
+  describe "independent queue outcome replay" do
+    let loadFixture = Aeson.eitherDecodeFileStrict' "test/fixtures/queue-job-outcomes.json" >>= either fail pure
+        replace key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)
+        replace _ _ value = value
+        modify key change raw = maybe raw (\value -> replace key (change value) raw) (jsonField key raw)
+        values (Aeson.Array entries) = toList entries
+        values _ = []
+        mapValues change = Aeson.toJSON . map change . values
+        replay raw = case (jsonField "job" raw, jsonField "physical" raw, jsonField "workers" raw) of
+          (Just job, Just physical, Just workers) -> replayQueueOutcomeCells job physical workers
+          _ -> Left "missing fixture section"
+        failures = fmap (map fst . filter (not . snd)) . replay
+        detects label raw = failures raw `shouldSatisfy` either (const False) (elem label)
+        modifyArm name change = modify "workers" (modify "arms" (mapValues (\arm -> if jsonField "case" arm == Just (Aeson.String name) then change arm else arm)))
+        empty = Aeson.toJSON ([] :: [Value])
+    it "reconstructs all forty-three checks without importing scenario oracles" do
+      raw <- loadFixture
+      replay raw `shouldSatisfy` either (const False) (\cells -> length cells == 43 && all snd cells)
+    it "detects altered drain results, attempts and visibility observations" do
+      raw <- loadFixture
+      forM_ [("done", "done-deletes"), ("retryHandled", "retry-delay-and-attempt"), ("retryAttempts", "retry-delay-and-attempt"), ("delayHandled", "enqueue-delay"), ("dead", "dead-letter"), ("defaultHandled", "default-retry-delay"), ("defaultAttempts", "default-retry-delay"), ("archive", "archive-when-dlq-disabled"), ("thrownHandled", "drain-handler-exception"), ("malformed", "malformed-payload"), ("futureHandled", "future-payload-retries"), ("futureReadCounts", "future-payload-retries")] \(key, label) ->
+        detects label (modify "job" (replace key empty) raw)
+    it "binds batch identities, group headers and archived data to physical rows" do
+      raw <- loadFixture
+      detects "batch-id-order-and-payloads" (modify "physical" (modify "batchReturnedIds" (Aeson.toJSON . reverse . values)) raw)
+      detects "batch-ids-and-rows" (modify "job" (replace "batchDepth" (Aeson.Number 2)) raw)
+      detects "archive-preserves-message" (modify "physical" (replace "archiveRows" empty) raw)
+      detects "group-header" (modify "job" (replace "groupRows" empty) raw)
+    it "checks decoded DLQ entries separately from raw wrappers and handler contexts" do
+      raw <- loadFixture
+      forM_ [("drainDecodedDlq", "drain-dead-wrapper"), ("workerDecodedDlq", "worker-dead-wrapper")] \(key, label) ->
+        forM_ ["messageId", "payload", "headers", "readCount", "reason", "enqueuedAt"] \attribute ->
+          detects label (modify "job" (modify key (mapValues (replace attribute Aeson.Null))) raw)
+      forM_ [("drainDeadEntries", "drain-dead-wrapper"), ("workerDeadEntries", "worker-dead-wrapper")] \(key, label) ->
+        detects label (modify "physical" (modify key (mapValues (replace "original_message_id" (Aeson.Number (-1))))) raw)
+      detects "drain-context-preserves-headers" (modify "physical" (replace "deadContextHeaders" empty) raw)
+      detects "worker-done-and-context" (modify "physical" (replace "workerContext" Aeson.Null) raw)
+      detects "malformed-skips-handler" (modify "physical" (replace "malformedHandlerCalls" (Aeson.Number 1)) raw)
+      detects "future-skips-handler" (modify "physical" (replace "futureHandlerCalls" (Aeson.Number 1)) raw)
+    it "requires source queues empty and SQL effects exact after worker completion" do
+      raw <- loadFixture
+      forM_ [("workerDoneRows", "worker-done-and-context"), ("workerRetryRows", "worker-retry"), ("workerDeadRows", "worker-dead-letter"), ("workerThrowRows", "worker-handler-exception-redelivery")] \(key, label) ->
+        detects label (modify "job" (replace key (Aeson.toJSON [object []])) raw)
+      forM_ ["worker-done-and-context", "worker-retry", "worker-dead-letter", "worker-handler-exception-redelivery"] \label ->
+        detects label (modify "job" (replace "workerEffects" (Aeson.toJSON ([0, 0, 0, 0] :: [Int]))) raw)
+    it "rejects missing or duplicated worker cases and altered fixture inputs" do
+      raw <- loadFixture
+      let rejected = either (const True) (const False)
+      failures (modify "workers" (replace "arms" empty) raw) `shouldSatisfy` rejected
+      failures (modify "workers" (modify "arms" (\items -> Aeson.toJSON (take 1 (values items) <> values items))) raw) `shouldSatisfy` rejected
+      failures (modify "physical" (replace "batchPayloads" empty) raw) `shouldSatisfy` rejected
+      failures (modify "job" (replace "schema" (Aeson.String "unknown")) raw) `shouldSatisfy` rejected
+    it "detects unfinished workers, stray handler entry and wrong placement in every arm" do
+      raw <- loadFixture
+      forM_ ["retry", "default", "archive", "malformed", "future", "zero"] \name -> do
+        detects ("worker-" <> name <> "-completed") (modifyArm name (replace "completed" (Aeson.Bool False)) raw)
+        detects ("worker-" <> name <> "-physical-placement") (modifyArm name (replace "mainRows" (Aeson.toJSON [object []])) raw)
+        let changedCalls = if name `elem` ["malformed", "future", "zero"] then Aeson.toJSON [object []] else empty
+        detects ("worker-" <> name <> "-handler-context") (modifyArm name (replace "deliveries" changedCalls) raw)
+      detects "worker-archive-physical-placement" (modifyArm "archive" (replace "archiveRows" empty) raw)
+      forM_ ["malformed", "future", "zero"] \name ->
+        detects ("worker-" <> name <> "-physical-placement") (modifyArm name (modify "dlqRows" (mapValues (modify "message" (replace "read_count" (Aeson.Number 0))))) raw)
+    it "recomputes fractional delay bounds and future-version deferral from timestamps" do
+      raw <- loadFixture
+      forM_ ["retry", "default"] \name ->
+        detects ("worker-" <> name <> "-fractional-delay-rounded-up") (modifyArm name (modify "deliveries" (mapValues (replace "at" (Aeson.String "2026-10-02T00:00:00Z")))) raw)
+      detects "worker-future-deferred-before-ceiling" (modifyArm "future" (replace "readSnapshots" empty) raw)
+  describe "independent queue configuration replay" do
+    let loadFixture = Aeson.eitherDecodeFileStrict' "test/fixtures/queue-config-rejections.json" >>= either fail pure
+        replay = fmap (map fst . filter (not . snd)) . replayQueueConfigCells
+        replace key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)
+        replace _ _ value = value
+        items raw = case jsonField "cases" raw of Just (Aeson.Array values) -> toList values; _ -> []
+        modifyCase target change raw = replace "cases" (Aeson.toJSON [if jsonField "case" item == Just (Aeson.String target) then change item else item | item <- items raw]) raw
+        rejected = either (const True) (const False)
+    it "replays all twenty-two checks independently of observation ordering" do
+      raw <- loadFixture
+      replayQueueConfigCells raw `shouldSatisfy` either (const False) (\cells -> length cells == 22 && all snd cells)
+      replay (replace "cases" (Aeson.toJSON (reverse (items raw))) raw) `shouldBe` Right []
+    it "refuses missing, duplicate and unknown cases or altered expectations" do
+      raw <- loadFixture
+      let cases = items raw
+      forM_ [[], drop 1 cases, take 1 cases <> cases, map (replace "case" (Aeson.String "unexpected")) (take 1 cases) <> drop 1 cases] \changed ->
+        replay (replace "cases" (Aeson.toJSON changed) raw) `shouldSatisfy` rejected
+      replay (replace "schema" (Aeson.String "unknown") raw) `shouldSatisfy` rejected
+      replay (modifyCase "invalid-visibility" (replace "expectedError" (Aeson.String "forged")) raw) `shouldSatisfy` rejected
+    it "detects each accepted configuration and incorrect exception without trusting expected-error data" do
+      raw <- loadFixture
+      forM_ (items raw) \item -> case jsonField "case" item of
+        Just (Aeson.String label) -> forM_ [("drain", label), ("worker", "worker-" <> label)] \(key, check) -> do
+          replay (modifyCase label (replace key (object ["status" .= ("accepted" :: Text), "detail" .= ("Right ()" :: Text)])) raw) `shouldBe` Right [check]
+          replay (modifyCase label (replace key (object ["status" .= ("rejected" :: Text), "detail" .= ("wrong exception" :: Text)])) raw) `shouldBe` Right [check]
+        _ -> expectationFailure "case label missing"
+    it "detects any rejected call reading or consuming the waiting message" do
+      raw <- loadFixture
+      forM_ (items raw) \item -> case jsonField "case" item of
+        Just (Aeson.String label) -> forM_ [("afterDrain", label), ("afterWorker", "worker-" <> label)] \(key, check) ->
+          forM_ [([0, 0] :: [Int]), [1, 1], [2, 0]] \state ->
+            replay (modifyCase label (replace key (Aeson.toJSON state)) raw) `shouldBe` Right [check]
+        _ -> expectationFailure "case label missing"
+    it "requires the final untouched row and exactly one valid subsequent drain" do
+      raw <- loadFixture
+      replay (replace "beforeValidDrain" (Aeson.toJSON ([1, 1] :: [Int])) raw) `shouldBe` Right ["read-count-untouched"]
+      forM_ [("validDrain", Aeson.Number 0), ("validDrain", Aeson.Null), ("emptyDrain", Aeson.Number 1), ("emptyDrain", Aeson.Null)] \(key, value) ->
+        replay (replace key value raw) `shouldBe` Right ["rejections-did-not-consume-job"]
+      replay (modifyCase "invalid-visibility" (replace "worker" (object [])) raw) `shouldSatisfy` rejected
+  describe "independent outbox terminal replay" do
+    it "accepts transient exhaustion at one attempt and rejects premature exhaustion at two" do
+      fixture <- Aeson.eitherDecodeFileStrict' "test/fixtures/outbox-terminal-one-attempt.json" >>= either fail pure
+      let replace key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)
+          replace _ _ value = value
+      case (jsonField "knobs" fixture, jsonField "observations" fixture) of
+        (Just knobs, Just raw) -> do
+          let replay settings observed = fmap (map fst . filter (not . snd)) (replayTerminalCells 4252662818734786 settings observed)
+          replay knobs raw `shouldBe` Right []
+          replay (replace "outbox.max-attempts" (Aeson.Number 2) knobs) raw `shouldBe` Right ["every-row-terminal", "poison-attempt-ceiling"]
+          case jsonField "rows" raw of
+            Just (Aeson.Array rows) ->
+              replay knobs (replace "rows" (Aeson.toJSON (map (replace "lastError" (Aeson.String "synthetic permanent failure")) (toList rows))) raw) `shouldBe` Right ["poison-attempt-ceiling"]
+            _ -> expectationFailure "missing terminal rows"
+        _ -> expectationFailure "missing terminal fixture observations"
+    forM_ ["per-key-head-of-line", "per-source-stream", "stop-the-line", "best-effort"] \policy -> do
+      let loadFixture = do
+            fixture <- Aeson.eitherDecodeFileStrict' ("test/fixtures/outbox-terminal-" <> policy <> ".json") >>= either fail pure
+            case (jsonField "seed" fixture, jsonField "knobs" fixture, jsonField "observations" fixture) of
+              (Just seed, Just knobs, Just raw) -> case Aeson.fromJSON seed of
+                Aeson.Success value -> pure (fmap (map fst . filter (not . snd)) . replayTerminalCells value knobs, raw)
+                Aeson.Error err -> fail err
+              _ -> fail "missing terminal fixture inputs"
+          replace key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)
+          replace _ _ value = value
+          items key raw = case jsonField key raw of Just (Aeson.Array values) -> toList values; _ -> []
+          changeRows change raw = replace "rows" (Aeson.toJSON (map change (items "rows" raw))) raw
+          hasFailure label = either (const False) (elem label)
+          empty = Aeson.toJSON ([] :: [Value])
+      it ("replays twelve checks and requires complete inputs: " <> policy) do
+        (replay, raw) <- loadFixture
+        replay raw `shouldBe` Right []
+        replay (replace "inputs" empty raw) `shouldSatisfy` either (const True) (const False)
+        replay (replace "schema" (Aeson.String "unknown") raw) `shouldSatisfy` either (const True) (const False)
+        replay (replace "rows" empty raw) `shouldSatisfy` hasFailure "every-row-terminal"
+        replay (replace "summaries" Aeson.Null raw) `shouldSatisfy` hasFailure "drained-before-deadline"
+      it ("rejects a duplicate final row substituted for another exhausted row: " <> policy) do
+        (replay, raw) <- loadFixture
+        let rows = items "rows" raw
+            exhausted = [row | row <- rows, jsonField "status" row == Just (Aeson.String "OutboxDead")]
+        case exhausted of
+          first : second : _ -> do
+            let substituted = [if jsonField "outboxId" row == jsonField "outboxId" second then first else row | row <- rows]
+            replay (replace "rows" (Aeson.toJSON substituted) raw) `shouldBe` Right ["every-row-terminal"]
+          _ -> expectationFailure "terminal fixture must include two exhausted rows"
+      it ("detects missing/duplicate appends and terminal metadata changes: " <> policy) do
+        (replay, raw) <- loadFixture
+        replay (replace "brokerHeaders" empty raw) `shouldSatisfy` hasFailure "broker-matches-terminal-status"
+        let records = items "brokerHeaders" raw
+        replay (replace "brokerHeaders" (Aeson.toJSON (take 1 records <> records)) raw) `shouldSatisfy` hasFailure "one-broker-record-per-sent-row"
+        replay (changeRows (replace "rejectedAt" Aeson.Null) raw) `shouldSatisfy` hasFailure "rejection-metadata"
+        replay (changeRows (replace "lastError" Aeson.Null) raw) `shouldSatisfy` hasFailure "poison-attempt-ceiling"
+        replay (changeRows (replace "attemptCount" (Aeson.Number 0)) raw) `shouldSatisfy` hasFailure "attempt-count-matches-callbacks"
+      it ("detects missing attempts, premature retries and altered summaries: " <> policy) do
+        (replay, raw) <- loadFixture
+        replay (replace "callbacks" empty raw) `shouldSatisfy` hasFailure "attempt-count-matches-callbacks"
+        let callbacks = items "callbacks" raw
+            sameTime = case callbacks of first : _ -> maybe Aeson.Null id (jsonField "started" first); _ -> Aeson.Null
+            simultaneous = map (replace "started" sameTime . replace "ended" sameTime) callbacks
+        replay (replace "callbacks" (Aeson.toJSON simultaneous) raw) `shouldSatisfy` hasFailure "backoff-respected"
+        forM_ [("retried", "retried-count-matches-attempts-and-skips"), ("published", "published-count-matches-summaries"), ("rejected", "rejected-count-matches-summaries"), ("dead", "dead-count-matches-summaries")] \(key, label) -> do
+          let changed = case items "summaries" raw of
+                first : rest -> case jsonField key first of
+                  Just (Aeson.Number count) -> replace key (Aeson.Number (count + 1)) first : rest
+                  _ -> []
+                [] -> []
+          replay (replace "summaries" (Aeson.toJSON changed) raw) `shouldSatisfy` hasFailure label
+  describe "independent inbox batch replay" do
+    forM_ [("inbox-table", "pure-exception"), ("inbox-table", "condemn"), ("delegated", "pure-exception")] \(mode, failure) -> do
+      let fixture = "test/fixtures/inbox-batch-" <> Text.unpack mode <> "-" <> Text.unpack failure <> ".json"
+          replay raw = fmap (map fst . filter (not . snd)) (replayBatchCells mode failure raw)
+          replace key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)
+          replace _ _ value = value
+          change key value raw = replace "observations" (replace key value (maybe Aeson.Null id (jsonField "observations" raw))) raw
+          empty = Aeson.toJSON ([] :: [Value])
+          loadFixture = Aeson.eitherDecodeFileStrict' fixture >>= either fail pure
+      it ("replays ordered batches and rejects incomplete arguments: " <> Text.unpack mode <> "/" <> Text.unpack failure) do
+        raw <- loadFixture
+        replay raw `shouldBe` Right []
+        forM_ ["batches", "observations"] \key ->
+          replay (replace key empty raw) `shouldSatisfy` either (const True) (const False)
+        replay (replace "failureMode" (Aeson.String "unsupported") raw) `shouldSatisfy` either (const True) (const False)
+        case jsonField "batches" raw of
+          Just (Aeson.Array batches) ->
+            replay (replace "batches" (Aeson.toJSON (reverse (toList batches))) raw) `shouldSatisfy` either (const True) (const False)
+          _ -> expectationFailure "fixture has no batch schedule"
+      it ("detects classification, invocation and committed-effect mutations: " <> Text.unpack mode <> "/" <> Text.unpack failure) do
+        raw <- loadFixture
+        if mode == "delegated"
+          then do
+            replay (change "firstResults" empty raw) `shouldBe` Right ["delegated-batch-positional"]
+            replay (change "secondResults" empty raw) `shouldBe` Right ["delegated-batch-memory-is-call-local"]
+            replay (change "callsAfterBatch" empty raw) `shouldBe` Right ["delegated-batch-retries-failed-key"]
+            replay (change "callsAfterNext" empty raw) `shouldBe` Right ["delegated-batch-memory-is-call-local"]
+          else do
+            replay (change "initialCalls" (Aeson.Number 1) raw) `shouldBe` Right ["handler-count-starts-at-zero"]
+            replay (change "firstResults" empty raw) `shouldBe` Right ["clean-batch-positional"]
+            replay (change "secondResults" empty raw) `shouldBe` Right ["fallback-isolates-poison"]
+            replay (change "initialHandlerCalls" (Aeson.Number 1) raw) `shouldBe` Right ["handler-count-starts-at-zero"]
+            replay (change "cleanHandlerCalls" (Aeson.Number 3) raw) `shouldBe` Right ["clean-batch-skips-duplicate-handler"]
+            replay (change "cleanTransactionCount" (Aeson.Number 2) raw) `shouldBe` Right ["clean-batch-one-transaction"]
+            replay (change "effects" empty raw) `shouldBe` Right ["effects-once"]
+            replay (change "effects" (Aeson.toJSON (["clean-a", "clean-b", "good-c", "good-d", "good-c"] :: [Text])) raw) `shouldBe` Right ["effects-once"]
+            if failure == "condemn"
+              then replay (change "poisonCalls" (Aeson.Number 1) raw) `shouldBe` Right ["poison-receipt"]
+              else replay (replace "rows" empty raw) `shouldBe` Right ["poison-receipt"]
+  describe "independent inbox poison replay" do
+    forM_ [("inbox-table", "pure-exception"), ("inbox-table", "condemn"), ("inbox-table", "sql-error"), ("delegated", "pure-exception")] \(mode, failure) -> do
+      let fixture = "test/fixtures/inbox-poison-" <> Text.unpack mode <> "-" <> Text.unpack failure <> ".json"
+          replay raw = fmap (map fst . filter (not . snd)) (replayPoisonCells mode failure raw)
+          replace key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)
+          replace _ _ value = value
+          change key value raw = replace "observations" (replace key value (maybe Aeson.Null id (jsonField "observations" raw))) raw
+          empty = Aeson.toJSON ([] :: [Value])
+          loadFixture = Aeson.eitherDecodeFileStrict' fixture >>= either fail pure
+      it ("replays the complete workload and rejects missing inputs: " <> Text.unpack mode <> "/" <> Text.unpack failure) do
+        raw <- loadFixture
+        replay raw `shouldBe` Right []
+        replay (replace "inputs" empty raw) `shouldSatisfy` either (const True) (const False)
+        replay (replace "observations" (object []) raw) `shouldSatisfy` either (const True) (const False)
+        replay (replace "failureMode" (Aeson.String "other") raw) `shouldSatisfy` either (const True) (const False)
+      it ("detects altered invocation and durable effect observations: " <> Text.unpack mode <> "/" <> Text.unpack failure) do
+        raw <- loadFixture
+        if mode == "delegated"
+          then do
+            replay (change "callsAfterCeiling" (Aeson.Number 1) raw) `shouldBe` Right ["delegated-ceiling-stops-handler"]
+            replay (change "callsAfterAttempt" (Aeson.Number 0) raw) `shouldBe` Right ["delegated-within-ceiling-runs-handler"]
+            replay (change "withinCeiling" (object ["tag" .= ("duplicate" :: Text)]) raw) `shouldBe` Right ["delegated-within-ceiling-runs-handler"]
+            replay (change "attempts" empty raw) `shouldSatisfy` either (const True) (const False)
+          else do
+            replay (change "initialCalls" (Aeson.Number 1) raw) `shouldBe` Right ["handler-count-starts-at-zero"]
+            if failure == "pure-exception"
+              then do
+                replay (change "poisonCalls" (Aeson.Number 4) raw) `shouldBe` Right ["ceiling-stops-handler"]
+                forM_ ["failedRecoveryCalls", "recoveredCalls", "duplicateCalls"] \key ->
+                  replay (change key (Aeson.Number 0) raw) `shouldBe` Right ["recovery-effect-once"]
+                forM_ ["poisonEffects", "failedRecoveryEffects"] \key ->
+                  replay (change key (Aeson.toJSON (["poison"] :: [Text])) raw) `shouldBe` Right ["failed-effects-roll-back"]
+                forM_ ["recoveredEffects", "duplicateEffects"] \key -> do
+                  replay (change key empty raw) `shouldBe` Right ["recovery-effect-once"]
+                  replay (change key (Aeson.toJSON (["recovery", "recovery"] :: [Text])) raw) `shouldBe` Right ["recovery-effect-once"]
+                replay (replace "rows" empty raw) `shouldBe` Right ["failed-row-survives-gc"]
+                replay (change "poisonResults" empty raw) `shouldBe` Right ["failure-attempts", "ceiling-stops-retry"]
+                replay (change "recoveryFailures" empty raw) `shouldBe` Right ["recovery-after-two-failures"]
+                replay (change "duplicate" (object ["tag" .= ("processed" :: Text)]) raw) `shouldBe` Right ["recovery-after-two-failures"]
+              else do
+                replay (change "effects" (Aeson.toJSON (["poison"] :: [Text])) raw) `shouldBe` Right [if failure == "condemn" then "condemned-call-rolls-back" else "sql-error-has-no-completed-effect"]
+                replay (change "handlerCalls" (Aeson.Number 0) raw) `shouldBe` Right [if failure == "condemn" then "redelivery-runs-handler-again" else "sql-error-handler-attempted"]
+                if failure == "condemn"
+                  then replay (change "second" Aeson.Null raw) `shouldBe` Right ["condemned-call-reports-processed"]
+                  else replay (change "second" (object ["tag" .= ("processed" :: Text)]) raw) `shouldSatisfy` either (const True) (const False)
+  describe "independent delegated inbox replay" do
+    forM_ ["message-id", "source-event", "kafka-delivery", "custom"] \policy -> do
+      let fixture = "test/fixtures/inbox-delegated-" <> Text.unpack policy <> ".json"
+          replay value = fmap (map fst . filter (not . snd)) (replayDelegatedCells policy value)
+          replace key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)
+          replace _ _ value = value
+          empty = Aeson.toJSON ([] :: [Value])
+          loadFixture = Aeson.eitherDecodeFileStrict' fixture >>= either fail pure
+      it ("reconstructs receipts and rejects changed classifications: " <> Text.unpack policy) do
+        observed <- loadFixture
+        replay observed `shouldBe` Right []
+        forM_ [("seedResults", "seeded-account-targets"), ("firstResults", "delegated-first-delivery"), ("secondResults", "delegated-redelivery"), ("republishResults", "delegated-republish-policy"), ("afterRefusalIds", "delegated-refusals-leave-stream-unchanged")] \(key, label) ->
+          replay (replace key empty observed) `shouldBe` Right [label]
+        forM_ [("noOpResult", "delegated-no-op-refused"), ("rejectedResult", "delegated-rejection-refused"), ("missingResult", "delegated-missing-policy-field-fails-closed")] \(key, label) ->
+          replay (replace key (object ["tag" .= ("processed" :: Text)]) observed) `shouldBe` Right [label]
+        replay (replace "decodedRows" (Aeson.toJSON [object ["key" .= ("unexpected" :: Text), "status" .= ("InboxCompleted" :: Text)]]) observed) `shouldBe` Right ["delegated-skips-inbox-table"]
+      it ("detects missing, duplicated and substituted stream receipts: " <> Text.unpack policy) do
+        observed <- loadFixture
+        case jsonField "streamIds" observed of
+          Just (Aeson.Array streams) -> case toList streams of
+            first : second : rest -> do
+              let mutate values = replay (replace "streamIds" (Aeson.toJSON values) observed)
+              mutate (first : rest) `shouldBe` Right ["delegated-stream-receipts"]
+              mutate (first : second : second : rest) `shouldBe` Right ["delegated-stream-receipts"]
+              mutate (first : empty : rest) `shouldBe` Right ["delegated-stream-receipts"]
+              case second of
+                Aeson.Array receipts -> do
+                  mutate (first : Aeson.toJSON (reverse (toList receipts)) : rest) `shouldBe` Right ["delegated-stream-receipts"]
+                  mutate (first : Aeson.toJSON (map (const (Aeson.String "00000000-0000-0000-0000-000000000000")) (toList receipts)) : rest) `shouldBe` Right ["delegated-stream-receipts"]
+                _ -> expectationFailure "stream observation is not an array"
+              replay (replace "streamIds" empty observed) `shouldBe` Right ["delegated-stream-receipts", "delegated-refusals-leave-stream-unchanged"]
+            _ -> expectationFailure "fixture has fewer than two stream observations"
+          _ -> expectationFailure "fixture has no stream observations"
+      it ("rejects incomplete or altered workload arguments: " <> Text.unpack policy) do
+        observed <- loadFixture
+        forM_ ["firstInputs", "republishInputs", "missingInput", "targets", "consumer", "operation"] \key ->
+          replay (replace key empty observed) `shouldSatisfy` either (const True) (const False)
+        replayDelegatedCells "unsupported" observed `shouldSatisfy` either (const True) (const False)
+  describe "independent inbox matrix replay" do
+    forM_ [("message-id", "full-envelope"), ("source-event", "dedupe-only")] \(policy, persistence) -> do
+      let fixture = "test/fixtures/inbox-replay-" <> Text.unpack policy <> ".json"
+          replay intake sql = fmap (map fst . filter (not . snd)) (replayInboxCells policy persistence intake sql)
+          replace key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)
+          replace _ _ value = value
+          empty = Aeson.toJSON ([] :: [Value])
+      it ("reconstructs every receipt column independently: " <> Text.unpack policy) do
+        (intake, sql) <- readInboxFixture fixture
+        replay intake sql `shouldBe` Right []
+        forM_ [("successRows", "persistence-shape"), ("failedRows", "failed-receipt-retains-envelope"), ("retainedFailedRows", "failed-receipt-survives-gc")] \(key, label) ->
+          case jsonField key sql of
+            Just (Aeson.Array rows) -> case toList rows of
+              firstRow@(Aeson.Object fields) : rest -> do
+                forM_ (KeyMap.keys fields) \column -> do
+                  let mutate value = replace key (Aeson.toJSON (value : rest)) sql
+                  replay intake (mutate (Aeson.Object (KeyMap.delete column fields))) `shouldBe` Right [label]
+                  replay intake (mutate (replace column (Aeson.String "corrupted") firstRow)) `shouldBe` Right [label]
+                replay intake (replace key (Aeson.toJSON (firstRow : firstRow : rest)) sql) `shouldBe` Right [label]
+                replay intake (replace key empty sql) `shouldBe` Right [label]
+              _ -> expectationFailure "fixture contains no receipt rows"
+            _ -> expectationFailure "fixture is missing receipt observations"
+      it ("rejects changed effects and intake classifications: " <> Text.unpack policy) do
+        (intake, sql) <- readInboxFixture fixture
+        forM_ [("firstResults", "first-delivery-processed"), ("secondResults", "redelivery-duplicate"), ("republishResults", "republish-policy"), ("decodedRows", "one-completed-row-per-key"), ("failedResults", "failed-receipt-ceiling")] \(key, label) ->
+          replay (replace key empty intake) sql `shouldBe` Right [label]
+        replay (replace "missingResult" (object ["tag" .= ("processed" :: Text)]) intake) sql `shouldBe` Right ["missing-policy-field-fails-closed"]
+        let duplicateEffects = case jsonField "effects" sql of
+              Just (Aeson.Array effects) -> Aeson.toJSON (toList effects <> toList effects)
+              _ -> empty
+        replay intake (replace "effects" duplicateEffects (replace "effectsAfterFailure" duplicateEffects sql)) `shouldBe` Right ["effect-count-by-policy"]
+        replay intake (replace "effectsAfterFailure" empty sql) `shouldBe` Right ["failed-handler-rolls-back-effect"]
+        replay (replace "firstInputs" empty intake) sql `shouldSatisfy` either (const True) (const False)
+        replay (replace "missingInput" (object []) intake) sql `shouldSatisfy` either (const True) (const False)
+      it ("ignores scenario-computed expected rows: " <> Text.unpack policy) do
+        (intake, sql) <- readInboxFixture fixture
+        replay intake (replace "expectedSuccessRows" empty (replace "expectedFailedRow" Aeson.Null sql)) `shouldBe` Right []
+  describe "independent queue lease replay" do
+    it "rechecks SQL leases, handler attempts, effects and drain state" do
+      now <- getCurrentTime
+      let lease readCount readSeconds vtSeconds observedSeconds = object ["messageId" .= (1 :: Int), "readCount" .= (readCount :: Int), "lastReadAt" .= addUTCTime readSeconds now, "visibleAt" .= addUTCTime vtSeconds now, "observedAt" .= addUTCTime observedSeconds now]
+          delivery attempt payload = object ["attempt" .= (attempt :: Int), "payload" .= (payload :: Text)]
+          arm initial contested deliveries effects = object ["schema" .= ("kenshou.queue-lease-observations/v1" :: Text), "initial" .= initial, "contested" .= contested, "deliveries" .= (deliveries :: [Value]), "completionObserved" .= True, "effects" .= (effects :: [Text]), "remainingRows" .= ([] :: [Value])]
+          unextended = arm (lease 1 0 2 0) (lease 2 3 5 6) [delivery 0 "unextended", delivery 1 "unextended"] ["unextended", "unextended"]
+          extended = arm (lease 1 0 10 0) (lease 1 0 10 6) [delivery 0 "extended", Aeson.Null] ["extended"]
+          replace key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)
+          replace _ _ value = value
+          failures value = fmap (map fst . filter (not . snd)) (replayLeaseCells unextended value)
+      failures extended `shouldBe` Right []
+      failures (replace "contested" (lease 2 3 13 6) extended) `shouldBe` Right ["extended-read-count-one"]
+      failures (replace "contested" (lease 1 0 10 11) extended) `shouldBe` Right ["extended-read-count-one"]
+      failures (replace "contested" (lease 1 0 10 1) extended) `shouldBe` Right ["extended-read-count-one"]
+      failures (replace "effects" (Aeson.toJSON (["extended", "extended"] :: [Text])) extended) `shouldBe` Right ["extension-prevents-duplicate"]
+      failures (replace "effects" (Aeson.toJSON (["substituted"] :: [Text])) extended) `shouldBe` Right ["extension-prevents-duplicate"]
+      failures (replace "deliveries" (Aeson.toJSON ([Aeson.Null, Aeson.Null] :: [Value])) extended) `shouldBe` Right ["extended-read-count-one"]
+      failures (replace "remainingRows" (Aeson.toJSON [lease 1 0 10 6]) extended) `shouldBe` Right ["both-queues-drained"]
+      fmap (map fst . filter (not . snd)) (replayLeaseCells (replace "contested" (lease 2 1 3 6) unextended) extended) `shouldBe` Right ["unextended-read-count-and-cadence"]
+      replayLeaseCells (object []) extended `shouldSatisfy` either (const True) (const False)
+  describe "Kafka fencing outcome oracle" do
+    it "derives the released idle-member failure from separate worker logs" do
+      fencingFacts [] [okEvent 10]
+        `shouldBe` Right (FencingFacts True False False [] ["fenced-member-still-alive-and-idle"])
+
+    it "derives a passing fatal exit from separate worker logs" do
+      fencingFacts [errorEvent "KafkaResponseError RdKafkaRespErrFatal", doneEvent] [okEvent 10]
+        `shouldBe` Right (FencingFacts True True True ["KafkaResponseError RdKafkaRespErrFatal"] [])
+
+    it "keeps an unrelated consumer error blocking" do
+      fencingFacts [errorEvent "unexpected Kafka error"] [okEvent 10]
+        `shouldBe` Right (FencingFacts True False False ["unexpected Kafka error"] ["fencing-unexpected-error", "fencing-fatal-not-observable"])
+
+    it "rejects malformed error evidence" do
+      fencingFacts [object ["type" .= ("error" :: Text)]] [okEvent 10]
+        `shouldBe` Left "an original-consumer error event has no message"
+
+  describe "CLI exit contract" do
+    it "resolves the wrapped cohort identity outside a source checkout" $
+      withSystemTempDirectory "kenshou-wrapped-cohort" \root -> do
+        fixture <- makeAbsolute "../kenshou-suite/fixtures/core/fixtures/cohort-identity.golden.json"
+        withEnvVariable "KENSHOU_COHORT_IDENTITY" fixture $
+          withCurrentDirectory root do
+            resolved <- resolveDefaultCohortIdentity
+            case resolved of
+              Left problem -> expectationFailure (show problem)
+              Right identity -> identity.identityCohort `shouldBe` CohortName "released"
+
+    it "returns success for help" do
+      runWithArgs ["--help"] `shouldReturnCode` ExitSuccess
+
+    it "rejects a pinned knob absent from every selected scenario" $
+      withSystemTempDirectory "kenshou-plan-pin" \root -> do
+        let output = root </> "run-plan.json"
+        runWithArgs
+          [ "plan",
+            "--all",
+            "--select",
+            "keiro/outbox/soak/table-growth-reduced",
+            "--set",
+            "diagnose.major-gc-interval-ms=5000",
+            "--out",
+            output
+          ]
+          `shouldReturnCode` ExitFailure 2
+        doesFileExist output `shouldReturn` False
+
+    it "returns success for command-specific help" do
+      runWithArgs ["record", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["attest", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["history", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["run", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["cell", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["cell", "fetch", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["cell", "verify", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["cell", "status", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["cell", "lease", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["cell", "release", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["cell", "watch", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["cell", "route", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["cell", "submit", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["cell", "run", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["cell", "probe", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["cell", "pair", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["cell", "overhead", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["cell", "resume", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["cell", "payload", "publish", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["cell", "payload", "show", "--help"] `shouldReturnCode` ExitSuccess
+      runWithArgs ["help", "cells"] `shouldReturnCode` ExitSuccess
+
+    it "shows a payload only when its bundle exists at the recorded size" $
+      withSystemTempDirectory "kenshou-cell-payload" \root -> do
+        store <- newFileStore root
+        let descriptor = "../kenshou-suite/fixtures/remote/golden/payload.json"
+            bundle = ObjectName "payloads/sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.nar.zst"
+            showPayload = ["cell", "payload", "show", descriptor]
+        withCellStore root do
+          runWithArgs showPayload `shouldReturnCode` ExitFailure 1
+          _ <- store.putObject (Bucket "control") bundle "application/octet-stream" DoesNotExist "xx"
+          runWithArgs showPayload `shouldReturnCode` ExitFailure 1
+          _ <- store.putObject (Bucket "control") bundle "application/octet-stream" NoPrecondition "x"
+          runWithArgs showPayload `shouldReturnCode` ExitSuccess
+
+    it "rejects malformed cell result identifiers and URIs" do
+      runWithArgs ["cell", "fetch", "--results-bucket", "test-results", "not-a-run-id", "--out", "test-output"] `shouldReturnCode` ExitFailure 2
+      runWithArgs ["cell", "verify", "gs://test-results/runs/not-a-run-id"] `shouldReturnCode` ExitFailure 2
+
+    it "distinguishes an unavailable cell tree from invalid evidence" do
+      runWithArgs ["cell", "verify", "test/fixtures/does-not-exist"] `shouldReturnCode` ExitFailure 4
+      runWithArgs ["cell", "verify", leakingRun] `shouldReturnCode` ExitFailure 1
+
+    it "acquires, reports and releases a lease through the file-backed cell CLI" $
+      withSystemTempDirectory "kenshou-cell-cli" \root -> do
+        store <- newFileStore root
+        descriptor <- LazyByteString.readFile "../kenshou-suite/fixtures/remote/golden/cell/cell.descriptor.v1.json"
+        let control = Bucket "tan-nb-exp-cells-control"
+            leaseObject = ObjectName "cells/alpha/lease.json"
+            common = ["--cell", "alpha", "--control-bucket", "tan-nb-exp-cells-control"]
+        _ <- store.putObject control (ObjectName "cells/alpha/descriptor.json") "application/json" DoesNotExist descriptor
+        withCellStore root do
+          runWithArgs (["cell", "status"] <> common <> ["--json"]) `shouldReturnCode` ExitSuccess
+          runWithArgs (["cell", "lease"] <> common <> ["--purpose", "cli-test"]) `shouldReturnCode` ExitSuccess
+          stored <- store.getObject control leaseObject
+          record <- case stored of
+            Just (bytes, _) -> case Aeson.eitherDecode bytes of
+              Right lease -> pure (lease :: Lease)
+              Left problem -> expectationFailure problem >> error "unreachable"
+            Nothing -> expectationFailure "lease was not published" >> error "unreachable"
+          runWithArgs (["cell", "status"] <> common) `shouldReturnCode` ExitSuccess
+          runWithArgs (["cell", "release"] <> common <> ["--lease-id", Text.unpack (renderRunId record.leaseId)]) `shouldReturnCode` ExitSuccess
+          store.statObject control leaseObject `shouldReturn` Nothing
+
+    it "routes a public plan through file-backed cell descriptors" $
+      withSystemTempDirectory "kenshou-cell-route" \root -> do
+        store <- newFileStore root
+        descriptor <- LazyByteString.readFile "../kenshou-suite/fixtures/remote/golden/cell/cell.descriptor.v1.json"
+        observed <- either fail pure (Aeson.eitherDecode descriptor :: Either String CellDescriptor)
+        let control = Bucket "tan-nb-exp-cells-control"
+            outDir = root </> "routed"
+            common = ["cell", "route", "--cell", "beta", "--cell", "alpha", "--control-bucket", "tan-nb-exp-cells-control", "--plan", "../kenshou-suite/fixtures/core/golden/run-plan.minimal.json"]
+        _ <- store.putObject control (ObjectName "cells/beta/descriptor.json") "application/json" DoesNotExist (Aeson.encode (observed {name = "beta", postgresMajor = 17}))
+        _ <- store.putObject control (ObjectName "cells/alpha/descriptor.json") "application/json" DoesNotExist descriptor
+        withCellStore root do
+          runWithArgs (common <> ["--out", outDir, "--coerce-durable"]) `shouldReturnCode` ExitSuccess
+          doesFileExist (outDir </> "plan.alpha.json") `shouldReturn` True
+          doesFileExist (outDir </> "plan.beta.json") `shouldReturn` False
+          report <- Aeson.eitherDecodeFileStrict' (outDir </> "unroutable.json") >>= either fail pure
+          case report of
+            Aeson.Object fields -> KeyMap.lookup "schema" fields `shouldBe` Just (Aeson.String "kenshou.cell-route/v1")
+            _ -> expectationFailure "expected route report"
+          runWithArgs (common <> ["--out", outDir, "--coerce-durable"]) `shouldReturnCode` ExitFailure 2
+          runWithArgs (common <> ["--out", root </> "refused"]) `shouldReturnCode` ExitFailure 2
+          doesFileExist (root </> "refused" </> "unroutable.json") `shouldReturn` True
+
+    it "uses a matching capability cache and ignores one from an old descriptor" $
+      withSystemTempDirectory "kenshou-cell-capability-route" \root -> do
+        store <- newFileStore root
+        descriptorBytes <- LazyByteString.readFile "../kenshou-suite/fixtures/remote/golden/cell/cell.descriptor.v1.json"
+        descriptor <- either fail pure (Aeson.eitherDecode descriptorBytes :: Either String CellDescriptor)
+        probeId <- newRunId
+        now <- getCurrentTime
+        let control = Bucket "tan-nb-exp-cells-control"
+            directory = root </> "capabilities"
+            rulesPath = root </> "rules.json"
+            cachePath = directory </> "alpha.capabilities.json"
+            command outDir = ["cell", "route", "--cell", "alpha", "--control-bucket", "tan-nb-exp-cells-control", "--plan", "../kenshou-suite/fixtures/core/golden/run-plan.minimal.json", "--routing-rules", rulesPath, "--out", outDir, "--coerce-durable"]
+            cache digest = object ["schema" .= ("kenshou.cell-capabilities/v1" :: Text), "cell" .= ("alpha" :: Text), "descriptorSha256" .= digest, "probedBy" .= renderRunId probeId, "probedAt" .= now, "capabilities" .= object ["postgres.pg_partman" .= False]]
+            rule = object ["when" .= object ["scenario" .= ("selftest/kernel/**" :: Text)], "requires" .= ("postgres.pg_partman" :: Text), "why" .= ("requires extension" :: Text)]
+        createDirectoryIfMissing True directory
+        LazyByteString.writeFile rulesPath (Aeson.encode [rule])
+        _ <- store.putObject control (ObjectName "cells/alpha/descriptor.json") "application/json" DoesNotExist descriptorBytes
+        withCellStore root $ withCapabilityDir directory do
+          LazyByteString.writeFile cachePath (Aeson.encode (cache (descriptorDigest descriptor)))
+          runWithArgs (command (root </> "denied")) `shouldReturnCode` ExitFailure 2
+          doesFileExist (root </> "denied" </> "plan.alpha.json") `shouldReturn` False
+          LazyByteString.writeFile cachePath (Aeson.encode (cache (Text.replicate 64 "0")))
+          runWithArgs (command (root </> "unprobed")) `shouldReturnCode` ExitSuccess
+          doesFileExist (root </> "unprobed" </> "plan.alpha.json") `shouldReturn` True
+
+    it "prepares a dry-run submission under an existing file-backed lease" $
+      withSystemTempDirectory "kenshou-cell-submit" \root -> do
+        store <- newFileStore root
+        descriptorBytes <- LazyByteString.readFile "../kenshou-suite/fixtures/remote/golden/cell/cell.descriptor.v1.json"
+        observed <- either fail pure (Aeson.eitherDecode descriptorBytes :: Either String CellDescriptor)
+        let control = Bucket "control"
+            descriptor = observed {buckets = observed.buckets {control = "control"}}
+            location = ["--cell", "alpha", "--control-bucket", "control"]
+            outDir = root </> "session"
+        _ <- store.putObject control (ObjectName "cells/alpha/descriptor.json") "application/json" DoesNotExist (Aeson.encode descriptor)
+        withCellStore root do
+          runWithArgs (["cell", "lease"] <> location <> ["--purpose", "submit-test"]) `shouldReturnCode` ExitSuccess
+          stored <- store.getObject control (ObjectName "cells/alpha/lease.json")
+          lease <- case stored of
+            Just (bytes, _) -> either fail pure (Aeson.eitherDecode bytes :: Either String Lease)
+            Nothing -> expectationFailure "lease was not published" >> error "unreachable"
+          let common = ["cell", "submit"] <> location <> ["--lease-id", Text.unpack (renderRunId lease.leaseId), "--payload", "../kenshou-suite/fixtures/remote/golden/payload.json", "--plan", "../kenshou-suite/fixtures/core/golden/run-plan.minimal.json", "--out", outDir, "--dry-run"]
+          runWithArgs (common <> ["--coerce-durable"]) `shouldReturnCode` ExitSuccess
+          doesPathExist outDir `shouldReturn` False
+          runWithArgs common `shouldReturnCode` ExitFailure 2
+          template <- Aeson.eitherDecodeFileStrict' "../kenshou-suite/fixtures/remote/golden/cell-session.json" >>= either fail pure
+          let complete = (template :: SessionJournal) {store = Text.pack ("file:" <> root), controlBucket = "control", resultsBucket = descriptor.buckets.results, leaseId = lease.leaseId, slices = []}
+          createDirectoryIfMissing True outDir
+          writeSessionJournal (outDir </> "session.json") complete
+          runWithArgs ["cell", "resume", "--session", outDir] `shouldReturnCode` ExitSuccess
+
+    it "releases a one-command lease when plan preparation fails" $
+      withSystemTempDirectory "kenshou-cell-run" \root -> do
+        store <- newFileStore root
+        descriptorBytes <- LazyByteString.readFile "../kenshou-suite/fixtures/remote/golden/cell/cell.descriptor.v1.json"
+        observed <- either fail pure (Aeson.eitherDecode descriptorBytes :: Either String CellDescriptor)
+        let control = Bucket "control"
+            descriptor = observed {buckets = observed.buckets {control = "control"}}
+            outDir = root </> "run-session"
+            command = ["cell", "run", "--cell", "alpha", "--control-bucket", "control", "--payload", "../kenshou-suite/fixtures/remote/golden/payload.json", "--plan", "../kenshou-suite/fixtures/core/golden/run-plan.minimal.json", "--out", outDir]
+        _ <- store.putObject control (ObjectName "cells/alpha/descriptor.json") "application/json" DoesNotExist (Aeson.encode descriptor)
+        withCellStore root do
+          runWithArgs command `shouldReturnCode` ExitFailure 2
+          store.statObject control (ObjectName "cells/alpha/lease.json") `shouldReturn` Nothing
+          doesPathExist outDir `shouldReturn` False
+
+    it "checkpoints a rejected one-command submission and releases its lease" $
+      withSystemTempDirectory "kenshou-cell-run-rejected" \root -> do
+        store <- newFileStore root
+        descriptorBytes <- LazyByteString.readFile "../kenshou-suite/fixtures/remote/golden/cell/cell.descriptor.v1.json"
+        observed <- either fail pure (Aeson.eitherDecode descriptorBytes :: Either String CellDescriptor)
+        let control = Bucket "control"
+            descriptor = observed {buckets = observed.buckets {control = "control"}}
+            outDir = root </> "run-session"
+            command = ["cell", "run", "--cell", "alpha", "--control-bucket", "control", "--payload", "../kenshou-suite/fixtures/remote/golden/payload.json", "--plan", "../kenshou-suite/fixtures/core/golden/run-plan.minimal.json", "--out", outDir, "--coerce-durable"]
+            awaitMarker = do
+              objects <- store.listObjects control "cells/alpha/submissions/"
+              case find (Text.isSuffixOf "/submission.json" . (.unObjectName) . fst) objects of
+                Nothing -> threadDelay 10000 >> awaitMarker
+                Just (name, _) -> do
+                  stored <- store.getObject control name
+                  case stored of
+                    Nothing -> expectationFailure "submission marker disappeared"
+                    Just (bytes, _) -> do
+                      submission <- either fail pure (Aeson.eitherDecode bytes :: Either String Submission)
+                      now <- getCurrentTime
+                      let prefix = "cells/alpha/submissions/" <> renderRunId submission.runId <> "/rejected.json"
+                      _ <- store.putObject control (ObjectName prefix) "application/json" DoesNotExist (Aeson.encode (Rejected submission.runId "fixture-rejected" now))
+                      pure ()
+        _ <- store.putObject control (ObjectName "cells/alpha/descriptor.json") "application/json" DoesNotExist (Aeson.encode descriptor)
+        worker <- forkIO awaitMarker
+        ( withCellStore root do
+            result <- timeout 15000000 (runWithArgs command)
+            result `shouldBe` Just (ExitFailure 4)
+            store.statObject control (ObjectName "cells/alpha/lease.json") `shouldReturn` Nothing
+            journal <- readSessionJournal (outDir </> "session.json") >>= either (fail . Text.unpack) pure
+            fmap (.state) journal.slices `shouldBe` [SliceRejected]
+          )
+          `finally` killThread worker
+
+    it "fetches and verifies a sealed one-command submission" $
+      withSystemTempDirectory "kenshou-cell-run-sealed" \root -> do
+        store <- newFileStore root
+        descriptorBytes <- LazyByteString.readFile "../kenshou-suite/fixtures/remote/golden/cell/cell.descriptor.v1.json"
+        observed <- either fail pure (Aeson.eitherDecode descriptorBytes :: Either String CellDescriptor)
+        let control = Bucket "control"
+            results = Bucket observed.buckets.results
+            descriptor = observed {buckets = observed.buckets {control = "control"}}
+            outDir = root </> "run-session"
+            command = ["cell", "run", "--cell", "alpha", "--control-bucket", "control", "--payload", "../kenshou-suite/fixtures/remote/golden/payload.json", "--plan", "../kenshou-suite/fixtures/core/golden/run-plan.minimal.json", "--out", outDir, "--coerce-durable"]
+            awaitMarker = do
+              objects <- store.listObjects control "cells/alpha/submissions/"
+              case find (Text.isSuffixOf "/submission.json" . (.unObjectName) . fst) objects of
+                Nothing -> threadDelay 10000 >> awaitMarker
+                Just (name, _) -> do
+                  marker <- store.getObject control name
+                  submission <- case marker of
+                    Just (bytes, _) -> either fail pure (Aeson.eitherDecode bytes :: Either String Submission)
+                    Nothing -> fail "submission marker disappeared"
+                  journal <- readSessionJournal (outDir </> "session.json") >>= either (fail . Text.unpack) pure
+                  nestedId <- case journal.slices of
+                    [slice] -> case slice.runIds of
+                      [identifier] -> pure identifier
+                      _ -> fail "expected one nested run"
+                    _ -> fail "expected one cell slice"
+                  let prefix = "cells/alpha/submissions/" <> renderRunId submission.runId <> "/"
+                  work <- store.getObject control (ObjectName (prefix <> "work"))
+                  workBytes <- case work of
+                    Just (bytes, _) -> pure bytes
+                    Nothing -> fail "submission work disappeared"
+                  now <- getCurrentTime
+                  let payloadDigest = submission.payload.bundle.sha256
+                      nestedBytes = Aeson.encode (object ["schema" .= ("kenshou.run-result/v1" :: Text), "runId" .= nestedId, "scenario" .= ("selftest/kernel/correctness/postgres-roundtrip" :: Text), "outcome" .= Outcome.Passed, "fingerprint" .= object ["cell" .= object ["payload" .= object ["bundleSha256" .= payloadDigest]]]])
+                      nestedInfo = workObjectFor "application/json" nestedBytes
+                      nestedManifest = Manifest nestedId now [ManifestFile "run-result.json" ("sha256:" <> nestedInfo.sha256) (fromIntegral nestedInfo.bytes) "application/json"]
+                      files =
+                        [ ("submission/work", workBytes),
+                          ("submission/submission.json", Aeson.encode submission),
+                          ("cell/result.json", Aeson.encode (CellRunResult submission.runId "alpha" submission.leaseId 1 Completed (Just 0) Nothing [])),
+                          ("output/" <> renderRunId nestedId <> "/run-result.json", nestedBytes),
+                          ("output/" <> renderRunId nestedId <> "/manifest.json", Aeson.encode nestedManifest)
+                        ]
+                      artifactFor (path, bytes) = let info = workObjectFor "application/json" bytes in Artifact path info.sha256 info.bytes "application/json"
+                      manifest = CellManifest submission.runId "alpha" submission.leaseId 1 now "0.1.0" (ManifestPayload payloadDigest submission.payload.storePath) Completed 3600 (map artifactFor files)
+                      manifestBytes = Aeson.encode manifest
+                      manifestDigest = (workObjectFor "application/json" manifestBytes).sha256
+                  mapM_
+                    ( \(path, bytes) -> do
+                        _ <- store.putObject results (ObjectName ("runs/" <> renderRunId submission.runId <> "/" <> path)) "application/json" DoesNotExist bytes
+                        pure ()
+                    )
+                    files
+                  _ <- store.putObject results (ObjectName ("runs/" <> renderRunId submission.runId <> "/manifest.json")) "application/json" DoesNotExist manifestBytes
+                  _ <- store.putObject control (ObjectName (prefix <> "status.json")) "application/json" DoesNotExist (Aeson.encode (CellStatus submission.runId Sealed (Just 1) now Nothing (LogChunks 0 0) (Just Completed) (Just manifestDigest) (Just [])))
+                  pure ()
+        _ <- store.putObject control (ObjectName "cells/alpha/descriptor.json") "application/json" DoesNotExist (Aeson.encode descriptor)
+        worker <- forkIO awaitMarker
+        ( withCellStore root do
+            result <- timeout 15000000 (runWithArgs command)
+            result `shouldBe` Just ExitSuccess
+            store.statObject control (ObjectName "cells/alpha/lease.json") `shouldReturn` Nothing
+            journal <- readSessionJournal (outDir </> "session.json") >>= either (fail . Text.unpack) pure
+            fmap (.state) journal.slices `shouldBe` [SliceVerified]
+            case journal.slices of
+              [slice] -> doesFileExist (root </> Text.unpack (renderRunId slice.cellRun) </> "cell-run.json") `shouldReturn` True
+              _ -> expectationFailure "expected one verified cell slice"
+          )
+          `finally` killThread worker
+
+    it "runs overhead slots behind one cell lease and links their verified run directories" $
+      withSystemTempDirectory "kenshou-cell-overhead" \root -> do
+        store <- newFileStore root
+        descriptorBytes <- LazyByteString.readFile "../kenshou-suite/fixtures/remote/golden/cell/cell.descriptor.v1.json"
+        observed <- either fail pure (Aeson.eitherDecode descriptorBytes :: Either String CellDescriptor)
+        let control = Bucket "control"
+            results = Bucket observed.buckets.results
+            descriptor = observed {buckets = observed.buckets {control = "control"}}
+            outRoot = root </> "overhead-output"
+            command =
+              [ "cell",
+                "overhead",
+                "keiro/command/benchmark/throughput-latency",
+                "--cell",
+                "alpha",
+                "--control-bucket",
+                "control",
+                "--payload",
+                "../kenshou-suite/fixtures/remote/golden/payload.json",
+                "--arms",
+                "tracing=off,noop",
+                "--trials",
+                "3",
+                "--settle-seconds",
+                "0",
+                "--retries",
+                "0",
+                "--policy",
+                "../policies/telemetry-overhead.json",
+                "--out",
+                outRoot
+              ]
+            awaitMarkers seen = do
+              objects <- store.listObjects control "cells/alpha/submissions/"
+              case find (\(name, _) -> Text.isSuffixOf "/submission.json" name.unObjectName && name `Set.notMember` seen) objects of
+                Nothing -> threadDelay 10000 >> awaitMarkers seen
+                Just (name, _) -> do
+                  marker <- store.getObject control name
+                  submission <- case marker of
+                    Just (bytes, _) -> either fail pure (Aeson.eitherDecode bytes :: Either String Submission)
+                    Nothing -> fail "overhead submission marker disappeared"
+                  let prefix = "cells/alpha/submissions/" <> renderRunId submission.runId <> "/"
+                  work <- store.getObject control (ObjectName (prefix <> "work"))
+                  workBytes <- case work of
+                    Just (bytes, _) -> pure bytes
+                    Nothing -> fail "overhead work disappeared"
+                  workValue <- either fail pure (Aeson.eitherDecode workBytes :: Either String Value)
+                  nestedId <- case workValue of
+                    Aeson.Object fields -> case KeyMap.lookup "runs" fields of
+                      Just (Aeson.Array entries) -> case toList entries of
+                        [Aeson.Object entry] -> case KeyMap.lookup "runId" entry of
+                          Just value -> case Aeson.fromJSON value of Aeson.Success identifier -> pure identifier; Aeson.Error problem -> fail problem
+                          Nothing -> fail "overhead work has no nested run ID"
+                        _ -> fail "overhead work must contain one valid run entry"
+                      _ -> fail "overhead work has no runs"
+                    _ -> fail "overhead work is invalid"
+                  now <- getCurrentTime
+                  let sequenceNumber = Set.size seen + 1
+                      payloadDigest = submission.payload.bundle.sha256
+                      nestedBytes = Aeson.encode (object ["schema" .= ("kenshou.run-result/v1" :: Text), "runId" .= nestedId, "scenario" .= ("keiro/command/benchmark/throughput-latency" :: Text), "outcome" .= Outcome.Passed, "fingerprint" .= object ["cell" .= object ["payload" .= object ["bundleSha256" .= payloadDigest]]]])
+                      nestedInfo = workObjectFor "application/json" nestedBytes
+                      nestedManifest = Manifest nestedId now [ManifestFile "run-result.json" ("sha256:" <> nestedInfo.sha256) (fromIntegral nestedInfo.bytes) "application/json"]
+                      files =
+                        [ ("submission/work", workBytes),
+                          ("submission/submission.json", Aeson.encode submission),
+                          ("cell/result.json", Aeson.encode (CellRunResult submission.runId "alpha" submission.leaseId sequenceNumber Completed (Just 0) Nothing [])),
+                          ("output/" <> renderRunId nestedId <> "/run-result.json", nestedBytes),
+                          ("output/" <> renderRunId nestedId <> "/manifest.json", Aeson.encode nestedManifest)
+                        ]
+                      artifactFor (path, bytes) = let info = workObjectFor "application/json" bytes in Artifact path info.sha256 info.bytes "application/json"
+                      manifest = CellManifest submission.runId "alpha" submission.leaseId sequenceNumber now "0.1.0" (ManifestPayload payloadDigest submission.payload.storePath) Completed 3600 (map artifactFor files)
+                      manifestBytes = Aeson.encode manifest
+                      manifestDigest = (workObjectFor "application/json" manifestBytes).sha256
+                  mapM_ (\(path, bytes) -> do _ <- store.putObject results (ObjectName ("runs/" <> renderRunId submission.runId <> "/" <> path)) "application/json" DoesNotExist bytes; pure ()) files
+                  _ <- store.putObject results (ObjectName ("runs/" <> renderRunId submission.runId <> "/manifest.json")) "application/json" DoesNotExist manifestBytes
+                  _ <- store.putObject control (ObjectName (prefix <> "status.json")) "application/json" DoesNotExist (Aeson.encode (CellStatus submission.runId Sealed (Just sequenceNumber) now Nothing (LogChunks 0 0) (Just Completed) (Just manifestDigest) (Just [])))
+                  if sequenceNumber < 6 then awaitMarkers (Set.insert name seen) else pure ()
+        _ <- store.putObject control (ObjectName "cells/alpha/descriptor.json") "application/json" DoesNotExist (Aeson.encode descriptor)
+        worker <- forkIO (awaitMarkers Set.empty)
+        ( withCellStore root do
+            result <- timeout 30000000 (runWithArgs command)
+            result `shouldBe` Just (ExitFailure 4)
+            store.statObject control (ObjectName "cells/alpha/lease.json") `shouldReturn` Nothing
+            [invocation] <- listDirectory outRoot
+            state <- loadOverheadState (outRoot </> invocation) >>= either fail pure
+            length state.slots `shouldBe` 6
+            all (.complete) state.slots `shouldBe` True
+            observations <-
+              traverse
+                ( \slot -> do
+                    runId <- case reverse slot.runIds of identifier : _ -> pure identifier; [] -> fail "overhead slot has no run"
+                    doesFileExist (outRoot </> invocation </> "runs" </> Text.unpack (renderRunId runId) </> "manifest.json") `shouldReturn` True
+                    journal <- readSessionJournal (outRoot </> invocation </> "cell-sessions" </> Text.unpack (renderRunId runId) </> "session.json") >>= either (fail . Text.unpack) pure
+                    slice <- case journal.slices of [one] -> pure one; _ -> fail "overhead child must have one slice"
+                    sealed <- store.getObject results (ObjectName ("runs/" <> renderRunId slice.cellRun <> "/manifest.json"))
+                    manifest <- case sealed of
+                      Just (bytes, _) -> either fail pure (Aeson.eitherDecode bytes :: Either String CellManifest)
+                      Nothing -> fail "overhead child has no cell manifest"
+                    pure (journal.leaseId, manifest.leaseSequence)
+                )
+                state.slots
+            length (Set.fromList (fmap fst observations)) `shouldBe` 1
+            List.sort (fmap snd observations) `shouldBe` [1 .. 6]
+            resumed <- timeout 15000000 (runWithArgs (command <> ["--resume"]))
+            resumed `shouldBe` Just (ExitFailure 4)
+            markers <- store.listObjects control "cells/alpha/submissions/"
+            length (filter (Text.isSuffixOf "/submission.json" . (.unObjectName) . fst) markers) `shouldBe` 6
+          )
+          `finally` killThread worker
+
+    it "leaves a detached single-slice lease alive and collects its rejection later" $
+      withSystemTempDirectory "kenshou-cell-run-detached" \root -> do
+        store <- newFileStore root
+        descriptorBytes <- LazyByteString.readFile "../kenshou-suite/fixtures/remote/golden/cell/cell.descriptor.v1.json"
+        observed <- either fail pure (Aeson.eitherDecode descriptorBytes :: Either String CellDescriptor)
+        let control = Bucket "control"
+            descriptor = observed {buckets = observed.buckets {control = "control"}}
+            outDir = root </> "run-session"
+            leaseObject = ObjectName "cells/alpha/lease.json"
+            command = ["cell", "run", "--cell", "alpha", "--control-bucket", "control", "--payload", "../kenshou-suite/fixtures/remote/golden/payload.json", "--plan", "../kenshou-suite/fixtures/core/golden/run-plan.minimal.json", "--out", outDir, "--coerce-durable", "--detach"]
+        _ <- store.putObject control (ObjectName "cells/alpha/descriptor.json") "application/json" DoesNotExist (Aeson.encode descriptor)
+        withCellStore root do
+          runWithArgs command `shouldReturnCode` ExitSuccess
+          journal <- readSessionJournal (outDir </> "session.json") >>= either (fail . Text.unpack) pure
+          journal.leaseMode `shouldBe` Detached
+          fmap (.state) journal.slices `shouldBe` [SliceSubmitted]
+          leaseStored <- store.getObject control leaseObject
+          lease <- case leaseStored of
+            Just (bytes, _) -> either fail pure (Aeson.eitherDecode bytes :: Either String Lease)
+            Nothing -> expectationFailure "detached lease was released" >> error "unreachable"
+          slice <- case journal.slices of
+            [entry] -> pure entry
+            _ -> expectationFailure "expected one detached slice" >> error "unreachable"
+          lease.ttlSeconds `shouldSatisfy` (>= fromIntegral slice.submission.limits.wallClockSeconds + 600)
+          runWithArgs ["cell", "resume", "--session", outDir] `shouldReturnCode` ExitFailure 4
+          store.statObject control leaseObject >>= (`shouldSatisfy` (maybe False (const True)))
+          now <- getCurrentTime
+          let rejectedObject = ObjectName ("cells/alpha/submissions/" <> renderRunId slice.cellRun <> "/rejected.json")
+          _ <- store.putObject control rejectedObject "application/json" DoesNotExist (Aeson.encode (Rejected slice.cellRun "fixture-rejected" now))
+          runWithArgs ["cell", "resume", "--session", outDir] `shouldReturnCode` ExitFailure 4
+          store.statObject control leaseObject `shouldReturn` Nothing
+          finished <- readSessionJournal (outDir </> "session.json") >>= either (fail . Text.unpack) pure
+          fmap (.state) finished.slices `shouldBe` [SliceRejected]
+          runWithArgs command `shouldReturnCode` ExitFailure 2
+          store.statObject control leaseObject `shouldReturn` Nothing
+
+    it "starts stopped instances and releases a reattached held lease after a terminal resume" $
+      withSystemTempDirectory "kenshou-cell-resume-release" \root -> do
+        store <- newFileStore root
+        descriptorBytes <- LazyByteString.readFile "../kenshou-suite/fixtures/remote/golden/cell/cell.descriptor.v1.json"
+        observed <- either fail pure (Aeson.eitherDecode descriptorBytes :: Either String CellDescriptor)
+        template <- Aeson.eitherDecodeFileStrict' "../kenshou-suite/fixtures/remote/golden/cell-session.json" >>= either fail pure
+        let control = Bucket "control"
+            descriptor = observed {buckets = observed.buckets {control = "control"}}
+            outDir = root </> "session"
+            leaseObject = ObjectName "cells/alpha/lease.json"
+        _ <- store.putObject control (ObjectName "cells/alpha/descriptor.json") "application/json" DoesNotExist (Aeson.encode descriptor)
+        withCellStore root do
+          runWithArgs ["cell", "lease", "--cell", "alpha", "--control-bucket", "control", "--purpose", "resume-test"] `shouldReturnCode` ExitSuccess
+          stored <- store.getObject control leaseObject
+          lease <- case stored of
+            Just (bytes, _) -> either fail pure (Aeson.eitherDecode bytes :: Either String Lease)
+            Nothing -> fail "fixture lease missing"
+          let journal = (template :: SessionJournal) {store = Text.pack ("file:" <> root), controlBucket = "control", resultsBucket = descriptor.buckets.results, leaseId = lease.leaseId, leaseMode = Held, slices = map (\slice -> slice {state = SliceRejected, rejectionReason = Just "fixture-rejected", cellOutcome = Nothing, entryExitCode = Nothing, manifestSha256 = Nothing, fetchedPath = Nothing}) template.slices}
+          createDirectoryIfMissing True outDir
+          writeSessionJournal (outDir </> "session.json") journal
+          let binDir = root </> "bin"
+              fakeGcloud = binDir </> "gcloud"
+              started = root </> "instances-started"
+          createDirectoryIfMissing True binDir
+          writeFile fakeGcloud "#!/bin/sh\nif [ \"$3\" = describe ]; then echo TERMINATED; else printf started > \"$KENSHOU_TEST_STARTED\"; fi\n"
+          permissions <- getPermissions fakeGcloud
+          setPermissions fakeGcloud permissions {executable = True}
+          oldPath <- lookupEnv "PATH"
+          withEnvVariable "PATH" (binDir <> ":" <> maybe "" id oldPath) $
+            withEnvVariable "KENSHOU_TEST_STARTED" started $
+              runWithArgs ["cell", "resume", "--start", "--session", outDir] `shouldReturnCode` ExitFailure 4
+          doesFileExist started `shouldReturn` True
+          store.statObject control leaseObject `shouldReturn` Nothing
+          runWithArgs ["cell", "resume", "--start", "--help"] `shouldReturnCode` ExitSuccess
+
+    it "rebinds a submitted marker that a prior held lease never accepted" $
+      withSystemTempDirectory "kenshou-cell-resume-unaccepted" \root -> do
+        store <- newFileStore root
+        descriptorBytes <- LazyByteString.readFile "../kenshou-suite/fixtures/remote/golden/cell/cell.descriptor.v1.json"
+        observed <- either fail pure (Aeson.eitherDecode descriptorBytes :: Either String CellDescriptor)
+        template <- Aeson.eitherDecodeFileStrict' "../kenshou-suite/fixtures/remote/golden/cell-session.json" >>= either fail pure
+        let control = Bucket "control"
+            descriptor = observed {buckets = observed.buckets {control = "control"}}
+            outDir = root </> "session"
+            leaseObject = ObjectName "cells/alpha/lease.json"
+        _ <- store.putObject control (ObjectName "cells/alpha/descriptor.json") "application/json" DoesNotExist (Aeson.encode descriptor)
+        withCellStore root do
+          runWithArgs ["cell", "lease", "--cell", "alpha", "--control-bucket", "control", "--purpose", "old-session"] `shouldReturnCode` ExitSuccess
+          oldStored <- store.getObject control leaseObject
+          oldLease <- case oldStored of
+            Just (bytes, _) -> either fail pure (Aeson.eitherDecode bytes :: Either String Lease)
+            Nothing -> expectationFailure "old lease missing" >> error "unreachable"
+          fixtureSlice <- case (template :: SessionJournal).slices of
+            [entry] -> pure entry
+            _ -> expectationFailure "expected one fixture slice" >> error "unreachable"
+          let fixtureSubmission = fixtureSlice.submission
+              fixturePayload = fixtureSubmission.payload
+              fixtureBundle = fixturePayload.bundle
+              payload = fixturePayload {bundle = fixtureBundle {uri = "gs://control/payloads/sha256/" <> fixtureBundle.sha256 <> ".nar.zst"}}
+              oldSubmission = fixtureSubmission {leaseId = oldLease.leaseId, payload = payload, work = workObjectFor "application/json" "{}"}
+              oldSlice = fixtureSlice {submission = oldSubmission, state = SliceSubmitted}
+              journal = template {store = Text.pack ("file:" <> root), controlBucket = "control", resultsBucket = descriptor.buckets.results, leaseId = oldLease.leaseId, slices = [oldSlice]}
+              oldMarker = ObjectName ("cells/alpha/submissions/" <> renderRunId oldSlice.cellRun <> "/submission.json")
+              awaitRetry = do
+                objects <- store.listObjects control "cells/alpha/submissions/"
+                case find (\(name, _) -> name /= oldMarker && Text.isSuffixOf "/submission.json" name.unObjectName) objects of
+                  Nothing -> threadDelay 10000 >> awaitRetry
+                  Just (name, _) -> do
+                    stored <- store.getObject control name
+                    submission <- case stored of
+                      Just (bytes, _) -> either fail pure (Aeson.eitherDecode bytes :: Either String Submission)
+                      Nothing -> fail "retry marker disappeared"
+                    now <- getCurrentTime
+                    let rejected = ObjectName ("cells/alpha/submissions/" <> renderRunId submission.runId <> "/rejected.json")
+                    _ <- store.putObject control rejected "application/json" DoesNotExist (Aeson.encode (Rejected submission.runId "fixture-rejected" now))
+                    pure ()
+          createDirectoryIfMissing True (outDir </> "slice-0")
+          LazyByteString.writeFile (outDir </> "slice-0/work.json") "{}"
+          writeSessionJournal (outDir </> "session.json") journal
+          _ <- store.putObject control oldMarker "application/json" DoesNotExist (Aeson.encode oldSubmission)
+          runWithArgs ["cell", "release", "--cell", "alpha", "--control-bucket", "control", "--lease-id", Text.unpack (renderRunId oldLease.leaseId)] `shouldReturnCode` ExitSuccess
+          worker <- forkIO awaitRetry
+          ( do
+              result <- timeout 15000000 (runWithArgs ["cell", "resume", "--session", outDir])
+              result `shouldBe` Just (ExitFailure 4)
+              finished <- readSessionJournal (outDir </> "session.json") >>= either (fail . Text.unpack) pure
+              fmap (.state) finished.slices `shouldBe` [SliceRejected]
+              fmap (.cellRun) finished.slices `shouldSatisfy` (/= [oldSlice.cellRun])
+              store.statObject control leaseObject `shouldReturn` Nothing
+            )
+            `finally` killThread worker
+
+    it "reads scenario history from a bundle" do
+      runWithArgs ["history", "--bundle", "../docs/verification", "--scenario", "selftest/kernel/correctness/always-pass", "--json"] `shouldReturnCode` ExitSuccess
+
+    it "requires one record source" do
+      runWithArgs ["record", "--purpose", "release"] `shouldReturnCode` ExitFailure 2
+      runWithArgs ["record", "a-run", "--comparison", "comparison.json", "--purpose", "release"] `shouldReturnCode` ExitFailure 2
+
+    it "rejects a human anomaly exception without an interactive terminal" do
+      runWithArgs ["attest", "invalid", "--project", "fixture", "--accept-anomaly", "--authority", "human:fixture", "--reason", "fixture"] `shouldReturnCode` ExitFailure 2
+
+    it "returns 2 for an unknown subcommand" do
+      runWithArgs ["cohort", "bogus"] `shouldReturnCode` ExitFailure 2
+
+    it "returns 1 when offline leak diagnosis finds growth" do
+      runWithArgs ["diagnose", "leak", leakingRun] `shouldReturnCode` ExitFailure 1
+
+    it "returns 1 when an offline stall diagnosis exists" do
+      runWithArgs ["diagnose", "stall", stalledRun] `shouldReturnCode` ExitFailure 1
+
+    it "returns 0 when no offline stall diagnosis exists" do
+      runWithArgs ["diagnose", "stall", leakingRun] `shouldReturnCode` ExitSuccess
+
+    it "returns 3 when leak evidence is insufficient" do
+      runWithArgs ["diagnose", "leak", stalledRun] `shouldReturnCode` ExitFailure 3
+
+    it "returns 4 when diagnosis input is unavailable" do
+      runWithArgs ["diagnose", "leak", "test/fixtures/does-not-exist"] `shouldReturnCode` ExitFailure 4
+
+    it "returns 2 for invalid diagnose syntax" do
+      runWithArgs ["diagnose", "leak", "--bogus"] `shouldReturnCode` ExitFailure 2
+
+    it "does not mutate a sealed run manifest" do
+      before <- Text.readFile (leakingRun <> "/manifest.json")
+      _ <- runWithArgs ["diagnose", "leak", leakingRun]
+      after <- Text.readFile (leakingRun <> "/manifest.json")
+      after `shouldBe` before
+
+  describe "version" do
+    it "includes the cabal package version and a short revision" do
+      appVersionWithGit `shouldSatisfy` Text.isPrefixOf "kenshou v0.1.0.0 ("
+      Text.dropAround (`elem` ['(', ')']) (Text.takeWhileEnd (/= ' ') appVersionWithGit)
+        `shouldSatisfy` (\revision -> revision == "dirty" || Text.length revision == 7)
+
+shouldReturnCode :: IO ExitCode -> ExitCode -> IO ()
+shouldReturnCode action expected = action >>= (`shouldBe` expected)
+
+leakingRun :: FilePath
+leakingRun = "../kenshou-suite/fixtures/diagnose/fixtures/run-leaking"
+
+stalledRun :: FilePath
+stalledRun = "../kenshou-suite/fixtures/diagnose/fixtures/run-stalled"
+
+okEvent :: Int -> Value
+okEvent value = object ["type" .= ("custom" :: Text), "name" .= ("ok" :: Text), "payload" .= object ["value" .= value]]
+
+errorEvent :: Text -> Value
+errorEvent message = object ["type" .= ("error" :: Text), "message" .= message]
+
+doneEvent :: Value
+doneEvent = object ["type" .= ("done" :: Text)]
+
+withCellStore :: FilePath -> IO value -> IO value
+withCellStore root operation = bracket (lookupEnv "KENSHOU_CELL_STORE") (restore "KENSHOU_CELL_STORE") \_ ->
+  bracket (lookupEnv "KENSHOU_GCP_ALLOWED_PROJECTS") (restore "KENSHOU_GCP_ALLOWED_PROJECTS") \_ -> do
+    setEnv "KENSHOU_CELL_STORE" ("file:" <> root)
+    setEnv "KENSHOU_GCP_ALLOWED_PROJECTS" "tan-nb-exp"
+    operation
+  where
+    restore name Nothing = unsetEnv name
+    restore name (Just prior) = setEnv name prior
+
+withCapabilityDir :: FilePath -> IO value -> IO value
+withCapabilityDir directory operation = bracket (lookupEnv "KENSHOU_CELL_CAPABILITIES_DIR") restore \_ -> do
+  setEnv "KENSHOU_CELL_CAPABILITIES_DIR" directory
+  operation
+  where
+    restore Nothing = unsetEnv "KENSHOU_CELL_CAPABILITIES_DIR"
+    restore (Just prior) = setEnv "KENSHOU_CELL_CAPABILITIES_DIR" prior
+
+withEnvVariable :: String -> String -> IO value -> IO value
+withEnvVariable name selected operation = bracket (lookupEnv name) restore \_ -> do
+  setEnv name selected
+  operation
+  where
+    restore Nothing = unsetEnv name
+    restore (Just prior) = setEnv name prior
+
+withPerfRoot :: IO a -> IO a
+withPerfRoot operation = do
+  exists <- doesFileExist "cohort/released.json"
+  withCurrentDirectory (if exists then "." else "..") operation
+
+replacePerfField :: Key.Key -> Value -> Value -> Value
+replacePerfField key value (Aeson.Object fields) = Aeson.Object (KeyMap.insert key value fields)
+replacePerfField _ _ value = value

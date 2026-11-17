@@ -2,6 +2,8 @@
 
 module Kenshou.Suite.Shibuya.Correctness.KirokuTrace (scenario) where
 
+import Kenshou.Suite.Schema (kirokuSchema)
+
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, displayException, try)
 import Data.Aeson (object, (.=))
@@ -14,7 +16,7 @@ import Data.Text qualified as Text
 import Effectful (liftIO, runEff)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension (DimensionSupport (..), MetricsArm (..), PgDurability (..), PgVersion (..), Support (..), Supported (..), TracingArm (..))
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
@@ -50,7 +52,7 @@ scenario =
             pgVersion = Supported (Support (Pg18 :| [Pg17]) Pg18)
           },
       phases = zeroPhases,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku] [] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [kirokuSchema] [] False)},
       knownDefect = Nothing,
       run = runTraceContinuity
     }

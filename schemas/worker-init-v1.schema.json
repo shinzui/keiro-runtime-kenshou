@@ -14,7 +14,8 @@
     "knobs": {"type": "object"},
     "dimensions": {"type": "object"},
     "postgres": {"type": ["object", "null"]},
-    "kafka": {},
+    "resources": {"type": "object", "description": "Provisioned values of the scenario's named resources, keyed by resource name."},
+    "kafka": {"deprecated": true, "description": "Written before named resources; readers map a non-null value to resources.kafka."},
     "telemetry": {},
     "outDir": {"type": "string"},
     "args": {}

@@ -39,4 +39,3 @@
 - [keiro/queue/benchmark/job-throughput passed on released](01a0f4a8-8e83-7594-a4fa-d8bfcb892f26.md) - Recorded keiro/queue/benchmark/job-throughput run against cohort released with digest-pinned data.
 - [keiro/queue/benchmark/job-throughput passed on released](01a0f4a8-8e83-7594-a83d-cb3604b6995f.md) - Recorded keiro/queue/benchmark/job-throughput run against cohort released with digest-pinned data.
 - [keiro/queue/benchmark/job-throughput passed on released](01a0f4a8-8e83-7594-ab91-f155443ddce8.md) - Recorded keiro/queue/benchmark/job-throughput run against cohort released with digest-pinned data.
-

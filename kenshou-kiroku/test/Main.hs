@@ -1,15 +1,17 @@
 module Main (main) where
 
+import Kenshou.Suite.Schema (keiroSchema, kirokuSchema, pgmqSchema)
+
 import Data.Aeson (decode, encode, object)
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.List (nub)
 import Data.Map.Strict qualified as Map
 import Kenshou.Check.Model.Linearizability qualified as Lin
-import Kenshou.Core.Bundle (LayerBundle (..), mkRegistry)
+import Kenshou.Core.Bundle (LayerBundle (..), mkRegistry, registryMigrationSets)
 import Kenshou.Core.Dimension (Dimensions (..), MetricsArm (..), PgDurability (..), PgVersion (..), TracingArm (..))
-import Kenshou.Core.Env (PostgresRequirement (..), SchemaComponent (..))
+import Kenshou.Core.Env (PostgresRequirement (..))
 import Kenshou.Core.Env.Postgres (PostgresEnv (..), withPostgresEnv)
-import Kenshou.Core.Id (Kind (..), Layer (..), ScenarioId (..), mkSeed, parseRunId, renderScenarioId)
+import Kenshou.Core.Id (Kind (..), ScenarioId (..), mkLayerId, mkSeed, parseRunId, renderScenarioId)
 import Kenshou.Core.Knob (RawKnob (..), mkKnobName, resolveKnobs)
 import Kenshou.Core.Log (nullLogger)
 import Kenshou.Core.RunSpec (PostgresSpec (..))
@@ -22,6 +24,7 @@ import Kenshou.Suite.Kiroku.Fixture.Store (StoreOptions (..), storeOptionsFromVa
 import Kenshou.Suite.Kiroku.Fixture.Telemetry (HandlerArm (..), handlerArm)
 import Kenshou.Suite.Kiroku.Fixture.Workload (IdPolicy (..), RunTag (..), eventIdFor, mkEvents, payloadOf, streamNameFor)
 import Kenshou.Suite.Kiroku.Knobs (storeKnobs)
+import Kenshou.Suite.Schema (schemaBundle)
 import Kiroku.Store (EventData (..), EventId (..), EventType (..), ExpectedVersion (..), KirokuStore (..), StreamName (..), StreamVersion (..), appendToStream, defaultConnectionSettings, hardDeleteStream, runStoreIO, withStore)
 import System.IO.Temp (withSystemTempDirectory)
 import Test.Hspec
@@ -116,10 +119,11 @@ main = hspec do
   describe "migrated SQL oracle" do
     it "counts durable rows and detects the gap created by a hard delete" $ withSystemTempDirectory "kenshou-kiroku-oracle" \directory -> do
       let runId = either (error . show) id (parseRunId "01997f3a-5b7c-7e21-8a44-0d6c2f9b1e55")
-          requirement = PostgresRequirement [SchemaKiroku] [] False
+          requirement = PostgresRequirement [kirokuSchema] [] False
           dimensions = Dimensions Nothing Nothing (Just PgFsyncOff) (Just Pg18)
           event = EventData Nothing (EventType "Oracle") (object []) Nothing Nothing Nothing
-      result <- withPostgresEnv nullLogger directory runId requirement (PostgresEphemeral []) dimensions \database -> withStore (defaultConnectionSettings database.connectionString) \store -> do
+      registry <- either (fail . show) pure (mkRegistry [schemaBundle, bundle])
+      result <- withPostgresEnv (registryMigrationSets registry) nullLogger directory runId requirement (PostgresEphemeral []) dimensions \database -> withStore (defaultConnectionSettings database.connectionString) \store -> do
         initial <- Oracle.threeCounts store.pool
         first <- runStoreIO store (appendToStream (StreamName "oracle-first") NoStream [event])
         second <- runStoreIO store (appendToStream (StreamName "oracle-second") NoStream [event])
@@ -146,12 +150,12 @@ main = hspec do
           names = fmap (renderScenarioId . (.id)) scenarios
       length scenarios `shouldBe` 54
       length (nub names) `shouldBe` length names
-      mapM_ (\scenario -> scenario.id.layer `shouldBe` Kiroku) scenarios
+      mapM_ (\scenario -> scenario.id.layer `shouldBe` either (error . show) id (mkLayerId "kiroku")) scenarios
       length [scenario | scenario <- scenarios, scenario.id.kind == Correctness] `shouldBe` 19
       length [scenario | scenario <- scenarios, scenario.id.kind == Concurrency] `shouldBe` 17
       length [scenario | scenario <- scenarios, scenario.id.kind == Benchmark] `shouldBe` 12
       length [scenario | scenario <- scenarios, scenario.id.kind == Soak] `shouldBe` 6
     it "passes the registry's structural validation" do
-      case mkRegistry [bundle] of
+      case mkRegistry [schemaBundle, bundle] of
         Right _ -> pure ()
         Left errors -> expectationFailure (show errors)

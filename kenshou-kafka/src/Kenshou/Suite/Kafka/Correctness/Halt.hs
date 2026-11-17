@@ -14,12 +14,12 @@ import Kafka.Effectful.Producer qualified as P
 import Kafka.Types (KafkaError, PartitionId (..), Timeout (..), TopicName)
 import Kenshou.Core.Context (RunContext (..))
 import Kenshou.Core.Dimension (allTelemetryArms, noDimensions)
-import Kenshou.Core.Env (kafkaEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
 import Kenshou.Env.Kafka
 import Kenshou.Suite.Kafka.Fixture (firstBrokers, sabotageDropFirst, sabotageKnob)
+import Kenshou.Suite.Schema (kafkaEnvironment)
 import Shibuya.Adapter.Kafka (defaultConfig, kafkaAdapter)
 import Shibuya.App (ProcessorId (..), defaultAppConfig, mkProcessor, runApp, stopApp, waitApp)
 import Shibuya.Core.Ack (AckDecision (..), HaltReason (..))

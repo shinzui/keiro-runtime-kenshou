@@ -11,7 +11,6 @@ import Kafka.Effectful.Consumer qualified as C
 import Kafka.Types (BrokerAddress (..), KafkaError, Timeout (..), TopicName (..))
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension (allTelemetryArms, noDimensions)
-import Kenshou.Core.Env (kafkaEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (knobInt, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
@@ -21,6 +20,7 @@ import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tie
 import Kenshou.Env.Kafka
 import Kenshou.Suite.Kafka.Fixture (firstBrokers, intKnob, produceValues, sabotageDropFirst, sabotageKnob)
 import Kenshou.Suite.Kafka.Roles (adapterConsumerRole)
+import Kenshou.Suite.Schema (kafkaEnvironment)
 import System.FilePath ((</>))
 
 scenarios :: [Scenario]

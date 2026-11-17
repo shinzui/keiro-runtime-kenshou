@@ -1,5 +1,7 @@
 module Kenshou.Suite.Shibuya.Concurrency.KirokuSigkillReplay (scenario) where
 
+import Kenshou.Suite.Schema (kirokuSchema)
+
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (wait, withAsync)
 import Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, takeMVar)
@@ -21,7 +23,7 @@ import Kenshou.Check.Process (awaitMark, awaitReady, killChild, roleProcess, sen
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension (PgDurability (..), PgVersion (..), noDimensions, postgresDimensions)
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Id (parseScenarioId, unSeed)
 import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), knobInt, knobText, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
@@ -50,7 +52,7 @@ scenario =
         ],
       dimensions = postgresDimensions (PgDurable :| []) (Pg18 :| [Pg17]) noDimensions,
       phases = zeroPhases,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku] [] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [kirokuSchema] [] False)},
       knownDefect = Nothing,
       run = runReplay
     }

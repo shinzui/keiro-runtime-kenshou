@@ -1,7 +1,10 @@
 module Kenshou.Suite.Keiro (bundle) where
 
-import Kenshou.Core.Bundle (LayerBundle (..))
-import Kenshou.Core.Id (Layer (Keiro))
+import Kenshou.Check.Oracle (OracleQuery (..))
+import Kenshou.Check.Oracle.Keiro qualified as Oracle
+import Kenshou.Core.Bundle (LayerBundle (..), mkBundle)
+import Kenshou.Core.Contribution (OracleSpec (..), PoolMethodology (..))
+import Kenshou.Core.Id (mkLayerId)
 import Kenshou.Suite.Keiro.Command.Bench qualified as Bench
 import Kenshou.Suite.Keiro.Command.Concurrency qualified as Concurrency
 import Kenshou.Suite.Keiro.Command.Correctness qualified as Correctness
@@ -24,4 +27,7 @@ import Kenshou.Suite.Keiro.Timer qualified as Timer
 import Kenshou.Suite.Keiro.Workflow qualified as Workflow
 
 bundle :: LayerBundle
-bundle = LayerBundle Keiro (Correctness.scenarios <> Concurrency.scenarios <> Bench.scenarios <> Soak.scenarios <> SteadyState.scenarios <> Projection.scenarios <> PMCorrectness.scenarios <> PMConcurrency.scenarios <> PMBench.scenarios <> RouterCorrectness.scenarios <> RouterConcurrency.scenarios <> RouterBench.scenarios <> KeiroTelemetry.scenarios <> Outbox.scenarios <> Inbox.scenarios <> Queue.scenarios <> Workflow.scenarios <> Timer.scenarios <> Shard.scenarios) (Roles.roles <> Outbox.roles <> Inbox.roles <> Queue.roles <> Workflow.roles <> Timer.roles <> Shard.roles)
+bundle = (mkBundle (either (error . show) id (mkLayerId "keiro")) (Correctness.scenarios <> Concurrency.scenarios <> Bench.scenarios <> Soak.scenarios <> SteadyState.scenarios <> Projection.scenarios <> PMCorrectness.scenarios <> PMConcurrency.scenarios <> PMBench.scenarios <> RouterCorrectness.scenarios <> RouterConcurrency.scenarios <> RouterBench.scenarios <> KeiroTelemetry.scenarios <> Outbox.scenarios <> Inbox.scenarios <> Queue.scenarios <> Workflow.scenarios <> Timer.scenarios <> Shard.scenarios) (Roles.roles <> Outbox.roles <> Inbox.roles <> Queue.roles <> Workflow.roles <> Timer.roles <> Shard.roles)) {oracles = oracleSpecs, evidenceSubject = Just "mori://shinzui/keiro"}
+
+oracleSpecs :: [OracleSpec]
+oracleSpecs = OracleSpec Oracle.outboxNonTerminal.name Oracle.outboxNonTerminal.sql : [OracleSpec query.name query.sql | query <- [Oracle.inboxByStatus, Oracle.timersByStatus, Oracle.workflowLeases, Oracle.shardOwners, Oracle.deadLetters]]

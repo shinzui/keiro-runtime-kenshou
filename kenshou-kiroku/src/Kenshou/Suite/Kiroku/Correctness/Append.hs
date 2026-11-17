@@ -1,5 +1,7 @@
 module Kenshou.Suite.Kiroku.Correctness.Append (scenarios, recordCells) where
 
+import Kenshou.Suite.Schema (kirokuSchema)
+
 import Control.Monad (forM)
 import Data.Aeson (object, (.=))
 import Data.Int (Int64)
@@ -19,7 +21,7 @@ import Hasql.Transaction qualified as Tx
 import Kenshou.Check.Verdict (InvariantClass (..), RunInfo (..), Verdict (..), VerdictStatus (..), writeVerdict)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobInt, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
@@ -79,7 +81,7 @@ expectedVersionMatrix =
             pgVersion = Supported (Support (Pg18 :| [Pg17]) Pg18)
           },
       phases = zeroPhases,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku] [] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [kirokuSchema] [] False)},
       knownDefect = Nothing,
       run = runMatrix
     }

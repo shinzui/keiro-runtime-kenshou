@@ -18,6 +18,7 @@ import Kenshou.Suite.Pgmq.Harness (scenarioQueueName)
 import Kenshou.Suite.Pgmq.Knobs qualified as PgmqKnobs
 import Kenshou.Suite.Pgmq.Oracle
 import Kenshou.Suite.Pgmq.TopicModel (matches)
+import Kenshou.Suite.Schema (schemaBundle)
 import Pgmq.Types (parseRoutingKey, parseTopicPattern, queueNameToText)
 import System.Directory (doesFileExist, getCurrentDirectory)
 import System.FilePath (takeDirectory, (</>))
@@ -27,7 +28,7 @@ main :: IO ()
 main = hspec do
   describe "pgmq bundle" do
     it "is registry-valid and contains the planned scenario counts" do
-      case mkRegistry [bundle] of
+      case mkRegistry [schemaBundle, bundle] of
         Left errors -> expectationFailure (show errors)
         Right _ -> pure ()
       length bundle.scenarios `shouldBe` 50
@@ -137,7 +138,7 @@ contextWith knobs =
       dimensions = emptyDimensions,
       seed = either (error . Text.unpack) id (mkSeed 1),
       phases = zeroPhases,
-      env = Environment Nothing Map.empty,
+      env = Environment Nothing Map.empty Map.empty,
       environmentSpec = error "environmentSpec not used by this unit test",
       comparison = Nothing,
       outDir = ".",

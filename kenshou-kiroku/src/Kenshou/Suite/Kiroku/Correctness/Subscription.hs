@@ -1,5 +1,7 @@
 module Kenshou.Suite.Kiroku.Correctness.Subscription (scenarios) where
 
+import Kenshou.Suite.Schema (kirokuSchema)
+
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 import Control.Concurrent.STM (atomically, putTMVar)
@@ -16,7 +18,7 @@ import Data.Time.Clock (addUTCTime, getCurrentTime)
 import Data.Vector qualified as Vector
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), knobInt, knobText, mkKnobName)
 import Kenshou.Core.Phase (PhasePlan (..), zeroPhases)
@@ -319,7 +321,7 @@ checkpointPolicies =
             pgVersion = Supported (Support (Pg18 :| [Pg17]) Pg18)
           },
       phases = zeroPhases,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku] [] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [kirokuSchema] [] False)},
       knownDefect = Nothing,
       run = runPolicies
     }

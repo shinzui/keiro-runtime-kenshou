@@ -1,5 +1,7 @@
 module Kenshou.Suite.Keiro.Timer.Correctness (scenarios) where
 
+import Kenshou.Suite.Schema (keiroSchema, kirokuSchema)
+
 import Data.Aeson (Value (Null))
 import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.List.NonEmpty (NonEmpty (..))
@@ -11,7 +13,7 @@ import Keiro.Timer (TimerId (..), TimerInspection (..), TimerRequest (..), Timer
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Phase (zeroPhases)
@@ -82,7 +84,7 @@ lifecycle =
             pgVersion = Supported (Support (Pg18 :| []) Pg18)
           },
       phases = zeroPhases,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku, SchemaKeiro] [] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [kirokuSchema, keiroSchema] [] False)},
       knownDefect = Nothing,
       run = runLifecycle
     }

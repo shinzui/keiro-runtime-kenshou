@@ -5,7 +5,7 @@
   "required": ["schema", "bundle", "query", "entries"],
   "properties": {
     "schema": {"const": "kenshou.evidence-history/v1"},
-    "bundle": {"const": "mori://shinzui/keiro-runtime-kenshou/okf/verification"},
+    "bundle": {"type": "string", "pattern": "^mori://"},
     "query": {
       "type": "object",
       "required": ["scenario"],
@@ -25,7 +25,7 @@
         "required": ["concept", "ref", "record", "trust", "attestations", "derivedBaseline"],
         "properties": {
           "concept": {"type": "string"},
-          "ref": {"type": "string", "pattern": "^mori://shinzui/keiro-runtime-kenshou/okf/verification/concepts/"},
+          "ref": {"type": "string", "pattern": "^mori://.+/concepts/"},
           "record": {"type": "object"},
           "trust": {"enum": ["unverified", "machine-confirmed", "human-reviewed"]},
           "attestations": {

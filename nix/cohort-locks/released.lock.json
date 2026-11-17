@@ -1,6 +1,6 @@
 {
   "cohort": "released",
-  "descriptorSha256": "5c08f30a78a7d36ab707cde925813987356bdc46d0c3626b2882814db685cf56",
+  "descriptorSha256": "dae0ae011ed58031382704b1e50701ae6c4842d6d9a89592723d196e33edd2ca",
   "packages": {
     "effectful": {
       "sha256": "sha256-krNjGxqdbmFpt1g3anTd5ajGtYnyvGaG+AiDLfJN8No=",

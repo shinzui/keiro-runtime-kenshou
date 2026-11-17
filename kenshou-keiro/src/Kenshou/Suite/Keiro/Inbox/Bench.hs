@@ -1,5 +1,7 @@
 module Kenshou.Suite.Keiro.Inbox.Bench (scenarios) where
 
+import Kenshou.Suite.Schema (keiroSchema, kirokuSchema)
+
 import Data.Aeson (object, (.=))
 import Data.ByteString qualified as ByteString
 import Data.List.NonEmpty (NonEmpty (..))
@@ -15,7 +17,7 @@ import Keiro.Inbox.Delegated (delegatedCommand, delegatedEventId)
 import Keiro.Integration.Event (IntegrationEvent (..))
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Id (Kind (..), parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobInt, knobText, mkKnobName)
 import Kenshou.Core.Phase qualified as CorePhase
@@ -67,7 +69,7 @@ intakeThroughput =
             pgVersion = Supported (Support (Pg18 :| []) Pg18)
           },
       phases = CorePhase.PhasePlan 0 1 1,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku, SchemaKeiro] [("shared_preload_libraries", "'pg_stat_statements'")] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [kirokuSchema, keiroSchema] [("shared_preload_libraries", "'pg_stat_statements'")] False)},
       knownDefect = Nothing,
       run = runIntakeThroughput
     }

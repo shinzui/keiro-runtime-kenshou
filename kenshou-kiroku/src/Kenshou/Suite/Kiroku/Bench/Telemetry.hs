@@ -1,5 +1,7 @@
 module Kenshou.Suite.Kiroku.Bench.Telemetry (scenarios) where
 
+import Kenshou.Suite.Schema (kirokuSchema)
+
 import Control.Concurrent (forkIO, killThread, threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, takeMVar, tryPutMVar)
 import Control.Concurrent.STM (atomically, newTVarIO, readTVar, writeTVar)
@@ -19,7 +21,7 @@ import Hasql.Session qualified as Session
 import Hasql.Statement qualified as Statement
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Id (Kind (..), parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), knobBool, knobInt, mkKnobName)
 import Kenshou.Core.Outcome (Outcome (..))
@@ -84,7 +86,7 @@ eventHandlerArms =
             pgVersion = Supported (Support (Pg18 :| [Pg17]) Pg18)
           },
       phases = PhasePlan 30 120 15,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku] [("shared_preload_libraries", "'pg_stat_statements'")] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [kirokuSchema] [("shared_preload_libraries", "'pg_stat_statements'")] False)},
       knownDefect = Nothing,
       run = runTelemetryBenchmark False
     }

@@ -115,7 +115,7 @@ def measure(environ):
     root = Path(environ["PERF_ROOT"])
     session = root / "session"
     # Build before fresh payload verification starts the measured interval.
-    subprocess.run(["nix", "develop", "-c", "cabal", "build", "kenshou-cli:exe:kenshou"], env=runner, check=True)
+    subprocess.run(["nix", "develop", "-c", "cabal", "build", "kenshou-suite:exe:kenshou"], env=runner, check=True)
     arguments = ["run", "--prepared", str(root / "preparation/evidence/prepared.json"), "--evidence-base-uri", execution["evidenceBaseUri"], "--out", str(session), "--control-bucket", execution["controlBucket"]]
     if execution.get("start", False):
         arguments.append("--start")

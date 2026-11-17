@@ -1,5 +1,7 @@
 module Kenshou.Suite.Kiroku.Correctness.Notifier (scenarios) where
 
+import Kenshou.Suite.Schema (kirokuSchema)
+
 import Control.Concurrent (threadDelay)
 import Control.Monad (forM_)
 import Data.Aeson (object, (.=))
@@ -11,7 +13,7 @@ import Data.Text (Text)
 import Data.Time.Clock (diffUTCTime, getCurrentTime)
 import Kenshou.Core.Context (RunContext, SummarySection (..), putSummary)
 import Kenshou.Core.Dimension
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario
@@ -41,7 +43,7 @@ wakeLatency =
             pgVersion = Supported (Support (Pg18 :| [Pg17]) Pg18)
           },
       phases = zeroPhases,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku] [] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [kirokuSchema] [] False)},
       knownDefect = Nothing,
       run = runWakeLatency
     }

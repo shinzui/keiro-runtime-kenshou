@@ -6,10 +6,13 @@ module Kenshou.Suite.Runtime.System.Context
   )
 where
 
+import Kenshou.Suite.Schema (keiroSchema, kirokuSchema, pgmqSchema)
+
 import Data.Map.Strict qualified as Map
 import Kenshou.Core.Context (Environment (..), RunContext (..), requirePostgres)
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
+import Kenshou.Core.Resource.Types (legacyKafkaName)
 import Kenshou.Suite.Runtime.System.Broker (RuntimeBroker, withRuntimeBroker)
 import Kiroku.Store (KirokuStore, defaultConnectionSettings, withStore)
 
@@ -32,10 +35,10 @@ runtimeRequirements =
   noEnvironment
     { postgres = Just databaseRequirement,
       extraPostgres = [("warehouse", databaseRequirement)],
-      kafka = True
+      resources = [legacyKafkaName]
     }
   where
-    databaseRequirement = PostgresRequirement [SchemaKiroku, SchemaKeiro, SchemaPgmq] [] False
+    databaseRequirement = PostgresRequirement [kirokuSchema, keiroSchema, pgmqSchema] [] False
 
 withRuntimeResources :: RunContext -> Int -> (RuntimeResources -> IO value) -> IO value
 withRuntimeResources context partitions action = do

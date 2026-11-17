@@ -20,7 +20,6 @@ import Keiro.Outbox (IntegrationEventDraft (..))
 import Keiro.Outbox.Kafka (KafkaProducerRecord (..), integrationEventToKafkaRecord)
 import Kenshou.Core.Context (RunContext, SummarySection (..), putSummary)
 import Kenshou.Core.Dimension (allTelemetryArms, noDimensions)
-import Kenshou.Core.Env (kafkaEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
@@ -29,6 +28,7 @@ import Kenshou.Suite.Runtime.System.Broker (RuntimeBroker (..), withRuntimeBroke
 import Kenshou.Suite.Runtime.System.Contracts (CustomerId (..), OrderId (..), ShopMessage (..), Sku (..), TopicPrefix (..), WarehouseMessage (..))
 import Kenshou.Suite.Runtime.System.KafkaBridge (decodeConsumerRecord, producerRecord)
 import Kenshou.Suite.Runtime.System.Wire (decodeShopEvent, decodeWarehouseEvent, shopEventDraft, warehouseEventDraft)
+import Kenshou.Suite.Schema (kafkaEnvironment)
 
 scenarios :: [Scenario]
 scenarios =

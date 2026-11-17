@@ -9,7 +9,7 @@ module Kenshou.Env.Kafka.Spec
   )
 where
 
-import Data.Aeson (FromJSON (..), Result (..), Value, fromJSON, withObject, (.!=), (.:), (.:?))
+import Data.Aeson (FromJSON (..), Result (..), Value (..), fromJSON, withObject, (.!=), (.:), (.:?))
 import Data.Char (isAsciiLower, isDigit)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
@@ -17,6 +17,7 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Kafka.Types (BrokerAddress (..))
 import Kenshou.Core.Context (RunContext (..))
+import Kenshou.Core.Resource.Types (legacyKafkaName)
 import Kenshou.Core.RunSpec (EnvironmentSpec (..))
 
 data BrokerBackend = RedpandaContainer | ExternalBrokers
@@ -44,11 +45,12 @@ defaultKafkaEnvSpec :: KafkaEnvSpec
 defaultKafkaEnvSpec = KafkaEnvSpec RedpandaContainer [] Nothing 1 Map.empty 90 False
 
 kafkaEnvSpecFromRunSpec :: RunContext -> Either Text KafkaEnvSpec
-kafkaEnvSpecFromRunSpec context = kafkaEnvSpecFromValue context.environmentSpec.kafka
+kafkaEnvSpecFromRunSpec context = kafkaEnvSpecFromValue (Map.lookup legacyKafkaName context.environmentSpec.resources)
 
 kafkaEnvSpecFromValue :: Maybe Value -> Either Text KafkaEnvSpec
 kafkaEnvSpecFromValue = \case
   Nothing -> Right defaultKafkaEnvSpec
+  Just Null -> Right defaultKafkaEnvSpec
   Just value -> case fromJSON value of
     Error message -> Left (Text.pack message)
     Success spec -> validateKafkaEnvSpec spec

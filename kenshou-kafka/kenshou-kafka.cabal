@@ -96,6 +96,7 @@ library
     kenshou-core,
     kenshou-diagnose,
     kenshou-measure,
+    kenshou-support,
     kenshou-telemetry,
     kiroku-store,
     network,
@@ -125,4 +126,5 @@ test-suite kenshou-kafka-test
     hw-kafka-client,
     kenshou-core,
     kenshou-kafka,
+    kenshou-support,
     text,

@@ -1,5 +1,7 @@
 module Kenshou.Suite.Kiroku.Correctness.ConsumerGroup (scenarios) where
 
+import Kenshou.Suite.Schema (kirokuSchema)
+
 import Control.Concurrent (threadDelay)
 import Control.Exception (try)
 import Control.Monad (forM, forM_)
@@ -17,7 +19,7 @@ import Hasql.Statement qualified as Statement
 import Hasql.Transaction qualified as Tx
 import Kenshou.Core.Context (RunContext (..))
 import Kenshou.Core.Dimension
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), knobInt, knobText, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
@@ -49,7 +51,7 @@ partitionCoverage =
             pgVersion = Supported (Support (Pg18 :| [Pg17]) Pg18)
           },
       phases = zeroPhases,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku] [] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [kirokuSchema] [] False)},
       knownDefect = Nothing,
       run = runCoverage
     }

@@ -13,7 +13,6 @@ import Kenshou.Check.Process (Child, awaitMark, awaitReady, killChild, readChild
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension (allTelemetryArms, noDimensions)
-import Kenshou.Core.Env (kafkaEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (KnobName, knobInt, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
@@ -21,6 +20,7 @@ import Kenshou.Core.Role (ControlMessage (..), WorkerMessage (..))
 import Kenshou.Core.Scenario (CohortScope (..), KnownDefect (..), Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
 import Kenshou.Env.Kafka
 import Kenshou.Suite.Kafka.Fixture (firstBrokers, intKnob, produceValues)
+import Kenshou.Suite.Schema (kafkaEnvironment)
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]

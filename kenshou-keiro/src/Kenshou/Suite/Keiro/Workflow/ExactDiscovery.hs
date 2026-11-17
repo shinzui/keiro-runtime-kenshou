@@ -1,5 +1,7 @@
 module Kenshou.Suite.Keiro.Workflow.ExactDiscovery (scenarios, awakeableCountStats, statsDelta) where
 
+import Kenshou.Suite.Schema (keiroSchema, kirokuSchema)
+
 import Control.Monad (forM)
 import Data.Aeson (object, withObject, (.:), (.=))
 import Data.Aeson.Types (parseMaybe)
@@ -23,7 +25,7 @@ import Keiro.Workflow.Sleep (drainWorkflowSleepTimers)
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary, requirePostgres)
 import Kenshou.Core.Dimension
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobValue (..), knobInt, knobText)
@@ -61,7 +63,7 @@ exactDiscovery =
             pgVersion = Supported (Support (Pg18 :| []) Pg18)
           },
       phases = zeroPhases,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku, SchemaKeiro] [("shared_preload_libraries", "'pg_stat_statements'")] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [kirokuSchema, keiroSchema] [("shared_preload_libraries", "'pg_stat_statements'")] False)},
       knownDefect = Nothing,
       run = runExactDiscovery
     }

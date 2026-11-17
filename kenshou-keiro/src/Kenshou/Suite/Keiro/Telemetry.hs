@@ -1,5 +1,7 @@
 module Kenshou.Suite.Keiro.Telemetry (scenarios) where
 
+import Kenshou.Suite.Schema (keiroSchema, kirokuSchema)
+
 import Data.Aeson (object, (.=))
 import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.List (nub)
@@ -14,7 +16,7 @@ import Keiro.Router (runRouterWorkerWith)
 import Keiro.Stream qualified as Stream
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary, requirePostgres)
 import Kenshou.Core.Dimension
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (parseScenarioId, unSeed)
 import Kenshou.Core.Phase (zeroPhases)
@@ -57,7 +59,7 @@ writeSideSignals =
             pgVersion = Supported (Support (Pg18 :| []) Pg18)
           },
       phases = zeroPhases,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku, SchemaKeiro] [] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [kirokuSchema, keiroSchema] [] False)},
       knownDefect = Nothing,
       run = runWriteSideSignals
     }

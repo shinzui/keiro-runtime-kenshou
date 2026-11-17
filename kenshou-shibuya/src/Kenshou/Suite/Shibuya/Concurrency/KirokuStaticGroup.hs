@@ -2,6 +2,8 @@
 
 module Kenshou.Suite.Shibuya.Concurrency.KirokuStaticGroup (scenario) where
 
+import Kenshou.Suite.Schema (kirokuSchema)
+
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, displayException, try)
 import Control.Monad (unless)
@@ -24,7 +26,7 @@ import Kenshou.Check.Process (awaitMark, awaitReady, killChild, roleProcess, sen
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension (PgDurability (..), PgVersion (..), noDimensions, postgresDimensions)
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), knobInt, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
@@ -59,7 +61,7 @@ scenario =
       knobs = [KnobSpec observeKnob "Seconds to observe a dead group member without rebalancing" KnobInt (VInt 20) (IntRange 1 120) []],
       dimensions = postgresDimensions (PgDurable :| []) (Pg18 :| [Pg17]) noDimensions,
       phases = zeroPhases,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku] [] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [kirokuSchema] [] False)},
       knownDefect = Nothing,
       run = runStaticGroup
     }

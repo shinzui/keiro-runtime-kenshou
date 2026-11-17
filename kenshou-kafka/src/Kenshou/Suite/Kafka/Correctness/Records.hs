@@ -25,13 +25,13 @@ import Keiro.Integration.Event (IntegrationContentType (..), IntegrationEvent (.
 import Keiro.Outbox.Kafka (KafkaProducerRecord (..), integrationEventToKafkaRecord)
 import Kenshou.Core.Context (RunContext (..))
 import Kenshou.Core.Dimension (allTelemetryArms, noDimensions)
-import Kenshou.Core.Env (kafkaEnvironment)
 import Kenshou.Core.Id (parseScenarioId, unSeed)
 import Kenshou.Core.Knob (knobInt, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
 import Kenshou.Core.Scenario (Placement (..), Scenario (..), ScenarioReport, Tier (..), failedWith, passed)
 import Kenshou.Env.Kafka
 import Kenshou.Suite.Kafka.Fixture (firstBrokers, intKnob, sabotageDropFirst, sabotageKnob)
+import Kenshou.Suite.Schema (kafkaEnvironment)
 import Kiroku.Store.Types (EventId (..), GlobalPosition (..))
 
 scenarios :: [Scenario]

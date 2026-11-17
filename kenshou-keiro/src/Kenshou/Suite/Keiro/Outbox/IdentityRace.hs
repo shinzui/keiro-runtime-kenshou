@@ -1,5 +1,7 @@
 module Kenshou.Suite.Keiro.Outbox.IdentityRace (scenarios) where
 
+import Kenshou.Suite.Schema (keiroSchema, kirokuSchema)
+
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (mapConcurrently, wait, withAsync)
 import Control.Monad (unless)
@@ -16,7 +18,7 @@ import Keiro.Integration.Event (IntegrationContentType (..), IntegrationEvent (.
 import Keiro.Outbox (BackoffSchedule (..), IntegrationEventDraft (..), IntegrationProducer (..), OutboxPublishOptions (..), OutboxRow (..), ProducerEnqueueOutcome (..), ProducerEventKey (..), ProducerIdentity (..), countOutboxBacklog, defaultPublishOptions, deriveProducerIdentity, enqueueProducerEventTx, garbageCollectSent, listOutbox, mkIntegrationProducer, publishClaimedOutbox)
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobInt, mkKnobName)
@@ -53,7 +55,7 @@ producerIdentityRaceWithGc =
             pgVersion = Supported (Support (Pg18 :| []) Pg18)
           },
       phases = zeroPhases,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku, SchemaKeiro] [] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [kirokuSchema, keiroSchema] [] False)},
       knownDefect = Nothing,
       run = runProducerIdentityRaceWithGc
     }

@@ -1,5 +1,7 @@
 module Kenshou.Suite.Keiro.Workflow.ChildSmoke (scenarios) where
 
+import Kenshou.Suite.Schema (keiroSchema, kirokuSchema)
+
 import Control.Exception (try)
 import Data.Aeson (object, toJSON, (.=))
 import Data.IORef (atomicModifyIORef', newIORef, readIORef)
@@ -13,7 +15,7 @@ import Keiro.Workflow.Resume (ResumeSummary (..), WorkflowResumeOptions (..), de
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Phase (zeroPhases)
@@ -44,7 +46,7 @@ childrenSpawnAwaitCancelFail =
             pgVersion = Supported (Support (Pg18 :| []) Pg18)
           },
       phases = zeroPhases,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku, SchemaKeiro] [] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [kirokuSchema, keiroSchema] [] False)},
       knownDefect = Nothing,
       run = runChildren
     }

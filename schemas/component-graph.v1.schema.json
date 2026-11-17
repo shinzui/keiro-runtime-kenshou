@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://shinzui.github.io/keiro-runtime-kenshou/schemas/component-graph.v1.schema.json",
+  "$id": "https://shinzui.github.io/kenshou/schemas/component-graph.v1.schema.json",
   "title": "Kenshou component graph v1",
   "type": "object",
   "required": ["schema", "components", "repositoryPaths"],

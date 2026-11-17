@@ -18,6 +18,16 @@ let
     disableProfiling = variant != "profiled";
   };
   # These released packages are newer than the shared channel's selections.
+  harnessSource = pkgs.fetchFromGitHub {
+    owner = "shinzui";
+    repo = "kenshou";
+    rev = "b90da77822002de46dfe310ab378f3ccd44cb1db";
+    hash = "sha256-hnjCuivif+2mAfyODv9l1ebnbp60jllthBKLH+Egs94=";
+  };
+  harnessNames = [ "kenshou-core" "kenshou-check" "kenshou-measure" "kenshou-diagnose" "kenshou-telemetry" "kenshou-evidence" "kenshou-remote" "kenshou-cli" ];
+  harness = hself: _: lib.genAttrs harnessNames (name:
+    pkgs.haskell.lib.compose.dontCheck
+      (hself.callCabal2nix name (harnessSource + "/${name}") { }));
   requiredPackages = hself: _: {
     # mori://hedgehogqa/haskell-hedgehog/packages/hedgehog
     hedgehog = pkgs.haskell.lib.compose.dontCheck (hself.callHackageDirect
@@ -62,8 +72,8 @@ let
   local = hself: _: lib.genAttrs localNames (name:
     let
       options =
-        if isolatedShibuya && name == "kenshou-cli" then "--flag=-runtime-suites"
-        else if isolatedShibuya && name == "kenshou-core" then "--flag=-keiro-schema"
+        if isolatedShibuya && name == "kenshou-suite" then "--flag=-runtime-suites"
+        else if isolatedShibuya && name == "kenshou-support" then "--flag=-keiro-schema"
         else "";
       base = hself.callCabal2nixWithOptions name
         (lib.cleanSourceWith {
@@ -74,7 +84,7 @@ let
         options
         { };
       withVersion =
-        if name == "kenshou-cli" then
+        if name == "kenshou-suite" then
           pkgs.haskell.lib.compose.overrideCabal
             (drv: {
               configureFlags = (drv.configureFlags or [ ]) ++ [
@@ -85,6 +95,15 @@ let
         else base;
     in
     pkgs.haskell.lib.compose.dontCheck withVersion);
+  # mori://shinzui/kiroku/packages/kiroku-cli: mirror the reviewed, scoped
+  # Cabal exception while retaining all other bounds in strict payload builds.
+  compatibility = _: hsuper: lib.optionalAttrs
+    (builtins.elem "kiroku-cli:http-client-tls" (descriptor.allowNewer or [ ]))
+    {
+      kiroku-cli = pkgs.haskell.lib.compose.overrideCabal
+        (args: { patches = (args.patches or [ ]) ++ [ ../patches/kiroku-cli-http-client-tls.patch ]; })
+        hsuper.kiroku-cli;
+    };
   enforceBounds = _: hsuper: lib.optionalAttrs strictBounds
     (lib.mapAttrs
       (_: value:
@@ -111,9 +130,11 @@ let
       (channel pkgs.haskell.lib.compose pkgs)
       yamlOutput
       requiredPackages
+      harness
       (import ./cohort-overlay.nix { inherit pkgs lock; })
       (if resolved == null then (_: _: { }) else import ./resolved-overlay.nix { inherit pkgs resolved; })
       local
+      compatibility
       enforceBounds
     ];
   };
@@ -123,7 +144,7 @@ let
   cli =
     let
       haskellLib = pkgs.haskell.lib.compose;
-      base = hp.kenshou-cli;
+      base = hp.kenshou-suite;
       lean = haskellLib.disableSharedLibraries
         (haskellLib.disableSharedExecutables
           (haskellLib.disableLibraryProfiling base));

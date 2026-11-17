@@ -16,7 +16,6 @@ import Kafka.Effectful.Producer qualified as P
 import Kafka.Types (KafkaError, Timeout (..), TopicName)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension (allTelemetryArms, noDimensions)
-import Kenshou.Core.Env (kafkaEnvironment)
 import Kenshou.Core.Id (Kind (..), parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobInt, knobText, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
@@ -28,6 +27,7 @@ import Kenshou.Measure.Phase (Phase (..), enterPhase)
 import Kenshou.Measure.Recorder (OpName (..), OpResult (..), newWorkerRecorder, recordDuration, registerOp)
 import Kenshou.Measure.Session (measureConfigFromKnobs, measurementPhaseClock, measurementRecorder, phasePlanFromCore, withMeasurement)
 import Kenshou.Suite.Kafka.Fixture (firstBrokers)
+import Kenshou.Suite.Schema (kafkaEnvironment)
 
 scenarios :: [Scenario]
 scenarios =

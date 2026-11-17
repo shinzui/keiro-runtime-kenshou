@@ -1,5 +1,7 @@
 module Kenshou.Suite.Keiro.Shard.Variants (scenarios) where
 
+import Kenshou.Suite.Schema (keiroSchema, kirokuSchema)
+
 import Control.Concurrent (threadDelay)
 import Data.Aeson (Result (..), Value (..), fromJSON, object, (.=))
 import Data.Aeson.KeyMap qualified as KeyMap
@@ -24,7 +26,7 @@ import Kenshou.Check.Process (awaitReady, roleProcess, sendCommand, spawn, stopG
 import Kenshou.Check.Scenario (CheckEnv (..), withCheck)
 import Kenshou.Core.Context (RunContext (..), requirePostgres)
 import Kenshou.Core.Dimension
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (knobInt)
@@ -57,7 +59,7 @@ ackCoupledHandlerVariants =
             pgVersion = Supported (Support (Pg18 :| []) Pg18)
           },
       phases = zeroPhases,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku, SchemaKeiro] [] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [kirokuSchema, keiroSchema] [] False)},
       knownDefect = Nothing,
       run = runVariants
     }

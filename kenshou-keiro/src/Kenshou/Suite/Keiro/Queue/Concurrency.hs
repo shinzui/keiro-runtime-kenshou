@@ -1,5 +1,7 @@
 module Kenshou.Suite.Keiro.Queue.Concurrency (scenarios, fifoGroupOrder, fifoLeaseEvidence, LeaseObservation (..), leaseEvidenceValid) where
 
+import Kenshou.Suite.Schema (kirokuSchema, pgmqSchema)
+
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (mapConcurrently, withAsync)
 import Control.Concurrent.STM (atomically)
@@ -32,7 +34,7 @@ import Kenshou.Check.Process (ChildSignal (..), ProgressSnapshot (..), awaitMark
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Check.Verdict (InvariantClass (..))
 import Kenshou.Core.Context (ArtifactDir (..), RunContext (..), SummarySection (..), artifactPath, putSummary, requirePostgres)
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobBool, knobInt, knobText, mkKnobName)
@@ -122,7 +124,7 @@ runtimePoolIsolation =
     { id = either (error . show) id (parseScenarioId "keiro/queue/concurrency/runtime-pool-isolation"),
       summary = "Checks that queue delivery continues while the kiroku store pool is fully occupied.",
       knobs = [],
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku, SchemaPgmq] [] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [kirokuSchema, pgmqSchema] [] False)},
       knownDefect = Nothing,
       run = runRuntimePoolIsolation
     }

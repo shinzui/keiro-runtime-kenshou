@@ -1,5 +1,7 @@
 module Kenshou.Suite.Shibuya.Concurrency.PgmqOutageRestart (scenario, backendScenario) where
 
+import Kenshou.Suite.Schema (pgmqSchema)
+
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (race, wait, waitCatch, withAsync)
 import Control.Concurrent.MVar (MVar, isEmptyMVar, newEmptyMVar, readMVar, tryPutMVar)
@@ -22,7 +24,7 @@ import Kenshou.Check.Fault (Fault (..), FaultHandle (..))
 import Kenshou.Check.Fault.Postgres (Backend (..), BackendSelector (..), listBackends, terminateBackends)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary, requirePostgres)
 import Kenshou.Core.Dimension (PgDurability (..), PgVersion (..), noDimensions, postgresDimensions)
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..), ServerControl (..), StopMode (..))
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), knobInt, mkKnobName)
@@ -60,7 +62,7 @@ outageScenario scenarioName fault =
           <> [KnobSpec (name "outage.seconds") "Postmaster downtime" KnobInt (VInt 10) (IntRange 1 15) [] | fault == "postmaster-restart"],
       dimensions = postgresDimensions (PgDurable :| []) (Pg18 :| [Pg17]) noDimensions,
       phases = zeroPhases,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaPgmq] [] (fault == "postmaster-restart"))},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [pgmqSchema] [] (fault == "postmaster-restart"))},
       knownDefect =
         Just $
           if fault == "postmaster-restart"

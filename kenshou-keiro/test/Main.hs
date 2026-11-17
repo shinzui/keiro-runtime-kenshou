@@ -190,7 +190,7 @@ main = hspec do
       let scenario = either (error . show) id (parseScenarioId "keiro/fixture/correctness/verdict-schema")
           knobs = either (error . show) id (resolveKnobs [] [])
           seed = either (error . show) id (mkSeed 0)
-          runContext = RunContext runId scenario knobs emptyDimensions seed zeroPhases (Environment Nothing mempty) (minimalRunSpec scenario).environment Nothing directory nullLogger state
+          runContext = RunContext runId scenario knobs emptyDimensions seed zeroPhases (Environment Nothing mempty mempty) (minimalRunSpec scenario).environment Nothing directory nullLogger state
       report <- recordCells runContext [("held", True), ("violated", False)]
       report.outcome `shouldBe` Outcome.Failed
       report.failures `shouldBe` ["violated"]
@@ -209,7 +209,7 @@ main = hspec do
       let scenario = either (error . show) id (parseScenarioId "keiro/fixture/correctness/observations")
           knobs = either (error . show) id (resolveKnobs [] [])
           seed = either (error . show) id (mkSeed 0)
-          runContext = RunContext runId scenario knobs emptyDimensions seed zeroPhases (Environment Nothing mempty) (minimalRunSpec scenario).environment Nothing directory nullLogger state
+          runContext = RunContext runId scenario knobs emptyDimensions seed zeroPhases (Environment Nothing mempty mempty) (minimalRunSpec scenario).environment Nothing directory nullLogger state
       report <- recordMessagingObservations runContext mempty (object []) [("coverage", True)] [("ordering", False)]
       report.outcome `shouldBe` Outcome.Passed
       report.failures `shouldBe` []

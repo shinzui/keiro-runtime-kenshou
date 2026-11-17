@@ -16,6 +16,11 @@ provenance:
       at: 2026-11-17T15:29:57Z
       mode: "update"
       note: "Prioritize released-cohort refresh and align reusable tooling with extracted Kenshou ownership"
+    - model: "gpt-6.1-sol"
+      harness: "codex-cli"
+      at: 2026-11-17T15:53:33Z
+      mode: "update"
+      note: "Link filed Kenshou improvement requests to consumer integration gates without claiming delivery"
 ---
 
 # Close the verification and repair loop for the keiro runtime in rounds
@@ -84,10 +89,10 @@ integrates generic round definitions, selection, and reporting, with local Rei
 wiring. These are consumer integration plans, not instructions to create generic
 packages here. Their former local implementation designs are superseded.
 
-The upstream feature work has not been assigned a verified upstream plan in this
-update. Before EP-1 through EP-4 can start, identify and accept the required
-published APIs and this consumer's adoption of that release. Missing capabilities
-must be planned in `mori://shinzui/kenshou`; do not invent release versions or
+The upstream feature requests are filed below; no upstream implementation plan
+or released capability is implied by filing them. Before EP-1 through EP-4 can
+start, identify and accept the required published APIs and this consumer's
+adoption of that release. Missing capabilities must be planned in `mori://shinzui/kenshou`; do not invent release versions or
 silently recreate the implementation locally. This external gate does not block
 EP-5. Adoption is separately scoped work rather than an implicit part of rerunning
 the runtime tests.
@@ -136,9 +141,16 @@ accepted consumer adoption of that release. G2 adds released scope evaluation;
 G3 adds released disposition derivation; G4 adds released round machinery.
 Each gate is satisfied by an exact released version, its upstream release tag,
 and an accepted consumer check, recorded in the affected child. EP-4 also
-hard-depends on EP-5 Complete so its real frozen-evidence handoff is available. A whole-child
-hard dependency requires that child to be Complete. No upstream API or release
+hard-depends on EP-5 Complete so its real frozen-evidence handoff is available.
+A whole-child hard dependency requires that child to be Complete. No upstream API or release
 is claimed to have shipped in this update.
+
+Upstream capability requests (all proposed; none satisfies its release gate yet):
+
+- G1, EP-1: Owner-record lookup — `mori://shinzui/kenshou/okf/improvement-requests/concepts/IR-2`.
+- G2, EP-2: Scope reconciliation — `mori://shinzui/kenshou/okf/improvement-requests/concepts/IR-3`.
+- G3, EP-3: Fix-verification dispositions — `mori://shinzui/kenshou/okf/improvement-requests/concepts/IR-4`.
+- G4, EP-4: Frozen round planning and reports — `mori://shinzui/kenshou/okf/improvement-requests/concepts/IR-5`.
 
 EP-1 through EP-4 must not become a second implementation of the extracted
 harness. If an upstream capability is missing, record the canonical upstream
@@ -356,9 +368,22 @@ Revision note (2026-11-17): prioritize a release-wide rerun and controlled
 comparison, replace stale smallest-fix selection with verified current compatible
 releases, and align automation ownership with the extracted Kenshou boundary.
 
+- Decision: Track the four generic capabilities through the canonical Kenshou request
+  URIs at integration gates G1 through G4.
+  Rationale: Consumer integration must depend on delivered upstream capabilities,
+  not on an unassigned local implementation or the existence of a proposal.
+  Date: 2026-11-17
+
+Revision note (2026-11-17): filed the four upstream improvement requests and linked
+them to EP-1 through EP-4. Existing release/adoption gates remain unmet; EP-5 is
+still the first runtime execution target.
+
+
 ## Outcomes & Retrospective
 
 The coordination update defines the next executable verification work and the
-upstream/consumer split. Runtime outcomes await EP-5 execution; generic tooling
+upstream/consumer split. Four upstream capability requests are now filed and
+linked to the corresponding integration gates; their implementation and release
+remain pending. Runtime outcomes await EP-5 execution; generic tooling
 integration awaits its declared external gates. No test result is implied by
 this planning update.

@@ -1,5 +1,7 @@
 module Kenshou.Suite.Keiro.ProcessManager.Bench (scenarios) where
 
+import Kenshou.Suite.Schema (keiroSchema, kirokuSchema)
+
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (withAsync)
 import Data.Aeson (object, (.=))
@@ -20,7 +22,7 @@ import Keiro.ProcessManager qualified as ProcessManager
 import Keiro.Telemetry (newKeiroMetrics)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary, requirePostgres)
 import Kenshou.Core.Dimension
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (Kind (..), parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobInt, knobText, mkKnobName)
@@ -79,7 +81,7 @@ dispatchLatency =
             pgVersion = Supported (Support (Pg18 :| []) Pg18)
           },
       phases = PhasePlan 5 120 5,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku, SchemaKeiro] [("shared_preload_libraries", "'pg_stat_statements'")] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [kirokuSchema, keiroSchema] [("shared_preload_libraries", "'pg_stat_statements'")] False)},
       knownDefect = Nothing,
       run = runDispatchLatency
     }

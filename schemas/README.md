@@ -22,3 +22,9 @@ the meaning of a published `v1` document.
 
 Run `just schemas-check` to validate the checked-in goldens and fresh CLI
 documents.
+
+The shared harness schemas mirror mori://shinzui/kenshou at commit
+`b90da77822002de46dfe310ab378f3ccd44cb1db` (project-relative `schemas/`;
+artifact-level URI pending). Keep them aligned with `cohort/kenshou.project`.
+The Kafka environment and Keiro observation schemas are consumer-owned.
+The shared schemas accept named resources and retain legacy document readers.

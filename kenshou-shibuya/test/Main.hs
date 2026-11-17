@@ -6,7 +6,7 @@ import Data.Text qualified as Text
 import Hedgehog (forAll, (===))
 import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
-import Kenshou.Core.Bundle (LayerBundle (..), mkRegistry)
+import Kenshou.Core.Bundle (LayerBundle (..), mkRegistry, registryMigrationSets)
 import Kenshou.Core.Context (Environment (..), RunContext (..), newRunState, readRunState)
 import Kenshou.Core.Env (EnvRequirements (..))
 import Kenshou.Core.Env.Postgres (withPostgresEnv)
@@ -16,6 +16,7 @@ import Kenshou.Core.Outcome (Outcome (..))
 import Kenshou.Core.RunSpec (EffectiveRunSpec (..), EnvironmentSpec (..), RunSpec (..), SpecPlacement (..))
 import Kenshou.Core.RunSpec.Resolve (resolveRunSpec)
 import Kenshou.Core.Scenario (Scenario (..), ScenarioReport (..))
+import Kenshou.Suite.Schema (schemaBundle)
 import Kenshou.Suite.Shibuya (bundle)
 import Kenshou.Suite.Shibuya.Cohort (CoreLine (..), coreLine, knownOnReleasedCore, rev)
 import Kenshou.Suite.Shibuya.Concurrency.KeyedModel (Action (..), Item (..), ModelCase (..), modelProperty, runCase)
@@ -52,15 +53,15 @@ runPgmqLiveProbe version name = do
         "release" -> PgmqShutdownRelease.scenario
         "lease-sizing" -> PgmqLeaseSizing.scenario
         _ -> error "unknown PGMQ live probe"
-      input = RunSpec Nothing scenario.id Nothing [] [("pg.version", Text.pack version)] Nothing Nothing Nothing (EnvironmentSpec RunLocal Nothing Nothing mempty Nothing Nothing) Nothing Nothing mempty
-  registry <- either (fail . show) pure (mkRegistry [bundle])
+      input = RunSpec Nothing scenario.id Nothing [] [("pg.version", Text.pack version)] Nothing Nothing Nothing (EnvironmentSpec RunLocal Nothing Nothing mempty mempty Nothing) Nothing Nothing mempty
+  registry <- either (fail . show) pure (mkRegistry [schemaBundle, bundle])
   (_, resolved) <- resolveRunSpec registry input >>= either (fail . show) pure
   let directory = "/tmp/kenshou-shibuya-pgmq-live-" <> Text.unpack (renderRunId resolved.runId)
   case (scenario.requires.postgres, resolved.environment.postgres) of
     (Just requirement, Just postgresSpec) -> do
-      result <- withPostgresEnv nullLogger directory resolved.runId requirement postgresSpec resolved.dimensions $ \postgres -> do
+      result <- withPostgresEnv (registryMigrationSets registry) nullLogger directory resolved.runId requirement postgresSpec resolved.dimensions $ \postgres -> do
         state <- newRunState
-        let probeContext = RunContext resolved.runId scenario.id resolved.knobs resolved.dimensions resolved.seed resolved.phases (Environment (Just postgres) mempty) resolved.environment resolved.comparison directory nullLogger state
+        let probeContext = RunContext resolved.runId scenario.id resolved.knobs resolved.dimensions resolved.seed resolved.phases (Environment (Just postgres) mempty mempty) resolved.environment resolved.comparison directory nullLogger state
         report <- scenario.run probeContext
         (summaries, _, _, _) <- readRunState state
         print summaries

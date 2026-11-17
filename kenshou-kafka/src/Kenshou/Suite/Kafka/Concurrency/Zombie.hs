@@ -25,7 +25,6 @@ import Kenshou.Check.Process (Child, Supervisor, awaitReady, readChildMessages, 
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension (allTelemetryArms, noDimensions)
-import Kenshou.Core.Env (kafkaEnvironment)
 import Kenshou.Core.Id (parseScenarioId)
 import Kenshou.Core.Knob (KnobName, knobInt, mkKnobName)
 import Kenshou.Core.Phase (zeroPhases)
@@ -34,6 +33,7 @@ import Kenshou.Core.Scenario (CohortScope (..), KnownDefect (..), PackageConditi
 import Kenshou.Env.Kafka
 import Kenshou.Env.Kafka.Spec qualified as KafkaSpec
 import Kenshou.Suite.Kafka.Fixture (firstBrokers, intKnob)
+import Kenshou.Suite.Schema (kafkaEnvironment)
 import System.Timeout (timeout)
 
 scenarios :: [Scenario]

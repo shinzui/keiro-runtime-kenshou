@@ -1,6 +1,9 @@
 # Bundle Update Log
 
 ## 2026-11-17
+
+* **Update**: ADR-24: consume the extracted harness through immutable dependencies and retain runtime suite ownership.
+
 * **Update**: Record extracted Kenshou ownership of reusable tooling and retain Keiro consumer inputs, policies, evidence, and optional Rei wiring here.
 
 ## 2026-10-12

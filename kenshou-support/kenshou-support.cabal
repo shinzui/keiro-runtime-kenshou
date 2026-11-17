@@ -1,0 +1,30 @@
+cabal-version: 3.0
+name: kenshou-support
+version: 0.1.0.0
+synopsis: Shared Keiro runtime verification contributions
+license: BSD-3-Clause
+build-type: Simple
+
+flag keiro-schema
+  default: True
+  manual: True
+
+library
+  hs-source-dirs: src
+  exposed-modules: Kenshou.Suite.Schema
+  default-language: GHC2024
+  default-extensions:
+    NoFieldSelectors
+    OverloadedRecordDot
+    OverloadedStrings
+
+  build-depends:
+    base,
+    kenshou-core ^>=0.1.0.0,
+    kiroku-store-migrations,
+    pgmq-migration,
+    text,
+
+  if flag(keiro-schema)
+    cpp-options: -DFULL_RUNTIME_SUITES
+    build-depends: keiro-migrations

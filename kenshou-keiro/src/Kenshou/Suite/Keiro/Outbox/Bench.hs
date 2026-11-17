@@ -1,5 +1,7 @@
 module Kenshou.Suite.Keiro.Outbox.Bench (scenarios) where
 
+import Kenshou.Suite.Schema (keiroSchema, kirokuSchema)
+
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (async, cancel)
 import Control.Exception (finally)
@@ -17,7 +19,7 @@ import Keiro.Integration.Event (IntegrationContentType (..), IntegrationEvent (.
 import Keiro.Outbox (IntegrationEventDraft (..), IntegrationProducer (IntegrationProducer), OrderingPolicy (..), OutboxPublishOptions (..), OutboxPublishSummary (..), OutboxRow (..), OutboxStatus (..), ProducerEnqueueOutcome (..), countOutboxBacklog, defaultPublishOptions, enqueueIntegrationEventTx, enqueueProducerEventTx, freshOutboxId, listOutbox, mkIntegrationProducer, publishClaimedOutbox)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary)
 import Kenshou.Core.Dimension
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Id (Kind (..), parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobDouble, knobInt, knobText, mkKnobName)
 import Kenshou.Core.Phase qualified as CorePhase
@@ -268,7 +270,7 @@ drainThroughput =
             pgVersion = Supported (Support (Pg18 :| []) Pg18)
           },
       phases = CorePhase.PhasePlan 0 1 1,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku, SchemaKeiro] [("shared_preload_libraries", "'pg_stat_statements'")] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [kirokuSchema, keiroSchema] [("shared_preload_libraries", "'pg_stat_statements'")] False)},
       knownDefect = Nothing,
       run = runDrainThroughput
     }

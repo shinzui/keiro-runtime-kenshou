@@ -1,5 +1,7 @@
 module Kenshou.Suite.Keiro.Workflow.ParkedPassBench (scenarios) where
 
+import Kenshou.Suite.Schema (keiroSchema, kirokuSchema)
+
 import Control.Monad (forM)
 import Data.Aeson (object, (.=))
 import Data.List.NonEmpty (NonEmpty (..))
@@ -11,7 +13,7 @@ import Keiro.Workflow.Resume (ResumeSummary (..), WorkflowDef (..), WorkflowResu
 import Kenshou.Check.Scenario (withCheck)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary, requirePostgres)
 import Kenshou.Core.Dimension
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (Kind (..), parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobSpec (..), KnobType (..), KnobValue (..), knobInt, knobText)
@@ -49,7 +51,7 @@ parkedPassCost =
             pgVersion = Supported (Support (Pg18 :| []) Pg18)
           },
       phases = PhasePlan 0 120 0,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaKiroku, SchemaKeiro] [("shared_preload_libraries", "'pg_stat_statements'")] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [kirokuSchema, keiroSchema] [("shared_preload_libraries", "'pg_stat_statements'")] False)},
       knownDefect = Nothing,
       run = runParkedPassCost
     }

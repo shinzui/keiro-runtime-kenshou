@@ -17,6 +17,11 @@ provenance:
       at: 2026-11-17T15:29:57Z
       mode: "update"
       note: "Rescope generic owner and round implementation to released upstream consumer integration"
+    - model: "gpt-6.1-sol"
+      harness: "codex-cli"
+      at: 2026-11-17T15:53:33Z
+      mode: "update"
+      note: "Link filed Kenshou improvement requests to consumer integration gates without claiming delivery"
 ---
 
 # Reconcile known-defect cohort scopes with owner records
@@ -79,6 +84,12 @@ update because Mori's configured database was unavailable.
   policy, and evidence remain in this suite. The first rerun proceeds separately.
   Date: 2026-11-17
 
+- Decision: Link this integration to the filed upstream request in Context and Orientation;
+  retain the existing published-release and adoption prerequisites.
+  Rationale: A proposed request records ownership and acceptance criteria but is
+  not evidence of implementation or command availability.
+  Date: 2026-11-17
+
 
 ## Outcomes & Retrospective
 
@@ -98,6 +109,10 @@ point if adoption moves it. Do not edit the local generic kernel/toolkits to
 recreate missing upstream features.
 
 The exact prerequisite is: EP-1 (docs/plans/20-report-owner-record-status-for-every-kenshou-finding.md) Complete, plus G2: adopted published generic scope reconciliation and scope evaluation.
+The generic capability is requested in
+`mori://shinzui/kenshou/okf/improvement-requests/concepts/IR-3`
+(status proposed). Filing the request does not satisfy the release/adoption gate.
+
 A gate is satisfied by an exact published package version, authoritative tag,
 source/docs inspection, and an accepted consumer check. No verified upstream
 implementation plan for these new capabilities has been assigned here. If they

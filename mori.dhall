@@ -23,41 +23,18 @@ in  Schema.Project::{
         }
       ]
     , packages =
-      [ Schema.Package::{
-        , name = "kenshou-core"
-        , type = Schema.PackageType.Library
-        , language = Schema.Language.Haskell
-        , path = Some "./kenshou-core"
-        , description = Some
-            "Cohort identity and the shared kernel for Keiro runtime verification"
-        }
-      , Schema.Package::{
-        , name = "kenshou-cli"
-        , type = Schema.PackageType.Application
-        , language = Schema.Language.Haskell
-        , path = Some "./kenshou-cli"
-        , description = Some
-            "Operator interface and aggregate runtime verification executable"
-        }
-      , Schema.Package::{
-        , name = "kenshou-remote"
-        , type = Schema.PackageType.Library
-        , language = Schema.Language.Haskell
-        , path = Some "./kenshou-remote"
-        , description = Some
-            "Leased verification cell client and immutable result verification"
-        }
-      , Schema.Package::{
-        , name = "kenshou-evidence"
-        , type = Schema.PackageType.Library
-        , language = Schema.Language.Haskell
-        , path = Some "./kenshou-evidence"
-        , description = Some
-            "Historic verification records and durable evidence storage"
-        }
+      [ Schema.Package::{ name = "kenshou-suite", type = Schema.PackageType.Application, language = Schema.Language.Haskell, path = Some "./kenshou-suite" }
+      , Schema.Package::{ name = "kenshou-support", type = Schema.PackageType.Library, language = Schema.Language.Haskell, path = Some "./kenshou-support" }
+      , Schema.Package::{ name = "kenshou-pgmq", type = Schema.PackageType.Library, language = Schema.Language.Haskell, path = Some "./kenshou-pgmq" }
+      , Schema.Package::{ name = "kenshou-kiroku", type = Schema.PackageType.Library, language = Schema.Language.Haskell, path = Some "./kenshou-kiroku" }
+      , Schema.Package::{ name = "kenshou-shibuya", type = Schema.PackageType.Library, language = Schema.Language.Haskell, path = Some "./kenshou-shibuya" }
+      , Schema.Package::{ name = "kenshou-kafka", type = Schema.PackageType.Library, language = Schema.Language.Haskell, path = Some "./kenshou-kafka" }
+      , Schema.Package::{ name = "kenshou-keiro", type = Schema.PackageType.Library, language = Schema.Language.Haskell, path = Some "./kenshou-keiro" }
+      , Schema.Package::{ name = "kenshou-runtime", type = Schema.PackageType.Library, language = Schema.Language.Haskell, path = Some "./kenshou-runtime" }
       ]
     , dependencies =
-      [ "shinzui/keiro"
+      [ "shinzui/kenshou"
+      , "shinzui/keiro"
       , "shinzui/keiki"
       , "shinzui/kiroku"
       , "shinzui/shibuya"
@@ -74,7 +51,8 @@ in  Schema.Project::{
       , "shinzui/okf"
       ]
     , dependencyRefs =
-      [ Schema.MoriRef::{ namespace = "shinzui", name = "keiro" }
+      [ Schema.MoriRef::{ namespace = "shinzui", name = "kenshou" }
+      , Schema.MoriRef::{ namespace = "shinzui", name = "keiro" }
       , Schema.MoriRef::{ namespace = "shinzui", name = "keiki" }
       , Schema.MoriRef::{ namespace = "shinzui", name = "kiroku" }
       , Schema.MoriRef::{ namespace = "shinzui", name = "shibuya" }

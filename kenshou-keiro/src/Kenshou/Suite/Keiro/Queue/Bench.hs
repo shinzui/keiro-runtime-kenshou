@@ -1,5 +1,7 @@
 module Kenshou.Suite.Keiro.Queue.Bench (scenarios, exactlyOnce, provisionMatches) where
 
+import Kenshou.Suite.Schema (pgmqSchema)
+
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (async, cancel, poll)
 import Control.Exception (bracket, finally)
@@ -28,7 +30,7 @@ import Keiro.PGMQ.Job (Job (..), JobOrdering (..), JobOutcome (..), JobPolling (
 import Keiro.PGMQ.Runtime (JobRuntime (..), QueueRef (..), queueRef, runJobEff, withJobRuntime)
 import Kenshou.Core.Context (RunContext (..), SummarySection (..), putSummary, requirePostgres)
 import Kenshou.Core.Dimension
-import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), SchemaComponent (..), noEnvironment)
+import Kenshou.Core.Env (EnvRequirements (..), PostgresRequirement (..), noEnvironment)
 import Kenshou.Core.Env.Postgres (PostgresEnv (..))
 import Kenshou.Core.Id (Kind (..), parseScenarioId)
 import Kenshou.Core.Knob (Allowed (..), KnobName, KnobSpec (..), KnobType (..), KnobValue (..), knobDouble, knobInt, knobText, mkKnobName)
@@ -230,7 +232,7 @@ jobThroughput =
             pgVersion = Supported (Support (Pg18 :| []) Pg18)
           },
       phases = CorePhase.PhasePlan 1 120 5,
-      requires = noEnvironment {postgres = Just (PostgresRequirement [SchemaPgmq] [("shared_preload_libraries", "'pg_stat_statements'")] False)},
+      requires = noEnvironment {postgres = Just (PostgresRequirement [pgmqSchema] [("shared_preload_libraries", "'pg_stat_statements'")] False)},
       knownDefect = Nothing,
       run = runJobThroughput
     }
