@@ -10,333 +10,250 @@ provenance:
     model: "claude-opus-5-5"
     harness: "claude-code"
     at: 2026-10-01T16:21:09Z
+  revisions:
+    - model: "gpt-6.1-sol"
+      harness: "codex-cli"
+      at: 2026-11-17T15:29:57Z
+      mode: "update"
+      note: "Prioritize released-cohort refresh and align reusable tooling with extracted Kenshou ownership"
 ---
 
 # Close the verification and repair loop for the keiro runtime in rounds
 
-This MasterPlan is a living document. The sections Progress, Surprises & Discoveries,
-Decision Log, and Outcomes & Retrospective must be kept up to date as work proceeds.
-If durable project context changes, update or create ADRs in docs/adr/ in the same change.
+This MasterPlan is a living document. Keep Progress, Surprises & Discoveries,
+Decision Log, and Outcomes & Retrospective current. Child plans own milestone
+progress; this document owns sequencing and shared boundaries.
 
 
 ## Vision & Scope
 
-[MasterPlan 1](1-build-an-extensive-verification-suite-for-the-keiro-runtime.md) builds the
-verification suite and records an initial baseline against the pinned released cohort. A
-*cohort* is the exact, named set of runtime package versions a build links, described by
-`cohort/<name>.json` and `cohort/<name>.project` (see
-[ADR-2](../adr/0002-every-result-carries-a-resolved-cohort-identity.md)). While building the
-suite, MasterPlan 1 found defects in the libraries it verifies and filed them in the
-repositories that own those libraries, as OKF bug reports and improvement requests. An *owner
-record* is one such filed report: a Markdown file with YAML frontmatter in the owning repository,
-addressed by a canonical `mori://` URI such as
-`mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-1`. MasterPlan 1 deliberately
-does not own the fixes. Its Decision Log (2026-09-27) says owners plan and implement repairs, and
-that verifying those repairs waits until the platform owner asks for it.
+The immediate goal is to rerun the available Keiro runtime verification suite
+against current released packages and compare it with the historical baseline.
+The [September baseline report](../reports/2026-09-29-runtime-baseline.md) and
+`cohort/released.{json,project}` remain historical inputs. A *cohort* is an exact
+set of resolved runtime packages, not a label for whatever is newest today.
+[ADR-2](../adr/0002-every-result-carries-a-resolved-cohort-identity.md) requires
+proof of the packages each executable actually links.
 
-This MasterPlan is that request, turned into a repeatable process. It does not take over repair.
-It owns the loop around repair. One pass of the loop is a *round*:
+Many releases have happened since the initial tests. Round 1 must therefore
+cover previously passing behavior, known defect reproductions, open findings,
+and available newer scenarios across PGMQ, Kiroku, Shibuya, Kafka, Keiro, and the
+assembled runtime. Selecting only records whose owners say `fixed` is too narrow.
+An *owner record* is an upstream bug or improvement report addressed by its
+canonical Mori URI. Owner status is an input to verification, never proof of it.
 
-1. Freeze the run set the round compares against.
-2. Owners fix and release, on their own schedules and under their own plans.
-3. Kenshou pins a candidate cohort that contains the released fixes.
-4. Kenshou reruns only the affected scenarios.
-5. Kenshou assigns every owner record in scope a disposition, collects any new findings, and
-   publishes a round report.
-6. The next round starts from that report.
+The initiative has two deliverables. First, EP-5 performs a release refresh with
+the existing harness: freeze historical evidence, verify current releases, pin a
+candidate, execute a documented matrix, retain evidence, and publish a dated
+comparison. Second, EP-1 through EP-4 integrate reusable owner and round tooling
+when it is released by `mori://shinzui/kenshou`. The refresh does not wait for that
+automation or for adoption of the extracted harness.
 
-When this initiative is complete, a maintainer can do the following from this repository. Run
-one command, `kenshou owners status`, that prints every owner record kenshou's findings and
-scenarios cite. For each record it shows the owner's current lifecycle status and versions
-(following `duplicate` records to their canonical record), which owner plans cite it and the Rei
-intentions those plans carry, and which local findings and scenarios depend on it. This replaces
-the hand-maintained "Upstream issue register" table in MasterPlan 1.
+Reusable harness implementation belongs in the extracted Kenshou project. This
+repository owns Keiro layer bundles, cohort descriptors, the component graph,
+scenario-to-owner mappings, scope declarations, findings, verification records,
+and reports. Its local generic packages are transitional copies, not a place to
+implement a second owner/round engine. Follow
+[ADR-3](../adr/0003-kenshou-owns-the-runtime-verification-protocol.md).
 
-The maintainer can run `kenshou owners scopes` to learn which `KnownDefect` cohort scopes in the
-scenario catalog disagree with what the owner records now say, and what scope each should have.
-They can ask, for any owner record and any cohort, whether the recorded evidence shows it
-verified fixed, still reproducing, regressed, not yet released, or simply not yet run. Finally,
-they can open a numbered round, plan its reruns from the base and candidate cohorts, execute
-them, and publish a dated round report with one disposition per owner record. None of these
-paths call a language model. Each is a deterministic join over files on disk and Mori lookups.
-
-Included:
-
-- the owner-record reader and the status report;
-- known-defect scope reconciliation;
-- disposition derivation from immutable evidence;
-- the round definition, planning and report;
-- the Rei wiring that lets a round wait on owner work;
-- one real round, executed against a candidate cohort built from fixes owners have already
-  released.
-
-Excluded:
-
-- **Fixing defects in owner repositories.** Owners keep repair authority.
-- **Writing into owner records.** Kenshou never edits an owner's status, version fields or body.
-  The owner's lifecycle is the owner's authority.
-- **Automatic editing of Haskell `KnownDefect` declarations.** The scope check proposes; a person
-  commits.
-- **CI orchestration.** The house CI platform `kotei` owns that, as in MasterPlan 1.
-- **An autonomous agent.** A shikigami "round steward" that reacts to owner releases is future
-  work, and the report this initiative builds is the tool such an agent would call.
-- **Rei features that are not shipped yet.** This initiative must work with Rei as it is today.
+Repairs remain with the runtime owners. This initiative does not edit owner
+lifecycle fields, automatically rewrite Haskell defect scopes, publish a Kenshou
+release, or migrate this consumer to an unpublished harness. Rei tracking is
+consumer coordination; it is not a required dependency of the generic harness.
+CI orchestration remains outside this plan.
 
 
 ## Decomposition Strategy
 
-The work splits along the data each step adds to the join. Each child plan produces a command
-whose output a person can check by hand, and each later plan consumes the previous plan's data
-types rather than re-deriving them.
+Keep the five existing child plans, but change their execution order and ownership.
 
-The first plan, the owner-record ledger (EP-1, `docs/plans/20-report-owner-record-status-for-every-kenshou-finding.md`), gathers references.
-It reads `docs/findings/*.md` and the scenario catalog's `KnownDefect` references. It resolves
-each URI through `mori path`, parses the owner record's frontmatter, follows `duplicateOf`, and
-locates owner plans that cite the record. That alone answers "where has everything got to?" and
-retires the hand-maintained register.
+EP-5 (`docs/plans/24-run-the-first-repair-verification-round-against-a-fixed-cohort.md`)
+is the first work to execute. It owns the actual broad release comparison and
+its frozen evidence inputs. It can do owner and scope checks manually, recording
+sources and uncertainty. It uses existing `plan`, `execute`, `compare`, `record`,
+`attest`, cohort, and cell commands; no `owners` command is assumed to exist.
 
-The second plan (EP-2, `docs/plans/21-reconcile-known-defect-cohort-scopes-with-owner-records.md`) compares each scenario's declared `KnownDefect`
-cohort scope with the owner record's `fixedVersion` and `affects` package. This is the step that
-turns an owner's "fixed" into a verifiable claim. Once the scope excludes the fixed version, a
-scenario that still fails on the fixed cohort becomes blocking, which is exactly how
-`defectDisposition` in `kenshou-core/src/Kenshou/Core/Run.hs` already treats an inapplicable
-defect.
+EP-1 (`docs/plans/20-report-owner-record-status-for-every-kenshou-finding.md`)
+integrates released generic owner lookup with this repository's findings and
+scenario references. EP-2 (`docs/plans/21-reconcile-known-defect-cohort-scopes-with-owner-records.md`)
+connects its real scope declarations and package mappings to released generic
+scope reconciliation. EP-3 (`docs/plans/22-derive-fix-verification-dispositions-from-recorded-evidence.md`)
+connects recorded Keiro observations and consumer oracles to generic disposition
+derivation. EP-4 (`docs/plans/23-define-the-round-protocol-and-its-report.md`)
+integrates generic round definitions, selection, and reporting, with local Rei
+wiring. These are consumer integration plans, not instructions to create generic
+packages here. Their former local implementation designs are superseded.
 
-The third plan (EP-3, `docs/plans/22-derive-fix-verification-dispositions-from-recorded-evidence.md`) derives, per owner record and cohort, a
-disposition from the immutable run records in `docs/verification/`.
+The upstream feature work has not been assigned a verified upstream plan in this
+update. Before EP-1 through EP-4 can start, identify and accept the required
+published APIs and this consumer's adoption of that release. Missing capabilities
+must be planned in `mori://shinzui/kenshou`; do not invent release versions or
+silently recreate the implementation locally. This external gate does not block
+EP-5. Adoption is separately scoped work rather than an implicit part of rerunning
+the runtime tests.
 
-The fourth plan (EP-4, `docs/plans/23-define-the-round-protocol-and-its-report.md`) wraps those three into a round: a checked-in round
-definition, round planning on top of `kenshou plan --cohort-from/--cohort-to`, a generated round
-report, and the Rei wiring.
-
-The fifth plan (EP-5, `docs/plans/24-run-the-first-repair-verification-round-against-a-fixed-cohort.md`) runs round 1 for real against a candidate cohort
-assembled from fixes already on Hackage.
-
-Two alternatives were rejected:
-
-- **Merging EP-1 to EP-3 into one "status" plan.** It would hide three different trust levels:
-  what the owner says, what the scope declares, and what the evidence shows. Those must stay
-  separately checkable.
-- **Recording dispositions as a fourth OKF concept type in `docs/verification/`.**
-  [ADR-18](../adr/0018-keep-verification-records-immutable-and-derive-baselines.md) fixes the
-  bundle at three types (`Attested Computation`, `Verification Run`, `Attestation`) and derives
-  baselines at read time. A disposition is the same kind of derived conclusion as a baseline. It
-  is derived from records, and the dated round report is the human-readable artifact that states
-  it. Adding a stored type would also require an additive release of the shared profile
-  `mori://shinzui/okf-profiles/profiles/verification-evidence` first, as ADR-18 states for any
-  record-shape change.
-
-Relevant local ADRs:
-
-- [ADR-2](../adr/0002-every-result-carries-a-resolved-cohort-identity.md) (cohort identity) and
-  [ADR-20](../adr/0020-pin-cell-payloads-to-verified-cohort-identities.md) (cell payloads pin
-  verified cohorts). A round's base and candidate are cohorts in exactly this sense.
-- [ADR-5](../adr/0005-select-runs-from-a-checked-in-component-graph.md). Rerun selection reuses
-  the component graph and its over-select-when-unsure rule.
-- [ADR-14](../adr/0014-distinguish-documented-limitations-from-known-defects.md).
-  Known-defect references are canonical owner URIs; unpromised behavior is an implementation
-  finding, not a defect; and only the scenario's specific failure labels and affected cohorts are
-  covered.
-- [ADR-18](../adr/0018-keep-verification-records-immutable-and-derive-baselines.md). Records
-  are immutable, and conclusions are derived.
-
-Cross-repository decisions that shape this initiative:
-
-- `mori://shinzui/rei/okf/adrs/concepts/ADR-45` (status Proposed) resolves an intention's
-  project from `scoped-to` project scope and ignores project Topics without a `mori` reference
-  when choosing a planning target.
-- The OKF bug-report profile is published as `coordination.bugReports` in
-  `mori://shinzui/okf-profiles` v0.18.0. It makes `fixedVersion` required when `status` is
-  `fixed`, and `duplicateOf` required when `status` is `duplicate`. Its version keys share a
-  fixed vocabulary meant for mechanical comparison: a bare released version, `unreleased`, or
-  `unknown`.
+Relevant decisions are [ADR-2](../adr/0002-every-result-carries-a-resolved-cohort-identity.md),
+[ADR-3](../adr/0003-kenshou-owns-the-runtime-verification-protocol.md),
+[ADR-5](../adr/0005-select-runs-from-a-checked-in-component-graph.md),
+[ADR-6](../adr/0006-comparison-verdicts-require-controlled-benchmark-evidence.md),
+[ADR-14](../adr/0014-distinguish-documented-limitations-from-known-defects.md),
+[ADR-18](../adr/0018-keep-verification-records-immutable-and-derive-baselines.md),
+[ADR-20](../adr/0020-pin-cell-payloads-to-verified-cohort-identities.md), and
+[ADR-23](../adr/0023-pin-performance-gates-to-independent-preparation-and-calibration-evidence.md).
+The extraction boundary is documented in
+`mori://shinzui/kenshou/masterplans/1-extract-a-package-agnostic-verification-harness-into-kenshou`,
+`mori://shinzui/kenshou/okf/adrs/concepts/ADR-1`, and
+`mori://shinzui/kenshou/okf/adrs/concepts/ADR-18`.
 
 
 ## Exec-Plan Registry
 
 | # | Title | Path | Hard Deps | Soft Deps | Status |
 |---|-------|------|-----------|-----------|--------|
-| 1 | Report owner-record status for every kenshou finding | docs/plans/20-report-owner-record-status-for-every-kenshou-finding.md | None | None | Not Started |
-| 2 | Reconcile known-defect cohort scopes with owner records | docs/plans/21-reconcile-known-defect-cohort-scopes-with-owner-records.md | EP-1 | None | Not Started |
-| 3 | Derive fix-verification dispositions from recorded evidence | docs/plans/22-derive-fix-verification-dispositions-from-recorded-evidence.md | EP-1, EP-2 | None | Not Started |
-| 4 | Define the round protocol and its report | docs/plans/23-define-the-round-protocol-and-its-report.md | EP-3 | None | Not Started |
-| 5 | Run the first repair-verification round against a fixed cohort | docs/plans/24-run-the-first-repair-verification-round-against-a-fixed-cohort.md | EP-4 | MasterPlan 1 EP-10, EP-11, EP-13 | Not Started |
+| 1 | Report owner-record status for every kenshou finding (consumer integration) | docs/plans/20-report-owner-record-status-for-every-kenshou-finding.md | External gate G1 | EP-5 evidence | Not Started |
+| 2 | Reconcile known-defect cohort scopes with owner records (consumer integration) | docs/plans/21-reconcile-known-defect-cohort-scopes-with-owner-records.md | EP-1; external gate G2 | EP-5 scope audit | Not Started |
+| 3 | Derive fix-verification dispositions from recorded evidence (consumer integration) | docs/plans/22-derive-fix-verification-dispositions-from-recorded-evidence.md | EP-1, EP-2; external gate G3 | EP-5 evidence | Not Started |
+| 4 | Define the round protocol and its report (consumer integration) | docs/plans/23-define-the-round-protocol-and-its-report.md | EP-3, EP-5; external gate G4 | None | Not Started |
+| 5 | Run the first repair-verification round against a fixed cohort (release refresh first) | docs/plans/24-run-the-first-repair-verification-round-against-a-fixed-cohort.md | None | MasterPlan 1 coverage and cell plans | Not Started |
 
-Status values: Not Started, In Progress, Complete, Cancelled.
-Hard Deps and Soft Deps reference other rows by their # prefix (e.g., EP-1, EP-3). Soft
-dependencies naming MasterPlan 1 rows refer to
-[MasterPlan 1's registry](1-build-an-extensive-verification-suite-for-the-keiro-runtime.md#exec-plan-registry).
+Status values: Not Started, In Progress, Complete, Cancelled. EP numbers above
+identify rows here, not filename prefixes. MasterPlan 1 references mean the
+[existing suite's registry](1-build-an-extensive-verification-suite-for-the-keiro-runtime.md#exec-plan-registry).
+An unfinished coverage plan does not hide an available scenario or imply that
+unimplemented coverage passed.
 
 
 ## Dependency Graph
 
-EP-1 has no dependency and can start immediately. It needs only the existing scenario catalog,
-the findings directory and the `mori` CLI. Every later plan consumes its `OwnerRecord` type and
-its reference index, so EP-1 is the root.
+Execution order is **EP-5 first**, followed by EP-1, EP-2, EP-3, EP-4 as their
+external gates become satisfied. EP-5 has no hard dependency on the new tooling.
+Its own first milestone checks Mori, release lookup, baseline evidence, builds,
+and execution prerequisites. Concrete unavailable resources remain blockers to
+the affected tests and are reported, not worked around with invented results.
 
-EP-2 hard-depends on EP-1 because a scope can only be reconciled against an owner record that
-has already been read and canonicalized. Duplicates must be followed first, or a scope would be
-checked against a record whose versions are absent by design.
+G1 requires a published generic owner-record API in `mori://shinzui/kenshou` and
+accepted consumer adoption of that release. G2 adds released scope evaluation;
+G3 adds released disposition derivation; G4 adds released round machinery.
+Each gate is satisfied by an exact released version, its upstream release tag,
+and an accepted consumer check, recorded in the affected child. EP-4 also
+hard-depends on EP-5 Complete so its real frozen-evidence handoff is available. A whole-child
+hard dependency requires that child to be Complete. No upstream API or release
+is claimed to have shipped in this update.
 
-EP-3 hard-depends on EP-1 for the record-to-scenario index, and on EP-2 for the
-scope-evaluation function that decides whether a recorded run's cohort is inside or outside a
-defect's applicable range. Without EP-2, a passing run cannot be told apart from a run on a
-cohort where the defect was never expected.
-
-EP-4 hard-depends on EP-3 because a round report is a set of dispositions plus round metadata.
-
-EP-5 hard-depends on EP-4, and only softly on MasterPlan 1's coverage plans for Shibuya, Kafka
-and Keiro messaging (EP-10, EP-11, EP-13 there). A round can verify whichever records already
-have scenarios; records without scenarios are reported as `not-run`, not hidden. EP-5 does not
-wait for MasterPlan 1 to finish.
-
-EP-1 and the first milestone of EP-2 (exposing scope data in the catalog JSON) can proceed in
-parallel, because that milestone touches only `kenshou-core` catalog serialization. Everything
-else is sequential. The chain is short, and each step's output is the next step's input.
-
-Cross-repository relationships are soft or integration dependencies only. Nothing here blocks on
-another repository:
-
-- **Integration with Rei's proposed IR-6 and IR-7**
-  (`mori://shinzui/rei/okf/improvement-requests/concepts/IR-6`,
-  `mori://shinzui/rei/okf/improvement-requests/concepts/IR-7`) and the planning-target resolver
-  (`mori://shinzui/rei/plans/231-resolve-an-intention-s-planning-target-from-project-scope`).
-  EP-4 uses today's `rei intention create`, `rei project scope add` and `rei dependency add`.
-  When those Rei features ship, the round wiring can move to them without changing the kenshou
-  side.
-- **Integration with the mori registry being fresh.** Every owner lookup goes through
-  `mori path`. A registry that has not re-read an owner's bundle cannot resolve a newly filed
-  record. On 2026-10-01, eight cited records were unresolvable until `mori register` was rerun
-  for keiro and shibuya-kafka-adapter. EP-1 reports such records as `unresolved` instead of
-  guessing a path.
+EP-1 through EP-4 must not become a second implementation of the extracted
+harness. If an upstream capability is missing, record the canonical upstream
+work reference and keep that integration pending. EP-5 can finish a documented
+comparison before any of these gates is satisfied. MasterPlan completion still
+requires the four integrations, not just a report.
 
 
 ## Integration Points
 
-Integration Point 1: the `kenshou-owners` package and its `OwnerRecord` type.
-- **Owner:** EP-1. Consumers: EP-2, EP-3, EP-4.
-- EP-1 creates a library package `kenshou-owners/`. Like every package, it is picked up by the
-  `kenshou-*/*.cabal` glob in `cabal.project`; nobody edits the package list.
-- It depends on `kenshou-core` (scenarios, cohort identity) and `kenshou-evidence` (run-record
-  history). It never depends on a layer package such as `kenshou-shibuya`, preserving
-  [ADR-1](../adr/0001-layer-packages-never-import-one-another.md). It obtains scenarios through
-  the `Registry` that `kenshou-cli` passes to every command in `CliEnv`.
-- Module `Kenshou.Owners.Record` defines `OwnerRecord` with these fields:
-  - `uri`: canonical `mori://` URI;
-  - `kind`: bug report, improvement request, or other reference;
-  - `status`: the owner's raw status string;
-  - `affects`: a Mori URI;
-  - `affectedVersion` and `fixedVersion`: each a version vocabulary value (`Released Version`,
-    `Unreleased`, `Unknown`, or `Unparseable Text`);
-  - `duplicateOf`;
-  - `resolvedPath`;
-  - `resolution`: `Resolved`, `Unresolved reason`, or `NotARecord`.
-- Module `Kenshou.Owners.Index` defines the reference index, which maps each canonical URI to
-  the citing findings, scenarios (with their `KnownDefect` entries), and owner plans with their
-  intention IDs.
-- EP-2, EP-3 and EP-4 extend this package with new modules. They do not redefine these types.
-  If a consumer needs a new field, it adds it in `Kenshou.Owners.Record` and updates this section
-  first.
+**Generic harness ownership.** The owner of reusable run, comparison, evidence,
+owner-record, scope, disposition, and round machinery is
+`mori://shinzui/kenshou`. This MasterPlan owns only its Keiro consumer integration.
+The extracted harness must take bundle contributions or explicit configuration;
+it must not import Keiro layers or hard-code this repository's directories,
+package names, owner URIs, evidence target, or Rei intention. Existing local
+copies may execute EP-5 before adoption; do not add new generic implementations
+to them. EP-1 verifies the published extension points before later integration.
 
-Integration Point 2: the `kenshou owners` command group.
-- **Owner:** EP-1. EP-2 to EP-4 add subcommands.
-- EP-1 registers one `CliCommand` named `owners` in group `Analysis` in
-  `kenshou-cli/src/Kenshou/Cli/Registry.hs`, following the extension contract stated there:
-  "tool plans add command and topic values here without changing a central sum type".
-- Subcommands:
-  - `status` (EP-1);
-  - `scopes` (EP-2);
-  - `verify` (EP-3);
-  - `round open`, `round plan`, `round report` (EP-4).
-- Every subcommand supports `--json`, writing a versioned document: `kenshou.owner-status/v1`,
-  `kenshou.owner-scopes/v1`, `kenshou.owner-dispositions/v1`, or `kenshou.round-report/v1`. As
-  with every kenshou machine-readable mode, standard output carries only that document and
-  diagnostics go to standard error.
+**Consumer inputs.** EP-1 owns collecting canonical references from
+`docs/findings/` and the registered scenario catalog. EP-2 owns the local mapping
+from `affects` URIs to cohort packages and the audited `KnownDefect` declarations.
+It proposes source edits for review; it does not narrow scopes without owner
+version evidence. EP-3 supplies consumer recomputers and evidence locations and
+uses the generic scope evaluator. EP-4 consumes all three integrations through
+published APIs. Concrete upstream types and codecs are selected from the release,
+not redefined in these child plans. The consumer command assembly currently
+lives in `kenshou-cli/src/Kenshou/Cli/Registry.hs`; adoption may move that entry point.
 
-Integration Point 3: catalog scope data.
-- **Owner:** EP-2. Consumers: EP-3.
-- Today `kenshou list --json` emits only each scenario's known-defect reference strings
-  (`kenshou-core/src/Kenshou/Core/Bundle.hs`, the `knownDefect` key).
-- EP-2 adds, additively, each defect's `expectedFailures` and a serialized `appliesTo` cohort
-  scope (`AllCohorts`, or `OnlyWhen` with `ResolvedFromHackage`, `ResolvedFromGit`,
-  `VersionBelow`, `RevisionIs` conditions).
-- EP-2 also exports a pure function that evaluates a scope against a run record's `components`
-  list, mirroring `cohortScopeApplies` in `kenshou-core/src/Kenshou/Core/Scenario.hs`.
-- EP-3 must use that function rather than a second implementation.
+**Refresh evidence and automation handoff.** EP-5 owns
+`rounds/1/refresh-inputs.json`, ordinary checked-in report input data rather than a
+new evidence concept type. It freezes the historical run IDs and trust, cohort
+and harness identities, exact plan/spec/policy digests, release checks, scope
+audit, new run/record IDs, comparisons, and coverage omissions. EP-4 owns using
+those exact inputs to validate the later generic round integration. It must not
+substitute whatever history calls latest when the automation is implemented.
+Any formal `rounds/1.json` uses the released upstream schema and is created only
+at that integration step; the refresh inputs must not pretend to conform to an
+unimplemented schema. Keep the original refresh and its dated report intact;
+record later derived reports separately. The representative producer/consumer
+check is EP-4 replaying EP-5's frozen evidence and accounting for any difference.
 
-Integration Point 4: disposition vocabulary.
-- **Owner:** EP-3. Consumers: EP-4, EP-5.
-- One owner record at one cohort has exactly one of these dispositions, with its reasons:
+**Comparison and trust.** EP-5 distinguishes historical observations from fresh
+same-harness baseline/candidate runs. Every scenario/matrix row has both outcomes
+or an explicit missing, incompatible, or not-run reason. Functional outcomes,
+known-defect labels, owner claims, performance, and infrastructure are reported
+separately. Exit zero can mean an expected defect reproduced; inspect labels and
+`knownDefect`, not just the process exit. Only confirmed evidence supports a
+headline `verified-fixed`. Missing or incomplete attestation remains visible.
+EP-3 derives those conclusions from evidence using the upstream engine; EP-4
+renders them without introducing a competing vocabulary.
 
-  | Disposition | Meaning |
-  |---|---|
-  | `verified-fixed` | A confirmed run on a cohort outside the defect's applicable scope passed. |
-  | `still-reproduces` | A run outside the scope failed with the defect's expected labels. |
-  | `regressed` | A later cohort fails after an earlier cohort was `verified-fixed`, or the owner record carries `lastWorkingVersion`. |
-  | `reproduces-as-expected` | Inside the scope, the defect reproduced. |
-  | `not-reproduced` | Inside the scope, the run passed: a possible unannounced fix, or a flaky reproduction. |
-  | `different-failure` | A failure carries labels the defect does not cover. |
-  | `not-yet-released` | The owner's `fixedVersion` is `unreleased`, or no cohort pins the fixed version. |
-  | `not-run` | No scenario cites the record, or no run exists on the cohort. |
-  | `unverifiable` | Unresolved record, unparseable version, or a reference that is not an owner record. |
+Performance verdicts require fresh paired, interleaved runs under the same
+controlled environment and a recorded comparison policy. Historical workstation
+timings are context. Use five pairs by default; retain samples and uncertainty.
+A failed health gate, inadequate coverage, incompatible build features, or an
+uncalibrated performance profile cannot yield whole-runtime acceptance. EP-5
+uses existing comparison machinery and ADR-6; bounded `perf` gates additionally
+follow ADR-23. Do not make the runtime release refresh depend on qualifying a
+new performance product.
 
-- Every disposition also carries an evidence trust attribute:
-  - `confirmed`: a published bundle record whose `kenshou history` trust is
-    `machine-confirmed` or `human-reviewed`;
-  - `unverified`: a published bundle record whose history trust is `unverified`;
-  - `local`: an unpublished sealed run under `runs/`.
-
-  Only `confirmed` evidence may support `verified-fixed` in a round report's headline counts.
-- Bundle records carry the outcome but not the failure labels. Telling `still-reproduces` from
-  `different-failure` requires the run's `run-result.json`, read from the record's digest-pinned
-  data link or a local sealed run. When labels are unavailable, the disposition is `unverifiable`
-  with that reason.
-- EP-4 renders these values and never adds new ones.
-- Changing the vocabulary is a decision recorded here and in the ADR created by EP-3.
-
-Integration Point 5: round definitions and reports.
-- **Owner:** EP-4. Consumer: EP-5.
-- A round is a checked-in JSON document `rounds/<n>.json` with schema `kenshou.round/v1`. It
-  names:
-  - the round number;
-  - the base cohort and the frozen base run set (the base run plan's digest and the run IDs it
-    produced);
-  - the candidate cohort;
-  - the owner records in scope;
-  - the round's Rei intention ID.
-- The report is generated to `docs/reports/<date>-round-<n>.md` and has the same mutable,
-  dated-reading status as `docs/reports/2026-09-29-runtime-baseline.md`.
-
-ADR candidates:
-
-- **EP-3, likely ADR-22:** "Derive fix-verification dispositions and never write them into owner
-  records". It extends ADR-14 and ADR-18.
-- **EP-4, likely ADR-23:** "Verify owner repairs in numbered rounds against frozen base run
-  sets". This records why MasterPlan 1's baseline is never mutated and why each round has its
-  own base.
-- **EP-2 may amend ADR-14** to state that a `KnownDefect` scope's upper bound comes from the
-  owner record's `fixedVersion`, never from an anticipated release number.
+**Tracking and owner authority.** EP-4 owns optional consumer-side Rei wiring
+under `intention_01m3w49yheevg9mzkyfab1mqy4`. Generic Kenshou need not depend on
+Rei. Owners keep repair and lifecycle authority. Local findings link existing
+owner records and record new failures; filing new owner reports follows
+MasterPlan 1's Integration Point 11 within the execution's authorized scope.
 
 
 ## Progress
 
-Coordination snapshot (2026-10-01): MasterPlan created with five child plans, all Not Started.
-EP-1 can start now. MasterPlan 1 is still In Progress (EP-8 and EP-10 to EP-17 open), and its
-Decision Log of 2026-09-27 defers fix verification "until the platform owner asks". This
-MasterPlan is that request, and does not change MasterPlan 1's remaining work.
+Coordination snapshot (2026-11-17): all five children remain Not Started; this
+update did not run the runtime tests or select new dependency pins. EP-5 is the
+next execution target. EP-1 through EP-4 now wait on published upstream features
+and consumer adoption rather than blocking the first rerun. The October 1
+snapshot and version list are historical, not candidate selection inputs.
+
+The extracted project's checked-in plan registry says EP-1 through EP-6 Complete and EP-7
+(first publication) In Progress. This is checkout evidence, not a registry-backed
+claim that no later release exists. Verify Hackage and upstream tags before
+choosing versions or deciding whether adoption can proceed. Mori's database was
+unavailable during this update, so current registry/owner state and canonical URI
+resolution could not be verified. That check remains required in EP-5's preflight.
+
+The existing isolated October 10 Shibuya comparison is useful prior evidence,
+but its reduced build and local timings do not satisfy the full runtime refresh.
+No new performance or fix-verification conclusion is claimed here.
 
 
 ## Surprises & Discoveries
+
+- The [October 10 report](../reports/2026-10-10-shibuya-latest-timings.md) already
+  compares newer Shibuya and Kiroku releases with the baseline. It disables
+  Keiro schema support, retains evidence locally without external attestation,
+  and labels timings exploratory. A new candidate must report its full catalog
+  and enabled features so reduced coverage cannot look like a whole-runtime pass.
+- The extracted Kenshou source documents that generic packages belong upstream
+  while the consumer retains its copies until a first release. The original
+  EP-1 through EP-4 would have added generic tooling to the wrong repository.
+- On 2026-11-17, `mori registry list`, package searches, and `mori path` failed
+  because the configured Mori PostgreSQL socket was absent. The exact extracted
+  checkout's manifest, README, extraction MasterPlan, and relevant ADRs were read
+  directly after those lookup attempts. No registry freshness or release check
+  is inferred from that fallback.
+
+Historical discoveries from the October 1 design, to recheck during the refresh:
 
 - Owner status has moved under the hand-maintained register. The 2026-09-29 baseline report
   counts 14 fixed, 16 reported and 2 duplicate among 32 distinct owner bug records. On
   2026-10-01, reading the owner files directly, 16 of the bug records cited from
   `docs/findings/` were `fixed`. A register written by hand goes stale between checkpoints,
-  which is why EP-1 computes it.
+  which is why EP-1 integrates a computed view.
 - Some existing `KnownDefect` scope bounds were chosen without an owner version. In
   `kenshou-kafka/src/Kenshou/Suite/Kafka/Concurrency/Zombie.hs` and `BrokerOutage.hs`, the
   scopes for `mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-4` and `BUG-3`
-  are `VersionBelow "shibuya-kafka-adapter" "0.9.0.2"`. Both owner records are `reported`, with
+  are `VersionBelow "shibuya-kafka-adapter" "0.9.0.2"`. Both owner records were `reported` at that checkpoint, with
   no `fixedVersion`. `BarrierOverwrite.hs` scopes BUG-5 below `0.9.0.2`, while the owner records
   `fixedVersion: "0.9.1.0"`. This is the concrete case EP-2 exists to catch.
 - Owner-record fields are less uniform than the profile intends:
@@ -348,15 +265,14 @@ MasterPlan is that request, and does not change MasterPlan 1's remaining work.
   EP-1 must report these as they are; EP-2 must map project-level `affects` through the cohort
   descriptor and refuse to guess for a multi-package project.
 - Owner plans cite their own repository's records by local handle or file name rather than
-  canonical URI. For example, keiro plan 300 is
-  `docs/plans/300-poll-pgmq-client-side-for-long-poll-job-workers-to-fix-bug-4-and-bug-6.md`
-  in `mori://shinzui/keiro`. Plan discovery must accept a canonical URI from any repository,
+  canonical URI. For example,
+  `mori://shinzui/keiro/plans/300-poll-pgmq-client-side-for-long-poll-job-workers-to-fix-bug-4-and-bug-6`
+  cites local owner handles. Plan discovery must accept a canonical URI from any repository,
   and a local handle or record path only within the owning repository.
 - The Mori registry lags owner bundles in more places than the two re-registered on 2026-10-01.
   After keiro and shibuya-kafka-adapter were re-registered, `mori path` still could not resolve
   `mori://shinzui/shibuya-pgmq-adapter/okf/bug-reports/concepts/BUG-4`, although
-  `docs/bug-reports/long-poll-outlives-a-killed-client-and-consumes-a-read-attempt.md` in that
-  repository carries `bugId: BUG-4`. Keiro plan 300 cites that record. EP-1 reports such records
+  the producing report carries `bugId: BUG-4` in the owner checkout. `mori://shinzui/keiro/plans/300-poll-pgmq-client-side-for-long-poll-job-workers-to-fix-bug-4-and-bug-6` cites that record. EP-1 reports such records
   as `unresolved`, and the operator fix is `mori register --path <owner checkout>`.
 - Owner bug-report handles live in `bugId` (`coordination.bugReports` declares
   `idField = "bugId"`), and several owners name report files by slug rather than number. Handles
@@ -369,8 +285,7 @@ MasterPlan is that request, and does not change MasterPlan 1's remaining work.
   prose only. Rounds make that practice systematic and queryable.
 - A `KnownDefect` whose scope does not apply to a cohort is not written into that run's result
   or evidence record (`applicable` in `defectDisposition`, `kenshou-core/src/Kenshou/Core/Run.hs`).
-  A passing run on a fixed cohort therefore carries no link to the record it verifies. EP-3 must
-  join through the scenario catalog, not through the run record's `knownDefects` field alone.
+  A passing run on a fixed cohort therefore carries no link to the record it verifies. EP-3 must integrate a join through the scenario catalog, not through the run record's `knownDefects` field alone.
 
 
 ## Decision Log
@@ -413,7 +328,37 @@ MasterPlan is that request, and does not change MasterPlan 1's remaining work.
   Shibuya records fixed in 0.10.0.0, rather than on fixtures alone.
   Date: 2026-10-01
 
+- Decision: Execute EP-5 as a broad release refresh before the automation chain;
+  use the existing harness and record manual owner/scope checks.
+  Rationale: The release gap calls for fresh evidence now, including regressions
+  outside known fixes. Four new commands are not prerequisites for running tests.
+  This supersedes the October 1 sequential execution decision and EP-5's former
+  hard dependency on EP-4.
+  Date: 2026-11-17
+
+- Decision: Re-scope EP-1 through EP-4 as integrations of released generic Kenshou
+  features. Keep the runtime-specific inputs, evidence, policies, and Rei wiring
+  here, and keep generic implementations upstream.
+  Rationale: The harness has been extracted. Creating `kenshou-owners` and a second
+  round engine here would recreate the coupling that extraction removed. This
+  supersedes the original local package/interface ownership, while preserving the
+  read-only owner authority and immutable evidence decisions. ADR-3 records the
+  durable boundary.
+  Date: 2026-11-17
+
+- Decision: Rei wiring is optional consumer coordination, superseding its earlier
+  role as a required round completion gate.
+  Rationale: Runtime verification and the extracted generic harness do not require
+  a personal tracking service to produce inspectable evidence.
+  Date: 2026-11-17
+
+Revision note (2026-11-17): prioritize a release-wide rerun and controlled
+comparison, replace stale smallest-fix selection with verified current compatible
+releases, and align automation ownership with the extracted Kenshou boundary.
 
 ## Outcomes & Retrospective
 
-(To be filled during and after implementation.)
+The coordination update defines the next executable verification work and the
+upstream/consumer split. Runtime outcomes await EP-5 execution; generic tooling
+integration awaits its declared external gates. No test result is implied by
+this planning update.

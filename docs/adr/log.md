@@ -1,5 +1,8 @@
 # Bundle Update Log
 
+## 2026-11-17
+* **Update**: Record extracted Kenshou ownership of reusable tooling and retain Keiro consumer inputs, policies, evidence, and optional Rei wiring here.
+
 ## 2026-10-12
 * **Update**: ADR-23 separates reusable infrastructure delivery from consumer benchmark calibration and CI deployment qualification without weakening authoritative gate admission.
 * **Update**: Resolve generated native dependencies from the spliced system package set and reject missing or ambiguous production inputs.

@@ -2,7 +2,7 @@
 type: Architecture Decision Record
 title: Kenshou owns the runtime verification protocol
 description: The harness kernel owns versioned list, run, result, worker, and manifest documents so every layer and external runner shares one stable protocol.
-timestamp: 2026-09-21T16:14:01Z
+timestamp: 2026-11-17T15:28:47Z
 generated:
   by: process:codex
   at: "2026-09-21T05:00:00Z"
@@ -26,6 +26,27 @@ identity and resolved parameters from the parent, while evidence tooling reads
 completed run directories without linking the Haskell libraries.
 
 ## Decision
+
+The generic harness has been extracted into `mori://shinzui/kenshou`. Reusable
+execution, comparison, evidence, owner-record, scope-evaluation, disposition,
+and round machinery belongs there. This repository owns its Keiro layer bundles,
+cohorts, component graph, scenario-to-owner mappings, defect declarations,
+findings, verification records, and reports. It supplies those inputs through
+the generic harness's extension points; consumer-specific Rei wiring stays here
+and is not a generic harness dependency.
+
+The consumer retains its existing local generic packages until a published
+Kenshou release is adopted. Those copies may execute verification now, but new
+generic tooling is implemented upstream rather than creating another engine
+here. A release-verification run does not require new owner/round automation:
+explicitly recorded manual checks can supply the same inputs while retaining
+their provenance and uncertainty. This follows the extraction boundary in
+`mori://shinzui/kenshou/masterplans/1-extract-a-package-agnostic-verification-harness-into-kenshou`,
+`mori://shinzui/kenshou/okf/adrs/concepts/ADR-1`, and
+`mori://shinzui/kenshou/okf/adrs/concepts/ADR-18`.
+
+The following protocol contract applies to the existing consumer and to its
+eventual integration with the published harness.
 
 `kenshou-core` owns the runtime-facing protocol used by `kenshou list`,
 `kenshou run`, future planning and comparison commands, worker processes, and
